@@ -1,0 +1,107 @@
+# {{BRAIN_NAME}} — the brain
+
+This vault is a **brain**: one organized, plain-text memory that people and AI tools read from and write to under the rules below. The rules are short on purpose. If something needs more rules, it probably does not belong in the brain.
+
+This file is the law. **Part 1** is the standard every brain shares. **Part 2** is specific to this brain — fill it in.
+
+# Part 1 — the standard
+
+## The folders
+
+Four memory folders, plus one optional for code.
+
+| Folder | Its job | Who writes |
+|---|---|---|
+| `raw/` | The loading dock. Tools and agents drop material here, tagged with where it came from. Messy is fine. Never hand-edited. | Each producer, only in its own lane: `raw/tools/<tool>/` or `raw/workspaces/<name>/` |
+| `workstreams/` | The desk. Active work, where most life happens. A workstream can be a single project or a standing collection of work and tasks that projects live inside. | The owner |
+| `knowledge/` | The trusted layer. Curated entities, concepts, and syntheses. The part everything leans on. | The owner, and the curator |
+| `archive/` | The basement. Cold storage, out of active recall. | Rarely, anyone |
+| `repos/` (optional) | The workshop. Code working trees. Workspace, not memory: keeps its own git story outside the brain repo. | Via git, never via note editing |
+
+Keep it flat. `knowledge/entities/`, `knowledge/concepts/`, and `knowledge/syntheses/` never grow deeper. Detail lives in note labels, never in folder paths. The folder also carries trust: anything in `knowledge/` is trusted, anything in `raw/` is not, so no note needs a trust label.
+
+## Every note starts with labels
+
+Two required labels, one auto-filled date, two optional. Order does not matter; git tracks every change, so there is no `updated` field to forget.
+
+```yaml
+---
+type: entity                  # required, from the list below
+source: me                    # required: a URL, the owner's name, or the raw/ path it came from
+created: 2026-01-01           # auto-filled by the note template
+title: Acme County            # optional, when the filename is not enough
+link: https://...             # optional: the matching record in your tables tool
+---
+```
+
+### The note types
+
+Never invent a type; add to this list instead, with the owner's sign-off.
+
+| type | What it is | Home |
+|---|---|---|
+| `entity` | One real thing: a person, org, place, or system | `knowledge/entities/` |
+| `concept` | An idea, playbook, position, or piece of language | `knowledge/concepts/` |
+| `synthesis` | A writeup that pulls several things together | `knowledge/syntheses/` |
+| `note` | Working material for an active workstream | `workstreams/<ws>/` |
+| `log` | A running record of what happened, newest on top | `workstreams/<ws>/` |
+| `capture` | Raw material from a tool or agent | `raw/` |
+| `snapshot` | A point-in-time backup taken before a change | `archive/` |
+
+## The shape of a workstream
+
+Every workstream folder under `workstreams/` has a known front door:
+
+- **`overview.md`** — what is true right now. The first thing any person or agent reads.
+- **`log.md`** — what happened, newest entry on top.
+- Everything else in the folder is working material.
+
+An agent that reads `overview.md` should be able to start working.
+
+## Written for context windows
+
+Notes in `knowledge/` are briefing cards, never articles. Short, dense, self-contained; one screen is the target. The brain's product is the right two thousand tokens for the task at hand, so the curator distills, it does not transcribe.
+
+## Who writes where
+
+1. **The owner** can edit anything, anywhere. Owner edits always win.
+2. **Tools and agents** write only inside their own lane in `raw/`, fed by one-way pipes (rsync or similar). The pipe points one direction, so the rule enforces itself. Never hand-write `raw/` from the agent side.
+3. **The curator** is the only thing besides the owner that writes to `knowledge/` and `workstreams/`. It promotes good material out of `raw/`, fills in labels, distills to one screen, and **links instead of copying**.
+4. **Anything destructive asks a human first**: bulk deletes, renames, moves, or any change to these rules.
+
+## The curator's defaults
+
+- **The default answer is no.** Most raw material never promotes. That is the system working.
+- **Config is not knowledge.** If a running job reads a file, link to it, never copy it.
+- **No web.** The curator works only from the vault and the owner. Research is a producer's job; web findings enter through `raw/` with provenance like everything else.
+- **New entities start with the owner.** Before a card for a new entity lands, the curator asks the owner what is missing. The owner is the richest producer the brain has.
+
+## Validation and trust
+
+The curator drafts proposals into its own lane in `raw/`; a proposal becomes trusted only when it moves into `knowledge/`, and the move is the approval. Every verdict (approved, edited, rejected, and why) goes in an append-only decisions log. The curator runs in one of three gears per kind of action: **ask first**, **act and report** (apply it, list it in the next digest; git makes undo one command), or **routine** (logged only). Everything starts at ask-first. When the log shows a kind of action approved repeatedly without edits, the curator may propose its own promotion to the next gear; only the owner grants it. Some things never graduate: new entity cards, anything destructive, anything crossing a doorway to another brain, and changes to these rules.
+
+## How to read the brain
+
+1. Read this `CLAUDE.md`. It is the whole law.
+2. Working on a workstream? Read its `overview.md`, then its `log.md`.
+3. Need background? Prefer `knowledge/` over `raw/`. Trust flows from the folder.
+4. Never bulk-load `raw/` into a context window. It is a loading dock, not a library.
+
+## Search is disposable
+
+The brain's native retrieval is filenames, folders, grep, and links between notes. Any index built on top (vector, full-text, graph) is a client-side convenience: rebuildable from the files, never the truth, never required.
+
+## Rollout is forward-only
+
+New notes get labels from day one. `knowledge/` starts empty, so it is clean from the first note. Older notes get labels when next touched. No bulk migration, ever.
+
+# Part 2 — this brain (fill this in)
+
+These change per brain. Replace the placeholders below.
+
+- **Hub:** `<which machine holds the canonical copy>`.
+- **Versioning:** `<git remote — keep it owned; the brain should not depend on a cloud git provider you do not control>`.
+- **Connectors (live pipes):** `<tool → raw/tools/<tool>/, cadence>` for each tool feeding this brain.
+- **Curator:** `<which agent/model curates, and what gear it is in today>`.
+- **Naming:** kebab-case for files and folders. No dates in top-level names.
+- **Source of truth:** `<where design intent lives, if anywhere, vs. this file which is the operating law>`.
