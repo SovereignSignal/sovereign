@@ -76,9 +76,28 @@ Notes in `knowledge/` are briefing cards, never articles. Short, dense, self-con
 - **No web.** The curator works only from the vault and the owner. Research is a producer's job; web findings enter through `raw/` with provenance like everything else.
 - **New entities start with the owner.** Before a card for a new entity lands, the curator asks the owner what is missing. The owner is the richest producer the brain has.
 
+## Curation policy
+
+How finely the curator slices a subject (one summary card, or a node per person, product, or program) is set per brain, never by the standard. The standard ships the mechanism; each owner supplies the answers.
+
+- **Default: depth follows engagement.** With no configuration, the curator goes finer where the owner invests more (more raw arriving on a subject, and the owner repeatedly approving fine-grained cards there) and stays coarse elsewhere. A fresh brain curates sensibly from day one, shaped by behavior, not by a hardcoded list.
+- **Optional policy, shipped empty.** An owner may override the default by writing a short policy in Part 2: a default depth, a go-deep list, and a never-promote list. The standard names the fields; the owner names the values.
+- **The gate decides, the log remembers.** The curator proposes at the chosen depth; the owner keeps, edits, or drops each; every verdict lands in the decisions log. Consistent verdicts are how the policy tightens over time.
+- **The curator suggests, the owner decides.** It may note that a subject looks deep and ask, but it never sets policy or changes depth on its own. Policy changes never graduate.
+
 ## Validation and trust
 
 The curator drafts proposals into its own lane in `raw/`; a proposal becomes trusted only when it moves into `knowledge/`, and the move is the approval. Every verdict (approved, edited, rejected, and why) goes in an append-only decisions log. The curator runs in one of three gears per kind of action: **ask first**, **act and report** (apply it, list it in the next digest; git makes undo one command), or **routine** (logged only). Everything starts at ask-first. When the log shows a kind of action approved repeatedly without edits, the curator may propose its own promotion to the next gear; only the owner grants it. Some things never graduate: new entity cards, anything destructive, anything crossing a doorway to another brain, and changes to these rules.
+
+## Connectors
+
+Any tool or agent that uses the brain is a **connector**, bound by a three-part contract. It is *in the loop* only when all three hold:
+
+1. **Read first.** Before acting on the brain's subject matter, it loads the relevant slice of `knowledge/` — an entry topic, its linked neighbors, and a small always-on core — so it works from current truth, not a stale copy.
+2. **Write to its lane.** Its outputs flow one-way into its own `raw/` lane, never straight into `knowledge/` (the write rule above).
+3. **Promote through the curator.** Raw becomes knowledge only via the curator and the owner's gate (the trust rule above).
+
+The brain never *controls* a connector. For an autonomous agent the brain only *offers* the read path and the norm to consult it; the agent decides when. A connector keeps its own memory thin — it does not copy the brain's knowledge (it reloads that on demand), though it may keep a log of its own actions.
 
 ## How to read the brain
 

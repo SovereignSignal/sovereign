@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""curator-run — one incremental curation pass (the Archivist's heartbeat).
+
+Gathers raw/ and workstreams/ material changed since the last run, asks an LLM
+whether each piece holds durable, reusable knowledge (default NO), drafts
+validated candidate cards into the curator's lane, and writes a digest + status.
+
+Proposer-first by design: this NEVER writes to knowledge/. A proposal becomes
+trusted only when the owner runs curator-approve (the gate). Everything is logged.
+
+Config via env (the mechanism is generic; the model/endpoint are swappable):
+  SOVS_VAULT        vault root (default: cwd)
+  CURATOR_LANE      lane name (default: curator; this brain: archivist)
+  CURATOR_ENDPOINT  OpenAI-compatible chat endpoint (default: Ollama cloud)
+  CURATOR_MODEL     model id (default: gpt-oss:120b)
+  CURATOR_KEYFILE   file holding the API key (default: ~/.config/ollama-cloud/key)
+
+Usage: curator-run [--since-days N] [--max N] [--dry]
+"""
+import os, re, json, glob, time, argparse, urllib.request
+from datetime import datetime, timezone
+
+VAULT = os.environ.get("SOVS_VAULT", os.getcwd())
+LANE_NAME = os.environ.get("CURATOR_LANE", "curator")
+LANE = os.path.join(VAULT, "raw", "workspaces", LANE_NAME)
+PROP = os.path.join(LANE, "proposals"); INBOX = os.path.join(LANE, "INBOX.md")
+STATUS = os.path.join(LANE, "status.json"); WM = os.path.join(LANE, ".last-run")
+K = os.path.join(VAULT, "knowledge")
+ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "https://ollama.com/v1/chat/completions")
+MODEL = os.environ.get("CURATOR_MODEL", "gpt-oss:120b")
+KEYFILE = os.environ.get("CURATOR_KEYFILE", os.path.expanduser("~/.config/ollama-cloud/key"))
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--since-days", type=float, default=None, help="lookback window if no watermark")
+ap.add_argument("--max", type=int, default=40, help="max new items to judge this run")
+ap.add_argument("--dry", action="store_true", help="judge and report, write nothing")
+ap.add_argument("--init", action="store_true", help="set the watermark to now (forward-only) and exit")
+a = ap.parse_args()
+os.makedirs(PROP, exist_ok=True)
+if a.init:
+    open(WM, "w").write(str(time.time()))
+    print("curator-run: watermark set to now — forward-only. Only material arriving after this point will be judged.")
+    raise SystemExit(0)
+
+if a.since_days is not None:
+    since = time.time() - a.since_days * 86400  # explicit window overrides watermark
+elif os.path.exists(WM):
+    since = float(open(WM).read().strip() or 0)
+else:
+    since = time.time() - 2 * 86400  # first-run default lookback
+
+def candidates():
+    out = []
+    for r in (os.path.join(VAULT, "raw"), os.path.join(VAULT, "workstreams")):
+        for dp, dn, fn in os.walk(r):
+            if LANE in dp or "/node_modules" in dp or "/.git" in dp or "/imports/" in dp:
+                continue  # skip the curator's own lane, code deps, and one-time bulk imports
+            for f in fn:
+                if f.startswith(".") or not f.endswith((".md", ".txt")):
+                    continue
+                p = os.path.join(dp, f)
+                try:
+                    if os.path.getmtime(p) > since:
+                        out.append(p)
+                except OSError:
+                    pass
+    # Judge the owner's curated desk before the loading dock, and tool-mirror
+    # chatter last, so a bounded --max spends its budget on high-value material.
+    def rank(p):
+        if "/workstreams/" in p: return 0
+        if "/raw/tools/" in p: return 2
+        return 1
+    return sorted(out, key=lambda p: (rank(p), -os.path.getmtime(p)))
+
+cands = candidates()[: a.max]
+have = {os.path.basename(p)[:-3] for p in glob.glob(K + "/**/*.md", recursive=True)}
+pending = {os.path.basename(p)[:-3] for p in glob.glob(PROP + "/*.md")}
+index = ", ".join(sorted(have))
+KEY = open(KEYFILE).read().strip() if os.path.exists(KEYFILE) else os.environ.get("CURATOR_KEY", "")
+
+SYS = (
+ "You are the curator of a plain-text knowledge brain (the Archivist). Decide whether ONE piece of raw material holds "
+ "DURABLE, REUSABLE knowledge worth a one-screen card in knowledge/. DEFAULT NO, and the bar is HIGH: most raw is noise, incremental, ephemeral, or already covered, and should be skipped. "
+ "Promote ONLY a SIGNIFICANT new entity (an important org, person, protocol, or program), a genuinely NOVEL concept/mechanism/playbook, or a MAJOR status change a future agent would truly need. "
+ "The existing knowledge slugs below already cover their topics: if an item is within or adjacent to a covered topic, default to update_of (extend it) or SKIP — never mint a near-duplicate. When in doubt, do NOT promote. Expect to skip the large majority of items. "
+ "Existing knowledge slugs (link with [[slug]]; never duplicate): " + index + ". "
+ 'Respond with ONE JSON object: {"promote":true|false,"reason":"<=20 words","type":"entity|concept|synthesis|null",'
+ '"slug":"kebab-case","title":"","body":"prose, one screen, [[links]], NO markdown heading","confidence":"high|med|low",'
+ '"update_of":"existing-slug or null"}. If promote is false the other fields may be empty.'
+)
+
+def judge(path):
+    txt = open(path, encoding="utf-8", errors="ignore").read()[:6000]
+    name = os.path.relpath(path, VAULT)
+    payload = json.dumps({"model": MODEL, "temperature": 0.1, "stream": False,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "system", "content": SYS},
+                     {"role": "user", "content": f"SOURCE: {name}\n\n{txt}"}]}).encode()
+    req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
+    out = json.load(urllib.request.urlopen(req, timeout=150))["choices"][0]["message"]["content"]
+    m = re.search(r"\{.*\}", out, re.S)
+    return json.loads(m.group(0)) if m else None
+
+proposals, judged = [], 0
+for p in cands:
+    judged += 1
+    try:
+        v = judge(p)
+    except Exception:
+        continue
+    if not v or not v.get("promote"):
+        continue
+    slug, typ = v.get("slug", ""), v.get("type", "")
+    if not slug or typ not in ("entity", "concept", "synthesis"):
+        continue
+    if slug in have or slug in pending:
+        v["update_of"] = v.get("update_of") or slug
+    src = os.path.relpath(p, VAULT)
+    card = (f"---\ntype: {typ}\nsource: {src}\ncreated: {datetime.now().strftime('%Y-%m-%d')}\n"
+            f"title: {v.get('title', slug)}\n---\n\n# {v.get('title', slug)}\n\n{(v.get('body') or '').strip()}\n")
+    proposals.append({**{k: v.get(k) for k in ("slug", "type", "title", "reason", "confidence", "update_of")},
+                      "src": src, "card": card})
+
+if not a.dry:
+    for pr in proposals:
+        open(os.path.join(PROP, pr["slug"] + ".md"), "w").write(pr["card"])
+    lines = [f"# Archivist digest — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+             f"_{len(proposals)} proposal(s) from {judged} new item(s). Approve: `curator-approve <slug>`  ·  drop: `curator-reject <slug>`._", ""]
+    for pr in proposals:
+        tag = "UPDATE " + pr["update_of"] if pr.get("update_of") else "new"
+        lines.append(f"- **{pr['slug']}** ({pr['type']}, {pr['confidence']}, {tag}) — {pr['reason']}\n  from `{pr['src']}`")
+    open(INBOX, "w").write("\n".join(lines) + "\n")
+    json.dump({"generated_at": datetime.now(timezone.utc).astimezone().isoformat(), "lane": LANE_NAME,
+               "judged": judged, "new_proposals": len(proposals),
+               "pending": len(glob.glob(PROP + "/*.md"))}, open(STATUS, "w"), indent=2)
+    open(WM, "w").write(str(time.time()))
+
+print(f"curator-run: judged {judged} new item(s), proposed {len(proposals)} card(s)" + (" [DRY: nothing written]" if a.dry else ""))
+for pr in proposals:
+    u = f" [UPDATE {pr['update_of']}]" if pr.get("update_of") else ""
+    print(f"  + {pr['slug']} ({pr['type']}, {pr['confidence']}){u}: {pr['reason']}")
