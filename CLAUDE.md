@@ -68,6 +68,7 @@ Notes in `knowledge/` are briefing cards, never articles. Short, dense, self-con
 2. **Tools and agents** write only inside their own lane in `raw/`, fed by one-way pipes (rsync or similar). The pipe points one direction, so the rule enforces itself. Never hand-write `raw/` from the agent side.
 3. **The curator** is the only thing besides the owner that writes to `knowledge/` and `workstreams/`. It promotes good material out of `raw/`, fills in labels, distills to one screen, and **links instead of copying**.
 4. **Anything destructive asks a human first**: bulk deletes, renames, moves, or any change to these rules.
+5. **Machine writers to `knowledge/` run on owner-controlled compute.** Any model that judges, drafts, or promotes trusted knowledge runs on inference the owner controls. Cloud models may assist only with material the owner has explicitly released, and never hold the gate.
 
 ## The curator's defaults
 
