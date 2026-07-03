@@ -17,7 +17,7 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
 
 Usage: curator-run [--since-days N] [--max N] [--dry]
 """
-import os, re, json, glob, time, argparse, urllib.request
+import os, re, json, glob, sys, time, argparse, hashlib, urllib.request
 from datetime import datetime, timezone
 
 VAULT = os.environ.get("SOVS_VAULT", os.getcwd())
@@ -25,6 +25,8 @@ LANE_NAME = os.environ.get("CURATOR_LANE", "curator")
 LANE = os.path.join(VAULT, "raw", "workspaces", LANE_NAME)
 PROP = os.path.join(LANE, "proposals"); INBOX = os.path.join(LANE, "INBOX.md")
 STATUS = os.path.join(LANE, "status.json"); WM = os.path.join(LANE, ".last-run")
+HASHSTORE = os.path.join(LANE, ".content-hashes.json")
+JUDGMENTS = os.path.join(LANE, "judgments.jsonl")
 K = os.path.join(VAULT, "knowledge")
 ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "https://ollama.com/v1/chat/completions")
 MODEL = os.environ.get("CURATOR_MODEL", "gpt-oss:120b")
@@ -49,44 +51,92 @@ elif os.path.exists(WM):
 else:
     since = time.time() - 2 * 86400  # first-run default lookback
 
+def _file_hash(path):
+    """Fast content hash for change detection."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(8192)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+def _load_hashes():
+    if os.path.exists(HASHSTORE):
+        try:
+            return json.load(open(HASHSTORE, encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+known_hashes = _load_hashes()
+
+def _excerpt(path, limit=1200):
+    try:
+        txt = open(path, encoding="utf-8", errors="ignore").read(limit)
+    except OSError:
+        return ""
+    return re.sub(r"\s+", " ", txt).strip()
+
 def candidates():
-    out = []
+    out, skipped_by_hash = [], 0
     for r in (os.path.join(VAULT, "raw"), os.path.join(VAULT, "workstreams")):
         for dp, dn, fn in os.walk(r):
             if LANE in dp or "/node_modules" in dp or "/.git" in dp or "/imports/" in dp:
-                continue  # skip the curator's own lane, code deps, and one-time bulk imports
+                continue
             for f in fn:
                 if f.startswith(".") or not f.endswith((".md", ".txt")):
                     continue
                 p = os.path.join(dp, f)
                 try:
-                    if os.path.getmtime(p) > since:
-                        out.append(p)
+                    if os.path.getmtime(p) <= since:
+                        continue
+                    # mtime changed — check if content actually changed
+                    rel = os.path.relpath(p, VAULT)
+                    ch = _file_hash(p)
+                    if rel in known_hashes and known_hashes[rel] == ch:
+                        skipped_by_hash += 1
+                        continue  # sync re-touched the file, content identical
+                    out.append(p)
                 except OSError:
                     pass
-    # Judge the owner's curated desk before the loading dock, and tool-mirror
-    # chatter last, so a bounded --max spends its budget on high-value material.
     def rank(p):
         if "/workstreams/" in p: return 0
         if "/raw/tools/" in p: return 2
         return 1
-    return sorted(out, key=lambda p: (rank(p), -os.path.getmtime(p)))
+    return sorted(out, key=lambda p: (rank(p), -os.path.getmtime(p))), skipped_by_hash
 
-cands = candidates()[: a.max]
+cands_all, skipped_by_hash = candidates()
+cands = cands_all[: a.max]
 have = {os.path.basename(p)[:-3] for p in glob.glob(K + "/**/*.md", recursive=True)}
 pending = {os.path.basename(p)[:-3] for p in glob.glob(PROP + "/*.md")}
 index = ", ".join(sorted(have))
 KEY = open(KEYFILE).read().strip() if os.path.exists(KEYFILE) else os.environ.get("CURATOR_KEY", "")
 
 SYS = (
- "You are the curator of a plain-text knowledge brain (the Archivist). Decide whether ONE piece of raw material holds "
- "DURABLE, REUSABLE knowledge worth a one-screen card in knowledge/. DEFAULT NO, and the bar is HIGH: most raw is noise, incremental, ephemeral, or already covered, and should be skipped. "
- "Promote ONLY a SIGNIFICANT new entity (an important org, person, protocol, or program), a genuinely NOVEL concept/mechanism/playbook, or a MAJOR status change a future agent would truly need. "
- "The existing knowledge slugs below already cover their topics: if an item is within or adjacent to a covered topic, default to update_of (extend it) or SKIP — never mint a near-duplicate. When in doubt, do NOT promote. Expect to skip the large majority of items. "
+ "You are the curator of a plain-text knowledge brain for Owner (Example Archive / Owner). "
+ "Your job: decide whether ONE piece of raw material holds DURABLE, REUSABLE knowledge "
+ "worth a one-screen card. Write clear, factual card bodies. Do NOT write relevance framing "
+ "\u2014 a more powerful review layer will add that.\n\n"
+ "WHO SOV IS: A grants and funding-architecture designer across crypto ecosystems (Gitcoin, "
+ "CoW DAO, Uniswap Foundation, Cardano Foundation, Filecoin, Optimism RetroPGI). Runs "
+ "[[consensus-consulting]] (LLC for crypto/grants income) and [[claw-consulting]] / "
+ "[[tannhaeuser]] (AI operations consultancy with [[nicholas-kelly]]). Does daily macro "
+ "analysis ([[macro-intelligence-system]]). Scans grant opportunities across crypto, OSS, "
+ "and AI via [[sov-grant-wires]]. Active in Sky/Spark, Scroll, Arbitrum governance.\n\n"
+ "JUDGMENT: DEFAULT NO, bar is HIGH. Promote ONLY a SIGNIFICANT new entity, a genuinely "
+ "NOVEL concept/mechanism/playbook, or a MAJOR status change. Generic orgs/funds/programs "
+ "are NOT automatically card-worthy unless Owner has a direct relationship or it changes his "
+ "strategic landscape. When in doubt, do NOT promote.\n\n"
+ "The existing knowledge slugs already cover their topics: if an item is within or adjacent "
+ "to a covered topic, default to update_of (extend it) or SKIP. "
  "Existing knowledge slugs (link with [[slug]]; never duplicate): " + index + ". "
  'Respond with ONE JSON object: {"promote":true|false,"reason":"<=20 words","type":"entity|concept|synthesis|null",'
- '"slug":"kebab-case","title":"","body":"prose, one screen, [[links]], NO markdown heading","confidence":"high|med|low",'
- '"update_of":"existing-slug or null"}. If promote is false the other fields may be empty.'
+ '"slug":"kebab-case","title":"","body":"factual prose, one screen, [[links]], NO markdown heading","confidence":"high|med|low",'
+ '"update_of":"existing-slug or null"}. If promote is false the other fields may be empty. '
+ 'IMPORTANT: in body text, link brain topics with [[slug]] but NEVER wrap a URL in [[...]] '
+ '\u2014 use plain URLs (e.g. https://example.com) and reserve [[...]] only for internal brain slugs.'
 )
 
 def judge(path):
@@ -101,27 +151,62 @@ def judge(path):
     m = re.search(r"\{.*\}", out, re.S)
     return json.loads(m.group(0)) if m else None
 
-proposals, judged = [], 0
+proposals, judgments, judged = [], [], 0
+_seen_this_run = set()
 for p in cands:
     judged += 1
+    src = os.path.relpath(p, VAULT)
+    base_judgment = {
+        "timestamp": datetime.now(timezone.utc).astimezone().isoformat(),
+        "lane": LANE_NAME,
+        "model": MODEL,
+        "source": src,
+        "hash": _file_hash(p),
+        "mtime": os.path.getmtime(p),
+        "excerpt": _excerpt(p),
+    }
     try:
         v = judge(p)
-    except Exception:
+    except Exception as exc:
+        judgments.append({**base_judgment, "promote": None, "error": str(exc)[:500]})
         continue
     if not v or not v.get("promote"):
+        judgments.append({**base_judgment, "promote": False, "reason": (v or {}).get("reason", "")})
         continue
     slug, typ = v.get("slug", ""), v.get("type", "")
     if not slug or typ not in ("entity", "concept", "synthesis"):
+        judgments.append({**base_judgment, "promote": False, "reason": "invalid promote payload", "raw": v})
         continue
+    judgments.append({**base_judgment, "promote": True,
+                      "reason": v.get("reason", ""), "type": typ,
+                      "slug": slug, "confidence": v.get("confidence", ""),
+                      "update_of": v.get("update_of")})
     if slug in have or slug in pending:
         v["update_of"] = v.get("update_of") or slug
-    src = os.path.relpath(p, VAULT)
+    # dedup against proposals already accepted this run (catches near-duplicate
+    # slugs from different source files describing the same entity)
+    slug_lower = slug.lower()
+    seen_key = slug_lower.replace("-", "")
+    if seen_key in _seen_this_run or any(seen_key in s for s in _seen_this_run):
+        v["update_of"] = v.get("update_of") or slug
+    _seen_this_run.add(seen_key)
+    body = (v.get("body") or "").strip()
     card = (f"---\ntype: {typ}\nsource: {src}\ncreated: {datetime.now().strftime('%Y-%m-%d')}\n"
-            f"title: {v.get('title', slug)}\n---\n\n# {v.get('title', slug)}\n\n{(v.get('body') or '').strip()}\n")
+            f"title: {v.get('title', slug)}\n---\n\n# {v.get('title', slug)}\n\n{body}\n")
     proposals.append({**{k: v.get(k) for k in ("slug", "type", "title", "reason", "confidence", "update_of")},
                       "src": src, "card": card})
 
+# Sovereign-inference law: a failed local run fails loudly, never silently.
+# Errored files must be re-judged next run: hold the watermark below them and
+# skip their content hashes so they re-enter the gather.
+errored = [j for j in judgments if j.get("error")]
+errored_srcs = {j["source"] for j in errored}
+
 if not a.dry:
+    if judgments:
+        with open(JUDGMENTS, "a", encoding="utf-8") as jf:
+            for row in judgments:
+                jf.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
     for pr in proposals:
         open(os.path.join(PROP, pr["slug"] + ".md"), "w").write(pr["card"])
     lines = [f"# Archivist digest — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -132,10 +217,33 @@ if not a.dry:
     open(INBOX, "w").write("\n".join(lines) + "\n")
     json.dump({"generated_at": datetime.now(timezone.utc).astimezone().isoformat(), "lane": LANE_NAME,
                "judged": judged, "new_proposals": len(proposals),
+               "errors": len(errored),
                "pending": len(glob.glob(PROP + "/*.md"))}, open(STATUS, "w"), indent=2)
-    open(WM, "w").write(str(time.time()))
+    # hold the watermark below the oldest errored file so it re-enters next run
+    wm_val = min(j["mtime"] for j in errored) - 1 if errored else time.time()
+    open(WM, "w").write(str(wm_val))
+    # record content hashes for files we judged so sync re-touches skip next time
+    # (errored files excluded: no hash means they are re-judged, not hash-skipped)
+    for p in cands:
+        rel = os.path.relpath(p, VAULT)
+        if rel in errored_srcs:
+            continue
+        try:
+            known_hashes[rel] = _file_hash(p)
+        except OSError:
+            pass
+    json.dump(known_hashes, open(HASHSTORE, "w", encoding="utf-8"), indent=2)
 
-print(f"curator-run: judged {judged} new item(s), proposed {len(proposals)} card(s)" + (" [DRY: nothing written]" if a.dry else ""))
+print(f"curator-run: judged {judged} new item(s), proposed {len(proposals)} card(s)"
+      + (f", skipped {skipped_by_hash} sync re-touch(es)" if skipped_by_hash else "")
+      + (" [DRY: nothing written]" if a.dry else ""))
 for pr in proposals:
     u = f" [UPDATE {pr['update_of']}]" if pr.get("update_of") else ""
     print(f"  + {pr['slug']} ({pr['type']}, {pr['confidence']}){u}: {pr['reason']}")
+
+if errored:
+    print(f"curator-run: {len(errored)} of {judged} judgment(s) FAILED against {ENDPOINT}; "
+          "watermark held so they re-enter next run", file=sys.stderr)
+    if judged and len(errored) == judged:
+        print("curator-run: ALL judgments failed — inference endpoint down? Exiting non-zero.", file=sys.stderr)
+        sys.exit(2)
