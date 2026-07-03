@@ -35,6 +35,8 @@ KEYFILE = os.environ.get("CURATOR_KEYFILE", os.path.expanduser("~/.config/ollama
 EXCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_EXCLUDE", "").split(":") if e.strip()]
 # optional owner profile injected into the judge prompt; the mechanism ships, the owner supplies the text
 PROFILE = os.environ.get("CURATOR_PROFILE", os.path.join(LANE, "profile.md"))
+# optional owner taste rules (keep/skip policy learned from the owner's verdicts); ships empty, owner-edited
+TASTE = os.environ.get("CURATOR_TASTE", os.path.join(LANE, "taste.md"))
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--since-days", type=float, default=None, help="lookback window if no watermark")
@@ -125,6 +127,57 @@ KEY = open(KEYFILE).read().strip() if os.path.exists(KEYFILE) else os.environ.ge
 _profile = ""
 if os.path.exists(PROFILE):
     _profile = open(PROFILE, encoding="utf-8", errors="ignore").read().strip()
+_taste = ""
+if os.path.exists(TASTE):
+    _taste = open(TASTE, encoding="utf-8", errors="ignore").read().strip()
+
+
+def _card_body(path):
+    """Card text after the frontmatter and H1, i.e. the part the model must produce."""
+    try:
+        t = open(path, encoding="utf-8", errors="ignore").read()
+    except OSError:
+        return ""
+    if t.startswith("---"):
+        end = t.find("\n---", 3)
+        if end != -1:
+            t = t[end + 4 :]
+    lines = [l for l in t.strip().splitlines() if not l.startswith("# ")]
+    return "\n".join(lines).strip()
+
+
+def _house_exemplars(max_n=2, lo=300, hi=1700):
+    """Recent owner-approved cards, used as house-style few-shot examples.
+    The style is learned from THIS brain's knowledge/ - nothing is hardcoded."""
+    scored = []
+    for p in glob.glob(K + "/**/*.md", recursive=True):
+        body = _card_body(p)
+        if lo <= len(body) <= hi:
+            try:
+                scored.append((os.path.getmtime(p), body))
+            except OSError:
+                pass
+    scored.sort(reverse=True)
+    return [b for _, b in scored[:max_n]]
+
+
+# neutral fallback for a fresh brain with no approved cards yet
+_FALLBACK_EXEMPLAR = (
+    "**Why this matters:** The owner sits on its protocol working group, so its decisions "
+    "shape the owner's compliance work.\n\n"
+    "Industry body that maintains the widget interoperability standard. Founded 2019; ~40 member orgs.\n"
+    "- **Working groups:** protocol (the owner's seat), safety, certification.\n"
+    "- **Cadence:** quarterly plenary; standard revisions ship each March.\n"
+    "- **Status:** v3 draft in comment period until 2026-09-01.\n\n"
+    "See [[acme-standard-v3]] and `workstreams/standards/`."
+)
+
+_exemplars = _house_exemplars() or [_FALLBACK_EXEMPLAR]
+
+
+def _knowledge_path(slug):
+    hits = glob.glob(K + f"/**/{slug}.md", recursive=True)
+    return hits[0] if hits else None
 
 SYS = (
  "You are the curator of a plain-text knowledge brain. "
@@ -142,6 +195,12 @@ SYS = (
  "the person responsible for the RECORD, never ownership of the organization. NEVER claim the "
  "owner founded, owns, or operates an org based on tracker fields. State only what the source "
  "supports; never invent relationships.\n\n"
+ + (f"OWNER TASTE - specific keep/skip rules the owner has set; these override general judgment:\n{_taste}\n\n" if _taste else "")
+ + "CARD SHAPE: open with ONE sentence saying what the thing is. Then 3-6 short key-fact bullets "
+ "(amounts, dates, people, status - bold the labels). Link related brain topics with [[slug]]. "
+ "Close with where living detail sits (a workstreams/ path) when relevant. Dense, scannable, one screen.\n\n"
+ "HOUSE STYLE - recent cards the owner approved; match this voice and shape:\n\n"
+ + "\n\n=====\n\n".join(_exemplars) + "\n\n"
  "The existing knowledge slugs already cover their topics: if an item is within or adjacent "
  "to a covered topic, default to update_of (extend it) or SKIP. "
  "Existing knowledge slugs (link with [[slug]]; never duplicate): " + index + ". "
@@ -161,6 +220,26 @@ def judge(path):
         "response_format": {"type": "json_object"},
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": f"SOURCE: {name}\n\n{txt}"}]}).encode()
+    req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
+    out = json.load(urllib.request.urlopen(req, timeout=150))["choices"][0]["message"]["content"]
+    m = re.search(r"\{.*\}", out, re.S)
+    return json.loads(m.group(0)) if m else None
+
+def judge_update(path, target, target_path):
+    """Second pass for updates: show the model the existing card so the merge
+    is drafted for the owner instead of left as manual work."""
+    txt = open(path, encoding="utf-8", errors="ignore").read()[:6000]
+    card = _card_body(target_path)[:4000]
+    name = os.path.relpath(path, VAULT)
+    user = (f"UPDATE TASK. The brain already holds this card ({target}):\n\n{card}\n\n"
+            f"NEW SOURCE: {name}\n\n{txt}\n\n"
+            "Return the same JSON shape with body = the FULL merged replacement body "
+            "(integrate the new facts, keep everything that is still true, follow the "
+            "CARD SHAPE, one screen) and why = why this update matters.")
+    payload = json.dumps({"model": MODEL, "temperature": 0.1, "stream": False,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "system", "content": SYS},
+                     {"role": "user", "content": user}]}).encode()
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
     out = json.load(urllib.request.urlopen(req, timeout=150))["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", out, re.S)
@@ -205,6 +284,18 @@ for p in cands:
     if seen_key in _seen_this_run or any(seen_key in s for s in _seen_this_run):
         v["update_of"] = v.get("update_of") or slug
     _seen_this_run.add(seen_key)
+    target = v.get("update_of")
+    if target:
+        tp = _knowledge_path(target)
+        if tp:
+            try:
+                v2 = judge_update(p, target, tp)
+                if v2 and (v2.get("body") or "").strip():
+                    v["body"] = v2["body"]
+                    v["why"] = (v2.get("why") or v.get("why") or "").strip()
+                    v["title"] = v2.get("title") or v.get("title")
+            except Exception as exc:  # merge pass is best-effort; the first draft still stands
+                print(f"curator-run: update merge pass failed for {target}: {str(exc)[:200]}", file=sys.stderr)
     body = (v.get("body") or "").strip()
     why = (v.get("why") or "").strip() or (v.get("reason") or "").strip()
     if why:
