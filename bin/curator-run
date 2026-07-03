@@ -31,6 +31,10 @@ K = os.path.join(VAULT, "knowledge")
 ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "https://ollama.com/v1/chat/completions")
 MODEL = os.environ.get("CURATOR_MODEL", "gpt-oss:120b")
 KEYFILE = os.environ.get("CURATOR_KEYFILE", os.path.expanduser("~/.config/ollama-cloud/key"))
+# never-promote paths (vault-relative prefixes, colon-separated) — pruned from the gather entirely
+EXCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_EXCLUDE", "").split(":") if e.strip()]
+# optional owner profile injected into the judge prompt; the mechanism ships, the owner supplies the text
+PROFILE = os.environ.get("CURATOR_PROFILE", os.path.join(LANE, "profile.md"))
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--since-days", type=float, default=None, help="lookback window if no watermark")
@@ -85,6 +89,10 @@ def candidates():
         for dp, dn, fn in os.walk(r):
             if LANE in dp or "/node_modules" in dp or "/.git" in dp or "/imports/" in dp:
                 continue
+            rel_dp = os.path.relpath(dp, VAULT)
+            if any(rel_dp == e or rel_dp.startswith(e + "/") for e in EXCLUDE):
+                dn[:] = []  # never-promote path: prune the whole subtree
+                continue
             for f in fn:
                 if f.startswith(".") or not f.endswith((".md", ".txt")):
                     continue
@@ -114,27 +122,34 @@ pending = {os.path.basename(p)[:-3] for p in glob.glob(PROP + "/*.md")}
 index = ", ".join(sorted(have))
 KEY = open(KEYFILE).read().strip() if os.path.exists(KEYFILE) else os.environ.get("CURATOR_KEY", "")
 
+_profile = ""
+if os.path.exists(PROFILE):
+    _profile = open(PROFILE, encoding="utf-8", errors="ignore").read().strip()
+
 SYS = (
- "You are the curator of a plain-text knowledge brain for Owner (Example Archive / Owner). "
+ "You are the curator of a plain-text knowledge brain. "
  "Your job: decide whether ONE piece of raw material holds DURABLE, REUSABLE knowledge "
- "worth a one-screen card. Write clear, factual card bodies. Do NOT write relevance framing "
- "\u2014 a more powerful review layer will add that.\n\n"
- "WHO SOV IS: A grants and funding-architecture designer across crypto ecosystems (Gitcoin, "
- "CoW DAO, Uniswap Foundation, Cardano Foundation, Filecoin, Optimism RetroPGI). Runs "
- "[[consensus-consulting]] (LLC for crypto/grants income) and [[claw-consulting]] / "
- "[[tannhaeuser]] (AI operations consultancy with [[nicholas-kelly]]). Does daily macro "
- "analysis ([[macro-intelligence-system]]). Scans grant opportunities across crypto, OSS, "
- "and AI via [[sov-grant-wires]]. Active in Sky/Spark, Scroll, Arbitrum governance.\n\n"
- "JUDGMENT: DEFAULT NO, bar is HIGH. Promote ONLY a SIGNIFICANT new entity, a genuinely "
+ "worth a one-screen card. Write clear, factual card bodies.\n\n"
+ + (f"WHO THE OWNER IS: {_profile}\n\n" if _profile else "")
+ + "JUDGMENT: DEFAULT NO, bar is HIGH. Promote ONLY a SIGNIFICANT new entity, a genuinely "
  "NOVEL concept/mechanism/playbook, or a MAJOR status change. Generic orgs/funds/programs "
- "are NOT automatically card-worthy unless Owner has a direct relationship or it changes his "
- "strategic landscape. When in doubt, do NOT promote.\n\n"
+ "are NOT automatically card-worthy unless the owner has a direct relationship or it changes "
+ "the owner's strategic landscape. When in doubt, do NOT promote.\n\n"
+ "TYPES: an entity is ONE durable real thing \u2014 a person, org, place, or system. News items, "
+ "events, rulings, announcements, and grant applications are NOT entities; if durable at all "
+ "they are a concept (a pattern or mechanism) or an update_of an existing card. Usually SKIP.\n\n"
+ "TABULAR / CRM SOURCES: in trackers, pipelines, and spreadsheets, fields like 'Owner' name "
+ "the person responsible for the RECORD, never ownership of the organization. NEVER claim the "
+ "owner founded, owns, or operates an org based on tracker fields. State only what the source "
+ "supports; never invent relationships.\n\n"
  "The existing knowledge slugs already cover their topics: if an item is within or adjacent "
  "to a covered topic, default to update_of (extend it) or SKIP. "
  "Existing knowledge slugs (link with [[slug]]; never duplicate): " + index + ". "
  'Respond with ONE JSON object: {"promote":true|false,"reason":"<=20 words","type":"entity|concept|synthesis|null",'
- '"slug":"kebab-case","title":"","body":"factual prose, one screen, [[links]], NO markdown heading","confidence":"high|med|low",'
- '"update_of":"existing-slug or null"}. If promote is false the other fields may be empty. '
+ '"slug":"kebab-case","title":"","body":"factual prose, one screen, [[links]], NO markdown heading",'
+ '"why":"1-2 sentences: why this matters to the owner\'s work, written for a future reader",'
+ '"confidence":"high|med|low","update_of":"existing-slug or null"}. '
+ "If promote is false the other fields may be empty. "
  'IMPORTANT: in body text, link brain topics with [[slug]] but NEVER wrap a URL in [[...]] '
  '\u2014 use plain URLs (e.g. https://example.com) and reserve [[...]] only for internal brain slugs.'
 )
@@ -191,6 +206,9 @@ for p in cands:
         v["update_of"] = v.get("update_of") or slug
     _seen_this_run.add(seen_key)
     body = (v.get("body") or "").strip()
+    why = (v.get("why") or "").strip() or (v.get("reason") or "").strip()
+    if why:
+        body = f"**Why this matters:** {why}\n\n{body}"
     card = (f"---\ntype: {typ}\nsource: {src}\ncreated: {datetime.now().strftime('%Y-%m-%d')}\n"
             f"title: {v.get('title', slug)}\n---\n\n# {v.get('title', slug)}\n\n{body}\n")
     proposals.append({**{k: v.get(k) for k in ("slug", "type", "title", "reason", "confidence", "update_of")},
