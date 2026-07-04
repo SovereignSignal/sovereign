@@ -33,6 +33,8 @@ MODEL = os.environ.get("CURATOR_MODEL", "gpt-oss:120b")
 KEYFILE = os.environ.get("CURATOR_KEYFILE", os.path.expanduser("~/.config/ollama-cloud/key"))
 # never-promote paths (vault-relative prefixes, colon-separated) — pruned from the gather entirely
 EXCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_EXCLUDE", "").split(":") if e.strip()]
+# optional harvest scope (vault-relative prefixes, colon-separated) — when set, ONLY these paths are gathered
+INCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_INCLUDE", "").split(":") if e.strip()]
 # optional owner profile injected into the judge prompt; the mechanism ships, the owner supplies the text
 PROFILE = os.environ.get("CURATOR_PROFILE", os.path.join(LANE, "profile.md"))
 # optional owner taste rules (keep/skip policy learned from the owner's verdicts); ships empty, owner-edited
@@ -95,6 +97,11 @@ def candidates():
             if any(rel_dp == e or rel_dp.startswith(e + "/") for e in EXCLUDE):
                 dn[:] = []  # never-promote path: prune the whole subtree
                 continue
+            if INCLUDE and not any(
+                rel_dp == e or rel_dp.startswith(e + "/") or e.startswith(rel_dp + "/")
+                for e in INCLUDE
+            ):
+                continue  # domain harvest: skip files outside the scope (still descend)
             for f in fn:
                 if f.startswith(".") or not f.endswith((".md", ".txt")):
                     continue
