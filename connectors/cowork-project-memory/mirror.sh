@@ -11,6 +11,8 @@ DST="$BRAIN_ROOT/raw/tools/cowork-$MACHINE"
 [ -d "$SRC" ] || exit 0
 mkdir -p "$DST"
 find "$SRC" -type d -name memory 2>/dev/null | while read -r m; do
+  # never mirror empty dirs: file sync deletes empty folders, rsync recreates them - an endless loop
+  [ -n "$(find "$m" -type f -not -name '.DS_Store' -print -quit 2>/dev/null)" ] || continue
   space=$(basename "$(dirname "$m")")
   rsync -a --delete --max-delete=50 --exclude='.DS_Store' --exclude='*.tmp' "$m/" "$DST/$space/"
 done

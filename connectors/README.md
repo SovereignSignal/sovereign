@@ -8,7 +8,8 @@ The pattern is always the same, and it is deliberately boring:
 2. **One lane per tool** (and per machine, when the same tool runs on several: `raw/tools/<tool>-<machine>/` — two machines writing one lane through file sync causes churn).
 3. **Secrets never travel.** Every pipe excludes `.env`, `.secrets`, tokens, logs. If a tool's store mixes credentials with content, pipe only the content subdirectory.
 4. **Pipe the distilled layer, not the exhaust.** Most tools keep both raw session transcripts (exhaust) and curated artifacts — project memory files, scheduled outputs, saved documents. Pipe the artifacts. Let your curator decide what becomes knowledge; don't make it wade through chat logs.
-5. **Every ~15 minutes, forever.** launchd on macOS, cron/systemd on Linux. Set it and stop thinking about it.
+5. **Never mirror empty directories.** File-sync layers (Obsidian Sync and friends) delete folders with no syncable files; your pipe recreates them; the two fight forever. Skip empty dirs in the pipe, and keep a small README.md beside any office-format assets (docx/xlsx/csv) that must live in the tree, so sync has something to hold onto.
+6. **Every ~15 minutes, forever.** launchd on macOS, cron/systemd on Linux. Set it and stop thinking about it.
 
 ## Finding your tools' hoards
 
