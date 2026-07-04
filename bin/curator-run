@@ -139,6 +139,28 @@ if os.path.exists(TASTE):
     _taste = open(TASTE, encoding="utf-8", errors="ignore").read().strip()
 
 
+_WIKILINK = re.compile(r'\[\[([^\]|]+?)(\|[^\]]+?)?\]\]')
+
+
+def _is_raw_target(t):
+    # Knowledge-card slugs are kebab-case with no underscores. Raw-lane files use
+    # underscores and reference_/feedback_/project_/date conventions. A [[link]] to
+    # one of those is a phantom graph node pointing at the loading dock, never a card.
+    t = t.strip().lower()
+    return ("_" in t) or bool(re.match(r"^(reference|feedback|project)-", t)) or bool(re.match(r"^20\d\d-", t))
+
+
+def _strip_raw_links(text):
+    # Dewikify any [[link]] whose target is a raw-file basename: keep the words,
+    # drop the brackets so no phantom node is created. Real card links pass through.
+    def repl(m):
+        tgt, alias = m.group(1), m.group(2)
+        if _is_raw_target(tgt):
+            return alias[1:] if alias else tgt.split("/")[-1]
+        return m.group(0)
+    return _WIKILINK.sub(repl, text)
+
+
 def _card_body(path):
     """Card text after the frontmatter and H1, i.e. the part the model must produce."""
     try:
@@ -217,7 +239,10 @@ SYS = (
  '"confidence":"high|med|low","update_of":"existing-slug or null"}. '
  "If promote is false the other fields may be empty. "
  'IMPORTANT: in body text, link brain topics with [[slug]] but NEVER wrap a URL in [[...]] '
- '\u2014 use plain URLs (e.g. https://example.com) and reserve [[...]] only for internal brain slugs.'
+ '\u2014 use plain URLs (e.g. https://example.com) and reserve [[...]] only for internal brain slugs. '
+ 'ONLY link to kebab-case card slugs (hyphens). NEVER [[link]] to a raw source filename: anything '
+ 'with underscores, or a reference_/feedback_/project_/date prefix, is a file in the loading dock, '
+ 'not a card \u2014 name it in plain text if needed, never in [[...]]. If unsure a slug is a real card, omit the link.'
 )
 
 def judge(path):
@@ -328,7 +353,7 @@ for p in cands:
                     v["title"] = v2.get("title") or v.get("title")
             except Exception as exc:  # merge pass is best-effort; the first draft still stands
                 print(f"curator-run: update merge pass failed for {target}: {str(exc)[:200]}", file=sys.stderr)
-    body = (v.get("body") or "").strip()
+    body = _strip_raw_links((v.get("body") or "").strip())
     why = (v.get("why") or "").strip() or (v.get("reason") or "").strip()
     if why:
         body = f"**Why this matters:** {why}\n\n{body}"
