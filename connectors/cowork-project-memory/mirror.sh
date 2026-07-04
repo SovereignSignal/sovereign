@@ -1,0 +1,16 @@
+#!/bin/bash
+# Connector: Claude Desktop (Cowork) project memory -> the brain's loading dock.
+# One-way. Machine-scoped lane. Secrets never travel (memory dirs hold only md).
+# Set BRAIN_ROOT and MACHINE, test once by hand, then schedule every ~15 min.
+
+BRAIN_ROOT="${BRAIN_ROOT:-$HOME/brain}"          # path to your brain vault
+MACHINE="${MACHINE:-$(hostname -s | tr 'A-Z' 'a-z')}"
+SRC="$HOME/Library/Application Support/Claude/local-agent-mode-sessions"
+DST="$BRAIN_ROOT/raw/tools/cowork-$MACHINE"
+
+[ -d "$SRC" ] || exit 0
+mkdir -p "$DST"
+find "$SRC" -type d -name memory 2>/dev/null | while read -r m; do
+  space=$(basename "$(dirname "$m")")
+  rsync -a --delete --max-delete=50 --exclude='.DS_Store' --exclude='*.tmp' "$m/" "$DST/$space/"
+done
