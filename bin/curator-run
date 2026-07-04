@@ -253,7 +253,25 @@ def judge_update(path, target, target_path):
     return json.loads(m.group(0)) if m else None
 
 proposals, judgments, judged = [], [], 0
-_seen_this_run = set()
+SEENSTORE = os.path.join(LANE, ".seen-keys.json")
+
+
+def _norm_key(s):
+    return s.lower().replace("-", "")
+
+
+# topic-dedup memory: normalized keys of every existing card, pending proposal,
+# and previously proposed slug (persisted) -> the slug they map to. A new
+# proposal whose key matches becomes an UPDATE of the mapped card, not a dup.
+_key_to_slug = {}
+for _s in list(have) + list(pending):
+    _key_to_slug.setdefault(_norm_key(_s), _s)
+try:
+    for _k, _s in json.load(open(SEENSTORE, encoding="utf-8")).items():
+        _key_to_slug.setdefault(_k, _s)
+except (OSError, ValueError):
+    pass
+_seen_this_run = set(_key_to_slug)
 for p in cands:
     judged += 1
     src = os.path.relpath(p, VAULT)
@@ -284,12 +302,19 @@ for p in cands:
                       "update_of": v.get("update_of")})
     if slug in have or slug in pending:
         v["update_of"] = v.get("update_of") or slug
-    # dedup against proposals already accepted this run (catches near-duplicate
-    # slugs from different source files describing the same entity)
-    slug_lower = slug.lower()
-    seen_key = slug_lower.replace("-", "")
-    if seen_key in _seen_this_run or any(seen_key in s for s in _seen_this_run):
-        v["update_of"] = v.get("update_of") or slug
+    # topic dedup across runs and passes: exact or near (substring, long keys
+    # only) match against every known card/proposal key -> becomes an UPDATE of
+    # the matched card instead of a near-duplicate new proposal.
+    seen_key = _norm_key(slug)
+    _match = _key_to_slug.get(seen_key)
+    if not _match and len(seen_key) >= 12:
+        for _k, _s2 in _key_to_slug.items():
+            if len(_k) >= 12 and (seen_key in _k or _k in seen_key):
+                _match = _s2
+                break
+    if _match and _match != slug:
+        v["update_of"] = v.get("update_of") or _match
+    _key_to_slug.setdefault(seen_key, slug)
     _seen_this_run.add(seen_key)
     target = v.get("update_of")
     if target:
@@ -349,6 +374,7 @@ if not a.dry:
         except OSError:
             pass
     json.dump(known_hashes, open(HASHSTORE, "w", encoding="utf-8"), indent=2)
+    json.dump(_key_to_slug, open(SEENSTORE, "w", encoding="utf-8"), indent=1)
 
 print(f"curator-run: judged {judged} new item(s), proposed {len(proposals)} card(s)"
       + (f", skipped {skipped_by_hash} sync re-touch(es)" if skipped_by_hash else "")
