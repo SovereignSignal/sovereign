@@ -48,6 +48,7 @@ WS = os.path.join(VAULT, "workstreams")
 AUDIT_DIR = os.path.join(LANE, "audit")
 SCREENED = os.path.join(LANE, ".audit-screened.json")
 SKIPMARK = os.path.join(LANE, ".audit-skipmark.json")
+HISTMARK = os.path.join(LANE, ".audit-historicized.json")
 JUDGMENTS = os.path.join(LANE, "judgments.jsonl")
 ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "http://localhost:11434/v1/chat/completions")
 MODEL = os.environ.get("CURATOR_AUDIT_MODEL") or os.environ.get("CURATOR_MODEL", "gpt-oss:120b")
@@ -246,7 +247,9 @@ for base in ("tools", "workspaces"):
 for extra in sorted(os.listdir(os.path.join(VAULT, "raw"))) if os.path.isdir(os.path.join(VAULT, "raw")) else []:
     if extra not in ("tools", "workspaces") and not extra.startswith(".") \
        and os.path.isdir(os.path.join(VAULT, "raw", extra)):
-        add("drift", f"- `raw/{extra}/` — a lane TYPE the standard does not define (only tools/ and workspaces/)")
+        if law and f"raw/{extra.lower()}" in law.lower():
+            continue  # nonstandard lane type, but the owner declared it in the law — accepted
+        add("drift", f"- `raw/{extra}/` — a lane TYPE the standard does not define (only tools/ and workspaces/) and the law never names")
 if law:
     for lane in lanes:
         name = os.path.basename(lane)
@@ -331,6 +334,14 @@ if not a.no_llm:
     # durable residue — and then the residue line says where the one durable fact
     # belongs instead.
     PROP = os.path.join(LANE, "proposals")
+    # historicize memory: a card already rewritten as dated history still contains past
+    # dates (that is the point), so the staleness flag re-fires forever. Remember the
+    # content hash of every card we drafted (or the owner historicized); only re-draft
+    # when the card's content actually changes again.
+    try:
+        histmark = json.load(open(HISTMARK, encoding="utf-8"))
+    except (OSError, ValueError):
+        histmark = {}
     SYS_HIST = ("You maintain ONE existing card of a trusted plain-text knowledge layer. Some of its "
         "facts are time-bound and now expired. Rewrite the card so it stays PERMANENTLY true: convert "
         "expired or forward-looking lines into dated past-tense history (\"as of Jun 2026\", \"ran in "
@@ -340,9 +351,10 @@ if not a.no_llm:
         + (f"OWNER TASTE RULES:\n{_taste}\n\n" if _taste else "")
         + "If, once the expired material is historicized, NOTHING durable remains (e.g. the card was "
         "only an opportunity listing), choose retire and name the one durable residue line worth "
-        "carrying onto a broader card (the funder's card, a lane card) instead.\n"
-        'Respond ONE JSON object: {"action":"historicize|retire","body":"full replacement body, factual '
-        'prose, NO markdown heading","why":"1-2 sentences for the future reader",'
+        "carrying onto a broader card (the funder's card, a lane card) instead. If the card is "
+        "ALREADY written as dated past-tense history (its dates are record, not claims), choose keep.\n"
+        'Respond ONE JSON object: {"action":"historicize|retire|keep","body":"full replacement body, factual '
+        'prose, NO markdown heading (empty when keep)","why":"1-2 sentences for the future reader",'
         '"residue":"only when retiring: the durable one-liner + which card it belongs on, else empty"}.')
     for p in stale_cards[: a.max_historicize]:
         slug = os.path.basename(p)[:-3]
@@ -351,6 +363,8 @@ if not a.no_llm:
             add("historicize", f"- `{rel(p)}` — a proposal for this slug is already pending; skipped")
             continue
         t = texts[p]
+        if histmark.get(rel(p)) == hashlib.md5(t.encode()).hexdigest():
+            continue  # already historicized in this exact form; past dates are record, not rot
         llm_calls += 1
         try:
             v = ask(SYS_HIST, f"CARD ({rel(p)}), today is {TODAY.isoformat()}:\n\n{t[:5000]}")
@@ -361,6 +375,9 @@ if not a.no_llm:
         if not v:
             add("historicize", f"- `{rel(p)}` — model returned no usable JSON; flag stands as staleness only")
             continue
+        histmark[rel(p)] = hashlib.md5(t.encode()).hexdigest()
+        if v.get("action") == "keep":
+            continue  # already dated history — remembered, never re-drafted unless the card changes
         if v.get("action") == "historicize" and (v.get("body") or "").strip():
             fm_end = t.find("\n---", 3)
             fm_block = t[: fm_end + 4] if t.startswith("---") and fm_end != -1 else "---\ntype: concept\nsource: brain-audit\n---\n"
@@ -376,6 +393,7 @@ if not a.no_llm:
         else:
             add("historicize", f"- `{rel(p)}` — nothing durable after expiry → **retire**"
                 + (f"; residue: {v.get('residue','')}" if (v.get("residue") or "").strip() else ""))
+    json.dump(histmark, open(HISTMARK, "w", encoding="utf-8"), indent=1)
 
     # retro-taste screen: unscreened (or changed) cards vs the owner's CURRENT rules
     try:
