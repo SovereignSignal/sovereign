@@ -60,6 +60,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--no-llm", action="store_true", help="deterministic checks only")
 ap.add_argument("--max-screen", type=int, default=20, help="retro-taste: cards screened per run")
 ap.add_argument("--max-skips", type=int, default=8, help="skip-audit: skipped judgments re-examined per run")
+ap.add_argument("--max-historicize", type=int, default=6, help="stale cards redrafted as dated history per run")
 ap.add_argument("--stale-grace", type=int, default=14, help="days past a deadline before it counts as stale")
 ap.add_argument("--ws-stale", type=int, default=21, help="days without a log.md touch before a workstream counts dormant")
 a = ap.parse_args()
@@ -219,6 +220,7 @@ def line_dates(line):
     return valid
 
 grace = timedelta(days=a.stale_grace)
+stale_cards = []   # cards whose expired facts feed the historicize pass below
 for p, t in texts.items():
     for line in t.splitlines():
         if not DEADLINEISH.search(line):
@@ -226,6 +228,7 @@ for p, t in texts.items():
         past = [d for d in line_dates(line) if d + grace < TODAY]
         if past:
             add("staleness", f"- `{rel(p)}` — deadline-ish line cites {past[0].isoformat()} (past): “{line.strip()[:110]}”")
+            stale_cards.append(p)
             break
 
 # ---------- 7: law-vs-disk drift ----------
@@ -293,6 +296,59 @@ if not a.no_llm:
     _profile = _pointer(PROFILE) or ""
     _taste = _pointer(TASTE) or ""
 
+    # historicize: a card with expired facts is usually not garbage — it is history
+    # written in the wrong tense. Draft the permanently-true rewrite (dated past
+    # tense + a future-facing "why this matters") into proposals/ as an UPDATE the
+    # owner gates with curator-approve --force. Retire is only for cards with no
+    # durable residue — and then the residue line says where the one durable fact
+    # belongs instead.
+    PROP = os.path.join(LANE, "proposals")
+    SYS_HIST = ("You maintain ONE existing card of a trusted plain-text knowledge layer. Some of its "
+        "facts are time-bound and now expired. Rewrite the card so it stays PERMANENTLY true: convert "
+        "expired or forward-looking lines into dated past-tense history (\"as of Jun 2026\", \"ran in "
+        "spring 2026\"); keep every durable fact; keep [[links]]; one screen. Also write a strengthened "
+        "1-2 sentence why: what a FUTURE reader gains from this card.\n\n"
+        + (f"WHO THE OWNER IS: {_profile}\n\n" if _profile else "")
+        + (f"OWNER TASTE RULES:\n{_taste}\n\n" if _taste else "")
+        + "If, once the expired material is historicized, NOTHING durable remains (e.g. the card was "
+        "only an opportunity listing), choose retire and name the one durable residue line worth "
+        "carrying onto a broader card (the funder's card, a lane card) instead.\n"
+        'Respond ONE JSON object: {"action":"historicize|retire","body":"full replacement body, factual '
+        'prose, NO markdown heading","why":"1-2 sentences for the future reader",'
+        '"residue":"only when retiring: the durable one-liner + which card it belongs on, else empty"}.')
+    for p in stale_cards[: a.max_historicize]:
+        slug = os.path.basename(p)[:-3]
+        prop_path = os.path.join(PROP, slug + ".md")
+        if os.path.exists(prop_path):
+            add("historicize", f"- `{rel(p)}` — a proposal for this slug is already pending; skipped")
+            continue
+        t = texts[p]
+        llm_calls += 1
+        try:
+            v = ask(SYS_HIST, f"CARD ({rel(p)}), today is {TODAY.isoformat()}:\n\n{t[:5000]}")
+        except Exception as exc:
+            llm_errors += 1
+            add("historicize", f"- `{rel(p)}` — redraft FAILED against {ENDPOINT}: {str(exc)[:120]}")
+            continue
+        if not v:
+            add("historicize", f"- `{rel(p)}` — model returned no usable JSON; flag stands as staleness only")
+            continue
+        if v.get("action") == "historicize" and (v.get("body") or "").strip():
+            fm_end = t.find("\n---", 3)
+            fm_block = t[: fm_end + 4] if t.startswith("---") and fm_end != -1 else "---\ntype: concept\nsource: brain-audit\n---\n"
+            m_title = re.search(r"^# (.+)$", t, re.M)
+            title = m_title.group(1) if m_title else slug
+            why = (v.get("why") or "").strip()
+            body = (v.get("body") or "").strip()
+            card = f"{fm_block}\n# {title}\n\n" + (f"**Why this matters:** {why}\n\n" if why else "") + body + "\n"
+            os.makedirs(PROP, exist_ok=True)
+            open(prop_path, "w", encoding="utf-8").write(card)
+            add("historicize", f"- `{rel(p)}` — dated-history redraft in proposals/ → review, then "
+                f"`curator-approve --force {slug} \"historicized\"` (reject to keep the original)")
+        else:
+            add("historicize", f"- `{rel(p)}` — nothing durable after expiry → **retire**"
+                + (f"; residue: {v.get('residue','')}" if (v.get("residue") or "").strip() else ""))
+
     # retro-taste screen: unscreened (or changed) cards vs the owner's CURRENT rules
     try:
         screened = json.load(open(SCREENED, encoding="utf-8"))
@@ -309,8 +365,9 @@ if not a.no_llm:
         "opportunities are not durable cards; no sensitive figures (PII, wallets, retainer amounts) on cards; "
         "the org is the entity, the model is the concept, the opportunity lives outside the brain.\n"
         'Respond with ONE JSON object: {"violates":true|false,"rule":"which rule, briefly",'
-        '"action":"keep|trim|merge|retire","note":"<=25 words, concrete"}. '
-        "violates=false means the card is fine — most should be.")
+        '"action":"keep|trim|merge|historicize|retire","note":"<=25 words, concrete"}. '
+        "historicize = the card's facts are time-bound and should be rewritten as dated history, "
+        "not deleted. violates=false means the card is fine — most should be.")
     for p, t in queue[: a.max_screen]:
         llm_calls += 1
         try:
@@ -367,10 +424,11 @@ os.makedirs(AUDIT_DIR, exist_ok=True)
 stamp = datetime.now().strftime("%Y-%m-%d")
 report_path = os.path.join(AUDIT_DIR, f"audit-{stamp}.md")
 ORDER = ["labels", "one-screen", "flatness", "links", "orphans", "duplicates",
-         "staleness", "drift", "gears", "workstreams", "retro-taste", "skip-audit"]
+         "staleness", "historicize", "drift", "gears", "workstreams", "retro-taste", "skip-audit"]
 TITLES = {"labels": "Labels", "one-screen": "One-screen rule", "flatness": "Folder flatness",
           "links": "Link graph", "orphans": "Inbound orphans", "duplicates": "Possible duplicates",
-          "staleness": "Stale dates on cards", "drift": "Law vs disk", "gears": "Trust gears",
+          "staleness": "Stale dates on cards", "historicize": "Historicize drafts (dated-history rewrites)",
+          "drift": "Law vs disk", "gears": "Trust gears",
           "workstreams": "Workstream front doors", "retro-taste": "Retro-taste screen (local model)",
           "skip-audit": "Skip audit (second local opinion)"}
 issue_sections = [s for s in ORDER if findings.get(s) and s != "gears"]
