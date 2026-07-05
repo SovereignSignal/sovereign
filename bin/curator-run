@@ -137,6 +137,11 @@ def candidates():
 
 cands_all, skipped_by_hash = candidates()
 cands = cands_all[: a.max]
+# Overflow beyond --max is DEFERRED, never dropped: the watermark is held below the
+# oldest unjudged candidate (see the write block) so the tail re-enters next run.
+# Files judged this run re-enter the mtime window too, but their content hashes are
+# recorded, so they hash-skip — the same mechanism that absorbs sync re-touches.
+deferred = cands_all[a.max :]
 have = {os.path.basename(p)[:-3] for p in glob.glob(K + "/**/*.md", recursive=True)}
 pending = {os.path.basename(p)[:-3] for p in glob.glob(PROP + "/*.md")}
 index = ", ".join(sorted(have))
@@ -394,6 +399,16 @@ for p in cands:
 errored = [j for j in judgments if j.get("error")]
 errored_srcs = {j["source"] for j in errored}
 
+# Deferred (overflow) files must re-enter too: collect their mtimes so the
+# watermark can be held below the oldest one. Per-file stat errors just drop
+# that file from the floor calculation — it re-enters when next touched.
+deferred_mtimes = []
+for _p in deferred:
+    try:
+        deferred_mtimes.append(os.path.getmtime(_p))
+    except OSError:
+        pass
+
 if not a.dry:
     if judgments:
         with open(JUDGMENTS, "a", encoding="utf-8") as jf:
@@ -403,6 +418,8 @@ if not a.dry:
         open(os.path.join(PROP, pr["slug"] + ".md"), "w").write(pr["card"])
     lines = [f"# Archivist digest — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
              f"_{len(proposals)} proposal(s) from {judged} new item(s). Approve: `curator-approve <slug>`  ·  drop: `curator-reject <slug>`._", ""]
+    if deferred:
+        lines.insert(2, f"_{len(deferred)} newer item(s) beyond --max were deferred; the watermark is held so they re-enter next run._")
     for pr in proposals:
         tag = "UPDATE " + pr["update_of"] if pr.get("update_of") else "new"
         lines.append(f"- **{pr['slug']}** ({pr['type']}, {pr['confidence']}, {tag}) — {pr['reason']}\n  from `{pr['src']}`")
@@ -410,9 +427,15 @@ if not a.dry:
     json.dump({"generated_at": datetime.now(timezone.utc).astimezone().isoformat(), "lane": LANE_NAME,
                "judged": judged, "new_proposals": len(proposals),
                "errors": len(errored),
+               "deferred": len(deferred),
                "pending": len(glob.glob(PROP + "/*.md"))}, open(STATUS, "w"), indent=2)
-    # hold the watermark below the oldest errored file so it re-enters next run
-    wm_val = min(j["mtime"] for j in errored) - 1 if errored else time.time()
+    # hold the watermark below the oldest errored AND the oldest deferred file so
+    # both re-enter next run — overflow drains across runs instead of vanishing
+    wm_val = time.time()
+    if errored:
+        wm_val = min(wm_val, min(j["mtime"] for j in errored) - 1)
+    if deferred_mtimes:
+        wm_val = min(wm_val, min(deferred_mtimes) - 1)
     open(WM, "w").write(str(wm_val))
     # record content hashes for files we judged so sync re-touches skip next time
     # (errored files excluded: no hash means they are re-judged, not hash-skipped)
@@ -429,6 +452,7 @@ if not a.dry:
 
 print(f"curator-run: judged {judged} new item(s), proposed {len(proposals)} card(s)"
       + (f", skipped {skipped_by_hash} sync re-touch(es)" if skipped_by_hash else "")
+      + (f", deferred {len(deferred)} beyond --max (watermark held)" if deferred else "")
       + (" [DRY: nothing written]" if a.dry else ""))
 for pr in proposals:
     u = f" [UPDATE {pr['update_of']}]" if pr.get("update_of") else ""
