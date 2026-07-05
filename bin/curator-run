@@ -9,28 +9,39 @@ Proposer-first by design: this NEVER writes to knowledge/. A proposal becomes
 trusted only when the owner runs curator-approve (the gate). Everything is logged.
 
 Config via env (the mechanism is generic; the model/endpoint are swappable):
-  SOVS_VAULT        vault root (default: cwd)
-  CURATOR_LANE      lane name (default: curator; this brain: archivist)
-  CURATOR_ENDPOINT  OpenAI-compatible chat endpoint (default: Ollama cloud)
+  SOVS_VAULT        vault root (fallback: ~/.brain-root pointer file, then cwd)
+  CURATOR_LANE      lane name (fallback: ~/.curator-lane pointer file, then "curator")
+  CURATOR_ENDPOINT  OpenAI-compatible chat endpoint (default: LOCAL Ollama).
+                    The default is local on purpose: the standard's law says machine
+                    writers to knowledge/ run on owner-controlled compute. Pointing
+                    this at a cloud endpoint is an explicit owner decision, never a default.
   CURATOR_MODEL     model id (default: gpt-oss:120b)
-  CURATOR_KEYFILE   file holding the API key (default: ~/.config/ollama-cloud/key)
+  CURATOR_KEYFILE   file holding the API key, if the endpoint needs one (default: none)
 
 Usage: curator-run [--since-days N] [--max N] [--dry]
 """
 import os, re, json, glob, sys, time, argparse, hashlib, urllib.request
 from datetime import datetime, timezone
 
-VAULT = os.environ.get("SOVS_VAULT", os.getcwd())
-LANE_NAME = os.environ.get("CURATOR_LANE", "curator")
+def _pointer(path):
+    try:
+        return open(os.path.expanduser(path), encoding="utf-8").read().strip() or None
+    except OSError:
+        return None
+
+VAULT = os.environ.get("SOVS_VAULT") or _pointer("~/.brain-root") or os.getcwd()
+LANE_NAME = os.environ.get("CURATOR_LANE") or _pointer("~/.curator-lane") or "curator"
 LANE = os.path.join(VAULT, "raw", "workspaces", LANE_NAME)
 PROP = os.path.join(LANE, "proposals"); INBOX = os.path.join(LANE, "INBOX.md")
 STATUS = os.path.join(LANE, "status.json"); WM = os.path.join(LANE, ".last-run")
 HASHSTORE = os.path.join(LANE, ".content-hashes.json")
 JUDGMENTS = os.path.join(LANE, "judgments.jsonl")
 K = os.path.join(VAULT, "knowledge")
-ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "https://ollama.com/v1/chat/completions")
+# Local by default — the law: machine writers to knowledge/ run on owner-controlled
+# compute. Cloud is an explicit opt-in via CURATOR_ENDPOINT, never the shipped default.
+ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "http://localhost:11434/v1/chat/completions")
 MODEL = os.environ.get("CURATOR_MODEL", "gpt-oss:120b")
-KEYFILE = os.environ.get("CURATOR_KEYFILE", os.path.expanduser("~/.config/ollama-cloud/key"))
+KEYFILE = os.environ.get("CURATOR_KEYFILE", "")
 # never-promote paths (vault-relative prefixes, colon-separated) — pruned from the gather entirely
 EXCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_EXCLUDE", "").split(":") if e.strip()]
 # optional harvest scope (vault-relative prefixes, colon-separated) — when set, ONLY these paths are gathered
