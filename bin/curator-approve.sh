@@ -29,6 +29,8 @@ fi
 
 mv "$prop" "$dest"
 log_decision approved "$prop" "knowledge/$sub/$(basename "$dest")"
-git_commit "curator: approve knowledge/$sub/$(basename "$dest")"
+if ! git_commit "curator: approve knowledge/$sub/$(basename "$dest")"; then
+  echo "Warning: commit succeeded but push to origin failed (see above)."
+fi
 "$HERE/curator-status.sh" >/dev/null 2>&1 || true
 echo "landed: knowledge/$sub/$(basename "$dest")"

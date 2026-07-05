@@ -21,8 +21,13 @@ Example:
   BRAIN_ROOT=~/vault BRAIN_CORE=me,how-to-work-with-me brain-load some-topic
   # or drop the path in ~/.brain-root and the csv in ~/.brain-core so it just works
 """
-import sys, os, re, argparse, glob
+import sys, os, re, argparse, glob, json
 from collections import deque
+
+# Ships EMPTY: the mechanism is generic, the answers are yours. Per-brain aliases
+# (spoken names -> canonical card slugs, e.g. "curator" -> "curator-architecture")
+# live in <vault>/.brain-aliases.json or ~/.brain-aliases.json, never in this script.
+DEFAULT_ALIASES = {}
 
 def _readfile(p):
     try:
@@ -46,6 +51,18 @@ def _resolve_root():
             return os.getcwd()
         d = nd
 
+def _load_aliases(root):
+    aliases = dict(DEFAULT_ALIASES)
+    for p in [os.path.join(root, ".brain-aliases.json"), "~/.brain-aliases.json"]:
+        raw = _readfile(p)
+        if not raw:
+            continue
+        try:
+            aliases.update({str(k): str(v) for k, v in json.loads(raw).items()})
+        except Exception as e:
+            sys.stderr.write(f"brain-load: ignored invalid alias file {p}: {e}\n")
+    return aliases
+
 ap = argparse.ArgumentParser()
 ap.add_argument("entry", help="entry-card slug to start the traversal from")
 ap.add_argument("--depth", type=int, default=2, help="link hops to follow (default 2)")
@@ -55,6 +72,9 @@ ap.add_argument("--max", type=int, default=25, help="cap on cards in the pack")
 a = ap.parse_args()
 
 K = os.path.join(a.root, "knowledge")
+ALIASES = _load_aliases(a.root)
+requested_entry = a.entry
+entry = ALIASES.get(requested_entry, requested_entry)
 
 def card_path(slug):
     r = glob.glob(os.path.join(K, "**", slug + ".md"), recursive=True)
@@ -65,7 +85,7 @@ def links_in(path):
     return sorted(set(re.findall(r'\[\[([a-z0-9-]+)\]\]', txt)))
 
 # breadth-first from the entry, following links up to --depth hops
-order, seen, q = [], set(), deque([(a.entry, 0)])
+order, seen, q = [], set(), deque([(entry, 0)])
 while q and len(order) < a.max:
     slug, d = q.popleft()
     if slug in seen:
@@ -84,12 +104,19 @@ for c in [s.strip() for s in a.core.split(",") if s.strip()]:
     if c not in seen and card_path(c):
         seen.add(c); order.append(c)
 
-if not card_path(a.entry):
-    sys.stderr.write(f"brain-load: no knowledge card for entry '{a.entry}'\n")
+missing_entry = not card_path(entry)
+if missing_entry:
+    sys.stderr.write(f"brain-load: no knowledge card for entry '{requested_entry}'; output is core-only\n")
+elif entry != requested_entry:
+    sys.stderr.write(f"brain-load: alias '{requested_entry}' -> '{entry}'\n")
 
-print(f"# Brain context pack — {a.entry}")
-print(f"_{len(order)} cards from the knowledge layer. Read this before working: "
-      f"it is the relevant slice of the brain, pre-loaded, so you start with full context._\n")
+shown_entry = requested_entry if entry == requested_entry else f"{requested_entry} -> {entry}"
+print(f"# Brain context pack — {shown_entry}")
+if missing_entry:
+    print("_Entry card missing. This is a core-only fallback pack, not full topic context._\n")
+else:
+    print(f"_{len(order)} cards from the knowledge layer. Read this before working: "
+          f"it is the relevant slice of the brain, pre-loaded, so you start with full context._\n")
 for slug in order:
     p = card_path(slug)
     if p:

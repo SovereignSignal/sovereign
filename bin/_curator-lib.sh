@@ -3,16 +3,21 @@
 # _curator-lib.sh — shared helpers for the curator action scripts.
 # Sourced by curator-approve.sh / curator-reject.sh / curator-status.sh.
 #
-# The curator (named "the Archivist" in Owner's brain) drafts candidate notes into its
-# own raw lane; these scripts are the DETERMINISTIC safety layer the model never bypasses:
+# The curator (each brain names its own; e.g. "the Archivist") drafts candidate notes into
+# its own raw lane; these scripts are the DETERMINISTIC safety layer the model never bypasses:
 # validate the labels, move on approval, log every verdict, keep the trusted layer clean.
 #
-# Config via env:
-#   SOVS_VAULT     vault root (default: current dir)
-#   CURATOR_LANE   the curator's raw lane name (default: curator; Owner's brain: archivist)
+# Config via env, with the same pointer-file fallbacks brain-load uses, so a bare
+# `curator-approve <slug>` works from anywhere once the pointers exist:
+#   SOVS_VAULT     vault root     (fallback: ~/.brain-root, then current dir)
+#   CURATOR_LANE   curator's lane (fallback: ~/.curator-lane, then "curator")
 
-VAULT="${SOVS_VAULT:-$(pwd)}"
-LANE_NAME="${CURATOR_LANE:-curator}"
+VAULT="${SOVS_VAULT:-}"
+[ -z "$VAULT" ] && [ -f "$HOME/.brain-root" ] && VAULT="$(cat "$HOME/.brain-root")"
+[ -n "$VAULT" ] || VAULT="$(pwd)"
+LANE_NAME="${CURATOR_LANE:-}"
+[ -z "$LANE_NAME" ] && [ -f "$HOME/.curator-lane" ] && LANE_NAME="$(cat "$HOME/.curator-lane")"
+[ -n "$LANE_NAME" ] || LANE_NAME="curator"
 LANE="$VAULT/raw/workspaces/$LANE_NAME"
 PROPOSALS="$LANE/proposals"
 REJECTED="$LANE/rejected"
@@ -52,12 +57,20 @@ log_decision(){ # verdict file detail
   printf '%s\t%s\t%s\t%s\n' "$(ts)" "$1" "$(basename "$2")" "${3:-}" >> "$DECISIONS"
 }
 
-# commit if the vault is a git repo; try to push, warn (do not fail) if push can't run
+# commit if the vault is a git repo; try to push.
+# Push failures are LOUD: write to stderr AND return nonzero so the nightly
+# digest surfaces them instead of silently swallowing.
 git_commit(){ # message
   git -C "$VAULT" rev-parse --git-dir >/dev/null 2>&1 || return 0
   git -C "$VAULT" add -A >/dev/null 2>&1 || true
   git -C "$VAULT" commit -q -m "$1" >/dev/null 2>&1 || return 0
-  git -C "$VAULT" push -q >/dev/null 2>&1 || echo "  (committed locally; push deferred)"
+  if ! git -C "$VAULT" push -q 2>/dev/null; then
+    # count unpushed commits so the warning carries weight
+    local unpushed
+    unpushed=$(git -C "$VAULT" log --oneline @{u}..HEAD 2>/dev/null | wc -l | tr -d ' ')
+    echo "  ⚠ PUSH FAILED: ${unpushed} commit(s) unpushed to origin. Vault is not backed up." >&2
+    return 1
+  fi
 }
 
 # resolve a proposal arg (full path, slug, or slug.md) to a file path in PROPOSALS
