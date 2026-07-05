@@ -264,7 +264,10 @@ SYS = (
  "gear vs vara). Match on the subject, the primary URL, and the source path — not the slug prefix — and "
  "set update_of to the richest matching card. "
  "Existing knowledge slugs (link with [[slug]]; never duplicate): " + index + ". "
- 'Respond with ONE JSON object: {"promote":true|false,"reason":"<=20 words","type":"entity|concept|synthesis|null",'
+ + (("Slugs ALREADY PROPOSED and awaiting the owner's gate — never propose these again, and do not "
+     "[[link]] to them (they are not cards yet); if your item is the same subject as one, set "
+     "update_of to that slug or skip: " + ", ".join(sorted(pending)) + ". ") if pending else "")
+ + 'Respond with ONE JSON object: {"promote":true|false,"reason":"<=20 words","type":"entity|concept|synthesis|null",'
  '"slug":"kebab-case","title":"","body":"factual prose, one screen, [[links]], NO markdown heading",'
  '"why":"1-2 sentences: why this matters to the owner\'s work, written for a future reader",'
  '"confidence":"high|med|low","update_of":"existing-slug or null"}. '

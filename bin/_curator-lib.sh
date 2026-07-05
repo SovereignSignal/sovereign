@@ -52,9 +52,13 @@ validate_note(){ # file
   return $bad
 }
 
+# decisions.log format (TSV, append-only): ts, verdict, file, actor, detail
+# actor = CURATOR_ACTOR env ("owner-cli" when unset), so relayed batches
+# (telegram-relay, qc-sweep, ...) stay distinguishable from the owner's own hand
+# in the audit trail. Rows written before this column existed have 4 fields.
 log_decision(){ # verdict file detail
   mkdir -p "$LANE"
-  printf '%s\t%s\t%s\t%s\n' "$(ts)" "$1" "$(basename "$2")" "${3:-}" >> "$DECISIONS"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(ts)" "$1" "$(basename "$2")" "${CURATOR_ACTOR:-owner-cli}" "${3:-}" >> "$DECISIONS"
 }
 
 # commit if the vault is a git repo; try to push.

@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 #
-# curator-approve.sh [--force] <proposal>
+# curator-approve.sh [--force] <proposal> [reason...]
 #
 # Approve a curator proposal: validate its labels, move it into the matching knowledge/
-# subfolder, log the verdict, commit. This is the ONLY path a proposal becomes trusted.
+# subfolder, log the verdict (with the optional reason — the law wants the WHY on every
+# verdict, approvals included), commit. This is the ONLY path a proposal becomes trusted.
 # Refuses to overwrite an existing knowledge note (that is an update; merge by hand or --force).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; . "$HERE/_curator-lib.sh"
 
 FORCE=0; [ "${1:-}" = "--force" ] && { FORCE=1; shift; }
-arg="${1:?usage: curator-approve.sh [--force] <proposal-file-or-slug>}"
+arg="${1:?usage: curator-approve.sh [--force] <proposal-file-or-slug> [reason...]}"; shift || true
+reason="${*:-}"
 prop="$(resolve_proposal "$arg")"
 [ -n "$prop" ] || { echo "proposal not found: $arg (looked in $PROPOSALS)"; exit 1; }
 
@@ -28,7 +30,7 @@ if [ -e "$dest" ] && [ "$FORCE" -ne 1 ]; then
 fi
 
 mv "$prop" "$dest"
-log_decision approved "$prop" "knowledge/$sub/$(basename "$dest")"
+log_decision approved "$prop" "knowledge/$sub/$(basename "$dest")${reason:+ — $reason}"
 if ! git_commit "curator: approve knowledge/$sub/$(basename "$dest")"; then
   echo "Warning: commit succeeded but push to origin failed (see above)."
 fi
