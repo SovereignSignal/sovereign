@@ -254,6 +254,34 @@ if law:
             continue
         if name.lower() not in law.lower():
             add("drift", f"- `{lane}/` — lane exists on disk but the law (CLAUDE.md Part 2 pipes) never names it")
+# lane contracts: every lane should carry a LANE.md (forward-only rollout: missing is
+# tolerated but flagged — undeclared writers are how loading docks rot)
+REQ_LANE = ("lane", "producer", "mission", "write", "gear", "status")
+LANE_STATUSES = {"proposed", "onboarded", "paused", "retired"}
+for lane_rel in lanes:
+    lm = os.path.join(VAULT, lane_rel, "LANE.md")
+    if not os.path.exists(lm):
+        add("contracts", f"- `{lane_rel}/` — no LANE.md (legacy-tolerated; declare the writer when next touched)")
+        continue
+    try:
+        lt = open(lm, encoding="utf-8", errors="ignore").read()
+    except OSError:
+        add("contracts", f"- `{lane_rel}/LANE.md` — unreadable")
+        continue
+    lfm = frontmatter(lt)
+    if not lfm:
+        add("contracts", f"- `{lane_rel}/LANE.md` — no frontmatter block")
+        continue
+    def _lv(k, _fm=lfm):
+        return (_fm.get(k) or "").split("#")[0].strip()
+    missing = [k for k in REQ_LANE if not _lv(k)]
+    if missing:
+        add("contracts", f"- `{lane_rel}/LANE.md` — missing required field(s): {', '.join(missing)}")
+    if _lv("lane") and _lv("lane") != os.path.basename(lane_rel):
+        add("contracts", f"- `{lane_rel}/LANE.md` — lane field '{_lv('lane')}' does not match the folder name")
+    if _lv("status") and _lv("status") not in LANE_STATUSES:
+        add("contracts", f"- `{lane_rel}/LANE.md` — unknown status '{_lv('status')}' (want: {', '.join(sorted(LANE_STATUSES))})")
+
 gears_path = os.path.join(LANE, "gears.json")
 if os.path.exists(gears_path):
     try:
@@ -424,11 +452,11 @@ os.makedirs(AUDIT_DIR, exist_ok=True)
 stamp = datetime.now().strftime("%Y-%m-%d")
 report_path = os.path.join(AUDIT_DIR, f"audit-{stamp}.md")
 ORDER = ["labels", "one-screen", "flatness", "links", "orphans", "duplicates",
-         "staleness", "historicize", "drift", "gears", "workstreams", "retro-taste", "skip-audit"]
+         "staleness", "historicize", "drift", "contracts", "gears", "workstreams", "retro-taste", "skip-audit"]
 TITLES = {"labels": "Labels", "one-screen": "One-screen rule", "flatness": "Folder flatness",
           "links": "Link graph", "orphans": "Inbound orphans", "duplicates": "Possible duplicates",
           "staleness": "Stale dates on cards", "historicize": "Historicize drafts (dated-history rewrites)",
-          "drift": "Law vs disk", "gears": "Trust gears",
+          "drift": "Law vs disk", "contracts": "Lane contracts (LANE.md)", "gears": "Trust gears",
           "workstreams": "Workstream front doors", "retro-taste": "Retro-taste screen (local model)",
           "skip-audit": "Skip audit (second local opinion)"}
 issue_sections = [s for s in ORDER if findings.get(s) and s != "gears"]
