@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""brain-capture — stage a capture into YOUR lane. The producer write wire.
+
+A producer calls this to land one markdown capture in its own lane, with valid
+provenance frontmatter, and nowhere else. It is the physical enforcement of the
+connector contract's second wire: write to your lane; never knowledge/, never
+workstreams/, never another lane, never the lane's own LANE.md.
+
+On a git lane (LANE.md declares `write: git-branch`) the capture is committed on
+the lane's declared branch and pushed — every producer write arrives at the hub
+as a reviewable commit. On rsync/local lanes it just writes the file and the
+pipe (or the hub itself) carries it.
+
+Config resolution (same pointer files the other brain tools use):
+  vault: $BRAIN_ROOT, $SOVS_VAULT, ~/.brain-root, else walk up for a knowledge/ dir
+  lane:  --lane, $BRAIN_LANE, ~/.brain-lane
+
+Usage:
+  brain-capture <slug> --from FILE          # body from a file ("-" = stdin)
+  brain-capture <slug> --note "text"        # short inline capture
+  Options: --lane L  --type capture  --title T  --origin URL  --dry
+"""
+import os, re, sys, argparse, subprocess
+from datetime import datetime
+
+def _pointer(path):
+    try:
+        return open(os.path.expanduser(path), encoding="utf-8").read().strip() or None
+    except OSError:
+        return None
+
+def _resolve_vault():
+    v = os.environ.get("BRAIN_ROOT") or os.environ.get("SOVS_VAULT") or _pointer("~/.brain-root")
+    if v:
+        return os.path.expanduser(v)
+    d = os.getcwd()
+    while True:
+        if os.path.isdir(os.path.join(d, "knowledge")):
+            return d
+        nd = os.path.dirname(d)
+        if nd == d:
+            return os.getcwd()
+        d = nd
+
+ap = argparse.ArgumentParser()
+ap.add_argument("slug", help="kebab-case name for the capture file")
+ap.add_argument("--from", dest="src", help='body from this file, or "-" for stdin')
+ap.add_argument("--note", help="short inline body text")
+ap.add_argument("--lane", default=os.environ.get("BRAIN_LANE") or _pointer("~/.brain-lane"))
+ap.add_argument("--type", default="capture", help="note type label (default: capture)")
+ap.add_argument("--title", default="", help="optional title label")
+ap.add_argument("--origin", default="", help="optional upstream URL this capture derives from")
+ap.add_argument("--topics", default="", help="comma-separated knowledge-card slugs this capture relates to; "
+                "only slugs with an existing card are linked (no phantom graph nodes)")
+ap.add_argument("--dry", action="store_true", help="print what would be written, write nothing")
+a = ap.parse_args()
+
+VAULT = _resolve_vault()
+if not a.lane:
+    sys.exit("brain-capture: no lane (--lane, $BRAIN_LANE, or ~/.brain-lane)")
+lane = a.lane.strip().strip("/")
+
+slug = a.slug.strip().lower()
+if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
+    sys.exit(f"brain-capture: slug must be kebab-case ([a-z0-9-]), got '{a.slug}'")
+if slug == "lane":
+    sys.exit("brain-capture: refusing — LANE.md is the contract, never a capture")
+
+# the lane may live under raw/workspaces/ (agents) or raw/tools/ (tool pipes)
+candidates = [os.path.join(VAULT, "raw", "workspaces", lane), os.path.join(VAULT, "raw", "tools", lane)]
+LANE_DIR = next((d for d in candidates if os.path.isdir(d)), candidates[0])
+
+# ---- the body ----
+if a.src and a.note:
+    sys.exit("brain-capture: use --from or --note, not both")
+if a.src:
+    body = sys.stdin.read() if a.src == "-" else open(a.src, encoding="utf-8", errors="ignore").read()
+elif a.note:
+    body = a.note
+else:
+    sys.exit("brain-capture: no body (--from FILE or --note TEXT)")
+body = body.strip()
+if not body:
+    sys.exit("brain-capture: empty body")
+if body.startswith("---"):
+    sys.exit("brain-capture: body already starts with a frontmatter block — pass the body only; "
+             "provenance labels are this tool's job")
+
+# ---- topic links: connect the capture to the knowledge graph, honestly ----
+# Only slugs that resolve to a REAL card get linked — a [[link]] to nothing renders
+# as a phantom node, which is graph pollution, not connection. Unresolved topics are
+# kept as plain words so the intent survives for the curator.
+topic_line = ""
+if a.topics:
+    import glob as _glob
+    linked, plain = [], []
+    for t in [x.strip().lower() for x in a.topics.split(",") if x.strip()]:
+        if _glob.glob(os.path.join(VAULT, "knowledge", "**", t + ".md"), recursive=True):
+            linked.append(f"[[{t}]]")
+        else:
+            plain.append(t)
+    parts = linked + plain
+    if parts:
+        topic_line = "\n\nTopics: " + " ".join(parts)
+
+# ---- the capture ----
+fm = [f"type: {a.type}", f"source: {lane}", f"created: {datetime.now().strftime('%Y-%m-%d')}"]
+if a.title:
+    fm.append(f"title: {a.title}")
+if a.origin:
+    fm.append(f"origin: {a.origin}")
+card = "---\n" + "\n".join(fm) + "\n---\n\n" + body + topic_line + "\n"
+
+out = os.path.join(LANE_DIR, slug + ".md")
+if os.path.exists(out):
+    out = os.path.join(LANE_DIR, f"{slug}-{datetime.now().strftime('%Y%m%d%H%M')}.md")
+
+# ---- the fence: the resolved path MUST be inside the lane, and only the lane ----
+real_out, real_lane = os.path.realpath(out), os.path.realpath(LANE_DIR)
+if not real_out.startswith(real_lane + os.sep):
+    sys.exit(f"brain-capture: refusing — resolved path escapes the lane: {real_out}")
+for fenced in ("knowledge", "workstreams"):
+    if os.path.realpath(os.path.join(VAULT, fenced)) in (os.path.dirname(real_out), real_out):
+        sys.exit(f"brain-capture: refusing — {fenced}/ is never a producer's to write")
+
+if a.dry:
+    print(f"[DRY] would write {os.path.relpath(out, VAULT)}:\n\n{card}")
+    raise SystemExit(0)
+
+os.makedirs(LANE_DIR, exist_ok=True)
+open(out, "w", encoding="utf-8").write(card)
+rel = os.path.relpath(out, VAULT)
+print(f"captured: {rel}")
+
+# ---- git lane? commit on the declared branch and push ----
+def _lane_fm():
+    p = os.path.join(LANE_DIR, "LANE.md")
+    try:
+        t = open(p, encoding="utf-8").read()
+    except OSError:
+        return {}
+    if not t.startswith("---"):
+        return {}
+    end = t.find("\n---", 3)
+    out = {}
+    for line in t[3:end].splitlines():
+        m = re.match(r"^(\w[\w-]*):\s*(.*)$", line)
+        if m:
+            out[m.group(1)] = m.group(2).split("#")[0].strip()
+    return out
+
+lf = _lane_fm()
+if lf.get("write") == "git-branch":
+    branch = lf.get("branch") or f"lane/{lane}"
+    def g(*args, **kw):
+        return subprocess.run(["git", "-C", VAULT] + list(args), capture_output=True, text=True, **kw)
+    if g("rev-parse", "--git-dir").returncode != 0:
+        sys.exit("brain-capture: LANE.md says write: git-branch but this is not a git clone")
+    cur = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if cur != branch:
+        sys.exit(f"brain-capture: file written, but you are on '{cur}' and your lane branch is "
+                 f"'{branch}' — checkout your lane branch and commit; never commit to another ref")
+    g("add", rel)
+    c = g("commit", "-m", f"capture: {lane}/{os.path.basename(out)}")
+    if c.returncode != 0:
+        sys.exit(f"brain-capture: commit failed:\n{c.stderr.strip()}")
+    p = g("push", "origin", branch)
+    if p.returncode != 0:
+        print(f"brain-capture: COMMITTED but PUSH FAILED — the hub has not received this capture:\n"
+              f"{p.stderr.strip()}", file=sys.stderr)
+        raise SystemExit(1)
+    print(f"committed + pushed on {branch}")

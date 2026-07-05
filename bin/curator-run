@@ -116,6 +116,8 @@ def candidates():
             for f in fn:
                 if f.startswith(".") or not f.endswith((".md", ".txt")):
                     continue
+                if f == "LANE.md":
+                    continue  # the lane's contract file — config, never material
                 p = os.path.join(dp, f)
                 try:
                     if os.path.getmtime(p) <= since:
