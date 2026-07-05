@@ -221,6 +221,13 @@ def line_dates(line):
     return valid
 
 grace = timedelta(days=a.stale_grace)
+# historicize memory: cards already rewritten as dated history carry past dates on
+# purpose — record, not rot. Their exact content hash is remembered; they neither
+# flag as stale nor re-enter the redraft pass until the card changes again.
+try:
+    histmark = json.load(open(HISTMARK, encoding="utf-8"))
+except (OSError, ValueError):
+    histmark = {}
 stale_cards = []   # cards whose expired facts feed the historicize pass below
 for p, t in texts.items():
     for line in t.splitlines():
@@ -228,6 +235,8 @@ for p, t in texts.items():
             continue
         past = [d for d in line_dates(line) if d + grace < TODAY]
         if past:
+            if histmark.get(rel(p)) == hashlib.md5(t.encode()).hexdigest():
+                break  # historicized in this exact form — dated history, not staleness
             add("staleness", f"- `{rel(p)}` — deadline-ish line cites {past[0].isoformat()} (past): “{line.strip()[:110]}”")
             stale_cards.append(p)
             break
@@ -334,14 +343,6 @@ if not a.no_llm:
     # durable residue — and then the residue line says where the one durable fact
     # belongs instead.
     PROP = os.path.join(LANE, "proposals")
-    # historicize memory: a card already rewritten as dated history still contains past
-    # dates (that is the point), so the staleness flag re-fires forever. Remember the
-    # content hash of every card we drafted (or the owner historicized); only re-draft
-    # when the card's content actually changes again.
-    try:
-        histmark = json.load(open(HISTMARK, encoding="utf-8"))
-    except (OSError, ValueError):
-        histmark = {}
     SYS_HIST = ("You maintain ONE existing card of a trusted plain-text knowledge layer. Some of its "
         "facts are time-bound and now expired. Rewrite the card so it stays PERMANENTLY true: convert "
         "expired or forward-looking lines into dated past-tense history (\"as of Jun 2026\", \"ran in "
