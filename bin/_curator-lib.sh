@@ -105,8 +105,15 @@ git_commit(){ # message [vault-path ...]
       case "/$rel/" in
         */../*|*/./*) echo "  REFUSED: unsafe scoped commit path: $rel" >&2; return 1 ;;
       esac
-      rels+=("$rel")
+      # A freshly materialized owner-approved proposal can be untracked and
+      # already moved by the time we stage. Skip that vanished source path;
+      # tracked sources still stage their deletion.
+      if [ -e "$VAULT/$rel" ] || git -C "$VAULT" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
+        rels+=("$rel")
+      fi
     done
+    [ "${#rels[@]}" -gt 0 ] || {
+      echo "  REFUSED: no scoped curator paths remain to stage." >&2; return 1; }
     git -C "$VAULT" add -A -- "${rels[@]}" >/dev/null 2>&1 || {
       echo "  REFUSED: failed to stage scoped curator paths." >&2; return 1; }
   elif [ "${CURATOR_ALLOW_GIT_ADD_ALL:-0}" = "1" ]; then

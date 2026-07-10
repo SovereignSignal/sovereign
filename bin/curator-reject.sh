@@ -15,8 +15,14 @@ prop="$(resolve_proposal "$arg")"
 
 git_scope_preflight || exit 1
 mkdir -p "$REJECTED"
-dest="$REJECTED/$(basename "$prop")"
-[ ! -e "$dest" ] || { echo "rejected archive already exists: $dest"; exit 1; }
+base="$(basename "$prop")"
+dest="$REJECTED/$base"
+if [ -e "$dest" ]; then
+  stem="${base%.md}"
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  dest="$REJECTED/${stem}--rejected-${stamp}.md"
+  [ ! -e "$dest" ] || { echo "rejected archive collision: $dest"; exit 1; }
+fi
 mv "$prop" "$dest"
 log_decision rejected "$prop" "$reason"
 git_commit "curator: reject $(basename "$prop")${reason:+ ($reason)}" \
