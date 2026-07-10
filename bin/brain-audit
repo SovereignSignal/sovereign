@@ -78,6 +78,11 @@ def rel(p):
 TYPE_DIRS = {"entity": "entities", "concept": "concepts", "synthesis": "syntheses"}
 cards = sorted(glob.glob(K + "/**/*.md", recursive=True))
 slugs = {os.path.basename(p)[:-3] for p in cards}
+cross_layer_slugs = {
+    os.path.basename(p)[:-3]
+    for base in (WS, os.path.join(VAULT, "archive"))
+    for p in glob.glob(base + "/**/*.md", recursive=True)
+}
 
 def frontmatter(text):
     if not text.startswith("---"):
@@ -136,6 +141,9 @@ for p, t in texts.items():
             if tgt != me:
                 inbound[tgt] += 1
                 outbound[me] = outbound.get(me, 0) + 1
+        elif tgt in cross_layer_slugs:
+            # Valid workstream/archive target. It does not add a trusted-graph edge.
+            pass
         elif RAWISH.search(tgt.lower()):
             add("links", f"- `{rel(p)}` — [[{tgt}]] targets a raw-style filename (loading dock, not a card)")
         else:
