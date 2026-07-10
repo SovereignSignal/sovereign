@@ -29,9 +29,11 @@ if [ -e "$dest" ] && [ "$FORCE" -ne 1 ]; then
   exit 1
 fi
 
+git_scope_preflight || exit 1
 mv "$prop" "$dest"
 log_decision approved "$prop" "knowledge/$sub/$(basename "$dest")${reason:+ — $reason}"
-if ! git_commit "curator: approve knowledge/$sub/$(basename "$dest")"; then
+if ! git_commit "curator: approve knowledge/$sub/$(basename "$dest")" \
+  "$prop" "$dest" "$DECISIONS"; then
   echo "Warning: commit succeeded but push to origin failed (see above)."
 fi
 "$HERE/curator-status.sh" >/dev/null 2>&1 || true

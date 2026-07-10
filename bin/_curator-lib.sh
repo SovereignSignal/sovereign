@@ -61,13 +61,63 @@ log_decision(){ # verdict file detail
   printf '%s\t%s\t%s\t%s\t%s\n' "$(ts)" "$1" "$(basename "$2")" "${CURATOR_ACTOR:-owner-cli}" "${3:-}" >> "$DECISIONS"
 }
 
-# commit if the vault is a git repo; try to push.
+# Refuse a verdict before any move or decision-log append when the Git index
+# already contains someone else's staged work. git_commit rechecks this to
+# catch a race between preflight and commit.
+git_scope_preflight(){
+  git -C "$VAULT" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  if ! git -C "$VAULT" diff --cached --quiet --; then
+    echo "REFUSED: vault index already has staged changes; curator action aborted." >&2
+    return 1
+  fi
+}
+
+# Commit only the paths named by the caller; try to push.
+#
+# The vault normally has unrelated producer and Obsidian Sync churn. A bare
+# `git add -A` would silently sweep that work into a curator verdict commit.
+# Callers must therefore provide every path belonging to the verdict. The
+# only escape hatch is explicit and intended for controlled maintenance:
+# CURATOR_ALLOW_GIT_ADD_ALL=1.
 # Push failures are LOUD: write to stderr AND return nonzero so the nightly
 # digest surfaces them instead of silently swallowing.
-git_commit(){ # message
+git_commit(){ # message [vault-path ...]
+  local message="$1"; shift || true
   git -C "$VAULT" rev-parse --git-dir >/dev/null 2>&1 || return 0
-  git -C "$VAULT" add -A >/dev/null 2>&1 || true
-  git -C "$VAULT" commit -q -m "$1" >/dev/null 2>&1 || return 0
+
+  # Never mix a curator verdict with paths that were already staged by a
+  # human or another process.
+  if ! git -C "$VAULT" diff --cached --quiet --; then
+    echo "  REFUSED: vault index already has staged changes; curator commit aborted." >&2
+    return 1
+  fi
+
+  if [ "$#" -gt 0 ]; then
+    local p rel
+    local -a rels=()
+    for p in "$@"; do
+      case "$p" in
+        "$VAULT"/*) rel="${p#"$VAULT"/}" ;;
+        /*) echo "  REFUSED: scoped commit path is outside vault: $p" >&2; return 1 ;;
+        *) rel="$p" ;;
+      esac
+      [ -n "$rel" ] || { echo "  REFUSED: empty scoped commit path" >&2; return 1; }
+      case "/$rel/" in
+        */../*|*/./*) echo "  REFUSED: unsafe scoped commit path: $rel" >&2; return 1 ;;
+      esac
+      rels+=("$rel")
+    done
+    git -C "$VAULT" add -A -- "${rels[@]}" >/dev/null 2>&1 || {
+      echo "  REFUSED: failed to stage scoped curator paths." >&2; return 1; }
+  elif [ "${CURATOR_ALLOW_GIT_ADD_ALL:-0}" = "1" ]; then
+    git -C "$VAULT" add -A >/dev/null 2>&1 || {
+      echo "  REFUSED: failed to stage vault." >&2; return 1; }
+  else
+    echo "  REFUSED: curator commit requires explicit paths." >&2
+    return 1
+  fi
+
+  git -C "$VAULT" commit -q -m "$message" >/dev/null 2>&1 || return 0
   if ! git -C "$VAULT" push -q 2>/dev/null; then
     # count unpushed commits so the warning carries weight
     local unpushed

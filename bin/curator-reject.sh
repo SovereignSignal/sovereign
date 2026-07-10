@@ -13,9 +13,13 @@ reason="${*:-}"
 prop="$(resolve_proposal "$arg")"
 [ -n "$prop" ] || { echo "proposal not found: $arg (looked in $PROPOSALS)"; exit 1; }
 
+git_scope_preflight || exit 1
 mkdir -p "$REJECTED"
-mv "$prop" "$REJECTED/$(basename "$prop")"
+dest="$REJECTED/$(basename "$prop")"
+[ ! -e "$dest" ] || { echo "rejected archive already exists: $dest"; exit 1; }
+mv "$prop" "$dest"
 log_decision rejected "$prop" "$reason"
-git_commit "curator: reject $(basename "$prop")${reason:+ ($reason)}"
+git_commit "curator: reject $(basename "$prop")${reason:+ ($reason)}" \
+  "$prop" "$dest" "$DECISIONS"
 "$HERE/curator-status.sh" >/dev/null 2>&1 || true
 echo "rejected: $(basename "$prop") (kept in rejected/)"
