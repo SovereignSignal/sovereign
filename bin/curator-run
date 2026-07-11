@@ -235,6 +235,17 @@ SYS = (
  "NOVEL concept/mechanism/playbook, or a MAJOR status change. Generic orgs/funds/programs "
  "are NOT automatically card-worthy unless the owner has a direct relationship or it changes "
  "the owner's strategic landscape. When in doubt, do NOT promote.\n\n"
+ "READ BEYOND THE SURFACE: The surface topic of an article is often not the signal. A tool-specific "
+ "article may describe a durable METHOD or workflow concept (e.g. cross-model review as a QA technique). "
+ "An essay about history may contain a governance framework applicable to the owner's work. A product "
+ "release note may reveal a novel approach to AI safety, crypto economics, or grant design. Read the "
+ "FULL text and look for reusable PATTERNS, METHODOLOGIES, and FRAMEWORKS, not just named entities. "
+ "The owner works across crypto ecosystems, AI operations, grant architecture, and macro intelligence — "
+ "signal from ANY of these domains is card-worthy even if it appears in an article about something else.\n\n"
+ "TRUNCATED CONTENT: If the source text appears to be mostly navigation, paywall text ('Already have "
+ "an account? Log in', 'Continue with a free trial'), or is clearly incomplete (cuts off mid-sentence), "
+ "set promote to false and reason to 'TRUNCATED: content insufficient to judge — needs backfill'. This "
+ "flags the item for re-judgment after full text is obtained.\n\n"
  "TYPES: an entity is ONE durable real thing \u2014 a person, org, place, or system. A specific "
  "NAMED program, fund, product, company, or publication is an ENTITY even when it also describes "
  "a process; a concept is a reusable idea/playbook/mechanism NOT tied to one named thing. Before "
@@ -282,7 +293,7 @@ SYS = (
 )
 
 def judge(path):
-    txt = open(path, encoding="utf-8", errors="ignore").read()[:6000]
+    txt = open(path, encoding="utf-8", errors="ignore").read()[:12000]
     name = os.path.relpath(path, VAULT)
     payload = json.dumps({"model": MODEL, "temperature": 0.1, "stream": False,
         "response_format": {"type": "json_object"},
@@ -296,7 +307,7 @@ def judge(path):
 def judge_update(path, target, target_path):
     """Second pass for updates: show the model the existing card so the merge
     is drafted for the owner instead of left as manual work."""
-    txt = open(path, encoding="utf-8", errors="ignore").read()[:6000]
+    txt = open(path, encoding="utf-8", errors="ignore").read()[:12000]
     card = _card_body(target_path)[:4000]
     name = os.path.relpath(path, VAULT)
     user = (f"UPDATE TASK. The brain already holds this card ({target}):\n\n{card}\n\n"
