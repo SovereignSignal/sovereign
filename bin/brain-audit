@@ -201,7 +201,18 @@ for i, s1 in enumerate(slug_list):
 for ttl, group in titles.items():
     if len(group) > 1:
         clusters.add(tuple(sorted(group)))
+# blessed pairs: deliberate keep-both rulings the owner has made — skip them.
+blessed = set()
+try:
+    import json as _json
+    _b = _json.load(open(os.path.join(LANE, ".audit-blessed-dups.json")))
+    for pair in _b.get("pairs", []):
+        blessed.add(tuple(sorted(pair)))
+except (OSError, ValueError):
+    pass
 for c in sorted(clusters):
+    if tuple(sorted(c)) in blessed:
+        continue
     add("duplicates", "- possible same-subject cluster: " + " · ".join(f"`{s}`" for s in c))
 
 # ---------- 6: staleness (deadline-ish lines citing past dates) ----------
