@@ -147,6 +147,11 @@ deferred = cands_all[a.max :]
 have = {os.path.basename(p)[:-3] for p in glob.glob(K + "/**/*.md", recursive=True)}
 pending = {os.path.basename(p)[:-3] for p in glob.glob(PROP + "/*.md")}
 index = ", ".join(sorted(have))
+# rejection memory: topics the owner has said no to at the gate. Repeated-rejection
+# artifacts carry a --rejected-<timestamp> suffix — normalize back to the base slug.
+rejected_topics = set()
+for _p in glob.glob(os.path.join(LANE, "rejected") + "/*.md"):
+    rejected_topics.add(re.sub(r"--rejected-\d{8}-\d{6}$", "", os.path.basename(_p)[:-3]))
 KEY = open(KEYFILE).read().strip() if os.path.exists(KEYFILE) else os.environ.get("CURATOR_KEY", "")
 
 _profile = ""
@@ -240,8 +245,8 @@ SYS = (
  "An essay about history may contain a governance framework applicable to the owner's work. A product "
  "release note may reveal a novel approach to AI safety, crypto economics, or grant design. Read the "
  "FULL text and look for reusable PATTERNS, METHODOLOGIES, and FRAMEWORKS, not just named entities. "
- "The owner works across crypto ecosystems, AI operations, grant architecture, and macro intelligence — "
- "signal from ANY of these domains is card-worthy even if it appears in an article about something else.\n\n"
+ "Signal from ANY of the owner's working domains (see WHO THE OWNER IS above) is card-worthy "
+ "even if it appears in an article about something else.\n\n"
  "TRUNCATED CONTENT: If the source text appears to be mostly navigation, paywall text ('Already have "
  "an account? Log in', 'Continue with a free trial'), or is clearly incomplete (cuts off mid-sentence), "
  "set promote to false and reason to 'TRUNCATED: content insufficient to judge — needs backfill'. This "
@@ -280,6 +285,9 @@ SYS = (
  + (("Slugs ALREADY PROPOSED and awaiting the owner's gate — never propose these again, and do not "
      "[[link]] to them (they are not cards yet); if your item is the same subject as one, set "
      "update_of to that slug or skip: " + ", ".join(sorted(pending)) + ". ") if pending else "")
+ + (("Topics the OWNER HAS REJECTED at the gate — do NOT propose these again unless the source holds "
+     "materially NEW facts beyond what was rejected (then set update_of to a real card slug, or state "
+     "the new facts in reason): " + ", ".join(sorted(rejected_topics)) + ". ") if rejected_topics else "")
  + 'Respond with ONE JSON object: {"promote":true|false,"reason":"<=20 words","type":"entity|concept|synthesis|null",'
  '"slug":"kebab-case","title":"","body":"factual prose, one screen, [[links]], NO markdown heading",'
  '"why":"1-2 sentences: why this matters to the owner\'s work, written for a future reader",'
@@ -332,6 +340,9 @@ def _norm_key(s):
     return s.lower().replace("-", "")
 
 
+_rejected_keys = {_norm_key(_s) for _s in rejected_topics}
+
+
 # topic-dedup memory: normalized keys of every existing card, pending proposal,
 # and previously proposed slug (persisted) -> the slug they map to. A new
 # proposal whose key matches becomes an UPDATE of the mapped card, not a dup.
@@ -368,6 +379,14 @@ for p in cands:
     if not slug or typ not in ("entity", "concept", "synthesis"):
         judgments.append({**base_judgment, "promote": False, "reason": "invalid promote payload", "raw": v})
         continue
+    # deterministic rejection-memory guard: a topic the owner rejected never re-enters
+    # the queue unless it is a genuine update to a card that actually exists
+    if (_norm_key(slug) in _rejected_keys
+            and not _knowledge_path(slug)
+            and not (v.get("update_of") and _knowledge_path(v.get("update_of")))):
+        judgments.append({**base_judgment, "promote": False,
+                          "reason": f"suppressed: owner previously rejected this topic ({slug})"})
+        continue
     judgments.append({**base_judgment, "promote": True,
                       "reason": v.get("reason", ""), "type": typ,
                       "slug": slug, "confidence": v.get("confidence", ""),
@@ -384,6 +403,21 @@ for p in cands:
             if len(_k) >= 12 and (seen_key in _k or _k in seen_key):
                 _match = _s2
                 break
+    if not _match:
+        # near-dup guard: token-set overlap catches same-subject slugs that share no
+        # long substring (e.g. unichain-infra-partner-... vs unichain-partner-...)
+        _tok = set(slug.lower().split("-"))
+        if len(_tok) >= 3:
+            _best, _best_slug = 0.0, None
+            for _s2 in set(_key_to_slug.values()):
+                _t2 = set(_s2.lower().split("-"))
+                if len(_t2) < 3:
+                    continue
+                _j = len(_tok & _t2) / len(_tok | _t2)
+                if _j > _best:
+                    _best, _best_slug = _j, _s2
+            if _best >= 0.6:
+                _match = _best_slug
     if _match and _match != slug:
         v["update_of"] = v.get("update_of") or _match
     _key_to_slug.setdefault(seen_key, slug)
@@ -425,6 +459,54 @@ for _p in deferred:
     except OSError:
         pass
 
+
+def _coverage():
+    """Corpus-wide coverage: how much of the processable universe has ever been
+    judged. Ignores CURATOR_INCLUDE (scoped runs still report the global picture);
+    respects CURATOR_EXCLUDE and the built-in skips. Makes a stranded backlog a
+    number in every digest instead of an invisible surprise."""
+    judged_srcs = set()
+    try:
+        with open(JUDGMENTS, encoding="utf-8") as jf:
+            for line in jf:
+                try:
+                    judged_srcs.add(json.loads(line).get("source"))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+    try:
+        wm_file = float(open(WM).read().strip() or 0)
+    except (OSError, ValueError):
+        wm_file = None
+    universe = judged_n = stranded = fresh = 0
+    for r in (os.path.join(VAULT, "raw"), os.path.join(VAULT, "workstreams")):
+        for dp, dn, fn in os.walk(r):
+            if LANE in dp or "/node_modules" in dp or "/.git" in dp or "/imports/" in dp:
+                continue
+            rel_dp = os.path.relpath(dp, VAULT)
+            if any(rel_dp == e or rel_dp.startswith(e + "/") for e in EXCLUDE):
+                dn[:] = []
+                continue
+            for f in fn:
+                if f.startswith(".") or not f.endswith((".md", ".txt")) or f == "LANE.md":
+                    continue
+                universe += 1
+                if os.path.join(rel_dp, f) in judged_srcs:
+                    judged_n += 1
+                    continue
+                try:
+                    m = os.path.getmtime(os.path.join(dp, f))
+                except OSError:
+                    continue
+                if wm_file is not None and m <= wm_file:
+                    stranded += 1
+                else:
+                    fresh += 1
+    return {"processable": universe, "judged_ever": judged_n,
+            "stranded_pre_watermark": stranded, "unjudged_in_window": fresh}
+
+
 if not a.dry:
     if judgments:
         with open(JUDGMENTS, "a", encoding="utf-8") as jf:
@@ -432,10 +514,17 @@ if not a.dry:
                 jf.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
     for pr in proposals:
         open(os.path.join(PROP, pr["slug"] + ".md"), "w").write(pr["card"])
+    cov = _coverage()
+    pending_now = len(glob.glob(PROP + "/*.md"))
     lines = [f"# Archivist digest — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
              f"_{len(proposals)} proposal(s) from {judged} new item(s). Approve: `curator-approve <slug>`  ·  drop: `curator-reject <slug>`._", ""]
     if deferred:
-        lines.insert(2, f"_{len(deferred)} newer item(s) beyond --max were deferred; the watermark is held so they re-enter next run._")
+        if a.since_days is None:
+            lines.insert(2, f"_{len(deferred)} newer item(s) beyond --max were deferred; the watermark is held so they re-enter next run._")
+        else:
+            lines.insert(2, f"_{len(deferred)} in-window item(s) beyond --max remain; re-run the same backfill command to continue draining._")
+    lines.insert(2, f"_Coverage: {cov['processable']} processable · {cov['judged_ever']} judged-ever · "
+                    f"{cov['stranded_pre_watermark']} stranded pre-watermark · {cov['unjudged_in_window']} awaiting · {pending_now} pending._")
     for pr in proposals:
         tag = "UPDATE " + pr["update_of"] if pr.get("update_of") else "new"
         lines.append(f"- **{pr['slug']}** ({pr['type']}, {pr['confidence']}, {tag}) — {pr['reason']}\n  from `{pr['src']}`")
@@ -444,15 +533,19 @@ if not a.dry:
                "judged": judged, "new_proposals": len(proposals),
                "errors": len(errored),
                "deferred": len(deferred),
-               "pending": len(glob.glob(PROP + "/*.md"))}, open(STATUS, "w"), indent=2)
+               "pending": pending_now,
+               "coverage": cov}, open(STATUS, "w"), indent=2)
     # hold the watermark below the oldest errored AND the oldest deferred file so
-    # both re-enter next run — overflow drains across runs instead of vanishing
-    wm_val = time.time()
-    if errored:
-        wm_val = min(wm_val, min(j["mtime"] for j in errored) - 1)
-    if deferred_mtimes:
-        wm_val = min(wm_val, min(deferred_mtimes) - 1)
-    open(WM, "w").write(str(wm_val))
+    # both re-enter next run — overflow drains across runs instead of vanishing.
+    # Explicit-window runs (--since-days) are backfills: they never move the
+    # nightly watermark — repeat runs drain via the content-hash store instead.
+    if a.since_days is None:
+        wm_val = time.time()
+        if errored:
+            wm_val = min(wm_val, min(j["mtime"] for j in errored) - 1)
+        if deferred_mtimes:
+            wm_val = min(wm_val, min(deferred_mtimes) - 1)
+        open(WM, "w").write(str(wm_val))
     # record content hashes for files we judged so sync re-touches skip next time
     # (errored files excluded: no hash means they are re-judged, not hash-skipped)
     for p in cands:
@@ -468,8 +561,12 @@ if not a.dry:
 
 print(f"curator-run: judged {judged} new item(s), proposed {len(proposals)} card(s)"
       + (f", skipped {skipped_by_hash} sync re-touch(es)" if skipped_by_hash else "")
-      + (f", deferred {len(deferred)} beyond --max (watermark held)" if deferred else "")
+      + (f", deferred {len(deferred)} beyond --max "
+         + ("(watermark held)" if a.since_days is None else "(re-run to continue)") if deferred else "")
       + (" [DRY: nothing written]" if a.dry else ""))
+if not a.dry:
+    print(f"curator-run: coverage — {cov['processable']} processable, {cov['judged_ever']} judged-ever, "
+          f"{cov['stranded_pre_watermark']} stranded, {cov['unjudged_in_window']} awaiting, {pending_now} pending")
 for pr in proposals:
     u = f" [UPDATE {pr['update_of']}]" if pr.get("update_of") else ""
     print(f"  + {pr['slug']} ({pr['type']}, {pr['confidence']}){u}: {pr['reason']}")
