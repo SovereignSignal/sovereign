@@ -3,8 +3,8 @@
 # curator-approve.sh [--force] <proposal> [reason...]
 #
 # Approve a curator proposal: validate its labels, move it into the matching knowledge/
-# subfolder, log the verdict (with the optional reason — the law wants the WHY on every
-# verdict, approvals included), commit. This is the ONLY path a proposal becomes trusted.
+# subfolder, log the verdict with the optional reason. The law wants the WHY on every
+# verdict, approvals included. Commit afterward. This is the ONLY path a proposal becomes trusted.
 # Refuses to overwrite an existing knowledge note (that is an update; merge by hand or --force).
 
 set -uo pipefail
@@ -31,7 +31,7 @@ fi
 
 git_scope_preflight || exit 1
 mv "$prop" "$dest"
-log_decision approved "$prop" "knowledge/$sub/$(basename "$dest")${reason:+ — $reason}"
+log_decision approved "$prop" "knowledge/$sub/$(basename "$dest")${reason:+: $reason}"
 if ! git_commit "curator: approve knowledge/$sub/$(basename "$dest")" \
   "$prop" "$dest" "$DECISIONS"; then
   echo "Warning: commit succeeded but push to origin failed (see above)."
