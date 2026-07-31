@@ -41,6 +41,23 @@ bin/brain-check.sh ~/my-brain
 
 A **curator** — an agent (a local model works well) that reads the raw loading dock and proposes promotions into the trusted `knowledge/` layer. It starts as a proposer: it drafts, you approve, and it earns more autonomy as its track record proves out. The brain works as plain files long before any agent touches it; the curator just makes it tend itself.
 
+## Archive evidence (optional)
+
+`bin/brain-evidence` is a separate, opt-in helper for exact trusted-card evidence and report-only freshness checks. It does not change `brain-load` or write to the brain.
+
+The helper requires an opaque sidecar and a private output directory outside the brain:
+
+```bash
+brain-evidence \
+  --root "$BRAIN_ROOT" \
+  --project-root "$BRAIN_EVIDENCE_STATE" \
+  --overlay "$BRAIN_EVIDENCE_STATE/enrollment.json" \
+  --ref opaque-reference \
+  --output "$BRAIN_EVIDENCE_STATE/runs/new-evidence.json"
+```
+
+Use `--audit-overlay` in place of `--ref` for a report-only aggregate freshness receipt. Detailed output can contain trusted text and identifiers, so keep the state directory private. Standard output contains only a sanitized receipt. Missing temporal fields remain findings; the helper never invents or backfills dates.
+
 ## License
 
 MIT (intended). Fork freely.
