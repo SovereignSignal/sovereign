@@ -69,7 +69,7 @@ def evaluate_freshness(rows: Iterable[Dict[str, Any]], today: date, known_paths:
         if (
             freshness_class in WINDOWS
             and verified not in (None, False)
-            and row.get("status", "current") == "current"
+            and row.get("status") in (None, "", "current")
             and (today - verified).days > WINDOWS[freshness_class]
         ):
             _add(findings, reference, "overdue_verification")

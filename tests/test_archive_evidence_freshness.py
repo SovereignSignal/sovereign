@@ -58,6 +58,23 @@ class FreshnessTests(unittest.TestCase):
         self.assertEqual(result["counts"], {"overdue_verification": 1})
         self.assertFalse(result["blocking"])
 
+    def test_null_status_does_not_suppress_report_only_overdue_finding(self):
+        rows = [
+            {
+                "opaque_ref": "ref-1",
+                "enrolled": True,
+                "as_of": None,
+                "verified_at": "2026-06-01",
+                "freshness_class": "operational",
+                "status": None,
+            }
+        ]
+
+        result = evaluate_freshness(rows, today=date(2026, 7, 30), known_paths=set())
+
+        self.assertEqual(result["counts"], {"missing_as_of": 1, "overdue_verification": 1})
+        self.assertFalse(result["blocking"])
+
     def test_invalid_class_status_and_missing_supersession_target_block(self):
         rows = [
             {
