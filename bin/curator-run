@@ -17,10 +17,11 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
                     this at a cloud endpoint is an explicit owner decision, never a default.
   CURATOR_MODEL     model id (default: gpt-oss:120b)
   CURATOR_KEYFILE   file holding the API key, if the endpoint needs one (default: none)
+  ARCHIVIST_AUTO_PROMOTE_MAX  per-run cap on gear-gated auto-promotions (default 5)
 
-Usage: curator-run [--since-days N] [--max N] [--dry]
+Usage: curator-run [--since-days N] [--max N] [--dry] [--self-test]
 """
-import os, re, json, glob, sys, time, argparse, hashlib, urllib.request
+import os, re, json, glob, sys, time, argparse, hashlib, urllib.request, subprocess
 from datetime import datetime, timezone
 
 def _pointer(path):
@@ -36,6 +37,8 @@ PROP = os.path.join(LANE, "proposals"); INBOX = os.path.join(LANE, "INBOX.md")
 STATUS = os.path.join(LANE, "status.json"); WM = os.path.join(LANE, ".last-run")
 HASHSTORE = os.path.join(LANE, ".content-hashes.json")
 JUDGMENTS = os.path.join(LANE, "judgments.jsonl")
+GEARS = os.path.join(LANE, "gears.json")
+META = os.path.join(PROP, ".meta.json")
 K = os.path.join(VAULT, "knowledge")
 # Local by default — the law: machine writers to knowledge/ run on owner-controlled
 # compute. Cloud is an explicit opt-in via CURATOR_ENDPOINT, never the shipped default.
@@ -56,7 +59,71 @@ ap.add_argument("--since-days", type=float, default=None, help="lookback window 
 ap.add_argument("--max", type=int, default=40, help="max new items to judge this run")
 ap.add_argument("--dry", action="store_true", help="judge and report, write nothing")
 ap.add_argument("--init", action="store_true", help="set the watermark to now (forward-only) and exit")
+ap.add_argument("--self-test", action="store_true", help="run the auto-promote decision-logic self-test and exit")
 a = ap.parse_args()
+
+
+def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promoted_so_far, cap):
+    """Pure decision: may this proposal auto-promote as an act-and-report UPDATE?
+
+    Fires ONLY when all hold: the type's gears rule lists this confidence in
+    auto_approve_update_confidence, update_of resolved to an EXISTING knowledge
+    card of the SAME type, and the per-run cap has room. Absent or empty grant
+    field = never. New-card auto-promote (the auto_approve_confidence field) is
+    intentionally NOT implemented: new cards always face the owner's gate.
+    Returns (True, "") or (False, why-not)."""
+    if typ == "entity":
+        # HARD LAW (CLAUDE.md never-graduate list): "New entity cards always
+        # stay at ask-first." Entities never auto-promote regardless of what
+        # gears.json says — a config typo must not override the standard.
+        return False, "entity: never graduates past ask-first (law)"
+    if not update_of:
+        return False, "not an update — new cards stay at the owner's gate"
+    rule = (rules or {}).get(typ) or {}
+    allowed = rule.get("auto_approve_update_confidence")
+    if not isinstance(allowed, list) or not allowed:
+        return False, "no auto_approve_update_confidence grant for this type"
+    if confidence not in allowed:
+        return False, f"confidence '{confidence}' not in grant {allowed}"
+    if target_type != typ:
+        return False, "update_of target missing or not a card of the same type"
+    if promoted_so_far >= cap:
+        return False, f"per-run auto-promote cap reached ({cap})"
+    return True, ""
+
+
+def _self_test():
+    """Assert the auto-promote decision table. No vault, no network, no writes."""
+    G = {"concept": {"auto_approve_update_confidence": ["high"]},
+         "entity": {"auto_approve_update_confidence": ["high"]},  # illegal grant — must still refuse
+         "synthesis": {}}
+    cases = [
+        ("granted concept + high + resolving update fires", True,  ("concept", "high", "card-a", "concept", G, 0, 5)),
+        ("entity hard-refused even when gears grant it",    False, ("entity", "high", "card-b", "entity", G, 0, 5)),
+        ("confidence not in grant list",                    False, ("concept", "med", "card-a", "concept", G, 0, 5)),
+        ("absent grant field = never",                      False, ("synthesis", "high", "card-c", "synthesis", G, 0, 5)),
+        ("no update_of (new card) = never",                 False, ("concept", "high", None, None, G, 0, 5)),
+        ("update_of target missing = never",                False, ("concept", "high", "ghost", None, G, 0, 5)),
+        ("target type mismatch = never",                    False, ("concept", "high", "card-b", "entity", G, 0, 5)),
+        ("per-run cap reached = never",                     False, ("concept", "high", "card-a", "concept", G, 5, 5)),
+        ("cap zero disables entirely",                      False, ("concept", "high", "card-a", "concept", G, 0, 0)),
+        ("empty rules = never",                             False, ("concept", "high", "card-a", "concept", {}, 0, 5)),
+        ("granted synthesis fires (mechanism is general)",  True,  ("synthesis", "high", "card-c", "synthesis",
+                                                                    {"synthesis": {"auto_approve_update_confidence": ["high"]}}, 0, 5)),
+    ]
+    failed = 0
+    for name, want, args in cases:
+        got, why = _decide_auto_promote(*args)
+        ok = got is want
+        failed += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
+    print(f"curator-run --self-test: {len(cases) - failed}/{len(cases)} passed")
+    return 1 if failed else 0
+
+
+if a.self_test:
+    raise SystemExit(_self_test())
+
 os.makedirs(PROP, exist_ok=True)
 if a.init:
     open(WM, "w").write(str(time.time()))
@@ -230,6 +297,122 @@ _exemplars = _house_exemplars() or [_FALLBACK_EXEMPLAR]
 def _knowledge_path(slug):
     hits = glob.glob(K + f"/**/{slug}.md", recursive=True)
     return hits[0] if hits else None
+
+
+def _note_type(path):
+    """Frontmatter `type:` label of a note, or None."""
+    try:
+        t = open(path, encoding="utf-8", errors="ignore").read(2000)
+    except OSError:
+        return None
+    if not t.startswith("---"):
+        return None
+    end = t.find("\n---", 3)
+    m = re.search(r"^type:\s*(\S+)", t[3 : end if end != -1 else len(t)], re.M)
+    return m.group(1) if m else None
+
+
+def _load_gears():
+    """gears.json — the OWNER's autonomy grants for this lane. Unreadable or
+    absent = no grants (everything stays ask-first). Never raises."""
+    try:
+        g = json.load(open(GEARS, encoding="utf-8"))
+        return g if isinstance(g, dict) else {}
+    except OSError:
+        return {}
+    except ValueError:
+        print("curator-run: gears.json unparsable — treating as NO grants (ask-first)", file=sys.stderr)
+        return {}
+
+
+def _load_meta():
+    """proposals/.meta.json — sidecar ledger of confidence/update_of/judged_at per
+    pending proposal, for the gate and future tooling. Kept OUT of frontmatter so
+    candidate cards stay clean for the validator and never carry judge metadata."""
+    try:
+        m = json.load(open(META, encoding="utf-8"))
+        return m if isinstance(m, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _auto_cap():
+    try:
+        return max(0, int(os.environ.get("ARCHIVIST_AUTO_PROMOTE_MAX", "5")))
+    except ValueError:
+        print("curator-run: bad ARCHIVIST_AUTO_PROMOTE_MAX — using default 5", file=sys.stderr)
+        return 5
+
+
+def _auto_promote(props, meta):
+    """Act-and-report gear: auto-approve qualifying UPDATE proposals through the
+    same deterministic gate the owner uses (curator-approve.sh --force), acting
+    as CURATOR_ACTOR=auto-gear so the decisions log shows exactly who moved it.
+    Every action lands in the digest with its revert path; any failure leaves
+    the proposal pending under its original name. Never raises, never silent."""
+    out = {"applied": [], "failures": []}
+    rules = _load_gears().get("rules") or {}
+    cap = _auto_cap()
+    approve = os.path.join(os.path.dirname(os.path.realpath(__file__)), "curator-approve.sh")
+    for pr in props:
+        typ, slug, target = pr.get("type"), pr.get("slug"), pr.get("update_of")
+        tp = _knowledge_path(target) if target else None
+        ok, _why_not = _decide_auto_promote(typ, pr.get("confidence"), target,
+                                            _note_type(tp) if tp else None,
+                                            rules, len(out["applied"]), cap)
+        if not ok:
+            continue  # stays pending for the owner's gate — the normal path
+        if target in {x["target"] for x in out["applied"]}:
+            continue  # second update to the same card this run: owner's call, stays pending
+        src_path = os.path.join(PROP, slug + ".md")
+        dst_path = os.path.join(PROP, target + ".md")
+        renamed = False
+        if slug != target:
+            # the gate lands proposals under their own filename; an update must
+            # land AS the target card, so rename inside proposals/ first
+            if os.path.exists(dst_path):
+                out["failures"].append({"slug": slug, "target": target,
+                                        "error": "a pending proposal already holds the target filename"})
+                continue
+            try:
+                os.rename(src_path, dst_path)
+                renamed = True
+                if slug in meta:
+                    meta[target] = meta.pop(slug)
+            except OSError as exc:
+                out["failures"].append({"slug": slug, "target": target, "error": str(exc)[:300]})
+                continue
+        env = {**os.environ, "CURATOR_ACTOR": "auto-gear",
+               "SOVS_VAULT": VAULT, "CURATOR_LANE": LANE_NAME}
+        note = (f"act-and-report: high-confidence update to existing {typ} card "
+                "(gear auto_approve_update_confidence)")
+        try:
+            r = subprocess.run([approve, "--force", target, note], env=env,
+                               capture_output=True, text=True, timeout=180)
+            rc, errtxt = r.returncode, (r.stderr or r.stdout or "").strip()
+        except Exception as exc:  # missing script, timeout — never crash the run
+            rc, errtxt = -1, str(exc)[:300]
+        if rc == 0:
+            try:
+                commit = subprocess.run(["git", "-C", VAULT, "rev-parse", "--short", "HEAD"],
+                                        capture_output=True, text=True, timeout=30).stdout.strip()
+            except Exception:
+                commit = ""
+            out["applied"].append({"slug": slug, "target": target, "type": typ,
+                                   "confidence": pr.get("confidence"),
+                                   "reason": pr.get("reason", ""), "commit": commit})
+        else:
+            if renamed:  # leave the proposal pending under its original name
+                try:
+                    os.rename(dst_path, src_path)
+                    if target in meta:
+                        meta[slug] = meta.pop(target)
+                except OSError:
+                    pass
+            out["failures"].append({"slug": slug, "target": target, "error": errtxt[-300:]})
+            print(f"curator-run: auto-promote FAILED for {slug} -> {target}, left pending: {errtxt[-200:]}",
+                  file=sys.stderr)
+    return out
 
 SYS = (
  "You are the curator of a plain-text knowledge brain. "
@@ -507,6 +690,8 @@ def _coverage():
             "stranded_pre_watermark": stranded, "unjudged_in_window": fresh}
 
 
+auto = {"applied": [], "failures": []}
+applied_slugs = set()
 if not a.dry:
     if judgments:
         with open(JUDGMENTS, "a", encoding="utf-8") as jf:
@@ -514,6 +699,19 @@ if not a.dry:
                 jf.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
     for pr in proposals:
         open(os.path.join(PROP, pr["slug"] + ".md"), "w").write(pr["card"])
+    # sidecar ledger: judge metadata per pending proposal (see _load_meta)
+    meta = _load_meta()
+    _meta_now = datetime.now(timezone.utc).astimezone().isoformat()
+    for pr in proposals:
+        meta[pr["slug"]] = {"confidence": pr.get("confidence") or "",
+                            "update_of": pr.get("update_of"),
+                            "judged_at": _meta_now}
+    # act-and-report: gear-gated auto-promotion of qualifying UPDATE proposals
+    auto = _auto_promote(proposals, meta)
+    applied_slugs = {x["slug"] for x in auto["applied"]}
+    # prune the ledger to files still pending (promoted/approved/rejected drop out)
+    meta = {k: v for k, v in meta.items() if os.path.exists(os.path.join(PROP, k + ".md"))}
+    json.dump(meta, open(META, "w", encoding="utf-8"), indent=1)
     cov = _coverage()
     pending_now = len(glob.glob(PROP + "/*.md"))
     lines = [f"# Archivist digest — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -526,11 +724,23 @@ if not a.dry:
     lines.insert(2, f"_Coverage: {cov['processable']} processable · {cov['judged_ever']} judged-ever · "
                     f"{cov['stranded_pre_watermark']} stranded pre-watermark · {cov['unjudged_in_window']} awaiting · {pending_now} pending._")
     for pr in proposals:
+        if pr["slug"] in applied_slugs:
+            continue  # already landed via the act-and-report gear; listed below
         tag = "UPDATE " + pr["update_of"] if pr.get("update_of") else "new"
         lines.append(f"- **{pr['slug']}** ({pr['type']}, {pr['confidence']}, {tag}) — {pr['reason']}\n  from `{pr['src']}`")
+    if auto["applied"] or auto["failures"]:
+        lines += ["", "## Auto-applied (act-and-report)",
+                  "_Applied by the `auto_approve_update_confidence` gear (actor `auto-gear`); each line carries its revert path._"]
+        for x in auto["applied"]:
+            lines.append(f"- **{x['target']}** ({x['type']}, {x['confidence']}, UPDATE) — {x['reason']}\n"
+                         f"  revert: `git -C \"{VAULT}\" revert {x['commit'] or '<promotion-commit>'} && curator-reject {x['target']}`")
+        for x in auto["failures"]:
+            lines.append(f"- FAILED (left pending): {x['slug']} -> {x['target']} — {x['error']}")
     open(INBOX, "w").write("\n".join(lines) + "\n")
     json.dump({"generated_at": datetime.now(timezone.utc).astimezone().isoformat(), "lane": LANE_NAME,
                "judged": judged, "new_proposals": len(proposals),
+               "auto_promoted": len(auto["applied"]),
+               "auto_promote_failures": len(auto["failures"]),
                "errors": len(errored),
                "deferred": len(deferred),
                "pending": pending_now,
@@ -567,9 +777,12 @@ print(f"curator-run: judged {judged} new item(s), proposed {len(proposals)} card
 if not a.dry:
     print(f"curator-run: coverage — {cov['processable']} processable, {cov['judged_ever']} judged-ever, "
           f"{cov['stranded_pre_watermark']} stranded, {cov['unjudged_in_window']} awaiting, {pending_now} pending")
+    print(f"curator-run: auto-promoted {len(auto['applied'])} update(s) (act-and-report)"
+          + (f", {len(auto['failures'])} auto-promote FAILURE(s) left pending" if auto["failures"] else ""))
 for pr in proposals:
     u = f" [UPDATE {pr['update_of']}]" if pr.get("update_of") else ""
-    print(f"  + {pr['slug']} ({pr['type']}, {pr['confidence']}){u}: {pr['reason']}")
+    tag = " [AUTO-APPLIED]" if pr["slug"] in applied_slugs else ""
+    print(f"  + {pr['slug']} ({pr['type']}, {pr['confidence']}){u}{tag}: {pr['reason']}")
 
 if errored:
     print(f"curator-run: {len(errored)} of {judged} judgment(s) FAILED against {ENDPOINT}; "
