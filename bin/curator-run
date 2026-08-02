@@ -18,6 +18,7 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
   CURATOR_MODEL     model id (default: gpt-oss:120b)
   CURATOR_KEYFILE   file holding the API key, if the endpoint needs one (default: none)
   ARCHIVIST_AUTO_PROMOTE_MAX  per-run cap on gear-gated auto-promotions (default 5)
+  ARCHIVIST_AUTO_REJECT_MAX   per-run cap on policy auto-rejections (default 10)
 
 Usage: curator-run [--since-days N] [--max N] [--dry] [--self-test]
 """
@@ -53,6 +54,10 @@ INCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_INCLUDE", "").s
 PROFILE = os.environ.get("CURATOR_PROFILE", os.path.join(LANE, "profile.md"))
 # optional owner taste rules (keep/skip policy learned from the owner's verdicts); ships empty, owner-edited
 TASTE = os.environ.get("CURATOR_TASTE", os.path.join(LANE, "taste.md"))
+# optional owner auto-reject classes: proposal classes the owner ALWAYS rejects at the
+# gate, declared as backticked kebab-case slugs. Absent file = feature off. Ships
+# absent, owner-edited — see _decide_auto_reject for the exact firing conditions.
+AUTOREJECT = os.environ.get("CURATOR_AUTOREJECT", os.path.join(LANE, "auto-reject.md"))
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--since-days", type=float, default=None, help="lookback window if no watermark")
@@ -92,8 +97,69 @@ def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promote
     return True, ""
 
 
+def _decide_auto_reject(typ, auto_reject_class, classes, rejected_so_far, cap):
+    """Pure decision: may this drafted proposal be auto-rejected under the lane's
+    auto-reject.md policy?
+
+    Fires ONLY when all hold: the policy file declared at least one class (absent
+    or empty file = feature off), the judge flagged one of THOSE classes (a
+    hallucinated class never fires), and the per-run cap has room. Unlike
+    _decide_auto_promote there is NO type gate: entities, concepts, and syntheses
+    are all eligible. Deliberate — rejection is non-destructive and owner-
+    reversible (the file lands in rejected/, git-tracked), so the never-graduate
+    law for entity PROMOTION does not bind here.
+    Returns (True, "") or (False, why-not)."""
+    if not classes:
+        return False, "no auto-reject.md policy classes — feature off"
+    if not auto_reject_class:
+        return False, "judge flagged no auto_reject_class"
+    if auto_reject_class not in classes:
+        return False, f"class '{auto_reject_class}' not declared in auto-reject.md"
+    if rejected_so_far >= cap:
+        return False, f"per-run auto-reject cap reached ({cap})"
+    return True, ""
+
+
+def _auto_reject(props, classes, cap, reject_script):
+    """Act-and-report: immediately reject drafted proposals the judge flagged into
+    an owner-declared auto-reject class, through the same deterministic gate the
+    owner uses (curator-reject.sh), acting as CURATOR_ACTOR=auto-taste so the
+    decisions log shows exactly who moved it. The proposal file is written first
+    and the reject is non-destructive (rejected/, git), so the owner can resurrect
+    any of them. Any reject failure leaves the proposal QUEUED for the owner's
+    gate (fail-open), never crashes the run. Never raises, never silent.
+    Defined up here (unlike _auto_promote) because --self-test exercises its
+    fail-open path; it takes everything it needs as arguments for that reason."""
+    out = {"applied": [], "failures": []}
+    for pr in props:
+        cls, slug = pr.get("auto_reject_class"), pr.get("slug")
+        ok, _why_not = _decide_auto_reject(pr.get("type"), cls, classes,
+                                           len(out["applied"]), cap)
+        if not ok:
+            continue  # queues for the owner's gate — the normal path
+        env = {**os.environ, "CURATOR_ACTOR": "auto-taste",
+               "SOVS_VAULT": VAULT, "CURATOR_LANE": LANE_NAME}
+        note = f"auto-taste: {cls} (lane auto-reject.md)"
+        try:
+            r = subprocess.run([reject_script, slug, note], env=env,
+                               capture_output=True, text=True, timeout=180)
+            rc, errtxt = r.returncode, (r.stderr or r.stdout or "").strip()
+        except Exception as exc:  # missing script, timeout — never crash the run
+            rc, errtxt = -1, str(exc)[:300]
+        if rc == 0:
+            out["applied"].append({"slug": slug, "class": cls,
+                                   "type": pr.get("type"),
+                                   "reason": pr.get("reason", "")})
+        else:
+            out["failures"].append({"slug": slug, "class": cls, "error": errtxt[-300:]})
+            print(f"curator-run: auto-reject FAILED for {slug}, left queued for the gate: {errtxt[-200:]}",
+                  file=sys.stderr)
+    return out
+
+
 def _self_test():
-    """Assert the auto-promote decision table. No vault, no network, no writes."""
+    """Assert the auto-promote and auto-reject decision tables plus the
+    auto-reject fail-open wiring. No vault, no network, no writes."""
     G = {"concept": {"auto_approve_update_confidence": ["high"]},
          "entity": {"auto_approve_update_confidence": ["high"]},  # illegal grant — must still refuse
          "synthesis": {}}
@@ -111,13 +177,51 @@ def _self_test():
         ("granted synthesis fires (mechanism is general)",  True,  ("synthesis", "high", "card-c", "synthesis",
                                                                     {"synthesis": {"auto_approve_update_confidence": ["high"]}}, 0, 5)),
     ]
+    C = ["news-no-engagement", "others-grant-rounds"]  # stand-in declared classes
+    reject_cases = [
+        ("flagged declared class fires",                    True,  ("concept", "news-no-engagement", C, 0, 10)),
+        ("entity flag fires (rejection is reversible)",     True,  ("entity", "others-grant-rounds", C, 0, 10)),
+        ("synthesis flag fires (all types eligible)",       True,  ("synthesis", "news-no-engagement", C, 0, 10)),
+        ("absent policy file (no classes) = feature off",   False, ("concept", "news-no-engagement", [], 0, 10)),
+        ("no class flagged = queues normally",              False, ("concept", None, C, 0, 10)),
+        ("undeclared class (hallucination) = queues",       False, ("concept", "everything-boring", C, 0, 10)),
+        ("per-run cap reached = queues normally",           False, ("concept", "news-no-engagement", C, 10, 10)),
+        ("cap zero disables entirely",                      False, ("concept", "others-grant-rounds", C, 0, 0)),
+    ]
     failed = 0
+    print(" auto-promote decision table (_decide_auto_promote):")
     for name, want, args in cases:
         got, why = _decide_auto_promote(*args)
         ok = got is want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
-    print(f"curator-run --self-test: {len(cases) - failed}/{len(cases)} passed")
+    print(" auto-reject decision table (_decide_auto_reject):")
+    for name, want, args in reject_cases:
+        got, why = _decide_auto_reject(*args)
+        ok = got is want
+        failed += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
+    print(" auto-reject wiring (fail-open; stderr FAILED lines below are the expected loudness):")
+    _prop = [{"slug": "stub-prop", "type": "entity", "reason": "stub",
+              "auto_reject_class": "news-no-engagement"}]
+    fn_cases = []
+    r = _auto_reject(list(_prop), C, 10, "/usr/bin/false")
+    fn_cases.append(("reject-script failure fails open (left queued, run continues)",
+                     not r["applied"] and len(r["failures"]) == 1))
+    r = _auto_reject(list(_prop), C, 10, "/nonexistent/curator-reject.sh")
+    fn_cases.append(("missing reject script fails open, never raises",
+                     not r["applied"] and len(r["failures"]) == 1))
+    r = _auto_reject(list(_prop), C, 10, "/usr/bin/true")
+    fn_cases.append(("reject-script success records the reject",
+                     len(r["applied"]) == 1 and not r["failures"]))
+    r = _auto_reject(list(_prop), [], 10, "/usr/bin/true")
+    fn_cases.append(("no policy classes = wiring never invokes the script",
+                     not r["applied"] and not r["failures"]))
+    for name, ok in fn_cases:
+        failed += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    total = len(cases) + len(reject_cases) + len(fn_cases)
+    print(f"curator-run --self-test: {total - failed}/{total} passed")
     return 1 if failed else 0
 
 
@@ -227,6 +331,13 @@ if os.path.exists(PROFILE):
 _taste = ""
 if os.path.exists(TASTE):
     _taste = open(TASTE, encoding="utf-8", errors="ignore").read().strip()
+_autoreject = ""
+if os.path.exists(AUTOREJECT):
+    _autoreject = open(AUTOREJECT, encoding="utf-8", errors="ignore").read().strip()
+# declared class slugs = list lines opening with a backticked kebab-case slug
+# (prose may backtick other tokens without declaring them); the judge may only
+# flag THESE (a hallucinated class never fires — _decide_auto_reject)
+_autoreject_classes = sorted(set(re.findall(r"(?m)^\s*[-*]\s*`([a-z0-9][a-z0-9-]*)`", _autoreject)))
 
 
 _WIKILINK = re.compile(r'\[\[([^\]|]+?)(\|[^\]]+?)?\]\]')
@@ -344,6 +455,14 @@ def _auto_cap():
         return 5
 
 
+def _auto_reject_cap():
+    try:
+        return max(0, int(os.environ.get("ARCHIVIST_AUTO_REJECT_MAX", "10")))
+    except ValueError:
+        print("curator-run: bad ARCHIVIST_AUTO_REJECT_MAX — using default 10", file=sys.stderr)
+        return 10
+
+
 def _auto_promote(props, meta):
     """Act-and-report gear: auto-approve qualifying UPDATE proposals through the
     same deterministic gate the owner uses (curator-approve.sh --force), acting
@@ -453,6 +572,12 @@ SYS = (
  "owner founded, owns, or operates an org based on tracker fields. State only what the source "
  "supports; never invent relationships.\n\n"
  + (f"OWNER TASTE - specific keep/skip rules the owner has set; these override general judgment:\n{_taste}\n\n" if _taste else "")
+ + (("AUTO-REJECT CLASSES - proposal classes the owner ALWAYS rejects at the gate (the lane's "
+     "auto-reject.md policy). When a candidate you would otherwise judge falls into one of these "
+     "classes, set promote true-or-false as usual and fill every other field exactly as usual, BUT "
+     "ALSO set auto_reject_class to that class's backticked slug; otherwise set it to null. "
+     "curator-run then rejects the drafted proposal at the gate itself (non-destructive, "
+     "owner-reversible). The classes:\n" + _autoreject + "\n\n") if _autoreject else "")
  + "CARD SHAPE: open with ONE sentence saying what the thing is. Then 3-6 short key-fact bullets "
  "(amounts, dates, people, status - bold the labels). Link related brain topics with [[slug]]. "
  "Close with where living detail sits (a workstreams/ path) when relevant. Dense, scannable, one screen.\n\n"
@@ -474,7 +599,8 @@ SYS = (
  + 'Respond with ONE JSON object: {"promote":true|false,"reason":"<=20 words","type":"entity|concept|synthesis|null",'
  '"slug":"kebab-case","title":"","body":"factual prose, one screen, [[links]], NO markdown heading",'
  '"why":"1-2 sentences: why this matters to the owner\'s work, written for a future reader",'
- '"confidence":"high|med|low","update_of":"existing-slug or null"}. '
+ '"confidence":"high|med|low","update_of":"existing-slug or null"'
+ + (',"auto_reject_class":"declared class slug or null"' if _autoreject else '') + '}. '
  "If promote is false the other fields may be empty. "
  'IMPORTANT: in body text, link brain topics with [[slug]] but NEVER wrap a URL in [[...]] '
  '\u2014 use plain URLs (e.g. https://example.com) and reserve [[...]] only for internal brain slugs. '
@@ -573,7 +699,8 @@ for p in cands:
     judgments.append({**base_judgment, "promote": True,
                       "reason": v.get("reason", ""), "type": typ,
                       "slug": slug, "confidence": v.get("confidence", ""),
-                      "update_of": v.get("update_of")})
+                      "update_of": v.get("update_of"),
+                      "auto_reject_class": v.get("auto_reject_class")})
     if slug in have or slug in pending:
         v["update_of"] = v.get("update_of") or slug
     # topic dedup across runs and passes: exact or near (substring, long keys
@@ -623,7 +750,8 @@ for p in cands:
         body = f"**Why this matters:** {why}\n\n{body}"
     card = (f"---\ntype: {typ}\nsource: {src}\ncreated: {datetime.now().strftime('%Y-%m-%d')}\n"
             f"title: {v.get('title', slug)}\n---\n\n# {v.get('title', slug)}\n\n{body}\n")
-    proposals.append({**{k: v.get(k) for k in ("slug", "type", "title", "reason", "confidence", "update_of")},
+    proposals.append({**{k: v.get(k) for k in ("slug", "type", "title", "reason", "confidence",
+                                               "update_of", "auto_reject_class")},
                       "src": src, "card": card})
 
 # Sovereign-inference law: a failed local run fails loudly, never silently.
@@ -691,7 +819,9 @@ def _coverage():
 
 
 auto = {"applied": [], "failures": []}
+autorej = {"applied": [], "failures": []}
 applied_slugs = set()
+autorej_slugs = set()
 if not a.dry:
     if judgments:
         with open(JUDGMENTS, "a", encoding="utf-8") as jf:
@@ -706,8 +836,14 @@ if not a.dry:
         meta[pr["slug"]] = {"confidence": pr.get("confidence") or "",
                             "update_of": pr.get("update_of"),
                             "judged_at": _meta_now}
+    # act-and-report: policy auto-reject of judge-flagged classes. Runs BEFORE
+    # auto-promote — an owner always-reject ruling outranks a gear grant, and a
+    # rejected file must never be considered for promotion in the same run.
+    autorej = _auto_reject(proposals, _autoreject_classes, _auto_reject_cap(),
+                           os.path.join(os.path.dirname(os.path.realpath(__file__)), "curator-reject.sh"))
+    autorej_slugs = {x["slug"] for x in autorej["applied"]}
     # act-and-report: gear-gated auto-promotion of qualifying UPDATE proposals
-    auto = _auto_promote(proposals, meta)
+    auto = _auto_promote([pr for pr in proposals if pr["slug"] not in autorej_slugs], meta)
     applied_slugs = {x["slug"] for x in auto["applied"]}
     # prune the ledger to files still pending (promoted/approved/rejected drop out)
     meta = {k: v for k, v in meta.items() if os.path.exists(os.path.join(PROP, k + ".md"))}
@@ -726,6 +862,8 @@ if not a.dry:
     for pr in proposals:
         if pr["slug"] in applied_slugs:
             continue  # already landed via the act-and-report gear; listed below
+        if pr["slug"] in autorej_slugs:
+            continue  # rejected by the lane's auto-reject policy; listed below
         tag = "UPDATE " + pr["update_of"] if pr.get("update_of") else "new"
         lines.append(f"- **{pr['slug']}** ({pr['type']}, {pr['confidence']}, {tag}) — {pr['reason']}\n  from `{pr['src']}`")
     if auto["applied"] or auto["failures"]:
@@ -736,11 +874,22 @@ if not a.dry:
                          f"  revert: `git -C \"{VAULT}\" revert {x['commit'] or '<promotion-commit>'} && curator-reject {x['target']}`")
         for x in auto["failures"]:
             lines.append(f"- FAILED (left pending): {x['slug']} -> {x['target']} — {x['error']}")
+    if autorej["applied"] or autorej["failures"]:
+        lines += ["", "## Auto-rejected (act-and-report)",
+                  "_Rejected by the lane's `auto-reject.md` policy (actor `auto-taste`). Nothing is destroyed: "
+                  "each file sits in `rejected/`, and the owner can resurrect any of them (move it back to "
+                  "`proposals/` and approve)._"]
+        for x in autorej["applied"]:
+            lines.append(f"- **{x['slug']}** ({x['type']}, class `{x['class']}`) — {x['reason']}")
+        for x in autorej["failures"]:
+            lines.append(f"- FAILED (left queued for the gate): {x['slug']} (class `{x['class']}`) — {x['error']}")
     open(INBOX, "w").write("\n".join(lines) + "\n")
     json.dump({"generated_at": datetime.now(timezone.utc).astimezone().isoformat(), "lane": LANE_NAME,
                "judged": judged, "new_proposals": len(proposals),
                "auto_promoted": len(auto["applied"]),
                "auto_promote_failures": len(auto["failures"]),
+               "auto_rejected": len(autorej["applied"]),
+               "auto_reject_failures": len(autorej["failures"]),
                "errors": len(errored),
                "deferred": len(deferred),
                "pending": pending_now,
@@ -779,9 +928,12 @@ if not a.dry:
           f"{cov['stranded_pre_watermark']} stranded, {cov['unjudged_in_window']} awaiting, {pending_now} pending")
     print(f"curator-run: auto-promoted {len(auto['applied'])} update(s) (act-and-report)"
           + (f", {len(auto['failures'])} auto-promote FAILURE(s) left pending" if auto["failures"] else ""))
+    print(f"curator-run: auto-rejected {len(autorej['applied'])} proposal(s) via lane auto-reject.md (act-and-report)"
+          + (f", {len(autorej['failures'])} auto-reject FAILURE(s) left queued" if autorej["failures"] else ""))
 for pr in proposals:
     u = f" [UPDATE {pr['update_of']}]" if pr.get("update_of") else ""
-    tag = " [AUTO-APPLIED]" if pr["slug"] in applied_slugs else ""
+    tag = (" [AUTO-APPLIED]" if pr["slug"] in applied_slugs
+           else f" [AUTO-REJECTED: {pr.get('auto_reject_class')}]" if pr["slug"] in autorej_slugs else "")
     print(f"  + {pr['slug']} ({pr['type']}, {pr['confidence']}){u}{tag}: {pr['reason']}")
 
 if errored:
