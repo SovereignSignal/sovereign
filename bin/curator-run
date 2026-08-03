@@ -17,7 +17,8 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
                     this at a cloud endpoint is an explicit owner decision, never a default.
   CURATOR_MODEL     model id (default: gpt-oss:120b)
   CURATOR_KEYFILE   file holding the API key, if the endpoint needs one (default: none)
-  ARCHIVIST_AUTO_PROMOTE_MAX  per-run cap on gear-gated auto-promotions (default 5)
+  ARCHIVIST_AUTO_PROMOTE_MAX  per-run cap on gear-gated auto-promotions,
+                    updates + new concepts combined (default 5)
   ARCHIVIST_AUTO_REJECT_MAX   per-run cap on policy auto-rejections (default 10)
 
 Usage: curator-run [--since-days N] [--max N] [--dry] [--self-test]
@@ -73,9 +74,9 @@ def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promote
 
     Fires ONLY when all hold: the type's gears rule lists this confidence in
     auto_approve_update_confidence, update_of resolved to an EXISTING knowledge
-    card of the SAME type, and the per-run cap has room. Absent or empty grant
-    field = never. New-card auto-promote (the auto_approve_confidence field) is
-    intentionally NOT implemented: new cards always face the owner's gate.
+    card of the SAME type, and the shared per-run cap has room. Absent or empty
+    grant field = never. New-card auto-promote lives in the separate, narrower
+    _decide_auto_promote_new (concepts only — owner grant 2026-08-03).
     Returns (True, "") or (False, why-not)."""
     if typ == "entity":
         # HARD LAW (CLAUDE.md never-graduate list): "New entity cards always
@@ -92,6 +93,43 @@ def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promote
         return False, f"confidence '{confidence}' not in grant {allowed}"
     if target_type != typ:
         return False, "update_of target missing or not a card of the same type"
+    if promoted_so_far >= cap:
+        return False, f"per-run auto-promote cap reached ({cap})"
+    return True, ""
+
+
+def _decide_auto_promote_new(typ, confidence, update_of, collides, rules, promoted_so_far, cap):
+    """Pure decision: may this proposal auto-promote as an act-and-report NEW card?
+
+    Fires ONLY when all hold: the proposal is a NEW concept (no update_of), the
+    concept gears rule lists this confidence in auto_approve_confidence, the slug
+    collides with NO existing knowledge card (exact filename match in any
+    subfolder = the owner's call — queue normally, never --force), and the
+    per-run cap (SHARED with update auto-promotions) has room. Absent or empty
+    grant field = never.
+    Returns (True, "") or (False, why-not)."""
+    if typ == "entity":
+        # HARD LAW (CLAUDE.md never-graduate list): "New entity cards always
+        # stay at ask-first." Entities never auto-promote regardless of what
+        # gears.json says — a config typo must not override the standard.
+        return False, "entity: never graduates past ask-first (law)"
+    if typ != "concept":
+        # HARD-EXCLUDED in code, not just config: the 2026-08-03 owner grant
+        # covers HIGH-confidence NEW CONCEPT cards ONLY — "Entities and
+        # syntheses remain ask-first" (gears.json _grants_basis). Widening to
+        # syntheses is a NEW owner grant plus a code change, per the law that a
+        # gear grant resets when the pipeline that earned it changes.
+        return False, f"{typ}: new-card auto-promote is granted for concepts only (2026-08-03 grant)"
+    if update_of:
+        return False, "an update — the auto_approve_update_confidence gear's job"
+    rule = (rules or {}).get(typ) or {}
+    allowed = rule.get("auto_approve_confidence")
+    if not isinstance(allowed, list) or not allowed:
+        return False, "no auto_approve_confidence grant for this type"
+    if confidence not in allowed:
+        return False, f"confidence '{confidence}' not in grant {allowed}"
+    if collides:
+        return False, "slug collides with an existing knowledge card — owner's call, never --force"
     if promoted_so_far >= cap:
         return False, f"per-run auto-promote cap reached ({cap})"
     return True, ""
@@ -177,6 +215,23 @@ def _self_test():
         ("granted synthesis fires (mechanism is general)",  True,  ("synthesis", "high", "card-c", "synthesis",
                                                                     {"synthesis": {"auto_approve_update_confidence": ["high"]}}, 0, 5)),
     ]
+    GN = {"concept": {"auto_approve_confidence": ["high"]},
+          "entity": {"auto_approve_confidence": ["high"]},      # illegal grant — must still refuse
+          "synthesis": {"auto_approve_confidence": ["high"]}}   # illegal grant — must still refuse
+    new_cases = [
+        ("granted new concept + high + no collision fires", True,  ("concept", "high", None, False, GN, 0, 5)),
+        ("entity hard-refused even when gears grant it",    False, ("entity", "high", None, False, GN, 0, 5)),
+        ("synthesis hard-refused even when gears grant it", False, ("synthesis", "high", None, False, GN, 0, 5)),
+        ("update_of present = the update gear's job",       False, ("concept", "high", "card-a", False, GN, 0, 5)),
+        ("confidence not in grant list",                    False, ("concept", "med", None, False, GN, 0, 5)),
+        ("slug collision queues, never --force",            False, ("concept", "high", None, True, GN, 0, 5)),
+        ("absent grant field = never",                      False, ("concept", "high", None, False, {"concept": {}}, 0, 5)),
+        ("empty grant list = never",                        False, ("concept", "high", None, False,
+                                                                    {"concept": {"auto_approve_confidence": []}}, 0, 5)),
+        ("shared per-run cap reached = never",              False, ("concept", "high", None, False, GN, 5, 5)),
+        ("cap zero disables entirely",                      False, ("concept", "high", None, False, GN, 0, 0)),
+        ("empty rules = never",                             False, ("concept", "high", None, False, {}, 0, 5)),
+    ]
     C = ["news-no-engagement", "others-grant-rounds"]  # stand-in declared classes
     reject_cases = [
         ("flagged declared class fires",                    True,  ("concept", "news-no-engagement", C, 0, 10)),
@@ -192,6 +247,12 @@ def _self_test():
     print(" auto-promote decision table (_decide_auto_promote):")
     for name, want, args in cases:
         got, why = _decide_auto_promote(*args)
+        ok = got is want
+        failed += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
+    print(" new-card auto-promote decision table (_decide_auto_promote_new):")
+    for name, want, args in new_cases:
+        got, why = _decide_auto_promote_new(*args)
         ok = got is want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
@@ -220,7 +281,7 @@ def _self_test():
     for name, ok in fn_cases:
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
-    total = len(cases) + len(reject_cases) + len(fn_cases)
+    total = len(cases) + len(new_cases) + len(reject_cases) + len(fn_cases)
     print(f"curator-run --self-test: {total - failed}/{total} passed")
     return 1 if failed else 0
 
@@ -464,9 +525,15 @@ def _auto_reject_cap():
 
 
 def _auto_promote(props, meta):
-    """Act-and-report gear: auto-approve qualifying UPDATE proposals through the
-    same deterministic gate the owner uses (curator-approve.sh --force), acting
-    as CURATOR_ACTOR=auto-gear so the decisions log shows exactly who moved it.
+    """Act-and-report gears: auto-approve qualifying proposals through the same
+    deterministic gate the owner uses (curator-approve.sh), acting as
+    CURATOR_ACTOR=auto-gear so the decisions log shows exactly who moved it.
+    Two grants share ONE per-run cap (ARCHIVIST_AUTO_PROMOTE_MAX):
+      - UPDATEs to existing cards (auto_approve_update_confidence) land via
+        approve --force onto the target card;
+      - NEW concept cards (auto_approve_confidence, owner grant 2026-08-03)
+        land via a PLAIN approve — never --force, so any slug collision with an
+        existing knowledge card refuses at the gate and stays queued.
     Every action lands in the digest with its revert path; any failure leaves
     the proposal pending under its original name. Never raises, never silent."""
     out = {"applied": [], "failures": []}
@@ -475,6 +542,41 @@ def _auto_promote(props, meta):
     approve = os.path.join(os.path.dirname(os.path.realpath(__file__)), "curator-approve.sh")
     for pr in props:
         typ, slug, target = pr.get("type"), pr.get("slug"), pr.get("update_of")
+        if not target:
+            # NEW-card path (concepts only; the decision fn hard-excludes the
+            # rest). The collision probe is LIVE — a card that landed after the
+            # judge pass still queues this proposal for the owner.
+            ok, _why_not = _decide_auto_promote_new(typ, pr.get("confidence"), target,
+                                                    bool(_knowledge_path(slug)),
+                                                    rules, len(out["applied"]), cap)
+            if not ok:
+                continue  # stays pending for the owner's gate — the normal path
+            env = {**os.environ, "CURATOR_ACTOR": "auto-gear",
+                   "SOVS_VAULT": VAULT, "CURATOR_LANE": LANE_NAME}
+            note = "act-and-report: high-confidence new concept (gear auto_approve_confidence)"
+            try:
+                # plain approve, NO --force: if a same-named card lands between
+                # the probe above and this call, the gate refuses and the
+                # proposal stays queued — the owner arbitrates, never an overwrite
+                r = subprocess.run([approve, slug, note], env=env,
+                                   capture_output=True, text=True, timeout=180)
+                rc, errtxt = r.returncode, (r.stderr or r.stdout or "").strip()
+            except Exception as exc:  # missing script, timeout — never crash the run
+                rc, errtxt = -1, str(exc)[:300]
+            if rc == 0:
+                try:
+                    commit = subprocess.run(["git", "-C", VAULT, "rev-parse", "--short", "HEAD"],
+                                            capture_output=True, text=True, timeout=30).stdout.strip()
+                except Exception:
+                    commit = ""
+                out["applied"].append({"slug": slug, "target": slug, "type": typ,
+                                       "mode": "new", "confidence": pr.get("confidence"),
+                                       "reason": pr.get("reason", ""), "commit": commit})
+            else:
+                out["failures"].append({"slug": slug, "target": slug, "error": errtxt[-300:]})
+                print(f"curator-run: auto-promote FAILED for new card {slug}, left queued: {errtxt[-200:]}",
+                      file=sys.stderr)
+            continue
         tp = _knowledge_path(target) if target else None
         ok, _why_not = _decide_auto_promote(typ, pr.get("confidence"), target,
                                             _note_type(tp) if tp else None,
@@ -518,7 +620,7 @@ def _auto_promote(props, meta):
             except Exception:
                 commit = ""
             out["applied"].append({"slug": slug, "target": target, "type": typ,
-                                   "confidence": pr.get("confidence"),
+                                   "mode": "update", "confidence": pr.get("confidence"),
                                    "reason": pr.get("reason", ""), "commit": commit})
         else:
             if renamed:  # leave the proposal pending under its original name
@@ -868,9 +970,11 @@ if not a.dry:
         lines.append(f"- **{pr['slug']}** ({pr['type']}, {pr['confidence']}, {tag}) — {pr['reason']}\n  from `{pr['src']}`")
     if auto["applied"] or auto["failures"]:
         lines += ["", "## Auto-applied (act-and-report)",
-                  "_Applied by the `auto_approve_update_confidence` gear (actor `auto-gear`); each line carries its revert path._"]
+                  "_Applied by the auto-promote gears (actor `auto-gear`): `auto_approve_update_confidence` "
+                  "for updates, `auto_approve_confidence` for new concepts; each line carries its revert path._"]
         for x in auto["applied"]:
-            lines.append(f"- **{x['target']}** ({x['type']}, {x['confidence']}, UPDATE) — {x['reason']}\n"
+            tag = "UPDATE" if x.get("mode") == "update" else "NEW"
+            lines.append(f"- **{x['target']}** ({x['type']}, {x['confidence']}, {tag}) — {x['reason']}\n"
                          f"  revert: `git -C \"{VAULT}\" revert {x['commit'] or '<promotion-commit>'} && curator-reject {x['target']}`")
         for x in auto["failures"]:
             lines.append(f"- FAILED (left pending): {x['slug']} -> {x['target']} — {x['error']}")
@@ -926,7 +1030,9 @@ print(f"curator-run: judged {judged} new item(s), proposed {len(proposals)} card
 if not a.dry:
     print(f"curator-run: coverage — {cov['processable']} processable, {cov['judged_ever']} judged-ever, "
           f"{cov['stranded_pre_watermark']} stranded, {cov['unjudged_in_window']} awaiting, {pending_now} pending")
-    print(f"curator-run: auto-promoted {len(auto['applied'])} update(s) (act-and-report)"
+    _auto_new = sum(1 for x in auto["applied"] if x.get("mode") == "new")
+    print(f"curator-run: auto-promoted {len(auto['applied'])} proposal(s) "
+          f"({len(auto['applied']) - _auto_new} update(s), {_auto_new} new) (act-and-report)"
           + (f", {len(auto['failures'])} auto-promote FAILURE(s) left pending" if auto["failures"] else ""))
     print(f"curator-run: auto-rejected {len(autorej['applied'])} proposal(s) via lane auto-reject.md (act-and-report)"
           + (f", {len(autorej['failures'])} auto-reject FAILURE(s) left queued" if autorej["failures"] else ""))
