@@ -5,10 +5,37 @@
 # Approve a curator proposal: validate its labels, move it into the matching knowledge/
 # subfolder, log the verdict with the optional reason. The law wants the WHY on every
 # verdict, approvals included. Commit afterward. This is the ONLY path a proposal becomes trusted.
-# Refuses to overwrite an existing knowledge note (that is an update; merge by hand or --force).
+# Refuses to overwrite an existing knowledge note (that is an update; merge by hand or --force),
+# UNLESS the curator itself declared this proposal a same-card update (see below).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; . "$HERE/_curator-lib.sh"
+
+# Did the curator declare THIS proposal a replacement for the card of the same name?
+#
+# When a re-proposal collides with an existing card, the curator resolves it as an UPDATE:
+# it judges old-vs-new and writes a MERGED body into the proposal file, recording the
+# verdict in the lane sidecar proposals/.meta.json as
+#   {"<slug>": {"confidence": ..., "update_of": "<slug>", "judged_at": ...}}
+# Only an update_of equal to the proposal's OWN slug counts — that is the curator saying
+# "this file is the merged replacement for that card". Without this, an owner-gated update
+# is unlandable: the overwrite guard refuses every human approve, and only the
+# auto-promote gear (which passes --force) can ever land one.
+#
+# No sidecar, no entry, an unreadable sidecar, a different update_of target, or no python3
+# all mean "not declared" — and the overwrite guard then behaves exactly as it always has.
+declared_same_slug_update(){ # meta-file slug
+  [ -f "$1" ] || return 1
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 -c 'import json, sys
+try:
+    meta = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+entry = meta.get(sys.argv[2]) if isinstance(meta, dict) else None
+sys.exit(0 if isinstance(entry, dict) and entry.get("update_of") == sys.argv[2] else 1)' \
+    "$1" "$2" 2>/dev/null
+}
 
 FORCE=0; [ "${1:-}" = "--force" ] && { FORCE=1; shift; }
 arg="${1:?usage: curator-approve.sh [--force] <proposal-file-or-slug> [reason...]}"; shift || true
@@ -22,11 +49,21 @@ errs="$(validate_note "$prop")"
 
 sub="$(type_subdir "$(fm_get "$prop" type)")"
 dest="$KNOWLEDGE/$sub/$(basename "$prop")"
+slug="$(basename "$prop" .md)"
 mkdir -p "$KNOWLEDGE/$sub"
+update_landing=0
 if [ -e "$dest" ] && [ "$FORCE" -ne 1 ]; then
-  echo "REFUSED, knowledge/$sub/$(basename "$prop") already exists."
-  echo "That is an update to an existing note, not a new one. Merge by hand, or re-run with --force to overwrite."
-  exit 1
+  if declared_same_slug_update "$PROPOSALS/.meta.json" "$slug"; then
+    update_landing=1
+    echo "update landing: the curator declared this a same-card update (update_of=$slug); landing its merged body over knowledge/$sub/$(basename "$prop")."
+  else
+    echo "REFUSED, knowledge/$sub/$(basename "$prop") already exists."
+    echo "That is an update to an existing note, not a new one. Merge by hand, or re-run with --force to overwrite."
+    exit 1
+  fi
+fi
+if [ "$update_landing" -eq 1 ]; then
+  reason="update landing (declared update_of):${reason:+ $reason}"
 fi
 
 git_scope_preflight || exit 1
