@@ -1107,7 +1107,12 @@ if not a.dry:
     for pr in proposals:
         meta[pr["slug"]] = {"confidence": pr.get("confidence") or "",
                             "update_of": pr.get("update_of"),
-                            "judged_at": _meta_now}
+                            "judged_at": _meta_now,
+                            # persisted so the Telegram poller's approve-all can
+                            # hold flagged items for a per-slug verdict; without
+                            # this the flag lives only in this run's digest text
+                            "screen_flagged": bool(pr.get("screen_flagged")),
+                            "screen_reason": pr.get("screen_reason") or ""}
     # act-and-report: policy auto-reject of judge-flagged classes. Runs BEFORE
     # auto-promote — an owner always-reject ruling outranks a gear grant, and a
     # rejected file must never be considered for promotion in the same run.
