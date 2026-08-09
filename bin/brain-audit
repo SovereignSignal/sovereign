@@ -357,11 +357,18 @@ if not a.no_llm:
 
     # historicize: a card with expired facts is usually not garbage — it is history
     # written in the wrong tense. Draft the permanently-true rewrite (dated past
-    # tense + a future-facing "why this matters") into proposals/ as an UPDATE the
-    # owner gates with curator-approve --force. Retire is only for cards with no
-    # durable residue — and then the residue line says where the one durable fact
-    # belongs instead.
+    # tense + a future-facing "why this matters") as an UPDATE the owner gates with
+    # curator-approve --force. Retire is only for cards with no durable residue —
+    # and then the residue line says where the one durable fact belongs instead.
+    #
+    # These drafts land in proposals/audit/, NOT the nightly queue in proposals/.
+    # Every queue reader (curator-run, curator-status.sh, the Telegram poller) globs
+    # proposals/*.md one level deep, so the subfolder is invisible to all of them.
+    # That segregation is deliberate: a redraft overwrites an existing trusted card,
+    # so it needs a deliberate per-card read, not a bulk "approve all" tap — which
+    # would refuse anyway, since only curator-run declares update_of in .meta.json.
     PROP = os.path.join(LANE, "proposals")
+    PROP_AUDIT = os.path.join(PROP, "audit")
     SYS_HIST = ("You maintain ONE existing card of a trusted plain-text knowledge layer. Some of its "
         "facts are time-bound and now expired. Rewrite the card so it stays PERMANENTLY true: convert "
         "expired or forward-looking lines into dated past-tense history (\"as of Jun 2026\", \"ran in "
@@ -378,8 +385,10 @@ if not a.no_llm:
         '"residue":"only when retiring: the durable one-liner + which card it belongs on, else empty"}.')
     for p in stale_cards[: a.max_historicize]:
         slug = os.path.basename(p)[:-3]
-        prop_path = os.path.join(PROP, slug + ".md")
-        if os.path.exists(prop_path):
+        prop_path = os.path.join(PROP_AUDIT, slug + ".md")
+        # pending in EITHER queue means hands off: the nightly may already be
+        # proposing this slug, or an earlier audit redraft is still awaiting the gate.
+        if os.path.exists(prop_path) or os.path.exists(os.path.join(PROP, slug + ".md")):
             add("historicize", f"- `{rel(p)}` — a proposal for this slug is already pending; skipped")
             continue
         t = texts[p]
@@ -406,10 +415,11 @@ if not a.no_llm:
             why = (v.get("why") or "").strip()
             body = (v.get("body") or "").strip()
             card = f"{fm_block}\n# {title}\n\n" + (f"**Why this matters:** {why}\n\n" if why else "") + body + "\n"
-            os.makedirs(PROP, exist_ok=True)
+            os.makedirs(PROP_AUDIT, exist_ok=True)
             open(prop_path, "w", encoding="utf-8").write(card)
-            add("historicize", f"- `{rel(p)}` — dated-history redraft in proposals/ → review, then "
-                f"`curator-approve --force {slug} \"historicized\"` (reject to keep the original)")
+            add("historicize", f"- `{rel(p)}` — dated-history redraft at `{rel(prop_path)}` → read it "
+                f"against the card, then `curator-approve --force {slug} \"historicized\"` "
+                f"(or `curator-reject {slug} \"<why>\"` to keep the original)")
         else:
             add("historicize", f"- `{rel(p)}` — nothing durable after expiry → **retire**"
                 + (f"; residue: {v.get('residue','')}" if (v.get("residue") or "").strip() else ""))

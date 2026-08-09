@@ -517,7 +517,12 @@ cands = cands_all[: a.max]
 # recorded, so they hash-skip — the same mechanism that absorbs sync re-touches.
 deferred = cands_all[a.max :]
 have = {os.path.basename(p)[:-3] for p in glob.glob(K + "/**/*.md", recursive=True)}
-pending = {os.path.basename(p)[:-3] for p in glob.glob(PROP + "/*.md")}
+# proposals/audit/ holds the weekly audit's historicize redrafts — a separate,
+# hand-gated queue this run never touches. It still counts as pending here: a slug
+# with a redraft awaiting the owner must not get a second, competing nightly
+# proposal (whichever landed second would silently clobber the first's merge).
+pending = {os.path.basename(p)[:-3]
+           for p in glob.glob(PROP + "/*.md") + glob.glob(PROP + "/audit/*.md")}
 index = ", ".join(sorted(have))
 # rejection memory: topics the owner has said no to at the gate. Repeated-rejection
 # artifacts carry a --rejected-<timestamp> suffix — normalize back to the base slug.

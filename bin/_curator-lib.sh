@@ -136,7 +136,13 @@ git_commit(){ # message [vault-path ...]
 
 # resolve a proposal arg (full path, slug, or slug.md) to a file path in PROPOSALS
 resolve_proposal(){ # arg -> echoes path or empty
+  # Nightly queue first, then proposals/audit/ (the weekly audit's historicize
+  # redrafts — never both at once by construction, but the nightly wins if so),
+  # then vault-relative for paths pasted from a report while cd'd elsewhere.
   local a="$1"
   if [ -f "$a" ]; then echo "$a"; elif [ -f "$PROPOSALS/$a" ]; then echo "$PROPOSALS/$a";
-  elif [ -f "$PROPOSALS/$a.md" ]; then echo "$PROPOSALS/$a.md"; else echo ""; fi
+  elif [ -f "$PROPOSALS/$a.md" ]; then echo "$PROPOSALS/$a.md";
+  elif [ -f "$PROPOSALS/audit/$a" ]; then echo "$PROPOSALS/audit/$a";
+  elif [ -f "$PROPOSALS/audit/$a.md" ]; then echo "$PROPOSALS/audit/$a.md";
+  elif [ -f "$VAULT/$a" ]; then echo "$VAULT/$a"; else echo ""; fi
 }
