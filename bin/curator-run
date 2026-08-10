@@ -495,12 +495,50 @@ def _is_raw_target(t):
     return ("_" in t) or bool(re.match(r"^(reference|feedback|project)-", t)) or bool(re.match(r"^20\d\d-", t))
 
 
-def _strip_raw_links(text):
+def _resolves_to_card(t, resolver=None):
+    """True when a wikilink target names a knowledge card that actually exists.
+
+    Bare slugs resolve by slug. Path-style targets resolve BY PATH: a wikilink
+    that spells out a path is a path from the vault root, so anything rooted
+    outside knowledge/ is never a card even when its basename matches one --
+    [[workstreams/macro/macro-ledger/source-ledger]] must still strip while
+    knowledge/concepts/source-ledger.md exists.
+
+    `resolver` is injectable so --self-test needs no vault; it defaults to
+    _knowledge_path, looked up at call time because that helper is defined
+    further down the file (and is therefore absent during --self-test, where
+    the default is inert by design).
+    """
+    slug = (t or "").strip().lstrip("./")
+    if "/" in slug:
+        head, _, tail = slug.partition("/")
+        if head.lower() != "knowledge":
+            return False
+        slug = tail.rsplit("/", 1)[-1]
+    if slug.lower().endswith(".md"):
+        slug = slug[:-3]
+    if not slug:
+        return False
+    if resolver is None:
+        resolver = globals().get("_knowledge_path")
+        if resolver is None:
+            return False
+    try:
+        return bool(resolver(slug))
+    except Exception:  # a lookup failure must never break a curation run
+        return False
+
+
+def _strip_raw_links(text, resolver=None):
     # Dewikify any [[link]] whose target is a raw-file basename: keep the words,
-    # drop the brackets so no phantom node is created. Real card links pass through.
+    # drop the brackets so no phantom node is created. Real card links pass
+    # through -- including cards whose slug happens to match a raw-style prefix
+    # ([[project-catalyst]], [[feedback-proposals-no-presolutioning]]), which is
+    # why a raw verdict is overridden whenever the target resolves to a real
+    # card. Without that override a merge pass silently deleted live links.
     def repl(m):
         tgt, alias = m.group(1), m.group(2)
-        if _is_raw_target(tgt):
+        if _is_raw_target(tgt) and not _resolves_to_card(tgt, resolver):
             return alias[1:] if alias else tgt.split("/")[-1]
         return m.group(0)
     return _WIKILINK.sub(repl, text)
@@ -762,6 +800,37 @@ def _self_test():
          _strip_raw_links("see [[macro-intelligence-system]]")),
         ("knowledge/ link passes through untouched",  "see [[knowledge/concepts/source-ledger]]",
          _strip_raw_links("see [[knowledge/concepts/source-ledger]]")),
+    ]
+    # Card resolution is INJECTED so the self-test still needs no vault. These
+    # slugs stand in for real hub cards whose names collide with the raw-style
+    # prefixes: knowledge/entities/project-catalyst.md (linked from 7 cards),
+    # knowledge/concepts/feedback-proposals-no-presolutioning.md, and
+    # knowledge/concepts/source-ledger.md (basename shared with a dock path).
+    _cards = {"project-catalyst", "feedback-proposals-no-presolutioning", "source-ledger"}
+    _R = lambda slug: ("knowledge/x/" + slug + ".md") if slug in _cards else None
+    link_cases += [
+        ("real card with a project- slug survives",   "see [[project-catalyst]]",
+         _strip_raw_links("see [[project-catalyst]]", _R)),
+        ("real card with a feedback- slug survives",  "see [[feedback-proposals-no-presolutioning]]",
+         _strip_raw_links("see [[feedback-proposals-no-presolutioning]]", _R)),
+        ("alias form of a real card keeps link+alias", "see [[project-catalyst|Catalyst]]",
+         _strip_raw_links("see [[project-catalyst|Catalyst]]", _R)),
+        ("whitespace around a real card target survives", "see [[ project-catalyst ]]",
+         _strip_raw_links("see [[ project-catalyst ]]", _R)),
+        ("knowledge/ path to a real card survives",   "see [[knowledge/entities/project-catalyst]]",
+         _strip_raw_links("see [[knowledge/entities/project-catalyst]]", _R)),
+        ("genuine raw basename still strips",         "see reference_something_2026",
+         _strip_raw_links("see [[reference_something_2026]]", _R)),
+        ("raw-style slug with no card still strips",  "see project-notes-2026",
+         _strip_raw_links("see [[project-notes-2026]]", _R)),
+        ("dock path strips despite same-basename card", "see source-ledger",
+         _strip_raw_links("see [[workstreams/macro/macro-ledger/source-ledger]]", _R)),
+        ("dock path alias strips despite that card",  "see The ledger",
+         _strip_raw_links("see [[workstreams/macro/macro-ledger/source-ledger|The ledger]]", _R)),
+        ("bare non-existent kebab slug unchanged",    "see [[some-unknown-card]]",
+         _strip_raw_links("see [[some-unknown-card]]", _R)),
+        ("no resolver = fail safe, raw-style slug still strips", "see project-catalyst",
+         _strip_raw_links("see [[project-catalyst]]")),
     ]
     for name, want, got in link_cases:
         ok = got == want
