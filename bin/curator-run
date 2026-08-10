@@ -49,6 +49,11 @@ JUDGMENTS = os.path.join(LANE, "judgments.jsonl")
 GEARS = os.path.join(LANE, "gears.json")
 META = os.path.join(PROP, ".meta.json")
 K = os.path.join(VAULT, "knowledge")
+# The brain's top-level folders that are not the trusted layer. A [[link]] whose
+# target is a path rooted in one of these points at the loading dock, the desk, or
+# cold storage - never at a card - so it is a phantom node in the graph. Folder
+# names come from the standard's own layout, so this stays general to any brain.
+NON_KNOWLEDGE_DIRS = ("workstreams", "raw", "archive", "repos")
 # Local by default — the law: machine writers to knowledge/ run on owner-controlled
 # compute. Cloud is an explicit opt-in via CURATOR_ENDPOINT, never the shipped default.
 ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "http://localhost:11434/v1/chat/completions")
@@ -469,6 +474,38 @@ def _auto_reject(props, classes, cap, reject_script):
     return out
 
 
+# Defined up here (with the other pure helpers) because --self-test exercises
+# the raw-link guard, and the self-test runs before the lower half of the file.
+_WIKILINK = re.compile(r'\[\[([^\]|]+?)(\|[^\]]+?)?\]\]')
+
+
+def _is_raw_target(t):
+    # Knowledge-card slugs are kebab-case with no underscores. Raw-lane files use
+    # underscores and reference_/feedback_/project_/date conventions. A [[link]] to
+    # one of those is a phantom graph node pointing at the loading dock, never a card.
+    t = t.strip().lower()
+    # Path-style targets are judged by their first segment, because a wikilink that
+    # spells out a path is a path from the vault root: anything rooted outside
+    # knowledge/ is the dock, the desk, or the basement, never a card. A bare slug
+    # with no "/" is untouched here - it may well be a card - and knowledge/... falls
+    # through to the basename rules below, so real card links still pass.
+    head = t.lstrip("./").split("/", 1)
+    if len(head) == 2 and head[0] in NON_KNOWLEDGE_DIRS:
+        return True
+    return ("_" in t) or bool(re.match(r"^(reference|feedback|project)-", t)) or bool(re.match(r"^20\d\d-", t))
+
+
+def _strip_raw_links(text):
+    # Dewikify any [[link]] whose target is a raw-file basename: keep the words,
+    # drop the brackets so no phantom node is created. Real card links pass through.
+    def repl(m):
+        tgt, alias = m.group(1), m.group(2)
+        if _is_raw_target(tgt):
+            return alias[1:] if alias else tgt.split("/")[-1]
+        return m.group(0)
+    return _WIKILINK.sub(repl, text)
+
+
 def _self_test():
     """Assert the auto-promote and auto-reject decision tables plus the
     auto-reject fail-open wiring. No vault, no network, no writes."""
@@ -700,8 +737,38 @@ def _self_test():
     for name, ok in fn_cases:
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    print(" raw-link guard (knowledge must never wikilink a non-knowledge folder):")
+    link_cases = [
+        ("path-style workstreams/ target is raw",     True,
+         _is_raw_target("workstreams/macro/macro-ledger/daily-packets/2026-07-05")),
+        ("path-style raw/ target is raw",             True,  _is_raw_target("raw/tools/notion/export-index")),
+        ("path-style archive/ target is raw",         True,  _is_raw_target("archive/knowledge-pre-linkfix")),
+        ("path-style repos/ target is raw",           True,  _is_raw_target("repos/a-repo/bin/tool")),
+        ("leading ./ does not evade the guard",       True,  _is_raw_target("./workstreams/x/y")),
+        ("upper case does not evade the guard",       True,  _is_raw_target("Workstreams/X/Y")),
+        ("knowledge/ path is a card, not raw",        False, _is_raw_target("knowledge/concepts/source-ledger")),
+        ("bare kebab slug is a card, not raw",        False, _is_raw_target("macro-intelligence-system")),
+        ("bare folder word alone is not a path",      False, _is_raw_target("workstreams")),
+        ("underscore rule still fires",               True,  _is_raw_target("grant_ops_automation_overview")),
+        ("reference- prefix rule still fires",        True,  _is_raw_target("reference-spell-plan-2026")),
+        ("feedback- prefix rule still fires",         True,  _is_raw_target("feedback-proposals")),
+        ("project- prefix rule still fires",          True,  _is_raw_target("project-notes-2026")),
+        ("date prefix rule still fires",              True,  _is_raw_target("2026-07-05")),
+        ("alias form is kept as its alias",           "see Source note",
+         _strip_raw_links("see [[workstreams/macro/daily-packets/2026-07-05|Source note]]")),
+        ("no-alias path keeps the readable tail",     "see 2026-07-05",
+         _strip_raw_links("see [[workstreams/macro/daily-packets/2026-07-05]]")),
+        ("real card link passes through untouched",   "see [[macro-intelligence-system]]",
+         _strip_raw_links("see [[macro-intelligence-system]]")),
+        ("knowledge/ link passes through untouched",  "see [[knowledge/concepts/source-ledger]]",
+         _strip_raw_links("see [[knowledge/concepts/source-ledger]]")),
+    ]
+    for name, want, got in link_cases:
+        ok = got == want
+        failed += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got!r})"))
     total = (len(wiring_cases) + len(screen_cases) + len(cases) + len(new_cases) + len(reject_cases)
-             + len(veto_cases) + len(fn_cases))
+             + len(veto_cases) + len(fn_cases) + len(link_cases))
     print(f"curator-run --self-test: {total - failed}/{total} passed")
     return 1 if failed else 0
 
@@ -824,28 +891,6 @@ if os.path.exists(AUTOREJECT):
 # (prose may backtick other tokens without declaring them); the judge may only
 # flag THESE (a hallucinated class never fires — _decide_auto_reject)
 _autoreject_classes = sorted(set(re.findall(r"(?m)^\s*[-*]\s*`([a-z0-9][a-z0-9-]*)`", _autoreject)))
-
-
-_WIKILINK = re.compile(r'\[\[([^\]|]+?)(\|[^\]]+?)?\]\]')
-
-
-def _is_raw_target(t):
-    # Knowledge-card slugs are kebab-case with no underscores. Raw-lane files use
-    # underscores and reference_/feedback_/project_/date conventions. A [[link]] to
-    # one of those is a phantom graph node pointing at the loading dock, never a card.
-    t = t.strip().lower()
-    return ("_" in t) or bool(re.match(r"^(reference|feedback|project)-", t)) or bool(re.match(r"^20\d\d-", t))
-
-
-def _strip_raw_links(text):
-    # Dewikify any [[link]] whose target is a raw-file basename: keep the words,
-    # drop the brackets so no phantom node is created. Real card links pass through.
-    def repl(m):
-        tgt, alias = m.group(1), m.group(2)
-        if _is_raw_target(tgt):
-            return alias[1:] if alias else tgt.split("/")[-1]
-        return m.group(0)
-    return _WIKILINK.sub(repl, text)
 
 
 def _card_body(path):
