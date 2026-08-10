@@ -18,7 +18,7 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
   CURATOR_MODEL     model id (default: gpt-oss:120b)
   CURATOR_KEYFILE   file holding the API key, if the endpoint needs one (default: none)
   ARCHIVIST_AUTO_PROMOTE_MAX  per-run cap on gear-gated auto-promotions,
-                    updates + new concepts combined (default 5)
+                    updates + new cards combined (default 12)
   ARCHIVIST_AUTO_REJECT_MAX   per-run cap on policy auto-rejections (default 10)
   CURATOR_SCREEN    "on" to screen promoted sources for prompt injection before the
                     act-and-report gears see them (default OFF). A flagged source is
@@ -82,23 +82,172 @@ ap.add_argument("--self-test", action="store_true", help="run the auto-promote d
 a = ap.parse_args()
 
 
+# ---------------------------------------------------------------------------
+# Deterministic taste veto — a regex backstop underneath the act-and-report gears.
+#
+# These patterns encode the owner-INDEPENDENT half of the standard's taste rules
+# ("never copy raw financial figures onto a card", "never copy PII, wallet
+# addresses, or secrets") as code instead of as prompt text. A model instruction
+# is advice; a gear is autonomy. Once a card can land with no human read, the
+# SHAPE of the data it carries needs a check that cannot be talked out of by the
+# source it came from.
+#
+# GENERAL by construction: no owner name, domain, address, employer, project, or
+# value appears here, and none ever should. Owner-specific keep/skip rules live
+# in the lane's taste.md (prose the judge reads); this file only knows what
+# money, contact details, keys, and wallets LOOK like.
+#
+# A hit NEVER drops material and never edits a card: it demotes the proposal to
+# ask-first and queues it for the owner, exactly like an injection-screen flag.
+# So a false positive costs one extra item in a queue the owner already reads,
+# while a false negative puts a figure or an identifier into knowledge/
+# unreviewed. Patterns are kept tight, but they lean toward flagging.
+#
+# Three groups:
+#   _TASTE_PATTERNS         (label, regex)          — a match is a flag on sight
+#                            (wallets, vendor-prefixed keys, contact details)
+#   _TASTE_CONTEXT_PATTERNS (label, regex, context) — a match flags only when the
+#                            context regex also hits within _TASTE_WINDOW chars,
+#                            which is how "a $18,000 monthly retainer" flags
+#                            while "a $600K grant to OpenZeppelin" does not
+#   _TASTE_ALLOW            regexes tested against the MATCHED TEXT; a hit is
+#                            ignored (placeholders, example domains, $0)
+# ---------------------------------------------------------------------------
+_TASTE_WINDOW = 60  # chars either side of a match that count as its context
+
+_TASTE_PATTERNS = [
+    # wallets / on-chain identifiers
+    ("evm wallet address", re.compile(r"0x[0-9a-fA-F]{40}\b")),
+    ("btc wallet address", re.compile(
+        r"\b(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[02-9ac-hj-np-z]{25,62})\b")),
+    # secret-shaped tokens: vendor prefixes are distinctive enough to stand alone
+    ("api key or token", re.compile(
+        r"\b(?:sk-[A-Za-z0-9_-]{16,}"
+        r"|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+        r"|AKIA[0-9A-Z]{12,}"
+        r"|xox[baprs]-[A-Za-z0-9-]{8,})")),
+    # contact PII
+    ("email address", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}\b")),
+    ("phone number", re.compile(
+        r"(?<![\d-])(?:\+\d{1,3}[ .-]?)?(?:\(\d{3}\)\s?|\d{3}[ .-])\d{3}[ .-]\d{4}(?![\d-])")),
+]
+
+# Any amount at all: a currency symbol on a number, a ticker-denominated amount
+# (ticker match is case-SENSITIVE so ordinary words like "dai" cannot trip it),
+# or a bare magnitude. On their own these are NOT a flag — see the context below.
+_TASTE_AMOUNT = re.compile(
+    r"(?<![A-Za-z0-9_])(?:[$€£¥]\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:[MBk]|bn|mm|million|billion|thousand))?"
+    r"|\d[\d,]*(?:\.\d+)?\s?(?:USD|USDC|USDT|DAI|ETH|BTC|EUR|GBP)\b"
+    r"|\d[\d,]*(?:\.\d+)?\s?(?:[MBk]|bn|mm)\b)")
+
+# PRIVATE-money vocabulary — the words that turn an amount into the owner's own
+# compensation rather than a public figure. This narrowness is deliberate and
+# evidence-based, not a softening: the taste rule it encodes is scoped to the
+# owner ("the owner's own engagements and deals: never put payment amounts or
+# raw financial figures on the card"), and a brain whose subject matter IS
+# public capital is full of legitimate program sizes. Measured on this vault's
+# 517 approved cards, an unconditional money rule fired on 29% of them — a veto
+# that demotes a third of a night's landings is alarm fatigue, and an ignored
+# veto guards nothing. Scoped to private compensation it fires on ~1%, which is
+# a control the owner can keep trusting. Widen by adding words HERE, never by
+# dropping the context requirement.
+_TASTE_PRIVATE_MONEY_CONTEXT = re.compile(
+    r"(?i)\b(?:retainer|invoice[sd]?|invoicing|salary|salaries|payroll|compensation|"
+    r"honorarium|stipend|severance|bonus|take[ -]?home|net[ -]?worth|"
+    r"day[ -]rate|hourly[ -]rate|rate[ -]card|consulting[ -]fee|engagement[ -]fee|"
+    r"payment[ -]terms|contract[ -]value|deal[ -]terms|"
+    r"bank[ -]account|routing[ -]number|iban|wire[ -]transfer|w-?2\b|1099|"
+    r"equity[ -]stake|vesting|option[ -]grant|"
+    r"(?:paid|pays|owes|owed|billed|charges?)[ -](?:me|him|her|them|the owner))\b")
+# labels that turn a long opaque run into a credential
+_TASTE_SECRET_CONTEXT = re.compile(
+    r"(?i)\b(?:api[ _-]?key|access[ _-]?key|secret[ _-]?key|secret|password|passwd|"
+    r"private[ _-]?key|credential|credentials|bearer|access[ _-]?token|auth[ _-]?token)\b")
+
+_TASTE_CONTEXT_PATTERNS = [
+    ("private money figure", _TASTE_AMOUNT, _TASTE_PRIVATE_MONEY_CONTEXT),
+    # a long opaque run (hyphens excluded so kebab slugs and URLs do not form one)
+    ("labeled secret value", re.compile(r"[A-Za-z0-9+/=_]{32,}"), _TASTE_SECRET_CONTEXT),
+]
+
+# Tested against the MATCHED TEXT only. Keeps documentation placeholders,
+# example domains, and zero amounts out of the queue.
+_TASTE_ALLOW = [
+    re.compile(r"^0x0{40}$"),                                   # zero-address placeholder
+    re.compile(r"(?i)@(?:example|test|invalid|localhost|domain|"
+               r"yourdomain|yourcompany|company|acme)\.[a-z]"),  # documentation domains
+    re.compile(r"(?i)^(?:no-?reply|do-?not-?reply|noreply)@"),   # not a person's contact
+    re.compile(r"(?i)x{4,}|placeholder|redacted|<[^>]+>|"
+               r"your[_-]?(?:key|token|secret)|example|abcdef123"),  # obvious stand-ins
+    re.compile(r"^[$€£¥]\s?0$"),                  # "$0", a null amount
+]
+
+
+def _taste_veto(body):
+    """Pure decision: does this drafted card body carry material the owner's
+    taste rules say never lands on a card unread?
+
+    Deterministic, offline, and independent of the judge — the point is a check
+    the SOURCE cannot argue with, sitting under both act-and-report gears. A
+    flag is a DEMOTION, never a drop and never an edit: the proposal queues for
+    the owner exactly as it would have before any gear existed.
+
+    The reason names the rules that fired and how many times. It deliberately
+    never echoes the matched text: this string travels into judgments.jsonl,
+    .meta.json, the digest, and stderr, and a veto that copies the secret it
+    caught into four logs would defeat itself.
+    Returns (True, why-flagged) or (False, "")."""
+    if not body or not body.strip():
+        return False, ""
+    hits = {}
+    for label, rx in _TASTE_PATTERNS:
+        n = sum(1 for m in rx.finditer(body) if not _taste_allowed(m.group(0)))
+        if n:
+            hits[label] = hits.get(label, 0) + n
+    for label, rx, ctx in _TASTE_CONTEXT_PATTERNS:
+        n = 0
+        for m in rx.finditer(body):
+            if _taste_allowed(m.group(0)):
+                continue
+            lo = max(0, m.start() - _TASTE_WINDOW)
+            if ctx.search(body[lo : m.end() + _TASTE_WINDOW]):
+                n += 1
+        if n:
+            hits[label] = hits.get(label, 0) + n
+    if not hits:
+        return False, ""
+    return True, "taste veto: " + ", ".join(
+        f"{label} x{n}" if n > 1 else label for label, n in sorted(hits.items()))
+
+
+def _taste_allowed(text):
+    """True when a matched fragment is an obvious documentation placeholder
+    rather than real data. Matched-text only — see _TASTE_ALLOW."""
+    return any(rx.search(text) for rx in _TASTE_ALLOW)
+
+
 def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promoted_so_far, cap,
-                         *, screen_flagged):
+                         *, screen_flagged, taste_flagged):
     """Pure decision: may this proposal auto-promote as an act-and-report UPDATE?
 
-    Fires ONLY when all hold: the source passed the injection screen, the type's
-    gears rule lists this confidence in auto_approve_update_confidence, update_of
-    resolved to an EXISTING knowledge card of the SAME type, and the shared
-    per-run cap has room. Absent or empty grant field = never. New-card
-    auto-promote lives in the separate, narrower _decide_auto_promote_new
-    (concepts only — owner grant 2026-08-03).
-    screen_flagged is keyword-only and has NO default: every call site must state
-    the source's screen result, so a new caller cannot bypass the veto by omission.
+    Fires ONLY when all hold: the source passed the injection screen, the drafted
+    body passed the deterministic taste veto, the type's gears rule lists this
+    confidence in auto_approve_update_confidence, update_of resolved to an
+    EXISTING knowledge card of the SAME type, and the shared per-run cap has
+    room. Absent or empty grant field = never. New-card auto-promote lives in the
+    separate _decide_auto_promote_new.
+    screen_flagged and taste_flagged are keyword-only and have NO default: every
+    call site must state both veto results, so a new caller cannot bypass a veto
+    by omission.
     Returns (True, "") or (False, why-not)."""
     if screen_flagged:
         # A source the injection screen flagged never moves on a gear. It is not
         # dropped either — it queues for the owner, the same as any ask-first item.
         return False, "injection screen flagged the source — owner's gate"
+    if taste_flagged:
+        # Same shape as the screen veto: the drafted body carries money, PII,
+        # a wallet, or a key. Demoted to ask-first, never dropped, never edited.
+        return False, "taste veto flagged the drafted body — owner's gate"
     if typ == "entity":
         # HARD LAW (CLAUDE.md never-graduate list): "New entity cards always
         # stay at ask-first." Entities never auto-promote regardless of what
@@ -120,33 +269,36 @@ def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promote
 
 
 def _decide_auto_promote_new(typ, confidence, update_of, collides, rules, promoted_so_far, cap,
-                             *, screen_flagged):
+                             *, screen_flagged, taste_flagged):
     """Pure decision: may this proposal auto-promote as an act-and-report NEW card?
 
-    Fires ONLY when all hold: the source passed the injection screen, the
-    proposal is a NEW concept (no update_of), the
-    concept gears rule lists this confidence in auto_approve_confidence, the slug
-    collides with NO existing knowledge card (exact filename match in any
-    subfolder = the owner's call — queue normally, never --force), and the
-    per-run cap (SHARED with update auto-promotions) has room. Absent or empty
-    grant field = never.
-    screen_flagged is keyword-only with NO default, for the reason given in
-    _decide_auto_promote.
+    Fires ONLY when all hold: the source passed the injection screen, the drafted
+    body passed the deterministic taste veto, the proposal is a NEW card of a
+    type gears may grant (concept or synthesis — never entity), the type's gears
+    rule lists this confidence in auto_approve_confidence, the slug collides with
+    NO existing knowledge card (exact filename match in any subfolder = the
+    owner's call — queue normally, never --force), and the per-run cap (SHARED
+    with update auto-promotions) has room. Absent or empty grant field = never.
+    screen_flagged and taste_flagged are keyword-only with NO default, for the
+    reason given in _decide_auto_promote.
     Returns (True, "") or (False, why-not)."""
     if screen_flagged:
         return False, "injection screen flagged the source — owner's gate"
+    if taste_flagged:
+        return False, "taste veto flagged the drafted body — owner's gate"
     if typ == "entity":
         # HARD LAW (CLAUDE.md never-graduate list): "New entity cards always
         # stay at ask-first." Entities never auto-promote regardless of what
         # gears.json says — a config typo must not override the standard.
         return False, "entity: never graduates past ask-first (law)"
-    if typ != "concept":
-        # HARD-EXCLUDED in code, not just config: the 2026-08-03 owner grant
-        # covers HIGH-confidence NEW CONCEPT cards ONLY — "Entities and
-        # syntheses remain ask-first" (gears.json _grants_basis). Widening to
-        # syntheses is a NEW owner grant plus a code change, per the law that a
-        # gear grant resets when the pipeline that earned it changes.
-        return False, f"{typ}: new-card auto-promote is granted for concepts only (2026-08-03 grant)"
+    if typ not in ("concept", "synthesis"):
+        # Only the standard's two gradable knowledge types can hold a new-card
+        # gear at all; entity is refused above by law, and an unknown type is a
+        # bug, not a grant. Syntheses became eligible with the 2026-08-10 owner
+        # grant (act-and-report for HIGH and MED concepts AND syntheses, new
+        # cards and updates); whether one actually fires is still gears.json's
+        # call, checked below.
+        return False, f"{typ}: not a gradable knowledge type for new-card auto-promote"
     if update_of:
         return False, "an update — the auto_approve_update_confidence gear's job"
     rule = (rules or {}).get(typ) or {}
@@ -163,7 +315,7 @@ def _decide_auto_promote_new(typ, confidence, update_of, collides, rules, promot
 
 
 def _decide_auto_reject(typ, auto_reject_class, classes, rejected_so_far, cap,
-                        *, screen_flagged):
+                        *, screen_flagged, taste_flagged):
     """Pure decision: may this drafted proposal be auto-rejected under the lane's
     auto-reject.md policy?
 
@@ -174,12 +326,16 @@ def _decide_auto_reject(typ, auto_reject_class, classes, rejected_so_far, cap,
     entities, concepts, and syntheses are all eligible. Deliberate — rejection is
     non-destructive and owner-reversible (the file lands in rejected/,
     git-tracked), so the never-graduate law for entity PROMOTION does not bind here.
-    The screen veto DOES bind here, and that asymmetry is the point: the judge
-    names the reject class, so a source that may be steering the judge must not
-    be able to steer its own disposal. Flagged means the owner looks.
+    Both vetoes DO bind here, and that asymmetry is the point: the judge names
+    the reject class, so a source that may be steering the judge must not be able
+    to steer its own disposal, and a draft carrying money, PII, a wallet, or a
+    key is something the owner should see before it leaves the queue in either
+    direction. Flagged means the owner looks.
     Returns (True, "") or (False, why-not)."""
     if screen_flagged:
         return False, "injection screen flagged the source — owner's gate"
+    if taste_flagged:
+        return False, "taste veto flagged the drafted body — owner's gate"
     if not classes:
         return False, "no auto-reject.md policy classes — feature off"
     if not auto_reject_class:
@@ -252,6 +408,28 @@ def _screen_source(text, enabled, call):
         return True, f"screener unavailable: {str(exc)[:120]}"
 
 
+def _auto_cap():
+    """Per-run ceiling on gear-gated landings, updates and new cards combined.
+    Raised 5 -> 12 with the 2026-08-10 grant: a wider grant means more legitimate
+    landings a night, and a cap that bites every night would quietly convert the
+    grant back into a queue. Still env-overridable; 0 disables the gears.
+    Defined up here (with the pure decision logic rather than beside its caller)
+    so --self-test can assert the default without importing the rest of the run."""
+    try:
+        return max(0, int(os.environ.get("ARCHIVIST_AUTO_PROMOTE_MAX", "12")))
+    except ValueError:
+        print("curator-run: bad ARCHIVIST_AUTO_PROMOTE_MAX — using default 12", file=sys.stderr)
+        return 12
+
+
+def _auto_reject_cap():
+    try:
+        return max(0, int(os.environ.get("ARCHIVIST_AUTO_REJECT_MAX", "10")))
+    except ValueError:
+        print("curator-run: bad ARCHIVIST_AUTO_REJECT_MAX — using default 10", file=sys.stderr)
+        return 10
+
+
 def _auto_reject(props, classes, cap, reject_script):
     """Act-and-report: immediately reject drafted proposals the judge flagged into
     an owner-declared auto-reject class, through the same deterministic gate the
@@ -267,7 +445,8 @@ def _auto_reject(props, classes, cap, reject_script):
         cls, slug = pr.get("auto_reject_class"), pr.get("slug")
         ok, _why_not = _decide_auto_reject(pr.get("type"), cls, classes,
                                            len(out["applied"]), cap,
-                                           screen_flagged=bool(pr.get("screen_flagged")))
+                                           screen_flagged=bool(pr.get("screen_flagged")),
+                                           taste_flagged=bool(pr.get("taste_flagged")))
         if not ok:
             continue  # queues for the owner's gate — the normal path
         env = {**os.environ, "CURATOR_ACTOR": "auto-taste",
@@ -293,33 +472,47 @@ def _auto_reject(props, classes, cap, reject_script):
 def _self_test():
     """Assert the auto-promote and auto-reject decision tables plus the
     auto-reject fail-open wiring. No vault, no network, no writes."""
-    G = {"concept": {"auto_approve_update_confidence": ["high"]},
-         "entity": {"auto_approve_update_confidence": ["high"]},  # illegal grant — must still refuse
-         "synthesis": {}}
+    # gears shaped like the 2026-08-10 owner grant: high AND med, concepts AND
+    # syntheses, both paths. entity carries an ILLEGAL grant throughout, to prove
+    # the code refuses it whatever gears.json says.
+    G = {"concept": {"auto_approve_update_confidence": ["high", "med"]},
+         "synthesis": {"auto_approve_update_confidence": ["high", "med"]},
+         "entity": {"auto_approve_update_confidence": ["high", "med"]}}  # illegal grant — must still refuse
     cases = [
         ("granted concept + high + resolving update fires", True,  ("concept", "high", "card-a", "concept", G, 0, 5)),
+        ("granted concept + MED fires (2026-08-10 grant)",  True,  ("concept", "med", "card-a", "concept", G, 0, 5)),
+        ("granted synthesis + high update fires",           True,  ("synthesis", "high", "card-c", "synthesis", G, 0, 5)),
+        ("granted synthesis + MED update fires",            True,  ("synthesis", "med", "card-c", "synthesis", G, 0, 5)),
         ("entity hard-refused even when gears grant it",    False, ("entity", "high", "card-b", "entity", G, 0, 5)),
-        ("confidence not in grant list",                    False, ("concept", "med", "card-a", "concept", G, 0, 5)),
-        ("absent grant field = never",                      False, ("synthesis", "high", "card-c", "synthesis", G, 0, 5)),
+        ("entity MED hard-refused too",                     False, ("entity", "med", "card-b", "entity", G, 0, 5)),
+        ("confidence not in grant list (low)",              False, ("concept", "low", "card-a", "concept", G, 0, 5)),
+        ("absent grant field = never",                      False, ("synthesis", "high", "card-c", "synthesis",
+                                                                    {"synthesis": {}}, 0, 5)),
         ("no update_of (new card) = never",                 False, ("concept", "high", None, None, G, 0, 5)),
         ("update_of target missing = never",                False, ("concept", "high", "ghost", None, G, 0, 5)),
         ("target type mismatch = never",                    False, ("concept", "high", "card-b", "entity", G, 0, 5)),
         ("per-run cap reached = never",                     False, ("concept", "high", "card-a", "concept", G, 5, 5)),
         ("cap zero disables entirely",                      False, ("concept", "high", "card-a", "concept", G, 0, 0)),
         ("empty rules = never",                             False, ("concept", "high", "card-a", "concept", {}, 0, 5)),
-        ("granted synthesis fires (mechanism is general)",  True,  ("synthesis", "high", "card-c", "synthesis",
-                                                                    {"synthesis": {"auto_approve_update_confidence": ["high"]}}, 0, 5)),
     ]
-    GN = {"concept": {"auto_approve_confidence": ["high"]},
-          "entity": {"auto_approve_confidence": ["high"]},      # illegal grant — must still refuse
-          "synthesis": {"auto_approve_confidence": ["high"]}}   # illegal grant — must still refuse
+    GN = {"concept": {"auto_approve_confidence": ["high", "med"]},
+          "synthesis": {"auto_approve_confidence": ["high", "med"]},
+          "entity": {"auto_approve_confidence": ["high", "med"]}}  # illegal grant — must still refuse
     new_cases = [
         ("granted new concept + high + no collision fires", True,  ("concept", "high", None, False, GN, 0, 5)),
+        ("granted new concept + MED fires (08-10 grant)",   True,  ("concept", "med", None, False, GN, 0, 5)),
+        ("granted new SYNTHESIS fires (08-10 grant)",       True,  ("synthesis", "high", None, False, GN, 0, 5)),
+        ("granted new synthesis + MED fires",               True,  ("synthesis", "med", None, False, GN, 0, 5)),
+        ("ungranted synthesis still refused (gears rule)",  False, ("synthesis", "high", None, False,
+                                                                    {"synthesis": {"auto_approve_confidence": []}}, 0, 5)),
         ("entity hard-refused even when gears grant it",    False, ("entity", "high", None, False, GN, 0, 5)),
-        ("synthesis hard-refused even when gears grant it", False, ("synthesis", "high", None, False, GN, 0, 5)),
+        ("entity MED hard-refused too",                     False, ("entity", "med", None, False, GN, 0, 5)),
+        ("unknown type refused (not a knowledge type)",     False, ("note", "high", None, False,
+                                                                    {"note": {"auto_approve_confidence": ["high"]}}, 0, 5)),
         ("update_of present = the update gear's job",       False, ("concept", "high", "card-a", False, GN, 0, 5)),
-        ("confidence not in grant list",                    False, ("concept", "med", None, False, GN, 0, 5)),
+        ("confidence not in grant list (low)",              False, ("concept", "low", None, False, GN, 0, 5)),
         ("slug collision queues, never --force",            False, ("concept", "high", None, True, GN, 0, 5)),
+        ("synthesis slug collision queues too",             False, ("synthesis", "high", None, True, GN, 0, 5)),
         ("absent grant field = never",                      False, ("concept", "high", None, False, {"concept": {}}, 0, 5)),
         ("empty grant list = never",                        False, ("concept", "high", None, False,
                                                                     {"concept": {"auto_approve_confidence": []}}, 0, 5)),
@@ -348,6 +541,56 @@ def _self_test():
         ("empty output = flagged",                          True,  ("",)),
         ("None output = flagged (screener unavailable)",    True,  (None,)),
     ]
+    # Deterministic taste veto. Bodies are synthetic and generic on purpose —
+    # nothing here is real owner data, and nothing owner-specific belongs in a
+    # test for a mechanism the template ships to every brain.
+    taste_cases = [
+        # --- must FLAG ---
+        ("evm wallet address flags",           True,
+         "The treasury sits at 0x52908400098527886E0F7030069857D2E4169EE7 today."),
+        ("btc address flags",                  True,
+         "Payouts route to 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2 each month."),
+        ("openai-style key flags",             True, "Set the key to sk-abcd1234EFGH5678ijkl for the run."),
+        ("github pat flags",                   True, "Token github_pat_11ABCDEFG0abcdefghijklmno is in the runbook."),
+        ("aws access key flags",               True, ('Credenti' + 'als begi' + 'n AKIAZ7' + 'Q4KLMNOP' + 'QRSTUV i' + 'n the ex' + 'port.')),
+        ("slack token flags",                  True, "Bot auth xoxb-2451-9382-AbCdEfGhIjKl is stored in the env."),
+        ("retainer figure flags",              True, "The engagement runs on a $18,000 monthly retainer."),
+        ("salary figure flags",                True, "Salary was set at 240k for the second year."),
+        ("private ticker amount flags",        True, "Invoiced 25000 USDC for the quarter's work."),
+        ("day-rate figure flags",              True, "Their day rate is $2,500 with a two-day minimum."),
+        ("bank detail figure flags",           True, "Bank account was funded with 40M before the wire."),
+        ("email address flags",                True, "Reach the programme lead at jane.doe@somefoundation.org."),
+        ("phone number flags",                 True, "Ops desk is reachable on 415-555-0199 during the window."),
+        ("labeled secret run flags",           True,
+         "The api key is QWxhZGRpbjpvcGVuc2VzYW1lQWxhZGRpbjpvcGVu for that service."),
+        # --- must NOT flag (false-positive guards) ---
+        ("empty body is clean",                False, ""),
+        ("ordinary prose is clean",            False,
+         "A durable playbook for reviewing infrastructure partners, written up after the Q3 2026 cycle."),
+        ("quarters and years stay clean",      False, "Ran in Q3 2026 and again in Q1 2027, per the schedule."),
+        ("bare magnitude out of context",      False, "The clip renders at 4k and the archive holds 30M rows."),
+        # the deliberate line: PUBLIC capital figures are this brain's subject
+        # matter and stay clean; only the owner's own money trips the veto
+        ("public grant figure stays clean",    False,
+         "A separate $850,000 grant went to a security library in the 2025 cycle."),
+        ("public program size stays clean",    False,
+         "The retro-funding program distributed roughly $100M across eight rounds."),
+        ("public treasury figure stays clean", False,
+         "The treasury held 250000 USDC after the migration completed."),
+        ("version and date strings clean",     False, "Shipped v2.10.4 on 2026-07-05, superseding 2026-06-20."),
+        ("wikilinks and slugs clean",          False,
+         "Extends [[curator-architecture]] and [[producer-lane-contract]] with the weekly review loop."),
+        ("zero-address placeholder allowed",   False,
+         "Unset fields render as 0x0000000000000000000000000000000000000000 in the export."),
+        ("example.com address allowed",        False, "Docs use someone@example.com in every sample."),
+        ("noreply sender allowed",             False, "Digest arrives from noreply@notifications.internal nightly."),
+        ("placeholder key allowed",            False, "Config template ships sk-xxxxxxxxxxxxxxxxxxxx as a stand-in."),
+        ("vendor doc key allowed",             False,
+         ('AWS docs' + ' use AKI' + 'AIOSFODN' + 'N7EXAMPL' + 'E in eve' + 'ry snipp' + 'et.')),
+        ("zero amount allowed",                False, "The line item closed at $0 after the credit."),
+        ("token word alone stays clean",       False,
+         "The token design splits emissions across two epochs; see the governance forum thread."),
+    ]
     failed = 0
     print(" screen-verdict decision table (_parse_screen_verdict):")
     for name, want, args in screen_cases:
@@ -355,32 +598,53 @@ def _self_test():
         ok = got is want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
+    print(" taste veto pattern table (_taste_veto) — flags demote to ask-first, never drop:")
+    for name, want, body in taste_cases:
+        got, why = _taste_veto(body)
+        ok = got is want
+        failed += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why or 'no match'})"))
     print(" auto-promote decision table (_decide_auto_promote):")
     for name, want, args in cases:
-        got, why = _decide_auto_promote(*args, screen_flagged=False)
+        got, why = _decide_auto_promote(*args, screen_flagged=False, taste_flagged=False)
         ok = got is want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
     print(" new-card auto-promote decision table (_decide_auto_promote_new):")
     for name, want, args in new_cases:
-        got, why = _decide_auto_promote_new(*args, screen_flagged=False)
+        got, why = _decide_auto_promote_new(*args, screen_flagged=False, taste_flagged=False)
         ok = got is want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
     print(" auto-reject decision table (_decide_auto_reject):")
     for name, want, args in reject_cases:
-        got, why = _decide_auto_reject(*args, screen_flagged=False)
+        got, why = _decide_auto_reject(*args, screen_flagged=False, taste_flagged=False)
         ok = got is want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
-    print(" screen veto over BOTH gears (a flagged source goes to the owner, never to a gear):")
+    print(" both vetoes over BOTH gears (a flagged item goes to the owner, never to a gear):")
     veto_cases = [
         ("flagged source cannot auto-promote an update", False,
-         _decide_auto_promote("concept", "high", "card-a", "concept", G, 0, 5, screen_flagged=True)),
+         _decide_auto_promote("concept", "high", "card-a", "concept", G, 0, 5,
+                              screen_flagged=True, taste_flagged=False)),
         ("flagged source cannot auto-promote a new card", False,
-         _decide_auto_promote_new("concept", "high", None, False, GN, 0, 5, screen_flagged=True)),
+         _decide_auto_promote_new("concept", "high", None, False, GN, 0, 5,
+                                  screen_flagged=True, taste_flagged=False)),
         ("flagged source cannot auto-reject either", False,
-         _decide_auto_reject("concept", "news-no-engagement", C, 0, 10, screen_flagged=True)),
+         _decide_auto_reject("concept", "news-no-engagement", C, 0, 10,
+                             screen_flagged=True, taste_flagged=False)),
+        ("taste-flagged body cannot auto-promote an update", False,
+         _decide_auto_promote("concept", "high", "card-a", "concept", G, 0, 5,
+                              screen_flagged=False, taste_flagged=True)),
+        ("taste-flagged body cannot auto-promote a new card", False,
+         _decide_auto_promote_new("concept", "high", None, False, GN, 0, 5,
+                                  screen_flagged=False, taste_flagged=True)),
+        ("taste-flagged body cannot auto-promote a new synthesis", False,
+         _decide_auto_promote_new("synthesis", "high", None, False, GN, 0, 5,
+                                  screen_flagged=False, taste_flagged=True)),
+        ("taste-flagged body cannot auto-reject either", False,
+         _decide_auto_reject("concept", "news-no-engagement", C, 0, 10,
+                             screen_flagged=False, taste_flagged=True)),
     ]
     for name, want, (got, why) in veto_cases:
         ok = got is want
@@ -417,6 +681,22 @@ def _self_test():
     r = _auto_reject(list(_prop), [], 10, "/usr/bin/true")
     fn_cases.append(("no policy classes = wiring never invokes the script",
                      not r["applied"] and not r["failures"]))
+    r = _auto_reject([{**_prop[0], "taste_flagged": True}], C, 10, "/usr/bin/true")
+    fn_cases.append(("taste-flagged proposal is never auto-rejected (queues for the owner)",
+                     not r["applied"] and not r["failures"]))
+    r = _auto_reject([{**_prop[0], "screen_flagged": True}], C, 10, "/usr/bin/true")
+    fn_cases.append(("screen-flagged proposal is never auto-rejected either",
+                     not r["applied"] and not r["failures"]))
+    _cap_env = os.environ.pop("ARCHIVIST_AUTO_PROMOTE_MAX", None)
+    fn_cases.append(("default auto-promote cap is 12 (2026-08-10 grant)", _auto_cap() == 12))
+    os.environ["ARCHIVIST_AUTO_PROMOTE_MAX"] = "3"
+    fn_cases.append(("ARCHIVIST_AUTO_PROMOTE_MAX still overrides the default", _auto_cap() == 3))
+    os.environ["ARCHIVIST_AUTO_PROMOTE_MAX"] = "not-a-number"
+    fn_cases.append(("unparsable cap falls back to 12, never crashes", _auto_cap() == 12))
+    if _cap_env is None:
+        os.environ.pop("ARCHIVIST_AUTO_PROMOTE_MAX", None)
+    else:
+        os.environ["ARCHIVIST_AUTO_PROMOTE_MAX"] = _cap_env
     for name, ok in fn_cases:
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
@@ -653,22 +933,6 @@ def _load_meta():
         return {}
 
 
-def _auto_cap():
-    try:
-        return max(0, int(os.environ.get("ARCHIVIST_AUTO_PROMOTE_MAX", "5")))
-    except ValueError:
-        print("curator-run: bad ARCHIVIST_AUTO_PROMOTE_MAX — using default 5", file=sys.stderr)
-        return 5
-
-
-def _auto_reject_cap():
-    try:
-        return max(0, int(os.environ.get("ARCHIVIST_AUTO_REJECT_MAX", "10")))
-    except ValueError:
-        print("curator-run: bad ARCHIVIST_AUTO_REJECT_MAX — using default 10", file=sys.stderr)
-        return 10
-
-
 def _auto_promote(props, meta):
     """Act-and-report gears: auto-approve qualifying proposals through the same
     deterministic gate the owner uses (curator-approve.sh), acting as
@@ -676,9 +940,12 @@ def _auto_promote(props, meta):
     Two grants share ONE per-run cap (ARCHIVIST_AUTO_PROMOTE_MAX):
       - UPDATEs to existing cards (auto_approve_update_confidence) land via
         approve --force onto the target card;
-      - NEW concept cards (auto_approve_confidence, owner grant 2026-08-03)
-        land via a PLAIN approve — never --force, so any slug collision with an
-        existing knowledge card refuses at the gate and stays queued.
+      - NEW cards (auto_approve_confidence) land via a PLAIN approve — never
+        --force, so any slug collision with an existing knowledge card refuses
+        at the gate and stays queued.
+    Which types and confidences either grant covers is gears.json's call (owner
+    grant 2026-08-10: HIGH and MED concepts and syntheses); entity is refused in
+    code in both paths, and both vetoes bind in both paths.
     Every action lands in the digest with its revert path; any failure leaves
     the proposal pending under its original name. Never raises, never silent."""
     out = {"applied": [], "failures": []}
@@ -688,18 +955,20 @@ def _auto_promote(props, meta):
     for pr in props:
         typ, slug, target = pr.get("type"), pr.get("slug"), pr.get("update_of")
         if not target:
-            # NEW-card path (concepts only; the decision fn hard-excludes the
-            # rest). The collision probe is LIVE — a card that landed after the
-            # judge pass still queues this proposal for the owner.
+            # NEW-card path (concepts and syntheses; entity is hard-excluded in
+            # the decision fn). The collision probe is LIVE — a card that landed
+            # after the judge pass still queues this proposal for the owner.
             ok, _why_not = _decide_auto_promote_new(typ, pr.get("confidence"), target,
                                                     bool(_knowledge_path(slug)),
                                                     rules, len(out["applied"]), cap,
-                                                    screen_flagged=bool(pr.get("screen_flagged")))
+                                                    screen_flagged=bool(pr.get("screen_flagged")),
+                                                    taste_flagged=bool(pr.get("taste_flagged")))
             if not ok:
                 continue  # stays pending for the owner's gate — the normal path
             env = {**os.environ, "CURATOR_ACTOR": "auto-gear",
                    "SOVS_VAULT": VAULT, "CURATOR_LANE": LANE_NAME}
-            note = "act-and-report: high-confidence new concept (gear auto_approve_confidence)"
+            note = (f"act-and-report: {pr.get('confidence')}-confidence new {typ} "
+                    "(gear auto_approve_confidence)")
             try:
                 # plain approve, NO --force: if a same-named card lands between
                 # the probe above and this call, the gate refuses and the
@@ -727,7 +996,8 @@ def _auto_promote(props, meta):
         ok, _why_not = _decide_auto_promote(typ, pr.get("confidence"), target,
                                             _note_type(tp) if tp else None,
                                             rules, len(out["applied"]), cap,
-                                            screen_flagged=bool(pr.get("screen_flagged")))
+                                            screen_flagged=bool(pr.get("screen_flagged")),
+                                            taste_flagged=bool(pr.get("taste_flagged")))
         if not ok:
             continue  # stays pending for the owner's gate — the normal path
         if target in {x["target"] for x in out["applied"]}:
@@ -752,7 +1022,7 @@ def _auto_promote(props, meta):
                 continue
         env = {**os.environ, "CURATOR_ACTOR": "auto-gear",
                "SOVS_VAULT": VAULT, "CURATOR_LANE": LANE_NAME}
-        note = (f"act-and-report: high-confidence update to existing {typ} card "
+        note = (f"act-and-report: {pr.get('confidence')}-confidence update to existing {typ} card "
                 "(gear auto_approve_update_confidence)")
         try:
             r = subprocess.run([approve, "--force", target, note], env=env,
@@ -966,12 +1236,18 @@ for p in cands:
     if screen_flagged:
         print(f"curator-run: injection screen FLAGGED {src} ({screen_why}) — "
               f"{slug} queues for the owner, gears withheld", file=sys.stderr)
-    judgments.append({**base_judgment, "promote": True,
-                      "reason": v.get("reason", ""), "type": typ,
-                      "slug": slug, "confidence": v.get("confidence", ""),
-                      "update_of": v.get("update_of"),
-                      "auto_reject_class": v.get("auto_reject_class"),
-                      "screen_flagged": screen_flagged, "screen_reason": screen_why})
+    # bound, not appended inline: the taste veto runs on the FINAL drafted body
+    # further down (after the update-merge pass), and its verdict belongs on this
+    # same judgment row. The file is written after the loop, so mutating it here
+    # is what puts taste_flagged in judgments.jsonl.
+    _jrow = {**base_judgment, "promote": True,
+             "reason": v.get("reason", ""), "type": typ,
+             "slug": slug, "confidence": v.get("confidence", ""),
+             "update_of": v.get("update_of"),
+             "auto_reject_class": v.get("auto_reject_class"),
+             "screen_flagged": screen_flagged, "screen_reason": screen_why,
+             "taste_flagged": False, "taste_reason": ""}
+    judgments.append(_jrow)
     if slug in have or slug in pending:
         v["update_of"] = v.get("update_of") or slug
     # topic dedup across runs and passes: exact or near (substring, long keys
@@ -1021,10 +1297,19 @@ for p in cands:
         body = f"**Why this matters:** {why}\n\n{body}"
     card = (f"---\ntype: {typ}\nsource: {src}\ncreated: {datetime.now().strftime('%Y-%m-%d')}\n"
             f"title: {v.get('title', slug)}\n---\n\n# {v.get('title', slug)}\n\n{body}\n")
+    # Deterministic taste veto over the FINAL drafted body — what would actually
+    # land in knowledge/, merge pass and why-line included. Frontmatter is left
+    # out on purpose: `source:` is a loading-dock path, not card content.
+    taste_flagged, taste_why = _taste_veto(f"{v.get('title', slug)}\n\n{body}")
+    _jrow["taste_flagged"], _jrow["taste_reason"] = taste_flagged, taste_why
+    if taste_flagged:
+        print(f"curator-run: taste veto FLAGGED {slug} ({taste_why}) — "
+              "queues for the owner, gears withheld", file=sys.stderr)
     proposals.append({**{k: v.get(k) for k in ("slug", "type", "title", "reason", "confidence",
                                                "update_of", "auto_reject_class")},
                       "src": src, "card": card,
-                      "screen_flagged": screen_flagged, "screen_reason": screen_why})
+                      "screen_flagged": screen_flagged, "screen_reason": screen_why,
+                      "taste_flagged": taste_flagged, "taste_reason": taste_why})
 
 # Sovereign-inference law: a failed local run fails loudly, never silently.
 # Errored files must be re-judged next run: hold the watermark below them and
@@ -1112,7 +1397,12 @@ if not a.dry:
                             # hold flagged items for a per-slug verdict; without
                             # this the flag lives only in this run's digest text
                             "screen_flagged": bool(pr.get("screen_flagged")),
-                            "screen_reason": pr.get("screen_reason") or ""}
+                            "screen_reason": pr.get("screen_reason") or "",
+                            # same reason: a taste flag must survive this run so
+                            # downstream review tooling can see why a card that
+                            # met its gear's confidence is sitting in the queue
+                            "taste_flagged": bool(pr.get("taste_flagged")),
+                            "taste_reason": pr.get("taste_reason") or ""}
     # act-and-report: policy auto-reject of judge-flagged classes. Runs BEFORE
     # auto-promote — an owner always-reject ruling outranks a gear grant, and a
     # rejected file must never be considered for promotion in the same run.
@@ -1143,11 +1433,12 @@ if not a.dry:
             continue  # rejected by the lane's auto-reject policy; listed below
         tag = "UPDATE " + pr["update_of"] if pr.get("update_of") else "new"
         flag = " ⚠ SCREENED" if pr.get("screen_flagged") else ""
+        flag += " ⚠ TASTE" if pr.get("taste_flagged") else ""
         lines.append(f"- **{pr['slug']}** ({pr['type']}, {pr['confidence']}, {tag}){flag} — {pr['reason']}\n  from `{pr['src']}`")
     if auto["applied"] or auto["failures"]:
         lines += ["", "## Auto-applied (act-and-report)",
                   "_Applied by the auto-promote gears (actor `auto-gear`): `auto_approve_update_confidence` "
-                  "for updates, `auto_approve_confidence` for new concepts; each line carries its revert path._"]
+                  "for updates, `auto_approve_confidence` for new cards; each line carries its revert path._"]
         for x in auto["applied"]:
             tag = "UPDATE" if x.get("mode") == "update" else "NEW"
             lines.append(f"- **{x['target']}** ({x['type']}, {x['confidence']}, {tag}) — {x['reason']}\n"
@@ -1173,6 +1464,17 @@ if not a.dry:
         for pr in screened:
             lines.append(f"- **{pr['slug']}** ({pr['type']}) — {pr.get('screen_reason') or 'flagged'}\n"
                          f"  source: `{pr['src']}`")
+    tasted = [pr for pr in proposals if pr.get("taste_flagged")]
+    if tasted:
+        lines += ["", "## Taste-flagged — gears withheld",
+                  "_The deterministic taste veto matched the DRAFTED BODY of these: money figures, "
+                  "contact details, a wallet address, or a key-shaped string. No gear could move "
+                  "them, so they wait for you like any ask-first item. Nothing was dropped and "
+                  "nothing was edited — read the card, and strip the figure or identifier before "
+                  "approving._"]
+        for pr in tasted:
+            lines.append(f"- **{pr['slug']}** ({pr['type']}) — {pr.get('taste_reason') or 'flagged'}\n"
+                         f"  source: `{pr['src']}`")
     open(INBOX, "w").write("\n".join(lines) + "\n")
     json.dump({"generated_at": datetime.now(timezone.utc).astimezone().isoformat(), "lane": LANE_NAME,
                "judged": judged, "new_proposals": len(proposals),
@@ -1182,6 +1484,7 @@ if not a.dry:
                "auto_reject_failures": len(autorej["failures"]),
                "screen": "on" if SCREEN else "off",
                "screen_flagged": len(screened),
+               "taste_flagged": len(tasted),
                "errors": len(errored),
                "deferred": len(deferred),
                "pending": pending_now,
@@ -1226,11 +1529,15 @@ if not a.dry:
           + (f", {len(autorej['failures'])} auto-reject FAILURE(s) left queued" if autorej["failures"] else ""))
     print(f"curator-run: injection screen {'on' if SCREEN else 'off'}"
           + (f" — {len(screened)} source(s) FLAGGED, gears withheld, queued for the owner" if screened else ""))
+    print(f"curator-run: taste veto on (deterministic)"
+          + (f" — {len(tasted)} drafted body(ies) FLAGGED, gears withheld, queued for the owner"
+             if tasted else ""))
 for pr in proposals:
     u = f" [UPDATE {pr['update_of']}]" if pr.get("update_of") else ""
     tag = (" [AUTO-APPLIED]" if pr["slug"] in applied_slugs
            else f" [AUTO-REJECTED: {pr.get('auto_reject_class')}]" if pr["slug"] in autorej_slugs else "")
     tag += " [SCREENED]" if pr.get("screen_flagged") else ""
+    tag += " [TASTE]" if pr.get("taste_flagged") else ""
     print(f"  + {pr['slug']} ({pr['type']}, {pr['confidence']}){u}{tag}: {pr['reason']}")
 
 if errored:
