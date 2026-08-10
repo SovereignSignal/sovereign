@@ -1,0 +1,10 @@
+{
+  "class": "chatter",
+  "why": "Scheduling, gate codes, lunch. Taste says logistics and chatter are never a card.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": false
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "class": "durable-concept",
+  "why": "A genuinely novel, reusable measurement method in the owner's domain. Taste says keep reusable methods.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": true,
+      "type": "concept"
+    }
+  ]
+}

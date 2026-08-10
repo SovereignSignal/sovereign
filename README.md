@@ -58,6 +58,18 @@ brain-evidence \
 
 Use `--audit-overlay` in place of `--ref` for a report-only aggregate freshness receipt. Detailed output can contain trusted text and identifiers, so keep the state directory private. Standard output contains only a sanitized receipt. Missing temporal fields remain findings; the helper never invents or backfills dates.
 
+## Picking a judge (optional)
+
+`bin/brain-judge-bakeoff` scores candidate judge models against the **real** `curator-run` judging path, so a judge is chosen on calibration rather than on benchmarks. Benchmark strength does not predict judge calibration: a strong model can promote everything (useless, since the curator's whole value is default-NO) or promote nothing (equally useless). Both failure modes have been observed on models that benchmark well.
+
+```bash
+bin/brain-judge-bakeoff gpt-oss:120b qwen3.6:35b --runs 3 --json bakeoff.json
+```
+
+It builds a throwaway vault in a temp dir, seeds it with the bundled synthetic corpus in `connectors/bakeoff-corpus/` (entirely fictional, so the harness is publishable), runs the real curator against it, and prints a scorecard: accuracy, false-promote rate (the dangerous one), false-skip rate, update detection, containment of adversarial documents, and median and p90 latency. Model calls are timed through a loopback proxy, so nothing in `curator-run` is patched to measure it.
+
+It refuses to run if the vault it resolved is inside a real one, caps the act-and-report gears at zero, and writes nothing outside the temp dir and an explicit `--json` path. `--endpoint`, `--keyfile`, and `--key-env` point it at a remote OpenAI-compatible endpoint; the default is local. Add cases by dropping a document and a matching `expected.json` into the corpus, and run `--self-test` to check the scoring logic with no network.
+
 ## License
 
 MIT (intended). Fork freely.

@@ -1,0 +1,11 @@
+{
+  "class": "durable-entity",
+  "why": "A named vendor the owner has contracted directly. Taste says a vendor the owner engages is always a node.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": true,
+      "type": "entity"
+    }
+  ]
+}

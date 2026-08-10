@@ -1,0 +1,10 @@
+{
+  "class": "config-params",
+  "why": "A SKILL.md a running job reads: cadences, query ids, source lists, render vars. Config is not knowledge.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": false
+    }
+  ]
+}

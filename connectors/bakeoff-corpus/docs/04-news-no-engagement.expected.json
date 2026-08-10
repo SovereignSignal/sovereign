@@ -1,0 +1,10 @@
+{
+  "class": "news-no-engagement",
+  "why": "A merger between two orgs the owner has no relationship with, in another market. Interesting is not the bar.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": false
+    }
+  ]
+}
