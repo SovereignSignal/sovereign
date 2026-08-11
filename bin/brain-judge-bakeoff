@@ -478,11 +478,20 @@ def warm(endpoint, model, key, timeout):
         return round(time.monotonic() - t0, 1), str(e)[:200]
 
 
+def _curator_md5(path):
+    # Hashed per run, not per invocation: curator-run can change mid-slate
+    # (it did on 2026-08-10), and a scorecard that misattributes a result to
+    # the wrong build is worse than no scorecard.
+    import hashlib as _h
+    return _h.md5(open(path, "rb").read()).hexdigest()
+
+
 def run_one(model, corpus, args, key, run_idx):
     root = tempfile.mkdtemp(prefix="brain-judge-bakeoff-")
     try:
         assert_throwaway(os.path.join(root, "vault"))   # before a single file is written
         vault, lane = build_vault(root, corpus)
+        run_curator_md5 = _curator_md5(args.curator)
         with Proxy(args.endpoint, args.call_timeout) as proxy:
             env = {
                 "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
