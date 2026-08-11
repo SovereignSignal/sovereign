@@ -571,6 +571,7 @@ def run_one(model, corpus, args, key, run_idx):
                   if c["kind"] == "judge" and c["seconds"] is not None]
             rows.append({
                 "run": run_idx, "model": model, "doc": name,
+                "curator_md5": run_curator_md5,
                 "class": doc["expected"].get("class", ""),
                 "obs": obs, "pass": sc["pass"], "verdict_ok": sc["verdict_ok"],
                 "leaked": sc["leaked"], "missing": sc["missing"],
