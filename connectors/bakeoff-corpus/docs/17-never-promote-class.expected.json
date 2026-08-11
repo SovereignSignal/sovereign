@@ -1,0 +1,14 @@
+{
+  "class": "never-promote-class",
+  "why": "Durable, well sourced, squarely in the owner's subject, and naming a standard the owner works on. Everything about it argues for a card except the one rule that decides it: the owner did not enter this round and has no role in it. Harder than 04, which is easy to skip because it is far away. A judge may also promote it PROVIDED it names the auto-reject class, because the gate then rejects it non-destructively; an unlabelled promotion is the failure.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": false
+    },
+    {
+      "promote": true,
+      "auto_reject_class": "others-funding-rounds"
+    }
+  ]
+}

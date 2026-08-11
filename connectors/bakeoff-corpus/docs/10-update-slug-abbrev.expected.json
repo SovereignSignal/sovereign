@@ -1,0 +1,11 @@
+{
+  "class": "update-slug-abbrev",
+  "why": "The existing card is slugged with an abbreviation (mwa-capital-programme) while the source spells the organisation out in full. Substring and token-overlap dedup both miss it, so the judge has to expand MWA from the profile and match on subject. Abbreviation-vs-expansion is the second near-miss shape that produced duplicate cards in production.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": true,
+      "update_of": "mwa-capital-programme"
+    }
+  ]
+}

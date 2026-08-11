@@ -1,0 +1,26 @@
+{
+  "class": "multi-subject",
+  "why": "One source touching three subjects the brain already holds cards on. The pipeline drafts at most one proposal per source, so the failure this catches is not three cards at once: it is the straddling FOURTH card, a new slug covering a bit of each, which is how overlapping cards actually get born a night at a time. Correct is to skip the roundup or to extend the single card it most advances.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": false
+    },
+    {
+      "promote": true,
+      "update_of": "tessellate-telemetry-consortium"
+    },
+    {
+      "promote": true,
+      "update_of": "mwa-capital-programme"
+    },
+    {
+      "promote": true,
+      "update_of": "ring-east-telemetry-pilot"
+    },
+    {
+      "promote": true,
+      "update_of": "legacy-probe-fleet"
+    }
+  ]
+}

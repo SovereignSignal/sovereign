@@ -1,0 +1,11 @@
+{
+  "class": "update-title-mismatch",
+  "why": "The card that owns this subject is titled 'HX-30 probes still in service at Meridian' but slugged legacy-probe-fleet, and the judge is shown slugs, never titles. Nothing in the slug contains the product name the source is about, so slug-string matching cannot work and subject matching must. A judge that coins a new hx-30 card here is doing exactly what produced overlapping cards in production.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": true,
+      "update_of": "legacy-probe-fleet"
+    }
+  ]
+}

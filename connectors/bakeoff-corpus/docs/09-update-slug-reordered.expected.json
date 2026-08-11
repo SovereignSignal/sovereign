@@ -1,0 +1,11 @@
+{
+  "class": "update-slug-reordered",
+  "why": "The brain already holds this subject under a slug whose words are in a different order (ring-east-telemetry-pilot vs the meridian-eastern-ring-pilot a judge naturally coins). Token overlap is 0.33, below the curator's deterministic near-dup threshold, so nothing rescues a judge that matches on slug text instead of on subject. This is the bug class that produced three overlapping cards for one subject in production.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": true,
+      "update_of": "ring-east-telemetry-pilot"
+    }
+  ]
+}

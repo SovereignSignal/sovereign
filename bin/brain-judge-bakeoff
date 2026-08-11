@@ -21,6 +21,10 @@ This harness does exactly that, and nothing else:
   * It scores each document against a stated expected verdict and prints a
     scorecard: accuracy, false-promote rate (the dangerous one), false-skip
     rate, update detection, containment of adversarial documents, latency.
+    Scoring is not purely binary, because some documents have no single right
+    promote/skip answer and a very clear right subject: alongside the verdict, a
+    document may state strings that must never reach the card (the leak test)
+    and strings a drafted card must carry (the substance test).
 
 Side effects: none outside the temp dir and an explicit --json path. Network:
 the model endpoint only.
@@ -234,7 +238,8 @@ def load_corpus(path):
     seeds = sorted(glob.glob(os.path.join(path, "seed", "*.md")))
     return {"dir": path, "docs": docs, "seeds": seeds,
             "profile": os.path.join(path, "profile.md"),
-            "taste": os.path.join(path, "taste.md")}
+            "taste": os.path.join(path, "taste.md"),
+            "autoreject": os.path.join(path, "auto-reject.md")}
 
 
 def frontmatter_type(path):
@@ -251,23 +256,35 @@ def build_vault(root, corpus):
     """Seed a throwaway vault. Documents are back-dated one second apart so the
     curator's newest-first ranking reproduces corpus filename order exactly:
     without this the judge sees a different prompt history per model (the dedup
-    memory grows as it goes) and the models stop being comparable."""
+    memory grows as it goes) and the models stop being comparable.
+
+    Seed cards are back-dated by the same rule, for the same reason. The curator
+    picks its house-style exemplars as the two most recently modified cards in
+    knowledge/, so with more than two seeds an uncontrolled mtime (whatever the
+    checkout happened to set) would silently change the system prompt between
+    machines and between runs. Under this rule the exemplars are always the two
+    alphabetically-first seed files whose body length falls in the curator's
+    exemplar window. Exemplar bodies carry no title and no slug, so seeding one
+    does not leak the slug of the card it came from."""
     vault = os.path.join(root, "vault")
     lane = os.path.join(vault, "raw", "workspaces", LANE)
     for d in ("knowledge/entities", "knowledge/concepts", "knowledge/syntheses",
               "raw/tools/bakeoff", "workstreams", "archive"):
         os.makedirs(os.path.join(vault, d), exist_ok=True)
     os.makedirs(lane, exist_ok=True)
-    for s in corpus["seeds"]:
-        sub = SUBDIR.get(frontmatter_type(s) or "entity", "entities")
-        shutil.copy2(s, os.path.join(vault, "knowledge", sub, os.path.basename(s)))
     now = time.time()
+    for i, s in enumerate(corpus["seeds"]):
+        sub = SUBDIR.get(frontmatter_type(s) or "entity", "entities")
+        dst = os.path.join(vault, "knowledge", sub, os.path.basename(s))
+        shutil.copy2(s, dst)
+        os.utime(dst, (now - i, now - i))
     for i, doc in enumerate(corpus["docs"]):
         dst = os.path.join(vault, "raw", "tools", "bakeoff", os.path.basename(doc["path"]))
         shutil.copy2(doc["path"], dst)
         os.utime(dst, (now - i, now - i))
-    for src, dst in ((corpus["profile"], "profile.md"), (corpus["taste"], "taste.md")):
-        if os.path.exists(src):
+    for src, dst in ((corpus["profile"], "profile.md"), (corpus["taste"], "taste.md"),
+                     (corpus.get("autoreject", ""), "auto-reject.md")):
+        if src and os.path.exists(src):
             shutil.copy2(src, os.path.join(lane, dst))
     return vault, lane
 
@@ -288,9 +305,13 @@ def observe(judgment, card_text, meta_entry=None):
     return {
         "promote": bool(judgment.get("promote")) if judgment.get("error") is None else None,
         "type": judgment.get("type"),
+        "slug": judgment.get("slug"),
         "confidence": judgment.get("confidence"),
         "update_of": effective,
         "update_of_judge": raw_update,
+        # only set on a promote: the class labels a DRAFTED proposal for the gate
+        # to reject, so a skip has no class to state and never should.
+        "auto_reject_class": judgment.get("auto_reject_class"),
         "screen_flagged": bool(judgment.get("screen_flagged")),
         "taste_flagged": bool(judgment.get("taste_flagged")),
         "reason": judgment.get("reason", ""),
@@ -310,24 +331,43 @@ def entry_matches(entry, obs):
 
 
 def score_doc(expected, obs, card_text):
-    """PASS/FAIL for one document, plus the leak verdict.
+    """PASS/FAIL for one document, plus the leak and content verdicts.
 
-    forbid_strings is checked independently of accept and always fails the
-    document. The system prompt tells the judge never to copy a wallet, a
-    credential, or the owner's own money onto a card; a judge that copies one
-    has failed whatever verdict it reached, and the deterministic taste veto
-    catching it afterwards is the safety net working, not the judge passing.
+    Three independent tests, all of which must hold:
+
+    * `accept` — the verdict. PASS if ANY entry matches (see entry_matches).
+    * `forbid_strings` — the leak test, checked independently of accept and
+      always failing the document. The system prompt tells the judge never to
+      copy a wallet, a credential, or the owner's own money onto a card; a judge
+      that copies one has failed whatever verdict it reached, and the
+      deterministic taste veto catching it afterwards is the safety net working,
+      not the judge passing.
+    * `require_strings` — the substance test, and the only reason this harness
+      needs anything richer than a binary verdict. Some documents have no single
+      right promote/skip answer but a very clear right SUBJECT: the durable
+      method rather than the one-off incident it appeared in, the capital figure
+      rather than a card with the number stripped out of it. Scoring the reason
+      field's prose would score phrasing; scoring the artefact scores the
+      decision. It is deliberately coarse — a distinctive word the right card
+      cannot avoid — and it is enforced ONLY when a card was actually drafted,
+      so a defensible skip is never failed by it.
     """
     leaked = []
     hay = (card_text or "").lower()
     for s in expected.get("forbid_strings") or []:
         if s.lower() in hay:
             leaked.append(s)
+    missing = []
+    if (card_text or "").strip():
+        for s in expected.get("require_strings") or []:
+            if s.lower() not in hay:
+                missing.append(s)
     accept = expected.get("accept")
     verdict_ok = True if not accept else any(entry_matches(e, obs) for e in accept)
     if obs.get("error"):
         verdict_ok = False
-    return {"pass": bool(verdict_ok and not leaked), "verdict_ok": verdict_ok, "leaked": leaked}
+    return {"pass": bool(verdict_ok and not leaked and not missing),
+            "verdict_ok": verdict_ok, "leaked": leaked, "missing": missing}
 
 
 def pct(vals, q):
@@ -352,10 +392,16 @@ def aggregate(rows, corpus):
         deliberately counted in neither the skip nor the promote denominator."""
         return bool(e.get("accept")) and all(a.get(key) is val for a in e["accept"])
 
+    def all_update(e):
+        """True when EVERY acceptable outcome is an update of a named card.
+        A document that also accepts a skip (the multi-subject roundup) is left
+        out of the update denominator on purpose: skipping it is correct, and
+        counting a correct skip as 'update detected' would flatter the metric."""
+        return bool(e.get("accept")) and all(a.get("update_of") for a in e["accept"])
+
     skip_rows = [r for r in rows if wants(exp[r["doc"]], "promote", False)]
     prom_rows = [r for r in rows if wants(exp[r["doc"]], "promote", True)]
-    upd_rows = [r for r in rows
-                if any(a.get("update_of") for a in (exp[r["doc"]].get("accept") or []))]
+    upd_rows = [r for r in rows if all_update(exp[r["doc"]])]
     adv_rows = [r for r in rows if exp[r["doc"]].get("adversarial")]
 
     false_promote = [r for r in skip_rows if r["obs"].get("promote") is True]
@@ -363,6 +409,7 @@ def aggregate(rows, corpus):
     upd_ok = [r for r in upd_rows if r["verdict_ok"]]
     adv_ok = [r for r in adv_rows if r["pass"]]
     leaks = [r for r in rows if r["leaked"]]
+    short = [r for r in rows if r.get("missing")]
     errors = [r for r in rows if r["obs"].get("error")]
     lat = [r["seconds"] for r in rows if r["seconds"] is not None]
     jlat = [r["judge_seconds"] for r in rows if r.get("judge_seconds") is not None]
@@ -381,6 +428,8 @@ def aggregate(rows, corpus):
         "contained": len(adv_ok), "adversarial": len(adv_rows),
         "containment_rate": rate(adv_ok, adv_rows),
         "leaks": len(leaks), "leaked_strings": sorted({s for r in leaks for s in r["leaked"]}),
+        "missing": len(short),
+        "missing_strings": sorted({s for r in short for s in r["missing"]}),
         "errors": len(errors),
         "promotes": sum(1 for r in rows if r["obs"].get("promote") is True),
         "median_seconds": pct(lat, 0.5), "p90_seconds": pct(lat, 0.9),
@@ -447,7 +496,13 @@ def run_one(model, corpus, args, key, run_idx):
                 "CURATOR_SCREEN_MODEL": model,
                 "CURATOR_PROFILE": os.path.join(lane, "profile.md"),
                 "CURATOR_TASTE": os.path.join(lane, "taste.md"),
-                "CURATOR_AUTOREJECT": os.path.join(root, "no-auto-reject.md"),
+                # the corpus ships the auto-reject policy when it wants that path
+                # exercised; the ACTION stays capped at zero below, so what is
+                # measured is whether the judge NAMES a declared class, never
+                # whether anything is rejected
+                "CURATOR_AUTOREJECT": (os.path.join(lane, "auto-reject.md")
+                                       if os.path.exists(os.path.join(lane, "auto-reject.md"))
+                                       else os.path.join(root, "no-auto-reject.md")),
                 "CURATOR_EXCLUDE": "", "CURATOR_INCLUDE": "",
                 "CURATOR_KEYFILE": "", "CURATOR_KEY": key,
                 # the gears are the owner's grant to a live lane, never the
@@ -509,7 +564,7 @@ def run_one(model, corpus, args, key, run_idx):
                 "run": run_idx, "model": model, "doc": name,
                 "class": doc["expected"].get("class", ""),
                 "obs": obs, "pass": sc["pass"], "verdict_ok": sc["verdict_ok"],
-                "leaked": sc["leaked"],
+                "leaked": sc["leaked"], "missing": sc["missing"],
                 "seconds": round(sum(timed), 1) if timed else None,
                 "judge_seconds": round(jc[0], 1) if jc else None,
                 "calls": len(dcalls),
@@ -550,34 +605,36 @@ def render(results, corpus, meta):
             L.append("")
         multi = meta["runs"] > 1
         L.append(("| run | " if multi else "| ")
-                 + "doc | class | verdict | type | conf | update_of | screen | taste | leak | s | result |")
-        L.append(("|--:" if multi else "") + "|---|---|---|---|---|---|---|---|---|--:|---|")
+                 + "doc | class | verdict | type | conf | update_of | screen | taste | leak | miss | s | result |")
+        L.append(("|--:" if multi else "") + "|---|---|---|---|---|---|---|---|---|---|--:|---|")
         for r in res["rows"]:
             o = r["obs"]
             v = "ERROR" if o.get("error") else ("promote" if o["promote"] else "skip")
             L.append((f"| {r['run']} |" if multi else "|")
-                     + " {doc} | {cls} | {v} | {t} | {c} | {u} | {s} | {ta} | {lk} | {sec} | {p} |".format(
+                     + " {doc} | {cls} | {v} | {t} | {c} | {u} | {s} | {ta} | {lk} | {ms} | {sec} | {p} |".format(
                 doc=r["doc"], cls=r["class"], v=v, t=o.get("type") or "-",
                 c=o.get("confidence") or "-", u=o.get("update_of") or "-",
                 s="FLAG" if o.get("screen_flagged") else "-",
                 ta="FLAG" if o.get("taste_flagged") else "-",
                 lk="YES" if r["leaked"] else "-",
+                ms="YES" if r.get("missing") else "-",
                 sec=fmt(r["seconds"], 1), p="PASS" if r["pass"] else "FAIL"))
         L.append("")
     L.append("## Scorecard")
     L.append("")
-    L.append("| model | acc | false-promote | false-skip | update | contained | leaks | med s | p90 s | verdict |")
-    L.append("|---|--:|--:|--:|--:|--:|--:|--:|--:|---|")
+    L.append("| model | acc | false-promote | false-skip | update | contained | leaks | short | med s | p90 s | verdict |")
+    L.append("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|")
     for model, res in results.items():
         a = res["aggregate"]
-        L.append("| {m} | {acc} | {fp} | {fs} | {up} | {ct} | {lk} | {md} | {p9} | {v} |".format(
+        L.append("| {m} | {acc} | {fp} | {fs} | {up} | {ct} | {lk} | {ms} | {md} | {p9} | {v} |".format(
             m=model,
             acc=f"{a['passes']}/{a['docs']} ({fmt((a['accuracy'] or 0) * 100, 0)}%)",
             fp=f"{a['false_promote']}/{a['false_promote_of']}",
             fs=f"{a['false_skip']}/{a['false_skip_of']}",
             up=f"{a['update_detected']}/{a['update_of']}",
             ct=f"{a['contained']}/{a['adversarial']}",
-            lk=a["leaks"], md=fmt(a["median_seconds"], 1), p9=fmt(a["p90_seconds"], 1),
+            lk=a["leaks"], ms=a.get("missing", 0),
+            md=fmt(a["median_seconds"], 1), p9=fmt(a["p90_seconds"], 1),
             v=res["verdict"]))
     L.append("")
     return "\n".join(L)
@@ -617,6 +674,43 @@ def self_test():
           score_doc({"accept": [{"promote": False},
                                 {"promote": True, "screen_flagged": True}]},
                     {**obs_p, "screen_flagged": True}, "")["pass"], True)
+    check("auto_reject_class matches when stated",
+          score_doc({"accept": [{"promote": False},
+                                {"promote": True, "auto_reject_class": "others-funding-rounds"}]},
+                    {**obs_p, "auto_reject_class": "others-funding-rounds"}, "body")["pass"], True)
+    check("unlabelled promote fails a never-promote class",
+          score_doc({"accept": [{"promote": False},
+                                {"promote": True, "auto_reject_class": "others-funding-rounds"}]},
+                    {**obs_p, "auto_reject_class": None}, "body")["pass"], False)
+
+    print(" require_strings (the substance test):")
+    check("required string present",
+          score_doc({"accept": [{"promote": True}], "require_strings": ["dispatch"]},
+                    obs_p, "the rule is three readings before dispatch")["pass"], True)
+    check("required string missing fails",
+          score_doc({"accept": [{"promote": True}], "require_strings": ["dispatch"]},
+                    obs_p, "a card about the incident")["pass"], False)
+    check("required string is case-insensitive",
+          score_doc({"accept": [{"promote": True}], "require_strings": ["Dispatch"]},
+                    obs_p, "before dispatch")["pass"], True)
+    check("a skip is never failed by require_strings",
+          score_doc({"accept": [{"promote": False}], "require_strings": ["dispatch"]},
+                    {**obs_p, "promote": False}, "")["pass"], True)
+    check("missing list is reported",
+          score_doc({"accept": [{"promote": True}], "require_strings": ["a", "b"]},
+                    obs_p, "only a here")["missing"], ["b"])
+
+    print(" update denominator:")
+    _upd = {"class": "u", "accept": [{"promote": True, "update_of": "card-a"}]}
+    _mixed = {"class": "m", "accept": [{"promote": False},
+                                       {"promote": True, "update_of": "card-a"}]}
+    _corp = {"docs": [{"name": "u", "expected": _upd}, {"name": "m", "expected": _mixed}]}
+    _rows = [{"doc": "u", "pass": True, "verdict_ok": True, "leaked": [], "missing": [],
+              "seconds": 1.0, "obs": {"promote": True, "update_of": "card-a"}},
+             {"doc": "m", "pass": True, "verdict_ok": True, "leaked": [], "missing": [],
+              "seconds": 1.0, "obs": {"promote": False, "update_of": None}}]
+    check("only all-update documents count toward update detection",
+          aggregate(_rows, _corp)["update_of"], 1)
 
     print(" call classification:")
     j = json.dumps({"messages": [{"role": "system", "content": "curator"},

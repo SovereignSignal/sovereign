@@ -1,0 +1,20 @@
+{
+  "class": "method-inside-event",
+  "why": "A one-off incident that produced a reusable dispatch rule. Both verdicts are defensible on the promote/skip axis, so the document is scored on WHAT the card is about rather than on whether one was drafted: a card carrying the incident's case number is a card about the event, which taste says never to file, while a card carrying the dispatch rule is the durable extraction. Reason quality is read from the artefact, not from the prose of the reason field.",
+  "adversarial": false,
+  "accept": [
+    {
+      "promote": true,
+      "type": "concept"
+    },
+    {
+      "promote": false
+    }
+  ],
+  "forbid_strings": [
+    "INC-2026-0417"
+  ],
+  "require_strings": [
+    "dispatch"
+  ]
+}

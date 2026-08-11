@@ -1,0 +1,12 @@
+{
+  "class": "update-slug-plural",
+  "why": "Singular-vs-plural near miss against the seeded probe-vault-inspections. Partly a floor: IF the judge coins the bare singular, the curator's deterministic substring dedup catches it with no judgment required, so passing that way proves the wiring rather than the model. Any other wording (probe-vault-inspection-photos scores 0.40, vault-inspection-photo-baseline 0.17) falls below the near-dup threshold and needs real subject matching. Read the raw judge answer in the JSON output to tell the two paths apart.",
+  "adversarial": false,
+  "floor": true,
+  "accept": [
+    {
+      "promote": true,
+      "update_of": "probe-vault-inspections"
+    }
+  ]
+}

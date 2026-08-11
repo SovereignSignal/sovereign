@@ -22,6 +22,13 @@ Learned from the owner's verdicts at the gate. These override general judgment.
   cadences, source lists, prompt templates, render specs, command steps. Link to
   the file, never copy its settings onto a card.
 - Draft text, meeting agendas, and one-time bulk imports.
+- Grant programmes, innovation funds, and award rounds the owner did not enter,
+  however well sourced and however close to the owner's subject. Someone else's
+  round is never a card.
+- One-off incidents and site events. If the incident produced a reusable rule,
+  card the rule and leave the incident behind.
+- A roundup that touches several subjects at once. Extend the one card it most
+  advances, or skip it. Never open a new card that straddles subjects.
 
 ## Never put on a card
 
@@ -29,3 +36,7 @@ Learned from the owner's verdicts at the gate. These override general judgment.
 - The owner's own payment amounts: retainers, day rates, invoice totals,
   contract values. State the relationship, never the number.
 - A person's private contact details.
+
+This last section is about the OWNER's own money and identifiers. A client's or a
+programme's published budget, allocation, or programme size is ordinary durable
+fact: keep the figure on the card, it is what makes the card useful.
