@@ -269,7 +269,7 @@ def main():
     dropped = before[0] - after[0]
     if dropped > 0:
         print(f"dropped   : {dropped} files, {human(before[1] - after[1])} "
-              f"({100.0 * (before[1] - after[1]) / before[1]:.0f}% of the tree)")
+              f"({100.0 * (before[1] - after[1]) / before[1]:.1f}% of the tree)")
     print("note      : the working tree is scoped; full history stays in .git. "
           "Hygiene, not isolation.")
     return 0
