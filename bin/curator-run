@@ -157,7 +157,12 @@ _TASTE_AMOUNT = re.compile(
 # a control the owner can keep trusting. Widen by adding words HERE, never by
 # dropping the context requirement.
 _TASTE_PRIVATE_MONEY_CONTEXT = re.compile(
-    r"(?i)\b(?:retainer|invoice[sd]?|invoicing|salary|salaries|payroll|compensation|"
+    r"(?i)\b(?:retainer|invoice[sd]?|invoicing|salary|salaries|payroll|"
+    # "compensation" on its own caught a PUBLIC governance pay schedule (Arbitrum
+    # delegate rates, 2026-08-16) and held a legitimate card hostage in a loop the
+    # owner could not clear. The rule is about the OWNER's money, so the word now
+    # needs a possessive or self-referential qualifier to fire.
+    r"(?:my|our|his|her|their|the owner's|sov's|personal|own)[ -]compensation|"
     r"honorarium|stipend|severance|bonus|take[ -]?home|net[ -]?worth|"
     r"day[ -]rate|hourly[ -]rate|rate[ -]card|consulting[ -]fee|engagement[ -]fee|"
     r"payment[ -]terms|contract[ -]value|deal[ -]terms|"
