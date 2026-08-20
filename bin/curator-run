@@ -102,21 +102,39 @@ a = ap.parse_args()
 # in the lane's taste.md (prose the judge reads); this file only knows what
 # money, contact details, keys, and wallets LOOK like.
 #
-# A hit NEVER drops material and never edits a card: it demotes the proposal to
-# ask-first and queues it for the owner, exactly like an injection-screen flag.
-# So a false positive costs one extra item in a queue the owner already reads,
-# while a false negative puts a figure or an identifier into knowledge/
-# unreviewed. Patterns are kept tight, but they lean toward flagging.
+# Nothing here ever drops material. Two groups, and since 2026-08-20 they behave
+# DIFFERENTLY, because they are different kinds of question:
 #
-# Three groups:
-#   _TASTE_PATTERNS         (label, regex)          — a match is a flag on sight
-#                            (wallets, vendor-prefixed keys, contact details)
-#   _TASTE_CONTEXT_PATTERNS (label, regex, context) — a match flags only when the
-#                            context regex also hits within _TASTE_WINDOW chars,
-#                            which is how "a $18,000 monthly retainer" flags
-#                            while "a $600K grant to OpenZeppelin" does not
+#   _TASTE_PATTERNS         (label, regex) — ABSOLUTE classes: wallets, vendor-
+#                            prefixed keys, contact details. The owner's rules say
+#                            these never appear on a card, full stop, so there is
+#                            no decision in them to put to him. A match is
+#                            REDACTED in place by _taste_redact() before the card
+#                            is written — the value is replaced with a marker
+#                            naming its class — and the card carries on to
+#                            whatever gear it earned. Loud, never blocking.
+#                            Blocking was the old behaviour and it did not work:
+#                            a card carrying one wallet address sat in `pending`
+#                            forever, resurfacing on every "approve all" tap
+#                            until a human stripped the value by hand. Three
+#                            cards in three weeks; the queue never drained.
+#   _TASTE_CONTEXT_PATTERNS (label, regex, context) — JUDGMENT classes: a private
+#                            money figure, a labeled secret value. These are
+#                            genuinely ambiguous, so a hit still DEMOTES the
+#                            proposal to ask-first and queues it for the owner,
+#                            exactly like an injection-screen flag: never dropped,
+#                            never edited. The context regex must also hit within
+#                            _TASTE_WINDOW chars, which is how "a $18,000 monthly
+#                            retainer" flags while "a $600K grant to OpenZeppelin"
+#                            does not.
 #   _TASTE_ALLOW            regexes tested against the MATCHED TEXT; a hit is
-#                            ignored (placeholders, example domains, $0)
+#                            ignored by BOTH tiers — an allowed match is neither
+#                            redacted nor flagged (placeholders, example domains,
+#                            $0)
+#
+# Patterns are kept tight but lean toward acting: a false-positive redaction costs
+# one marker in a card body, while a false negative puts an identifier into
+# knowledge/ unreviewed.
 # ---------------------------------------------------------------------------
 _TASTE_WINDOW = 60  # chars either side of a match that count as its context
 
@@ -192,10 +210,74 @@ _TASTE_ALLOW = [
     re.compile(r"^[$€£¥]\s?0$"),                  # "$0", a null amount
 ]
 
+# What a redacted value is replaced with. Readable prose in square brackets: the
+# card still says WHAT was there, it survives markdown untouched, and it matches
+# _TASTE_ALLOW's "redacted" rule, so a marker can never be re-matched, counted, or
+# redacted again on a later pass. Keep it stable — it lands in knowledge/ cards.
+_TASTE_MARK = "[redacted: {}]"
+# The one absolute class that means something beyond the card. A wallet or an
+# email is data that should not be ON a card; a live key is a CREDENTIAL sitting
+# in a raw source, and redacting the card does nothing about that. The value is
+# still stripped and the card still ships — but this class gets its own alarm
+# naming the source path, because only the owner can rotate it. See the call site.
+_TASTE_CREDENTIAL_CLASS = "api key or token"
+
+
+def _taste_redact(body):
+    """Pure transform: strip the ABSOLUTE taste classes out of a drafted card,
+    in place, replacing each match with a marker that names its class.
+
+    Deterministic and offline — no model call, no network; the same input always
+    yields the same output. Runs BEFORE _taste_veto, so by the time the veto
+    looks, only the judgment classes are left for it to have an opinion about.
+
+    Matches from every absolute pattern are collected over the ORIGINAL body and
+    resolved in ONE pass (earliest start wins, then the longest match, then table
+    order), so two patterns overlapping the same run cannot double-redact it and
+    reordering the table cannot change the output.
+
+    Returns (new_body, {class-label: count}); an empty dict means untouched.
+    """
+    if not body or not body.strip():
+        return body, {}
+    spans = []
+    for idx, (label, rx) in enumerate(_TASTE_PATTERNS):
+        for m in rx.finditer(body):
+            if _taste_allowed(m.group(0)):
+                continue
+            spans.append((m.start(), -(m.end() - m.start()), idx, m.end(), label))
+    if not spans:
+        return body, {}
+    out, counts, cursor = [], {}, 0
+    for start, _neg_len, _idx, end, label in sorted(spans):
+        if start < cursor:
+            continue  # already inside an earlier redaction
+        out.append(body[cursor:start])
+        out.append(_TASTE_MARK.format(label))
+        counts[label] = counts.get(label, 0) + 1
+        cursor = end
+    out.append(body[cursor:])
+    return "".join(out), counts
+
+
+def _redaction_summary(counts):
+    """"evm wallet address, email address x2" — classes and counts, never the
+    matched text. Same rule as the veto reason: this string travels into
+    judgments.jsonl, .meta.json, the digest and stderr, and a redaction notice
+    that echoed what it caught would undo the redaction in four places at once."""
+    return ", ".join(f"{label} x{n}" if n > 1 else label
+                     for label, n in sorted(counts.items()))
+
 
 def _taste_veto(body):
     """Pure decision: does this drafted card body carry material the owner's
-    taste rules say never lands on a card unread?
+    taste rules say he has to LOOK at before it lands?
+
+    Only the JUDGMENT classes (_TASTE_CONTEXT_PATTERNS) reach here. The absolute
+    classes are not a call he makes differently on different days, so
+    _taste_redact() has already taken them out of this body; putting them to him
+    only ever produced a card he could not approve without hand-editing it, and a
+    queue that never drained.
 
     Deterministic, offline, and independent of the judge — the point is a check
     the SOURCE cannot argue with, sitting under both act-and-report gears. A
@@ -210,10 +292,6 @@ def _taste_veto(body):
     if not body or not body.strip():
         return False, ""
     hits = {}
-    for label, rx in _TASTE_PATTERNS:
-        n = sum(1 for m in rx.finditer(body) if not _taste_allowed(m.group(0)))
-        if n:
-            hits[label] = hits.get(label, 0) + n
     for label, rx, ctx in _TASTE_CONTEXT_PATTERNS:
         n = 0
         for m in rx.finditer(body):
@@ -621,26 +699,69 @@ def _self_test():
         ("empty output = flagged",                          True,  ("",)),
         ("None output = flagged (screener unavailable)",    True,  (None,)),
     ]
-    # Deterministic taste veto. Bodies are synthetic and generic on purpose —
+    # Deterministic taste rule. Bodies are synthetic and generic on purpose —
     # nothing here is real owner data, and nothing owner-specific belongs in a
     # test for a mechanism the template ships to every brain.
-    taste_cases = [
-        # --- must FLAG ---
-        ("evm wallet address flags",           True,
+    #
+    # ABSOLUTE classes -> _taste_redact strips them in place and the card carries
+    # on. Tuple: (name, expected {class: count}, does the VETO still flag the
+    # redacted body, body).
+    taste_redact_cases = [
+        ("evm wallet address is redacted",      {"evm wallet address": 1}, False,
          "The treasury sits at 0x52908400098527886E0F7030069857D2E4169EE7 today."),
-        ("btc address flags",                  True,
+        ("btc address is redacted",             {"btc wallet address": 1}, False,
          "Payouts route to 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2 each month."),
-        ("openai-style key flags",             True, "Set the key to sk-abcd1234EFGH5678ijkl for the run."),
-        ("github pat flags",                   True, "Token github_pat_11ABCDEFG0abcdefghijklmno is in the runbook."),
-        ("aws access key flags",               True, ('Credenti' + 'als begi' + 'n AKIAZ7' + 'Q4KLMNOP' + 'QRSTUV i' + 'n the ex' + 'port.')),
-        ("slack token flags",                  True, "Bot auth xoxb-2451-9382-AbCdEfGhIjKl is stored in the env."),
+        ("openai-style key is redacted",        {"api key or token": 1}, False,
+         "Set the key to sk-abcd1234EFGH5678ijkl for the run."),
+        ("github pat is redacted",              {"api key or token": 1}, False,
+         "Token github_pat_11ABCDEFG0abcdefghijklmno is in the runbook."),
+        ("aws access key is redacted",          {"api key or token": 1}, False,
+         ('Credenti' + 'als begi' + 'n AKIAZ7' + 'Q4KLMNOP' + 'QRSTUV i' + 'n the ex' + 'port.')),
+        ("slack token is redacted",             {"api key or token": 1}, False,
+         "Bot auth xoxb-2451-9382-AbCdEfGhIjKl is stored in the env."),
+        ("email address is redacted",           {"email address": 1}, False,
+         "Reach the programme lead at jane.doe@somefoundation.org."),
+        ("phone number is redacted",            {"phone number": 1}, False,
+         "Ops desk is reachable on 415-555-0199 during the window."),
+        # counts are per class, and two classes in one body both land
+        ("counts are per class, not per body",
+         {"evm wallet address": 2, "email address": 1}, False,
+         "Safes 0x52908400098527886E0F7030069857D2E4169EE7 and "
+         "0xde709f2102306220921060314715629080e2fb77 report to ops@somefoundation.org."),
+        # the mixed case: an absolute class AND a judgment class in one body. The
+        # wallet goes; the retainer figure still stops the card at the gate.
+        ("wallet redacted AND money figure still flags",
+         {"evm wallet address": 1}, True,
+         "Paid from 0x52908400098527886E0F7030069857D2E4169EE7 on a $18,000 monthly retainer."),
+        # --- allow-listed placeholders: untouched, byte for byte ---
+        ("empty body is untouched",             {}, False, ""),
+        ("ordinary prose is untouched",         {}, False,
+         "A durable playbook for reviewing infrastructure partners, written up after the Q3 2026 cycle."),
+        ("zero-address placeholder untouched",  {}, False,
+         "Unset fields render as 0x0000000000000000000000000000000000000000 in the export."),
+        ("example.com address untouched",       {}, False, "Docs use someone@example.com in every sample."),
+        ("noreply sender untouched",            {}, False,
+         "Digest arrives from noreply@notifications.internal nightly."),
+        ("placeholder key untouched",           {}, False,
+         "Config template ships sk-xxxxxxxxxxxxxxxxxxxx as a stand-in."),
+        ("vendor doc key untouched",            {}, False,
+         ('AWS docs' + ' use AKI' + 'AIOSFODN' + 'N7EXAMPL' + 'E in eve' + 'ry snipp' + 'et.')),
+        ("wikilinks and slugs untouched",       {}, False,
+         "Extends [[curator-architecture]] and [[producer-lane-contract]] with the weekly review loop."),
+        ("version and date strings untouched",  {}, False,
+         "Shipped v2.10.4 on 2026-07-05, superseding 2026-06-20."),
+        # the markers themselves are inert: a card already carrying them is a no-op
+        ("a body of nothing but markers is inert", {}, False,
+         " ".join(_TASTE_MARK.format(_l) for _l, _rx in _TASTE_PATTERNS)),
+    ]
+    # JUDGMENT classes -> still demote to ask-first, exactly as before.
+    taste_veto_cases = [
+        # --- must FLAG ---
         ("retainer figure flags",              True, "The engagement runs on a $18,000 monthly retainer."),
         ("salary figure flags",                True, "Salary was set at 240k for the second year."),
         ("private ticker amount flags",        True, "Invoiced 25000 USDC for the quarter's work."),
         ("day-rate figure flags",              True, "Their day rate is $2,500 with a two-day minimum."),
         ("bank detail figure flags",           True, "Bank account was funded with 40M before the wire."),
-        ("email address flags",                True, "Reach the programme lead at jane.doe@somefoundation.org."),
-        ("phone number flags",                 True, "Ops desk is reachable on 415-555-0199 during the window."),
         ("labeled secret run flags",           True,
          "The api key is QWxhZGRpbjpvcGVuc2VzYW1lQWxhZGRpbjpvcGVu for that service."),
         # --- must NOT flag (false-positive guards) ---
@@ -660,16 +781,17 @@ def _self_test():
         ("version and date strings clean",     False, "Shipped v2.10.4 on 2026-07-05, superseding 2026-06-20."),
         ("wikilinks and slugs clean",          False,
          "Extends [[curator-architecture]] and [[producer-lane-contract]] with the weekly review loop."),
-        ("zero-address placeholder allowed",   False,
-         "Unset fields render as 0x0000000000000000000000000000000000000000 in the export."),
-        ("example.com address allowed",        False, "Docs use someone@example.com in every sample."),
-        ("noreply sender allowed",             False, "Digest arrives from noreply@notifications.internal nightly."),
-        ("placeholder key allowed",            False, "Config template ships sk-xxxxxxxxxxxxxxxxxxxx as a stand-in."),
-        ("vendor doc key allowed",             False,
-         ('AWS docs' + ' use AKI' + 'AIOSFODN' + 'N7EXAMPL' + 'E in eve' + 'ry snipp' + 'et.')),
         ("zero amount allowed",                False, "The line item closed at $0 after the credit."),
         ("token word alone stays clean",       False,
          "The token design splits emissions across two epochs; see the governance forum thread."),
+        # the classes the veto NO LONGER owns (2026-08-20): a raw wallet or email
+        # reaching it is not its job — redaction upstream has already taken them
+        ("a bare wallet no longer flags (redaction owns it)",  False,
+         "The treasury sits at 0x52908400098527886E0F7030069857D2E4169EE7 today."),
+        ("a bare email no longer flags (redaction owns it)",   False,
+         "Reach the programme lead at jane.doe@somefoundation.org."),
+        ("a bare api key no longer flags (redaction owns it)", False,
+         "Set the key to sk-abcd1234EFGH5678ijkl for the run."),
     ]
     failed = 0
     print(" screen-verdict decision table (_parse_screen_verdict):")
@@ -678,8 +800,39 @@ def _self_test():
         ok = got is want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
-    print(" taste veto pattern table (_taste_veto) — flags demote to ask-first, never drop:")
-    for name, want, body in taste_cases:
+    print(" taste REDACTION table (_taste_redact) — absolute classes are stripped in place, never blocked:")
+    for name, want_counts, want_veto, body in taste_redact_cases:
+        new_body, counts = _taste_redact(body)
+        detail = ""
+        ok = counts == want_counts
+        if not ok:
+            detail = f"  (counts {counts}, wanted {want_counts})"
+        if ok and want_counts:
+            # every counted class must be visible as a marker in the output
+            missing = [l for l in want_counts if _TASTE_MARK.format(l) not in new_body]
+            ok = not missing
+            if not ok:
+                detail = f"  (no marker for {missing})"
+        if ok and not want_counts:
+            ok = new_body == body  # untouched means byte-identical
+            if not ok:
+                detail = "  (an allow-listed body was modified)"
+        if ok:
+            # a second pass must find nothing: the value is gone, and the marker
+            # it was replaced with can never itself be matched or re-redacted
+            _again, again_counts = _taste_redact(new_body)
+            ok = again_counts == {} and _again == new_body
+            if not ok:
+                detail = f"  (not idempotent: second pass {again_counts})"
+        if ok:
+            still, why = _taste_veto(new_body)
+            ok = still is want_veto
+            if not ok:
+                detail = f"  (veto after redaction {still}: {why or 'no match'})"
+        failed += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else detail))
+    print(" taste VETO table (_taste_veto) — judgment classes only; a flag demotes to ask-first, never drops:")
+    for name, want, body in taste_veto_cases:
         got, why = _taste_veto(body)
         ok = got is want
         failed += 0 if ok else 1
@@ -767,6 +920,21 @@ def _self_test():
     r = _auto_reject([{**_prop[0], "screen_flagged": True}], C, 10, "/usr/bin/true")
     fn_cases.append(("screen-flagged proposal is never auto-rejected either",
                      not r["applied"] and not r["failures"]))
+    fn_cases.append(("every redaction marker is allow-listed, so it can never re-match",
+                     all(_taste_allowed(_TASTE_MARK.format(l)) for l, _rx in _TASTE_PATTERNS)))
+    fn_cases.append(("the marker names its class, so the card still says what was there",
+                     _TASTE_MARK.format("evm wallet address") == "[redacted: evm wallet address]"))
+    _mixed, _mixed_counts = _taste_redact(
+        "Safe 0x52908400098527886E0F7030069857D2E4169EE7, desk 415-555-0199, ops@somefoundation.org.")
+    fn_cases.append(("three classes in one body all redact, each counted once",
+                     _mixed_counts == {"evm wallet address": 1, "phone number": 1, "email address": 1}))
+    fn_cases.append(("a redacted body carries one marker per stripped value",
+                     _mixed.count("[redacted: ") == 3))
+    fn_cases.append(("the credential class the source alarm keys on is a real pattern label",
+                     _TASTE_CREDENTIAL_CLASS in [l for l, _rx in _TASTE_PATTERNS]))
+    fn_cases.append(("the redaction summary names classes and counts, never the text",
+                     _redaction_summary({"email address": 2, "evm wallet address": 1})
+                     == "email address x2, evm wallet address"))
     _cap_env = os.environ.pop("ARCHIVIST_AUTO_PROMOTE_MAX", None)
     fn_cases.append(("default auto-promote cap is 12 (2026-08-10 grant)", _auto_cap() == 12))
     os.environ["ARCHIVIST_AUTO_PROMOTE_MAX"] = "3"
@@ -841,8 +1009,11 @@ def _self_test():
         ok = got == want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got!r})"))
+    # NOTE 2026-08-20: the taste tables were run but left OUT of this sum, so the
+    # printed score under-reported by the size of the taste table. Counted now.
     total = (len(wiring_cases) + len(screen_cases) + len(cases) + len(new_cases) + len(reject_cases)
-             + len(veto_cases) + len(fn_cases) + len(link_cases))
+             + len(veto_cases) + len(fn_cases) + len(link_cases)
+             + len(taste_redact_cases) + len(taste_veto_cases))
     print(f"curator-run --self-test: {total - failed}/{total} passed")
     return 1 if failed else 0
 
@@ -1414,13 +1585,41 @@ for p in cands:
     why = (v.get("why") or "").strip() or (v.get("reason") or "").strip()
     if why:
         body = f"**Why this matters:** {why}\n\n{body}"
+    title = v.get("title") or slug
+    # Deterministic taste REDACTION over the FINAL drafted title and body — what
+    # would actually land in knowledge/, merge pass and why-line included. It runs
+    # BEFORE the veto: the absolute classes are values the owner's rules never
+    # allow on a card, so they are stripped in place and the card keeps whatever
+    # gear it earned. Frontmatter is left out on purpose: `source:` is a
+    # loading-dock path, not card content.
+    body, _red_body = _taste_redact(body)
+    title, _red_title = _taste_redact(title)
+    v["title"] = title  # the proposal row must carry the REDACTED title
+    redactions = dict(_red_body)
+    for _label, _n in _red_title.items():
+        redactions[_label] = redactions.get(_label, 0) + _n
+    if redactions:
+        print(f"curator-run: taste REDACTED {slug} ({_redaction_summary(redactions)}) — "
+              "value(s) replaced in the card with a marker; nothing dropped, "
+              "nothing blocked", file=sys.stderr)
+    # The credential exception. Stripping the card is right and the card still
+    # ships, but a key-shaped value in a drafted card means a LIVE credential is
+    # sitting in a raw source, and only the owner can rotate it. Distinct, loud,
+    # and it names the source path — never the value.
+    if _TASTE_CREDENTIAL_CLASS in redactions:
+        print(f"curator-run: CREDENTIAL IN SOURCE — {redactions[_TASTE_CREDENTIAL_CLASS]} "
+              f"'{_TASTE_CREDENTIAL_CLASS}' value(s) redacted from {slug}; the live value "
+              f"is still in the source file {src} — rotate it and clean the source, the "
+              "brain cannot do either for you", file=sys.stderr)
     card = (f"---\ntype: {typ}\nsource: {src}\ncreated: {datetime.now().strftime('%Y-%m-%d')}\n"
-            f"title: {v.get('title', slug)}\n---\n\n# {v.get('title', slug)}\n\n{body}\n")
-    # Deterministic taste veto over the FINAL drafted body — what would actually
-    # land in knowledge/, merge pass and why-line included. Frontmatter is left
-    # out on purpose: `source:` is a loading-dock path, not card content.
-    taste_flagged, taste_why = _taste_veto(f"{v.get('title', slug)}\n\n{body}")
+            f"title: {title}\n---\n\n# {title}\n\n{body}\n")
+    # Deterministic taste veto over the REDACTED body: only the judgment classes
+    # (a private money figure, a labeled secret value) can still demote to
+    # ask-first, and they demote exactly as they did before.
+    taste_flagged, taste_why = _taste_veto(f"{title}\n\n{body}")
     _jrow["taste_flagged"], _jrow["taste_reason"] = taste_flagged, taste_why
+    _jrow["redactions"] = redactions
+    _jrow["credential_in_source"] = _TASTE_CREDENTIAL_CLASS in redactions
     if taste_flagged:
         print(f"curator-run: taste veto FLAGGED {slug} ({taste_why}) — "
               "queues for the owner, gears withheld", file=sys.stderr)
@@ -1428,7 +1627,8 @@ for p in cands:
                                                "update_of", "auto_reject_class")},
                       "src": src, "card": card,
                       "screen_flagged": screen_flagged, "screen_reason": screen_why,
-                      "taste_flagged": taste_flagged, "taste_reason": taste_why})
+                      "taste_flagged": taste_flagged, "taste_reason": taste_why,
+                      "redactions": redactions})
 
 # Sovereign-inference law: a failed local run fails loudly, never silently.
 # Errored files must be re-judged next run: hold the watermark below them and
@@ -1521,7 +1721,13 @@ if not a.dry:
                             # downstream review tooling can see why a card that
                             # met its gear's confidence is sitting in the queue
                             "taste_flagged": bool(pr.get("taste_flagged")),
-                            "taste_reason": pr.get("taste_reason") or ""}
+                            "taste_reason": pr.get("taste_reason") or "",
+                            # what the absolute-class redaction took OUT of this
+                            # card before it was written: classes and counts,
+                            # never the values. A redaction is not a hold — this
+                            # is a record, and review tooling must not treat it
+                            # like taste_flagged.
+                            "redactions": pr.get("redactions") or {}}
     # act-and-report: policy auto-reject of judge-flagged classes. Runs BEFORE
     # auto-promote — an owner always-reject ruling outranks a gear grant, and a
     # rejected file must never be considered for promotion in the same run.
@@ -1586,14 +1792,44 @@ if not a.dry:
     tasted = [pr for pr in proposals if pr.get("taste_flagged")]
     if tasted:
         lines += ["", "## Taste-flagged — gears withheld",
-                  "_The deterministic taste veto matched the DRAFTED BODY of these: money figures, "
-                  "contact details, a wallet address, or a key-shaped string. No gear could move "
-                  "them, so they wait for you like any ask-first item. Nothing was dropped and "
-                  "nothing was edited — read the card, and strip the figure or identifier before "
-                  "approving._"]
+                  "_The deterministic taste veto matched the DRAFTED BODY of these: a private money "
+                  "figure or a labeled secret value — the judgment classes, where only you can say "
+                  "whether it belongs on a card. (Wallets, keys, emails and phone numbers are never "
+                  "in this list: those are absolute, so they were redacted in place and their cards "
+                  "moved on.) No gear could move these, so they wait for you like any ask-first "
+                  "item. Nothing was dropped and nothing was edited — read the card, and strip the "
+                  "figure before approving._"]
         for pr in tasted:
             lines.append(f"- **{pr['slug']}** ({pr['type']}) — {pr.get('taste_reason') or 'flagged'}\n"
                          f"  source: `{pr['src']}`")
+    # Redactions are a REPORT, never a hold. The two sections below deliberately
+    # write the slug in backticks rather than the `- **slug** (type) — ...` shape
+    # the proposal list uses: that shape is what the Notion digest parses as a
+    # pending card, and a redacted card must not appear there a second time.
+    redacted = [pr for pr in proposals if pr.get("redactions")]
+    redaction_totals = {}
+    for pr in redacted:
+        for _label, _n in pr["redactions"].items():
+            redaction_totals[_label] = redaction_totals.get(_label, 0) + _n
+    if redacted:
+        lines += ["", "## Redacted — value stripped, card kept",
+                  "_The deterministic taste rule replaced these classes in place with a visible "
+                  "`[redacted: ...]` marker before the card was written. Your rules say a wallet, a "
+                  "key, an email or a phone number never appears on a card, so there was no decision "
+                  "here to put to you: nothing was dropped, nothing was blocked, and each card kept "
+                  "whatever gear it had earned. Classes and counts only — the matched text is never "
+                  "echoed._"]
+        for pr in redacted:
+            lines.append(f"- `{pr['slug']}` ({pr['type']}) — {_redaction_summary(pr['redactions'])}")
+    cred_cards = [pr for pr in redacted if _TASTE_CREDENTIAL_CLASS in pr["redactions"]]
+    if cred_cards:
+        lines += ["", "## ⚠ Live credential in a raw source",
+                  "_A key-shaped value was redacted from the card, but the value itself is still "
+                  "sitting in the source file named below. The card is fine; the SOURCE is not. "
+                  "Rotate the credential and clean the file — the brain cannot do either for you._"]
+        for pr in cred_cards:
+            lines.append(f"- `{pr['slug']}` — {pr['redactions'][_TASTE_CREDENTIAL_CLASS]}x "
+                         f"`{_TASTE_CREDENTIAL_CLASS}` in source `{pr['src']}`")
     open(INBOX, "w").write("\n".join(lines) + "\n")
     json.dump({"generated_at": datetime.now(timezone.utc).astimezone().isoformat(), "lane": LANE_NAME,
                "judged": judged, "new_proposals": len(proposals),
@@ -1604,6 +1840,9 @@ if not a.dry:
                "screen": "on" if SCREEN else "off",
                "screen_flagged": len(screened),
                "taste_flagged": len(tasted),
+               "taste_redacted_cards": len(redacted),
+               "taste_redactions": redaction_totals,
+               "credential_in_source_cards": len(cred_cards),
                "errors": len(errored),
                "deferred": len(deferred),
                "pending": pending_now,
@@ -1651,12 +1890,23 @@ if not a.dry:
     print(f"curator-run: taste veto on (deterministic)"
           + (f" — {len(tasted)} drafted body(ies) FLAGGED, gears withheld, queued for the owner"
              if tasted else ""))
+    print(f"curator-run: taste redacted {sum(redaction_totals.values())} value(s) "
+          f"across {len(redacted)} card(s)"
+          + (f" — {_redaction_summary(redaction_totals)}" if redaction_totals else "")
+          + " (act-and-report: stripped in place, cards kept their gears)")
+    if cred_cards:
+        print(f"curator-run: CREDENTIAL IN SOURCE — {len(cred_cards)} card(s) carried a "
+              "key-shaped value that is still live in its raw source; see the digest for "
+              "the paths", file=sys.stderr)
 for pr in proposals:
     u = f" [UPDATE {pr['update_of']}]" if pr.get("update_of") else ""
     tag = (" [AUTO-APPLIED]" if pr["slug"] in applied_slugs
            else f" [AUTO-REJECTED: {pr.get('auto_reject_class')}]" if pr["slug"] in autorej_slugs else "")
     tag += " [SCREENED]" if pr.get("screen_flagged") else ""
     tag += " [TASTE]" if pr.get("taste_flagged") else ""
+    # a redaction is not a hold, so it never becomes a ⚠ tag in the INBOX bullet
+    # (that is what approve-all reads to hold a card) — only a note on stdout
+    tag += f" [REDACTED: {_redaction_summary(pr['redactions'])}]" if pr.get("redactions") else ""
     print(f"  + {pr['slug']} ({pr['type']}, {pr['confidence']}){u}{tag}: {pr['reason']}")
 
 if errored:
