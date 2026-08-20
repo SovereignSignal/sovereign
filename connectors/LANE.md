@@ -28,6 +28,8 @@ read_scope:                    # optional: the vault paths this producer's clone
 gear: ask-first                # ask-first | act-and-report | routine — mirrors the curator's gears;
                                # starts at ask-first, graduates only by owner grant, resets when
                                # the pipeline that earned it changes
+capture_window: 30d            # optional: how long this lane may be quiet before the hub's
+                               # freshness check complains. Omit it and the default applies.
 
 # ---- transport details (required for git transports) ----
 branch: lane/wire-ops          # the ONLY ref this producer may push
@@ -82,6 +84,20 @@ like, anything unusual about cadence or shape, and the standing rules restated o
     This is clarity and hygiene — a producer's disk shows only what it works on — and it is
     **not** isolation from a determined reader on that box. A lane that must not hold other
     material at all needs a different transport, not a narrower cone.
+- **`capture_window`** answers "how long may this lane be silent before something is
+  wrong?". The hub's daily health check watches the newest capture in every `onboarded`
+  lane and complains when it goes stale.
+  - **Default when the field is absent:** yellow past **7d**, red past **14d**. Most lanes
+    never write the field.
+  - **Write it only when the lane's SOURCES are legitimately static** — a program that is
+    paused, a season that has closed, a corpus that is finished. A producer that runs on
+    schedule and correctly captures nothing is healthy, and a check that fires on a correct
+    outcome only teaches the owner to ignore the check.
+  - **Format** is a whole number of days (`30d`, `45 days`). Red is always twice the
+    declared window. An unreadable value falls back to the default and says so in the check
+    line, so a typo can never quietly widen a lane's alarm.
+  - **It is not a fix for a broken producer.** Widening the window on a lane that has
+    genuinely died hides the death. Remove the field when the sources come back.
 - **`gear`** governs how the producer's *own* actions escalate (e.g. whether it may
   restructure files inside its lane without asking). It never governs promotion — nothing
   a producer does graduates into writing trusted layers.
