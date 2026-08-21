@@ -1479,7 +1479,7 @@ def judge(path):
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": f"SOURCE: {name}\n\n{txt}"}]}).encode()
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    out = _post_json(req, 300)["choices"][0]["message"]["content"]
+    out = _post_json(req, 480)["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", out, re.S)
     return json.loads(m.group(0)) if m else None
 
@@ -1493,7 +1493,7 @@ def _screen_call(text):
         "messages": [{"role": "system", "content": SCREEN_SYS},
                      {"role": "user", "content": text[:12000]}]}).encode()
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    return _post_json(req, 240)["choices"][0]["message"]["content"]
+    return _post_json(req, 360)["choices"][0]["message"]["content"]
 
 
 def judge_update(path, target, target_path):
@@ -1512,7 +1512,7 @@ def judge_update(path, target, target_path):
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": user}]}).encode()
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    out = _post_json(req, 300)["choices"][0]["message"]["content"]
+    out = _post_json(req, 480)["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", out, re.S)
     return json.loads(m.group(0)) if m else None
 
