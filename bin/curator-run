@@ -1021,6 +1021,46 @@ def _self_test():
 if a.self_test:
     raise SystemExit(_self_test())
 
+
+def _model_lock(job):
+    """Serialize model jobs across scripts (curator runs, the weekly audit, ad-hoc
+    backfills). Two jobs sharing the single local-inference slot push each other's
+    waits past the client timeout and turn judgments into recorded errors
+    (2026-08-21: a curator/nightly collision lost 26 of 33 judgments this way).
+    Blocking wait with a 4h deadline; past it, exit nonzero so the cron wrapper
+    alerts instead of a silent stall. The returned handle must stay referenced
+    for the life of the run."""
+    import fcntl
+    d = os.path.expanduser("~/.local/state/sovs-cron")
+    os.makedirs(d, exist_ok=True)
+    fh = open(os.path.join(d, "model.lock"), "a+")
+    deadline = time.time() + 4 * 3600
+    waited = False
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fh.seek(0)
+            fh.truncate()
+            fh.write("%s pid %d since %s\n" % (job, os.getpid(), time.strftime("%F %T")))
+            fh.flush()
+            if waited:
+                print("%s: model lock acquired, proceeding" % job)
+            return fh
+        except OSError:
+            if not waited:
+                try:
+                    holder = open(fh.name).read().strip()
+                except OSError:
+                    holder = ""
+                print("%s: model busy (%s); waiting" % (job, holder or "unknown holder"))
+                waited = True
+            if time.time() > deadline:
+                print("%s: gave up waiting for the model lock after 4h" % job, file=sys.stderr)
+                raise SystemExit(3)
+            time.sleep(60)
+
+_MODEL_LOCK = _model_lock("curator-run")
+
 os.makedirs(PROP, exist_ok=True)
 if a.init:
     open(WM, "w").write(str(time.time()))
@@ -1418,6 +1458,19 @@ SYS = (
  'not a card \u2014 name it in plain text if needed, never in [[...]]. If unsure a slug is a real card, omit the link.'
 )
 
+
+def _post_json(req, timeout):
+    """One retry on a timed-out model call. A single timeout otherwise costs the
+    document until the next run; transient queue pressure should not do that."""
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=timeout))
+    except Exception as exc:
+        if "timed out" not in str(exc).lower():
+            raise
+        time.sleep(30)
+        return json.load(urllib.request.urlopen(req, timeout=timeout))
+
+
 def judge(path):
     txt = open(path, encoding="utf-8", errors="ignore").read()[:12000]
     name = os.path.relpath(path, VAULT)
@@ -1426,7 +1479,7 @@ def judge(path):
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": f"SOURCE: {name}\n\n{txt}"}]}).encode()
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    out = json.load(urllib.request.urlopen(req, timeout=300))["choices"][0]["message"]["content"]
+    out = _post_json(req, 300)["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", out, re.S)
     return json.loads(m.group(0)) if m else None
 
@@ -1440,7 +1493,7 @@ def _screen_call(text):
         "messages": [{"role": "system", "content": SCREEN_SYS},
                      {"role": "user", "content": text[:12000]}]}).encode()
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    return json.load(urllib.request.urlopen(req, timeout=240))["choices"][0]["message"]["content"]
+    return _post_json(req, 240)["choices"][0]["message"]["content"]
 
 
 def judge_update(path, target, target_path):
@@ -1459,7 +1512,7 @@ def judge_update(path, target, target_path):
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": user}]}).encode()
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    out = json.load(urllib.request.urlopen(req, timeout=300))["choices"][0]["message"]["content"]
+    out = _post_json(req, 300)["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", out, re.S)
     return json.loads(m.group(0)) if m else None
 
