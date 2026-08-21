@@ -35,6 +35,9 @@ capture_window: 30d            # optional: how long this lane may be quiet befor
 branch: lane/wire-ops          # the ONLY ref this producer may push
 remote: <the brain's reachable remote URL>
 auth: deploy-key wire-ops@node-11   # the credential's identity — never the credential itself
+                               # git producers also end every run with a heartbeat push to
+                               # refs/heartbeats/<lane> — not a field, a fixed behavior;
+                               # see "The heartbeat" under Field notes.
 
 # ---- lifecycle (required) ----
 status: proposed               # proposed | onboarded | paused | retired
@@ -84,6 +87,30 @@ like, anything unusual about cadence or shape, and the standing rules restated o
     This is clarity and hygiene — a producer's disk shows only what it works on — and it is
     **not** isolation from a determined reader on that box. A lane that must not hold other
     material at all needs a different transport, not a narrower cone.
+- **The heartbeat (git transports).** At the end of EVERY run — captures or none — the
+  producer pushes a timestamped annotated tag object to a reserved ref namespace on the
+  exchange, exactly two commands:
+
+  ```
+  git tag -f -a hb-local -m heartbeat HEAD
+  git push -qf origin refs/tags/hb-local:refs/heartbeats/<lane>
+  ```
+
+  - **What it proves.** The tag's tagger date is written at run time and reaches the hub
+    only after the exchange accepted the push and the hub's fence fetched the namespace —
+    so a fresh heartbeat proves the WHOLE pipe (the script actually ran, AND the exchange
+    was reachable, AND the hub fetched), where "cron fired" or a fresh local log line
+    proves only the first link. No commits, no working-tree files, invisible to normal
+    git operations.
+  - **The thresholds the hub applies.** For a daily lane: yellow past **2d**, red past
+    **4d**. Once a lane heartbeats, heartbeat age drives the freshness alarm and the
+    newest-capture age becomes informational text on the same check line — a scheduled
+    producer that runs and correctly captures nothing is healthy, and now provably so.
+    (`capture_window` below matters only for lanes with no heartbeat yet.)
+  - **Best-effort by design.** The capture run must NEVER fail because the heartbeat
+    could not push: wrap it fully, log the failure to the script's own log, and exit as
+    the run otherwise would. A failed push just leaves the heartbeat stale — which IS
+    the alarm working.
 - **`capture_window`** answers "how long may this lane be silent before something is
   wrong?". The hub's daily health check watches the newest capture in every `onboarded`
   lane and complains when it goes stale.

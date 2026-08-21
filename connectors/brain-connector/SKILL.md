@@ -42,6 +42,41 @@ gate. Your captures wait in your lane until the curator proposes and the owner a
 Do not edit `knowledge/` or `workstreams/`. If you believe a capture is urgent or canonical,
 say so IN the capture and flag it to the owner — do not act on that belief.
 
+## Heartbeat (git lanes)
+
+End EVERY run — captures or none — by pushing the lane heartbeat (contract: the
+heartbeat notes in `LANE.md`). It proves the whole pipe — script ran, exchange
+reachable, hub fetched — where a log line only proves the first link. It is
+best-effort: never let it raise, never let it fail the run. Reference
+implementation, matching the shipped capture-script shape (a `log()` logger, a
+`git()` helper running in the lane clone, `BRANCH = "lane/<slug>"`):
+
+```python
+def _heartbeat():
+    """Prove the whole pipe: an annotated tag (tagger date = now) forced onto
+    the exchange's reserved heartbeat ref, fetched by the hub's fence.
+    Best-effort by contract: never raises, never fails the run — a failed
+    push just leaves the heartbeat stale, which is the hub's alarm working."""
+    try:
+        lane = BRANCH.split("/", 1)[1]          # lane/<slug> -> <slug>
+        t = git("tag", "-f", "-a", "hb-local", "-m", "heartbeat", "HEAD")
+        if t.returncode != 0:
+            log(f"heartbeat: tag failed (non-fatal): {t.stderr.strip()}")
+            return
+        p = git("push", "-qf", "origin",
+                f"refs/tags/hb-local:refs/heartbeats/{lane}")
+        if p.returncode != 0:
+            log(f"heartbeat: push failed (non-fatal): {p.stderr.strip()}")
+            return
+        log("heartbeat: pushed")
+    except Exception as e:
+        log(f"heartbeat: failed (non-fatal): {e}")
+```
+
+Call it at the end of `main()`, after the capture loop, regardless of capture
+count — a quiet day still heartbeats; that is the point. Skip it on a dry run:
+a rehearsal must not fake liveness.
+
 ## Defaults
 
 - Transport comes from your `LANE.md` (`read:`, `write:`). Defaults: `git` / `git-branch`.
