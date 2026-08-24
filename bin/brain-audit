@@ -26,7 +26,7 @@ Config via env (defaults mirror curator-run):
   SOVS_VAULT / ~/.brain-root     vault root
   CURATOR_LANE / ~/.curator-lane lane name (default "curator")
   CURATOR_ENDPOINT               OpenAI-compatible endpoint (default: LOCAL Ollama)
-  CURATOR_AUDIT_MODEL            model for the audit passes (default: CURATOR_MODEL, then gpt-oss:120b)
+  CURATOR_AUDIT_MODEL            model for the audit passes (default: CURATOR_MODEL, then qwen3.8:27b)
   CURATOR_PROFILE / CURATOR_TASTE  same owner files the nightly judge reads
 
 Usage: brain-audit [--no-llm] [--max-screen N] [--max-skips N] [--stale-grace DAYS] [--ws-stale DAYS]
@@ -51,7 +51,7 @@ SKIPMARK = os.path.join(LANE, ".audit-skipmark.json")
 HISTMARK = os.path.join(LANE, ".audit-historicized.json")
 JUDGMENTS = os.path.join(LANE, "judgments.jsonl")
 ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "http://localhost:11434/v1/chat/completions")
-MODEL = os.environ.get("CURATOR_AUDIT_MODEL") or os.environ.get("CURATOR_MODEL", "gpt-oss:120b")
+MODEL = os.environ.get("CURATOR_AUDIT_MODEL") or os.environ.get("CURATOR_MODEL", "qwen3.8:27b")
 KEYFILE = os.environ.get("CURATOR_KEYFILE", "")
 KEY = open(KEYFILE).read().strip() if KEYFILE and os.path.exists(KEYFILE) else os.environ.get("CURATOR_KEY", "")
 PROFILE = os.environ.get("CURATOR_PROFILE", os.path.join(LANE, "profile.md"))

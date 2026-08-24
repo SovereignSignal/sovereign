@@ -15,7 +15,7 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
                     The default is local on purpose: the standard's law says machine
                     writers to knowledge/ run on owner-controlled compute. Pointing
                     this at a cloud endpoint is an explicit owner decision, never a default.
-  CURATOR_MODEL     model id (default: gpt-oss:120b)
+  CURATOR_MODEL     model id (default: qwen3.8:27b)
   CURATOR_KEYFILE   file holding the API key, if the endpoint needs one (default: none)
   ARCHIVIST_AUTO_PROMOTE_MAX  per-run cap on gear-gated auto-promotions,
                     updates + new cards combined (default 12)
@@ -57,7 +57,7 @@ NON_KNOWLEDGE_DIRS = ("workstreams", "raw", "archive", "repos")
 # Local by default — the law: machine writers to knowledge/ run on owner-controlled
 # compute. Cloud is an explicit opt-in via CURATOR_ENDPOINT, never the shipped default.
 ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "http://localhost:11434/v1/chat/completions")
-MODEL = os.environ.get("CURATOR_MODEL", "gpt-oss:120b")
+MODEL = os.environ.get("CURATOR_MODEL", "qwen3.8:27b")
 KEYFILE = os.environ.get("CURATOR_KEYFILE", "")
 # never-promote paths (vault-relative prefixes, colon-separated) — pruned from the gather entirely
 EXCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_EXCLUDE", "").split(":") if e.strip()]
