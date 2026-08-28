@@ -31,7 +31,7 @@ Config via env (defaults mirror curator-run):
 
 Usage: brain-audit [--no-llm] [--max-screen N] [--max-skips N] [--stale-grace DAYS] [--ws-stale DAYS]
 """
-import os, re, json, glob, sys, argparse, hashlib, urllib.request, time
+import os, re, json, glob, sys, argparse, hashlib, urllib.request, urllib.parse, ast, time
 from datetime import datetime, timezone, date, timedelta
 
 def _pointer(path):
@@ -56,6 +56,64 @@ KEYFILE = os.environ.get("CURATOR_KEYFILE", "")
 KEY = open(KEYFILE).read().strip() if KEYFILE and os.path.exists(KEYFILE) else os.environ.get("CURATOR_KEY", "")
 PROFILE = os.environ.get("CURATOR_PROFILE", os.path.join(LANE, "profile.md"))
 TASTE = os.environ.get("CURATOR_TASTE", os.path.join(LANE, "taste.md"))
+
+
+def _inference_guard():
+    """Lift curator-run's _inference_violations and reuse it verbatim.
+
+    The law is one rule, so it gets one predicate. A second copy here would drift
+    from curator-run's at exactly the edges that matter (what counts as a local
+    host, which model ids read as hosted), and the drift would be invisible until
+    the day it mattered. curator-run has no __main__ guard and evaluates its own
+    guard at module level, so importing it would run that and can SystemExit(4)
+    inside this process -- instead parse its AST and exec only this one function
+    node. That reads curator-run without importing or modifying it.
+
+    Fails CLOSED. If the shared predicate cannot be lifted (renamed, moved,
+    refactored), this refuses to run rather than silently falling back to a local
+    copy. A weekly propose-only audit is cheap to fail loudly; an unnoticed
+    divergence is the exact hole the guard exists to close.
+    """
+    srcp = os.path.join(os.path.dirname(os.path.realpath(__file__)), "curator-run")
+    with open(srcp, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), filename=srcp)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_inference_violations":
+            ns = {"urllib": urllib}
+            exec(compile(ast.Module(body=[node], type_ignores=[]), srcp, "exec"), ns)
+            return ns["_inference_violations"]
+    raise RuntimeError("curator-run exposes no _inference_violations to reuse")
+
+
+# The audit reads knowledge/ -- trusted, vault-derived content -- and feeds it to a
+# model, so it sits squarely inside the curation path the sovereign-inference law
+# governs. curator-run has enforced this since 2026-08-28; this closes the same hole
+# here. Checked BEFORE the model lock, so a violating run never queues for the GPU.
+#
+# Only the RESOLVED model is checked, not both env vars: brain-audit sends exactly
+# one model (CURATOR_AUDIT_MODEL when set, else CURATOR_MODEL), and flagging an
+# unused CURATOR_MODEL would refuse a run that is in fact entirely local.
+_AUDIT_MODEL_VAR = "CURATOR_AUDIT_MODEL" if os.environ.get("CURATOR_AUDIT_MODEL") else "CURATOR_MODEL"
+_ALLOW_REMOTE = os.environ.get("CURATOR_ALLOW_REMOTE", "").strip().lower() in ("1", "on", "true", "yes")
+try:
+    _violations = _inference_guard()(ENDPOINT, MODEL, None, _ALLOW_REMOTE)
+except Exception as _exc:
+    print("brain-audit: REFUSING - could not load the shared sovereign-inference guard "
+          "from curator-run (%s). Refusing rather than auditing unverified." % _exc,
+          file=sys.stderr)
+    raise SystemExit(4)
+if _violations:
+    for _v in _violations:
+        print("brain-audit: REFUSING - sovereign-inference law: %s"
+              % _v.replace("CURATOR_MODEL", _AUDIT_MODEL_VAR), file=sys.stderr)
+    print("brain-audit: set CURATOR_ALLOW_REMOTE=1 only as a deliberate owner decision "
+          "for non-vault work; the audit reads knowledge/ and must stay on owned inference.",
+          file=sys.stderr)
+    raise SystemExit(4)
+if _ALLOW_REMOTE:
+    print("brain-audit: WARNING - CURATOR_ALLOW_REMOTE is set; inference locality is NOT enforced")
+
+
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--no-llm", action="store_true", help="deterministic checks only")
