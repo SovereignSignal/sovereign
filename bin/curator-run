@@ -30,7 +30,7 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
 
 Usage: curator-run [--since-days N] [--max N] [--dry] [--self-test]
 """
-import os, re, json, glob, sys, time, argparse, hashlib, urllib.request, urllib.error, subprocess
+import os, re, json, glob, sys, time, argparse, hashlib, urllib.request, urllib.error, subprocess, urllib.parse
 from datetime import datetime, timezone
 
 def _pointer(path):
@@ -627,6 +627,35 @@ def _strip_raw_links(text, resolver=None):
     return _WIKILINK.sub(repl, text)
 
 
+
+def _inference_violations(endpoint, model, screen_model, allow_remote,
+                          local_hosts=("localhost", "127.0.0.1", "::1", "0.0.0.0")):
+    """The law: every model that reads vault-derived content runs on inference the
+    owner controls, with no cloud primary and no cloud fallback in the curation
+    path. Until 2026-08-28 that was enforced only by the DEFAULTS being local, so a
+    one-token typo in CURATOR_MODEL (a hosted ':cloud' tag, say) would egress vault
+    content and still look like a clean run.
+
+    Two independent ways to leave the box, so two checks: a non-loopback ENDPOINT,
+    and a model id carrying a hosted-inference marker even on a local endpoint
+    (Ollama's ':cloud' tag proxies through the vendor's servers, and the request
+    still goes to localhost:11434).
+
+    Pure and injectable so --self-test covers it with no env and no network.
+    Returns a list of violation strings; empty means clean. `allow_remote` is the
+    explicit owner opt-out the law allows, and is reported by the caller so an
+    opted-out run is never silent."""
+    if allow_remote:
+        return []
+    out = []
+    host = urllib.parse.urlparse(endpoint).hostname or ""
+    if host.lower() not in local_hosts and not host.lower().endswith(".local"):
+        out.append(f"endpoint is not local: {host or endpoint}")
+    for label, m in (("CURATOR_MODEL", model), ("CURATOR_SCREEN_MODEL", screen_model)):
+        if m and m.strip().lower().endswith(":cloud"):
+            out.append(f"{label} is a hosted model: {m}")
+    return out
+
 def _self_test():
     """Assert the auto-promote and auto-reject decision tables plus the
     auto-reject fail-open wiring. No vault, no network, no writes."""
@@ -883,6 +912,28 @@ def _self_test():
         ok = got is want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}: {why})"))
+    print(" sovereign-inference guard (fail-CLOSED; cloud is an owner decision, never a default):")
+    guard_cases = [
+        ("local endpoint + local model = clean", 0,
+         len(_inference_violations("http://localhost:11434/v1/chat/completions", "qwen3.8:27b", "qwen3.8:27b", False))),
+        ("127.0.0.1 is local too", 0,
+         len(_inference_violations("http://127.0.0.1:8080/v1/chat/completions", "glm-5.3", "glm-5.3", False))),
+        ("remote endpoint refused", 1,
+         len(_inference_violations("https://api.vendor.com/v1/chat/completions", "qwen3.8:27b", "qwen3.8:27b", False))),
+        (":cloud model refused even on localhost", 1,
+         len(_inference_violations("http://localhost:11434/v1/chat/completions", "qwen3.5:cloud", "qwen3.8:27b", False))),
+        (":cloud SCREEN model refused too", 1,
+         len(_inference_violations("http://localhost:11434/v1/chat/completions", "qwen3.8:27b", "kimi-k3:cloud", False))),
+        ("both bad = two violations", 2,
+         len(_inference_violations("https://api.vendor.com/v1/chat/completions", "qwen3.5:cloud", "qwen3.8:27b", False))),
+        ("explicit owner opt-out disables the guard", 0,
+         len(_inference_violations("https://api.vendor.com/v1/chat/completions", "qwen3.5:cloud", "kimi-k3:cloud", True))),
+    ]
+    for name, want, got in guard_cases:
+        ok = got == want
+        failed += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got}, want {want})"))
+
     print(" screen wiring (fail-CLOSED; an unreachable screener demotes, never drops):")
     def _boom(_t):
         raise urllib.error.URLError("connection refused")
@@ -1013,13 +1064,26 @@ def _self_test():
     # printed score under-reported by the size of the taste table. Counted now.
     total = (len(wiring_cases) + len(screen_cases) + len(cases) + len(new_cases) + len(reject_cases)
              + len(veto_cases) + len(fn_cases) + len(link_cases)
-             + len(taste_redact_cases) + len(taste_veto_cases))
+             + len(taste_redact_cases) + len(taste_veto_cases) + len(guard_cases))
     print(f"curator-run --self-test: {total - failed}/{total} passed")
     return 1 if failed else 0
 
 
 if a.self_test:
     raise SystemExit(_self_test())
+
+_violations = _inference_violations(ENDPOINT, MODEL, SCREEN_MODEL,
+                                    os.environ.get("CURATOR_ALLOW_REMOTE", "").strip().lower()
+                                    in ("1", "on", "true", "yes"))
+if _violations:
+    for _v in _violations:
+        print(f"curator-run: REFUSING — sovereign-inference law: {_v}", file=sys.stderr)
+    print("curator-run: set CURATOR_ALLOW_REMOTE=1 only as a deliberate owner decision "
+          "for non-vault work; the curation path must stay on owned inference.",
+          file=sys.stderr)
+    raise SystemExit(4)
+if os.environ.get("CURATOR_ALLOW_REMOTE", "").strip().lower() in ("1", "on", "true", "yes"):
+    print("curator-run: WARNING — CURATOR_ALLOW_REMOTE is set; inference locality is NOT enforced")
 
 
 def _model_lock(job):
