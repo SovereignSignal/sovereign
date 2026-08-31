@@ -1,2 +1,6 @@
 .DS_Store
 .obsidian/workspace*
+
+# superseded in-place backups — git history is the undo
+*.pre-*
+__pycache__/

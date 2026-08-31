@@ -63,7 +63,7 @@ Use `--audit-overlay` in place of `--ref` for a report-only aggregate freshness 
 `bin/brain-judge-bakeoff` scores candidate judge models against the **real** `curator-run` judging path, so a judge is chosen on calibration rather than on benchmarks. Benchmark strength does not predict judge calibration: a strong model can promote everything (useless, since the curator's whole value is default-NO) or promote nothing (equally useless). Both failure modes have been observed on models that benchmark well.
 
 ```bash
-bin/brain-judge-bakeoff gpt-oss:120b qwen3.6:35b --runs 3 --json bakeoff.json
+bin/brain-judge-bakeoff qwen3.8:27b qwen3.6:35b --runs 3 --json bakeoff.json
 ```
 
 It builds a throwaway vault in a temp dir, seeds it with the bundled synthetic corpus in `connectors/bakeoff-corpus/` (entirely fictional, so the harness is publishable), runs the real curator against it, and prints a scorecard: accuracy, false-promote rate (the dangerous one), false-skip rate, update detection, containment of adversarial documents, and median and p90 latency. Model calls are timed through a loopback proxy, so nothing in `curator-run` is patched to measure it.
