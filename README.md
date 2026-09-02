@@ -41,6 +41,25 @@ bin/brain-check.sh ~/my-brain
 
 A **curator** — an agent (a local model works well) that reads the raw loading dock and proposes promotions into the trusted `knowledge/` layer. It starts as a proposer: it drafts, you approve, and it earns more autonomy as its track record proves out. The brain works as plain files long before any agent touches it; the curator just makes it tend itself.
 
+## Connect a tool (both wires, one command)
+
+A tool is *in the loop* when it reads the brain before it works and writes its distilled
+output to its own lane. `connectors/harness/<name>/` packages both wires per tool, and
+`bin/sov` is the front door:
+
+```
+sov connect claude-code --host client --vault ~/my-brain --core me,how-to-work-with-me   # dry run
+sov connect claude-code ... --apply                                                  # install
+sov load <topic>        # the context pack, same thing the session-start hook injects
+sov status              # pointers, every lane on this machine, freshness per wire
+```
+
+Claude Code is the first harness: a SessionStart hook maps the working directory to a
+workstream and injects the pack; a launchd job mirrors every project's memory (never
+transcripts) into the lane every 15 minutes. Instance data (vault path, core cards, host
+name, aliases) lives in pointer files under `~`, never in this repo. Tests:
+`python3 -m unittest tests.test_connector_claude_code`.
+
 ## Archive evidence (optional)
 
 `bin/brain-evidence` is a separate, opt-in helper for exact trusted-card evidence and report-only freshness checks. It does not change `brain-load` or write to the brain.
