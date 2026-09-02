@@ -1,0 +1,83 @@
+#!/bin/bash
+# sov: one front door for the brain tools.
+#
+#   sov load <topic>              print the context pack for a topic (brain-load)
+#   sov capture <slug> ...        stage a capture into your lane (brain-capture)
+#   sov connect <harness> [...]   install a connector on this machine, both wires
+#                                 (see connectors/harness/<harness>/install.sh; dry run
+#                                 without --apply)
+#   sov hook <harness>            run a harness's session-start hook here, for testing
+#   sov status                    pointers, lanes on this machine, and their freshness
+#   sov check                     validate the vault (brain-check)
+#
+# It routes; it does not reimplement. Instance data lives in pointer files
+# (~/.brain-root, ~/.brain-core, ~/.brain-host, ~/.brain-lane), never here.
+set -euo pipefail
+
+SELF="$(/usr/bin/python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")"
+BIN="$(dirname "$SELF")"
+TEMPLATE="$(dirname "$BIN")"
+HARNESS_DIR="$TEMPLATE/connectors/harness"
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  load)     exec /usr/bin/python3 "$BIN/brain-load" "$@";;
+  capture)  exec /usr/bin/python3 "$BIN/brain-capture" "$@";;
+  check)    exec /bin/bash "$BIN/brain-check.sh" "$@";;
+  connect)
+    h="${1:-}"; shift || true
+    [ -n "$h" ] || { echo "sov connect <harness>; available: $(ls "$HARNESS_DIR" | tr '\n' ' ')"; exit 64; }
+    [ -x "$HARNESS_DIR/$h/install.sh" ] || chmod +x "$HARNESS_DIR/$h/install.sh" 2>/dev/null || true
+    exec /bin/bash "$HARNESS_DIR/$h/install.sh" "$@";;
+  hook)
+    h="${1:-}"; [ -n "$h" ] || { echo "sov hook <harness>"; exit 64; }
+    hook="$(ls "$HARNESS_DIR/$h"/session-start.* 2>/dev/null | head -1)"
+    [ -n "$hook" ] || { echo "no session-start hook for $h"; exit 66; }
+    printf '{"cwd":"%s","session_id":"manual","source":"startup"}' "$PWD" | /usr/bin/python3 "$hook";;
+  status)
+    /usr/bin/python3 - <<'EOF'
+import os, glob, time, socket
+def pointer(p):
+    try: return open(os.path.expanduser(p)).read().strip() or None
+    except OSError: return None
+root = os.environ.get("BRAIN_ROOT") or pointer("~/.brain-root")
+host = os.environ.get("BRAIN_HOST") or pointer("~/.brain-host") or socket.gethostname().split(".")[0].lower()
+print("vault  ", root or "(not connected: no ~/.brain-root)")
+print("host   ", host)
+print("core   ", pointer("~/.brain-core") or "(none)")
+if not root: raise SystemExit(0)
+stage = os.path.expanduser("~/.vault-staging/raw/tools")
+now = time.time()
+def age(p):
+    best = 0
+    for dp, dn, fn in os.walk(p):
+        dn[:] = [d for d in dn if d != ".git"]
+        for f in fn:
+            try: best = max(best, os.path.getmtime(os.path.join(dp, f)))
+            except OSError: pass
+    return (now - best) / 3600 if best else None
+def fmt(h): return "-" if h is None else ("%.1fh" % h if h < 48 else "%.0fd" % (h / 24))
+print("\nlanes on this machine (newest file age: staging -> vault)")
+seen = set()
+for base in (stage, os.path.join(root, "raw", "tools"), os.path.join(root, "raw", "workspaces")):
+    for d in sorted(glob.glob(os.path.join(base, "*"))):
+        if not os.path.isdir(d) or not os.path.exists(os.path.join(d, "LANE.md")): continue
+        name = os.path.basename(d)
+        if name in seen: continue
+        seen.add(name)
+        st = age(os.path.join(stage, name)) if os.path.isdir(os.path.join(stage, name)) else None
+        va = None
+        for sub in ("tools", "workspaces"):
+            vd = os.path.join(root, "raw", sub, name)
+            if os.path.isdir(vd): va = age(vd)
+        rd = "?"
+        try:
+            for line in open(os.path.join(d, "LANE.md"), encoding="utf-8"):
+                if line.startswith("read:"): rd = line.split(":", 1)[1].strip(); break
+        except OSError: pass
+        print("  %-22s staging %-6s vault %-6s read: %s" % (name, fmt(st), fmt(va), rd))
+EOF
+    ;;
+  help|-h|--help) sed -n '2,15p' "$SELF";;
+  *) echo "sov: unknown command '$cmd'"; sed -n '2,15p' "$SELF"; exit 64;;
+esac

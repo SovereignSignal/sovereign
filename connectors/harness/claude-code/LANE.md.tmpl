@@ -1,0 +1,27 @@
+---
+lane: claude-code-{{HOST}}
+producer: Claude Code CLI on {{HOST}}
+host: {{HOST}}
+mission: >
+  Claude Code's distilled cross-session memory from every project on this machine:
+  each project's MEMORY.md index plus one file per durable fact. Both wires: the
+  session-start hook reads the brain, the mirror writes this lane.
+write: rsync{{WRITE_VIA}}
+read: brain-load (session-start hook)
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect claude-code` on {{DATE}}.
+
+Write wire: `connectors/harness/claude-code/mirror.sh` every {{INTERVAL}}s via launchd
+(`{{LABEL}}`), mirroring `~/.claude/projects/*/memory/` into `memory/<project>/`.
+`memory/MANIFEST.md` is the heartbeat: last run, project count, failures.
+Transcripts (`*.jsonl`) never cross.
+
+Read wire: `connectors/harness/claude-code/session-start.sh`, registered as a
+SessionStart hook in `~/.claude/settings.json`. It maps the session's working
+directory to a workstream, runs `brain-load`, and injects the pack as context.
+It never writes the pack into this lane or into Claude Code's memory files.
+`brain-load-usage.md` here is its receipt, one line per session start.
