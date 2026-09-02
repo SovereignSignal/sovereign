@@ -1,0 +1,21 @@
+---
+lane: cowork-{{HOST}}
+producer: Cowork (Claude Desktop local agent mode) project memory on {{HOST}}
+host: {{HOST}}
+mission: >
+  Each Cowork project's memory folder from this machine, one folder per project
+  space. Write wire by mirror; read wire by instruction (Cowork runs no hooks).
+write: rsync{{WRITE_VIA}}
+read: {{READ}}
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect cowork` on {{DATE}}.
+
+Write wire: `connectors/harness/cowork/mirror.sh` every {{INTERVAL}}s via launchd
+(`{{LABEL}}`). `MANIFEST.md` is the heartbeat.
+
+Read wire: the owner pastes `connectors/harness/cowork/INSTRUCTION.md` into each
+Cowork project's instructions; the agent runs `sov load <topic>` before working.

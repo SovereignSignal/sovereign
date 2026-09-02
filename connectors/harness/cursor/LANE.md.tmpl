@@ -1,0 +1,23 @@
+---
+lane: cursor-{{HOST}}
+producer: Cursor (GUI composer + CLI agent) on {{HOST}}
+host: {{HOST}}
+mission: >
+  Cursor's work record from this machine: GUI conversations exported to markdown,
+  CLI agent transcripts per project, plans, skills, config. Both wires: the
+  sessionStart hook reads the brain, the mirror writes this lane.
+write: rsync + sqlite export{{WRITE_VIA}}
+read: {{READ}}
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect cursor` on {{DATE}}.
+
+Write wire: `connectors/harness/cursor/mirror.sh` every {{INTERVAL}}s via launchd
+(`{{LABEL}}`), append-only. `MANIFEST.md` is the heartbeat.
+
+Read wire: `connectors/harness/cursor/session-start.py`, a `sessionStart` hook in
+`~/.cursor/hooks.json`, returning the pack as `additional_context`. It never writes
+the pack into this lane. `brain-load-usage.md` here is its receipt.

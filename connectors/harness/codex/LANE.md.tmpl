@@ -1,0 +1,25 @@
+---
+lane: codex-memory-{{HOST}}
+producer: Codex CLI memory on {{HOST}}
+host: {{HOST}}
+mission: >
+  Codex's distilled cross-session memory (MEMORY.md, memory summary, raw memories,
+  rollout summaries) from this machine. Both wires: the session-start hook reads the
+  brain, the mirror writes this lane.
+write: rsync{{WRITE_VIA}}
+read: {{READ}}
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect codex` on {{DATE}}.
+
+Write wire: `connectors/harness/codex/mirror.sh` every {{INTERVAL}}s via launchd
+(`{{LABEL}}`), mirroring `~/.codex/memories/` (working tree, never `.git`, never
+session transcripts). `MANIFEST.md` is the heartbeat.
+
+Read wire: `connectors/harness/codex/session-start.py`, a SessionStart hook in
+`~/.codex/hooks.json`. It maps the working directory to a workstream, runs
+`brain-load`, and injects the pack as context. It never writes the pack into this
+lane or into Codex's memory files. `brain-load-usage.md` here is its receipt.

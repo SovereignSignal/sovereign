@@ -112,7 +112,7 @@ class MirrorTests(unittest.TestCase):
             self.assertFalse((lane / "-Users-x-empty").exists())
             self.assertEqual([p for p in lane.rglob("*.jsonl")], [])
             manifest = (lane / "MANIFEST.md").read_text()
-            self.assertIn("Projects mirrored: 2. Failed: 0.", manifest)
+            self.assertIn("Items mirrored: 2. Failed: 0.", manifest)
             self.assertIn("-Users-x-proj-a", manifest)
 
     def test_no_destination_exits_zero(self):
