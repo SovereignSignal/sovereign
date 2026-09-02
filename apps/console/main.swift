@@ -33,7 +33,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         case "connect":
             guard let sov = sov, let h = d["harness"] as? String else { return }
             var args = [sov, "connect", h]
-            if let host = d["host"] as? String, !host.isEmpty { args += ["--host", host] }
+            for (flag, key) in [("--host", "host"), ("--vault", "vault"), ("--core", "core"), ("--hub", "hub")] {
+                if let v = d[key] as? String, !v.isEmpty { args += [flag, v] }
+            }
             if (d["apply"] as? Bool) == true { args.append("--apply") }
             stream(args, id: "connect")
         case "kickstart":

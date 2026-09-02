@@ -284,14 +284,38 @@ def main():
                 hook_registered = hook_path in open(hook_file, encoding="utf-8").read()
             except OSError:
                 hook_registered = False
+        elif meta.get("instruction_glob"):
+            # instruction-based read wire: registered when every space carries the sentinel
+            total = covered = 0
+            for sp_file in glob.glob(os.path.expanduser(meta["instruction_glob"])):
+                try:
+                    data = json.load(open(sp_file, encoding="utf-8"))
+                    spaces = data.get("spaces") if isinstance(data, dict) else data
+                    for sp in spaces or []:
+                        total += 1
+                        if meta.get("instruction_sentinel", "[Sovereign]") in (sp.get("instructions") or ""):
+                            covered += 1
+                except Exception:
+                    pass
+            hook_registered = (total > 0 and covered == total)
         lane_dir = next((p for p in ((os.path.join(stage, "raw", "tools", lane) if stage else None),
                                      os.path.join(root, "raw", "tools", lane)) if p and os.path.isdir(p)), None)
         loaded = label in rows
+        trusted = None
+        if meta.get("trust_check") and hook_registered:
+            try:
+                trusted = subprocess.run([sys.executable, os.path.join(hd, meta["trust_check"]), "--check"],
+                                         capture_output=True, text=True, timeout=10).returncode == 0
+            except Exception:
+                trusted = None
         read_kind = meta.get("read", "hook" if hook_path else "none")
-        read_ok = hook_registered if read_kind == "hook" else (read_kind == "instruction")
+        read_ok = hook_registered if read_kind == "hook" else (hook_registered if hook_registered is not None else read_kind == "instruction")
+        if trusted is False:
+            read_ok = False
         state = "connected" if (loaded and read_ok) else ("partial" if (loaded or hook_registered) else "not connected")
-        harnesses.append({"id": h, "name": meta.get("name", h), "lane": lane, "lane_dir": lane_dir, "label": label,
-                          "read": read_kind, "hook_file": hook_file, "hook_registered": hook_registered,
+        detected = any(os.path.exists(os.path.expanduser(x)) for x in meta.get("detect", [])) if meta.get("detect") else None
+        harnesses.append({"id": h, "name": meta.get("name", h), "lane": lane, "lane_dir": lane_dir, "label": label, "detected": detected,
+                          "read": read_kind, "hook_file": hook_file, "hook_registered": hook_registered, "trusted": trusted,
                           "job_loaded": loaded, "job": rows.get(label), "plist": plist_info(label) if loaded or os.path.exists(os.path.expanduser("~/Library/LaunchAgents/%s.plist" % label)) else None,
                           "last_run": manifest_last_run(lane_dir) if lane_dir else None,
                           "reads_7d": receipts_7d(lane_dir) if lane_dir else {"total": 0, "real": 0},
@@ -314,7 +338,9 @@ def main():
     if hub.get("pending"):
         needs.append({"kind": "gate", "text": "%d proposal(s) waiting at the gate. Approve or reject them on Telegram or with curator-approve." % hub["pending"]})
     for h in harnesses:
-        if h["state"] == "connected" and h["read"] == "hook" and h["reads_7d"]["real"] == 0 and h["manual_step"]:
+        if h.get("trusted") is False:
+            needs.append({"kind": "harness", "harness": h["id"], "text": "%s: the hook is installed but not trusted. Run: sov connect %s --apply" % (h["name"], h["id"])})
+        elif h["state"] == "connected" and h["read"] == "hook" and h["reads_7d"]["real"] == 0 and h["manual_step"]:
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: %s" % (h["name"], h["manual_step"])})
         elif h["state"] == "connected" and h["read"] == "instruction" and h["manual_step"]:
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: %s" % (h["name"], h["manual_step"])})

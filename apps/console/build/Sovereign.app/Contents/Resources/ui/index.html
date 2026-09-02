@@ -105,6 +105,9 @@
   #drawer pre { margin: 0; padding: 12px 28px 16px; max-height: 280px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; }
   #drawer .grow { flex: 1; }
 
+  .field { display: block; font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+  .field input { display: block; width: 100%; margin-top: 4px; font: 13px var(--sans); color: var(--ink); background: var(--soft); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; }
+  .field input:focus { outline: 2px solid var(--gold); outline-offset: 0; border-color: transparent; }
   footer { margin-top: 36px; color: var(--muted); font-size: 11px; }
   footer code { font-family: var(--mono); }
   .loading { color: var(--muted); padding: 40px 0; text-align: center; }
@@ -148,9 +151,26 @@
   const clock = (iso) => { if (!iso) return "?"; const d = new Date(iso); return isNaN(d) ? iso.slice(11, 16) : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
   const day = (iso) => { if (!iso) return "?"; const d = new Date(iso); return isNaN(d) ? iso.slice(0, 10) : d.toLocaleDateString([], { month: "short", day: "numeric" }); };
 
+  function renderSetup(d) {
+    const m = d.machine || {};
+    $("#vault").textContent = "Sovereign";
+    $("#sub").textContent = "this Mac is not connected to a brain yet";
+    $("#hubpill").innerHTML = `<span class="dot"></span>not connected`;
+    $("#main").innerHTML = `<section><p class="eyebrow">Connect this Mac</p>
+      <div class="panel" style="padding:18px 20px;max-width:640px">
+        <p style="margin:0 0 14px;color:var(--muted)">Point this Mac at a brain once. Every tool found here gets both wires: it reads the brain when a session starts, and its notes flow back to its own lane. Nothing runs until you see the dry run and press Install.</p>
+        <label class="field">Vault folder<input id="f-vault" placeholder="/Users/you/Documents/My Brain"></label>
+        <label class="field">This Mac's short name<input id="f-host" value="${esc(m.host || "")}"></label>
+        <label class="field">Always-on cards, comma separated<input id="f-core" placeholder="me,how-to-work-with-me"></label>
+        <label class="field">Hub, if the vault's hub is another machine (ssh alias:path)<input id="f-hub" placeholder="hub:/Users/you/Brain"></label>
+        <div style="display:flex;gap:8px;margin-top:6px"><button class="primary" id="setup-dry">See the dry run</button></div>
+      </div></section>`;
+  }
+
   function render(d) {
     state = d;
     const m = d.machine || {}, hub = d.hub || {};
+    if (!m.connected) return renderSetup(d);
     $("#vault").textContent = m.vault_name || "Sovereign";
     $("#sub").innerHTML = `host <code>${esc(m.host)}</code> · template <code>${esc(m.template_rev || "?")}</code> · refreshed ${clock(d.generated_at)}`;
     const hp = $("#hubpill");
@@ -208,9 +228,10 @@
           <button class="small" data-act="connect" data-harness="${esc(h.id)}">${h.state === "connected" ? "Reinstall" : "Connect"}</button>
         </div></div>`;
     });
-    const notConnected = hs.filter(h => h.state !== "connected");
-    cards.push(`<div class="panel tool add"><div><strong style="color:var(--ink)">Add a tool</strong><div style="margin:6px 0 10px">${notConnected.length ? "Pick one to see the dry run first." : "Every tool in the catalog is connected on this Mac."}</div>
-      <select id="addsel">${hs.map(h => `<option value="${esc(h.id)}">${esc(h.name)}${h.state === "connected" ? " (connected)" : ""}</option>`).join("")}</select>
+    const found = hs.filter(h => h.detected !== false && h.state !== "connected");
+    cards.push(`<div class="panel tool add"><div><strong style="color:var(--ink)">Add a tool</strong><div style="margin:6px 0 10px">${found.length ? `${found.length} tool${found.length === 1 ? "" : "s"} found on this Mac and not connected yet: ${esc(found.map(h => h.name).join(", "))}.` : "Every tool found on this Mac is connected."}</div>
+      ${found.length ? `<button class="small primary" id="connect-all" style="margin-bottom:10px">Connect everything found</button><br>` : ""}
+      <select id="addsel">${hs.map(h => `<option value="${esc(h.id)}">${esc(h.name)}${h.state === "connected" ? " (connected)" : h.detected === false ? " (not found here)" : ""}</option>`).join("")}</select>
       <button class="small" id="addbtn" style="margin-left:6px">Dry run</button></div></div>`);
     parts.push(`<section><p class="eyebrow">Tools on this Mac <span class="count">${hs.filter(h => h.state === "connected").length} of ${hs.length} connected</span></p><div class="tools">${cards.join("")}</div></section>`);
 
@@ -247,10 +268,11 @@
     $("#drawer-title").textContent = title; $("#drawer-log").textContent = ""; $("#drawer-state").textContent = "running";
     $("#drawer-apply").hidden = !showApply; $("#drawer-apply").disabled = true; $("#drawer").classList.add("open");
   }
-  function connect(harness, apply) {
-    pendingConnect = { harness, apply };
-    openDrawer(`${apply ? "Installing" : "Dry run:"} ${harness}`, !apply);
-    bridge({ cmd: "connect", harness, apply: !!apply, host: (state && state.machine && state.machine.host) || "" });
+  function connect(harness, apply, extra) {
+    extra = extra || (pendingConnect && pendingConnect.extra) || {};
+    pendingConnect = { harness, apply, extra };
+    openDrawer(`${apply ? "Installing" : "Dry run:"} ${harness === "all" ? "every tool found on this Mac" : harness}`, !apply);
+    bridge(Object.assign({ cmd: "connect", harness, apply: !!apply, host: extra.host || (state && state.machine && state.machine.host) || "" }, extra));
   }
 
   document.addEventListener("click", (e) => {
@@ -259,6 +281,12 @@
     if (b.id === "drawer-close") { $("#drawer").classList.remove("open"); return; }
     if (b.id === "drawer-apply") { if (pendingConnect) connect(pendingConnect.harness, true); return; }
     if (b.id === "addbtn") { connect($("#addsel").value, false); return; }
+    if (b.id === "connect-all") { connect("all", false); return; }
+    if (b.id === "setup-dry") {
+      const extra = { vault: $("#f-vault").value.trim(), host: $("#f-host").value.trim(), core: $("#f-core").value.trim(), hub: $("#f-hub").value.trim() };
+      if (!extra.vault) { $("#f-vault").focus(); return; }
+      connect("all", false, extra); return;
+    }
     const act = b.dataset.act;
     if (act === "connect") connect(b.dataset.harness, false);
     if (act === "kickstart") { openDrawer("Run now: " + b.dataset.label, false); bridge({ cmd: "kickstart", label: b.dataset.label }); }

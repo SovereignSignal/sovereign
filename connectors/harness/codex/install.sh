@@ -3,7 +3,8 @@
 #
 #   sov connect codex --host client --vault "~/My Brain" --core me,how-to-work-with-me --apply
 #
-# Read wire: SessionStart hook merged into ~/.codex/hooks.json (backup kept).
+# Read wire: SessionStart hook merged into ~/.codex/hooks.json (backup kept), then
+# trusted in ~/.codex/config.toml by trust.py (the record the /hooks screen writes).
 # Write wire: launchd job running mirror.sh (~/.codex/memories -> the lane).
 # Without --apply it prints what it would do and changes nothing.
 set -euo pipefail
@@ -19,11 +20,10 @@ sov_plan "hook       $HERE/session-start.py  (SessionStart: startup|resume -> ~/
 sov_write_pointers
 sov_link_bins
 sov_merge_hook_claude_style "$HOME/.codex/hooks.json" "$HERE/session-start.py" "startup|resume"
+/usr/bin/python3 "$HERE/trust.py"
 sov_install_launchd "$HERE/mirror.sh"
 sov_lane_contract "$HERE/LANE.md.tmpl" "brain-load (session-start hook)"
 sov_smoke_mirror "$HERE/mirror.sh"
 sov_smoke_hook "$HERE/session-start.py" claude
-say; say "done. ONE MANUAL STEP, in the TERMINAL (the desktop app has no hooks screen): cd into a"
-say "workstream folder, run codex, type /hooks, select the Sovereign hook, press t to trust."
-say "Trust is by hash, so re-trust after editing the hook."
-say "Then start codex inside $VAULT/workstreams/<name>/ and ask it what Sovereign context it received."
+say; say "done. the hook is installed and trusted (same record the /hooks screen writes)."
+say "start codex inside $VAULT/workstreams/<name>/ and ask it what Sovereign context it received."

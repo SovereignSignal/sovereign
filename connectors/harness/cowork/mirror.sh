@@ -30,4 +30,6 @@ done < <(find "$SRC" -type d -name memory 2>/dev/null)
 
 sov_manifest "$DEST" "$LANE" "Cowork memory mirror manifest" "$ok" "$failed" \
   "Each folder is one Cowork project space's memory." "" "${lines[@]}"
+# the read wire: every space carries the Sovereign instruction, new spaces included
+/usr/bin/python3 "$HERE/ensure-instruction.py" >> "$DEST/MANIFEST.md" 2>&1 || true
 exit 0

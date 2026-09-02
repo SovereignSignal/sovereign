@@ -1,3 +1,14 @@
-{"name": "Cowork", "lane_prefix": "cowork", "read": "instruction", "hook_file": null, "write": "mirror",
- "manual_step": "Paste INSTRUCTION.md into each Cowork project's instructions.",
- "description": "No hooks in Cowork: the read is a pasted instruction; each project space's memory is mirrored."}
+{
+ "name": "Cowork",
+ "lane_prefix": "cowork",
+ "read": "instruction",
+ "hook_file": null,
+ "write": "mirror",
+ "manual_step": null,
+ "description": "No hooks in Cowork: the read instruction is written into every space's instructions field (re-applied every mirror run); each space's memory is mirrored.",
+ "instruction_glob": "~/Library/Application Support/Claude/local-agent-mode-sessions/*/*/spaces.json",
+ "instruction_sentinel": "[Sovereign]",
+ "detect": [
+  "~/Library/Application Support/Claude/local-agent-mode-sessions"
+ ]
+}

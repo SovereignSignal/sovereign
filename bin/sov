@@ -3,7 +3,7 @@
 #
 #   sov load <topic>              print the context pack for a topic (brain-load)
 #   sov capture <slug> ...        stage a capture into your lane (brain-capture)
-#   sov connect <harness> [...]   install a connector on this machine, both wires
+#   sov connect <harness>|all    install a connector on this machine, both wires (all = every tool found)
 #                                 (see connectors/harness/<harness>/install.sh; dry run
 #                                 without --apply)
 #   sov hook <harness>            run a harness's session-start hook here, for testing
@@ -26,7 +26,8 @@ case "$cmd" in
   check)    exec /bin/bash "$BIN/brain-check.sh" "$@";;
   connect)
     h="${1:-}"; shift || true
-    [ -n "$h" ] || { echo "sov connect <harness>; available: $(ls "$HARNESS_DIR" | grep -v '^_' | tr '\n' ' ')"; exit 64; }
+    [ -n "$h" ] || { echo "sov connect <harness>|all; available: $(ls "$HARNESS_DIR" | grep -v '^_' | tr '\n' ' ')"; exit 64; }
+    [ "$h" = "all" ] && exec /usr/bin/python3 "$HARNESS_DIR/_lib/connect-all.py" "$@"
     [ -x "$HARNESS_DIR/$h/install.sh" ] || chmod +x "$HARNESS_DIR/$h/install.sh" 2>/dev/null || true
     exec /bin/bash "$HARNESS_DIR/$h/install.sh" "$@";;
   hook)

@@ -5,7 +5,7 @@
 # the steps it needs. Everything written is instance-level: pointer files, one
 # launchd plist, one hook entry, one LANE.md. The template stays general.
 #
-#   sov_parse_args "$@"       --host --vault --core --interval --label --apply
+#   sov_parse_args "$@"       --host --vault --core --hub --interval --label --apply
 #   sov_resolve               VAULT CORE HOST LANE LANE_DIR WRITE_VIA LABEL PLIST
 #   sov_plan <line>...        print the dry-run summary (always)
 #   sov_write_pointers        ~/.brain-root ~/.brain-core ~/.brain-host
@@ -18,7 +18,7 @@
 #   sov_smoke_hook <hook> <claude|cursor>
 set -euo pipefail
 
-HOST=""; VAULT=""; CORE=""; INTERVAL=900; APPLY=0; LABEL=""
+HOST=""; VAULT=""; CORE=""; HUB=""; INTERVAL=900; APPLY=0; LABEL=""
 _pointer() { [ -f "$1" ] && tr -d '\n' < "$1" || true; }
 say() { printf '%s\n' "$*"; }
 
@@ -28,6 +28,7 @@ sov_parse_args() {
       --host) HOST="$2"; shift 2;;
       --vault) VAULT="$2"; shift 2;;
       --core) CORE="$2"; shift 2;;
+      --hub) HUB="$2"; shift 2;;
       --interval) INTERVAL="$2"; shift 2;;
       --label) LABEL="$2"; shift 2;;
       --apply) APPLY=1; shift;;
@@ -71,7 +72,8 @@ sov_write_pointers() {
   printf '%s' "$VAULT" > "$HOME/.brain-root"
   [ -n "$CORE" ] && printf '%s' "$CORE" > "$HOME/.brain-core"
   printf '%s' "$HOST" > "$HOME/.brain-host"
-  say "[pointers] ~/.brain-root ~/.brain-core ~/.brain-host"
+  [ -n "$HUB" ] && printf '%s' "$HUB" > "$HOME/.brain-hub"
+  say "[pointers] ~/.brain-root ~/.brain-core ~/.brain-host${HUB:+ ~/.brain-hub}"
 }
 
 sov_link_bins() {

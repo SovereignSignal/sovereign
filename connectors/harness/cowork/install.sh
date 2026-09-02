@@ -15,12 +15,12 @@ HARNESS=cowork; LANE_PREFIX=cowork
 
 sov_parse_args "$@"
 sov_resolve
-sov_plan "read       instruction (no hooks in Cowork): see $HERE/INSTRUCTION.md" \
+sov_plan "read       instruction, written into every Cowork space by $HERE/ensure-instruction.py (no hooks in Cowork)" \
          "mirror     $HERE/mirror.sh  every ${INTERVAL}s as $LABEL"
 sov_write_pointers
 sov_link_bins
 sov_install_launchd "$HERE/mirror.sh"
-sov_lane_contract "$HERE/LANE.md.tmpl" "instruction (owner pastes INSTRUCTION.md into each Cowork project)"
+sov_lane_contract "$HERE/LANE.md.tmpl" "instruction (auto-applied to every Cowork space)"
 sov_smoke_mirror "$HERE/mirror.sh"
-say; say "paste this into each Cowork project's instructions:"; say
-sed -e "s|{{VAULT}}|$VAULT|g" "$HERE/INSTRUCTION.md"
+/usr/bin/python3 "$HERE/ensure-instruction.py"
+say; say "done. every Cowork space now carries the Sovereign read instruction; restart Claude Desktop once if it was open."

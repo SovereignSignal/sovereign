@@ -131,3 +131,54 @@ class Mirrors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CoworkInstruction(unittest.TestCase):
+    def test_ensure_instruction_covers_every_space_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "sessions"
+            sp = sessions / "acct" / "profile"; sp.mkdir(parents=True)
+            (sp / "spaces.json").write_text(json.dumps({"spaces": [
+                {"id": "1", "name": "A", "instructions": "Read X first."},
+                {"id": "2", "name": "B"},
+            ]}))
+            env = dict(os.environ); env.update({"BRAIN_ROOT": str(Path(tmp) / "vault"), "COWORK_SESSIONS": str(sessions)})
+            script = H / "cowork" / "ensure-instruction.py"
+            r1 = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, env=env)
+            r2 = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, env=env)
+            self.assertIn("covered 2 space(s) newly covered", r1.stdout)
+            self.assertIn("0 space(s) newly covered, 2 already covered", r2.stdout)
+            data = json.loads((sp / "spaces.json").read_text())
+            self.assertTrue(data["spaces"][0]["instructions"].startswith("Read X first."))
+            self.assertEqual(data["spaces"][0]["instructions"].count("[Sovereign]"), 1)
+            self.assertIn(str(Path(tmp) / "vault"), data["spaces"][1]["instructions"])
+            self.assertTrue(list(sp.glob("spaces.json.bak-*")))
+
+
+class CodexTrust(unittest.TestCase):
+    def test_trust_record_matches_codex_formula_and_is_idempotent(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / ".codex"; home.mkdir()
+            hook = str(H / "codex" / "session-start.py")
+            (home / "hooks.json").write_text(json.dumps({"hooks": {"SessionStart": [
+                {"matcher": "startup|resume", "hooks": [{"type": "command", "command": hook, "timeout": 30, "statusMessage": "Sovereign: loading brain context"}]}]}}))
+            (home / "config.toml").write_text('model = "x"\n\n[hooks.state]\n')
+            env = dict(os.environ); env.update({"CODEX_HOME": str(home)})
+            script = str(H / "codex" / "trust.py")
+            r0 = subprocess.run([sys.executable, script, "--check"], capture_output=True, text=True, env=env)
+            self.assertEqual(r0.returncode, 1, r0.stdout)
+            r1 = subprocess.run([sys.executable, script], capture_output=True, text=True, env=env)
+            self.assertIn("written", r1.stdout)
+            expected = "sha256:" + hashlib.sha256(json.dumps(
+                {"event_name": "session_start", "matcher": "startup|resume",
+                 "hooks": [{"type": "command", "command": hook, "timeout": 30, "async": False, "statusMessage": "Sovereign: loading brain context"}]},
+                sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            text = (home / "config.toml").read_text()
+            self.assertIn('[hooks.state."%s/hooks.json:session_start:0:0"]' % home, text)
+            self.assertIn('trusted_hash = "%s"' % expected, text)
+            r2 = subprocess.run([sys.executable, script], capture_output=True, text=True, env=env)
+            self.assertIn("already", r2.stdout)
+            self.assertEqual(text, (home / "config.toml").read_text())
+            r3 = subprocess.run([sys.executable, script, "--check"], capture_output=True, text=True, env=env)
+            self.assertEqual(r3.returncode, 0)
