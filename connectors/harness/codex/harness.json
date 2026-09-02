@@ -1,3 +1,9 @@
-{"name": "Codex", "lane_prefix": "codex-memory", "read": "hook", "hook_file": "~/.codex/hooks.json", "write": "mirror",
- "manual_step": "Codex runs no hook until you trust it. Start codex, type /hooks, and trust the Sovereign hook.",
- "description": "SessionStart hook reads the brain; ~/.codex/memories is mirrored."}
+{
+ "name": "Codex",
+ "lane_prefix": "codex-memory",
+ "read": "hook",
+ "hook_file": "~/.codex/hooks.json",
+ "write": "mirror",
+ "manual_step": "Codex runs no hook until you trust it, and the switch is only in the terminal program, not the desktop app. In Terminal: cd into a workstream folder, run codex, type /hooks, select the Sovereign hook, press t to trust. Then start a new session.",
+ "description": "SessionStart hook reads the brain; ~/.codex/memories is mirrored."
+}

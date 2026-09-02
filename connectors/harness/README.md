@@ -12,7 +12,7 @@ sov connect <harness> ... --apply                                               
 | Harness | Read wire | Write wire | One manual step |
 |---|---|---|---|
 | `claude-code` | SessionStart hook in `~/.claude/settings.json`, pack injected as `additionalContext` | every project's memory folder, never transcripts | none |
-| `codex` | SessionStart hook in `~/.codex/hooks.json`, same shape | `~/.codex/memories` working tree | Codex runs no hook until you trust it: start `codex`, type `/hooks`, trust the Sovereign hook. Trust is by hash, so re-trust after editing the hook. |
+| `codex` | SessionStart hook in `~/.codex/hooks.json`, same shape | `~/.codex/memories` working tree | Codex runs no hook until you trust it, and the switch exists only in the terminal program (the desktop app has no hooks screen): in Terminal, run `codex` in a workstream folder, type `/hooks`, select the Sovereign hook, press `t`. Trust is stored as a hash in config.toml, so re-trust after editing the hook. |
 | `cursor` | `sessionStart` hook in `~/.cursor/hooks.json`, pack returned as `additional_context` | GUI chats exported from SQLite to markdown, CLI transcripts, plans, skills, config | none |
 | `cowork` | none available (no hooks); paste `cowork/INSTRUCTION.md` into each project | each project space's memory folder | the paste |
 
