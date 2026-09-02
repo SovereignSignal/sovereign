@@ -23,4 +23,6 @@ sov_install_launchd "$HERE/mirror.sh"
 sov_lane_contract "$HERE/LANE.md.tmpl" "brain-load (session-start hook)"
 sov_smoke_mirror "$HERE/mirror.sh"
 sov_smoke_hook "$HERE/session-start.py" claude
-say; say "done. start codex inside $VAULT/workstreams/<name>/ and ask it what Sovereign context it received."
+say; say "done. ONE MANUAL STEP: Codex runs no hook until you trust it. Start codex, type /hooks,"
+say "and trust the Sovereign session-start hook (trust is by hash, so re-trust after editing it)."
+say "Then start codex inside $VAULT/workstreams/<name>/ and ask it what Sovereign context it received."
