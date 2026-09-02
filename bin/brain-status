@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""brain-status: one honest JSON about this machine's place in the brain.
+
+Everything the console app, the health check, and `sov status` show comes from
+here, so there is one truth. Read-only. Never writes the vault.
+
+Sections:
+  machine    vault, host, core, template revision, whether this machine is the hub
+  hub        the hub's state (local if this is the hub, else over ssh via ~/.brain-hub):
+             last nightly, pending, tail, gears summary, last verdicts, card counts,
+             per-lane freshness as seen from the hub, scheduler last runs
+  lanes      every lane this machine has a copy of: contract fields plus freshness in
+             staging, in the local vault copy, and on the hub
+  harnesses  the connector catalog (connectors/harness/*/harness.json) with what is
+             installed here: hook registered, launchd job loaded, last mirror run,
+             reads in the last 7 days, the manual step if any
+  jobs       launchd jobs for the brain on this machine: schedule, last exit, log errors
+  needs_you  the short list of things only the owner can do
+
+Config, all instance-level: ~/.brain-root, ~/.brain-host, ~/.brain-core,
+  ~/.brain-hub ("sshalias:/path/to/vault"; absent when this machine is the hub).
+
+Usage: brain-status [--json] [--no-hub]
+"""
+import os, sys, json, glob, time, subprocess, socket, re, plistlib, datetime, shlex
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_ROOT = os.path.abspath(os.path.join(HERE, ".."))
+NOW = time.time()
+JOB_PREFIXES = ("com.sovereign.", "com.sovereignsignal.", "com.sov.")
+
+
+def pointer(p):
+    try:
+        return open(os.path.expanduser(p), encoding="utf-8").read().strip() or None
+    except OSError:
+        return None
+
+
+def newest_mtime(path):
+    best = 0
+    for dp, dn, fn in os.walk(path):
+        dn[:] = [d for d in dn if d != ".git"]
+        for f in fn:
+            try:
+                best = max(best, os.path.getmtime(os.path.join(dp, f)))
+            except OSError:
+                pass
+    return best or None
+
+
+def age_h(mtime):
+    return None if not mtime else round((NOW - mtime) / 3600, 2)
+
+
+def frontmatter(path):
+    out = {}
+    try:
+        lines = open(path, encoding="utf-8").read().split("\n")
+    except OSError:
+        return out
+    if not lines or lines[0].strip() != "---":
+        return out
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
+        if m:
+            out[m.group(1)] = m.group(2).strip()
+    return out
+
+
+def manifest_last_run(lane_dir):
+    for cand in (os.path.join(lane_dir, "MANIFEST.md"), os.path.join(lane_dir, "memory", "MANIFEST.md")):
+        try:
+            for line in open(cand, encoding="utf-8"):
+                if line.startswith("Last run:"):
+                    return line.strip()
+        except OSError:
+            continue
+    return None
+
+
+def receipts_7d(lane_dir):
+    p = os.path.join(lane_dir, "brain-load-usage.md")
+    cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%MZ")
+    n, real = 0, 0
+    try:
+        for line in open(p, encoding="utf-8"):
+            if line.startswith("- ") and line[2:19] >= cutoff:
+                n += 1
+                if "session=install-" not in line and "session=manual" not in line:
+                    real += 1
+    except OSError:
+        pass
+    return {"total": n, "real": real}
+
+
+def launchctl_rows():
+    rows = {}
+    try:
+        out = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return rows
+    for line in out.splitlines()[1:]:
+        parts = line.split("\t")
+        if len(parts) >= 3 and parts[2].startswith(JOB_PREFIXES):
+            rows[parts[2]] = {"pid": None if parts[0] == "-" else int(parts[0]),
+                              "last_exit": int(parts[1]) if parts[1].lstrip("-").isdigit() else None}
+    return rows
+
+
+def plist_info(label):
+    p = os.path.expanduser("~/Library/LaunchAgents/%s.plist" % label)
+    info = {"plist": p if os.path.exists(p) else None, "schedule": None, "program": None,
+            "stderr": None, "stderr_lines": None, "stderr_age_h": None}
+    if not info["plist"]:
+        return info
+    try:
+        d = plistlib.load(open(p, "rb"))
+    except Exception:
+        return info
+    ci, si = d.get("StartCalendarInterval"), d.get("StartInterval")
+    if isinstance(ci, dict):
+        ci = [ci]
+    if ci:
+        info["schedule"] = " | ".join("wd=%s %02d:%02d" % (c.get("Weekday", "*"), c.get("Hour", 0), c.get("Minute", 0)) for c in ci)
+    elif si:
+        info["schedule"] = "every %ss" % si
+    info["program"] = " ".join(d.get("ProgramArguments") or [d.get("Program", "")])[-80:]
+    err = d.get("StandardErrorPath")
+    info["stderr"] = err
+    if err and os.path.exists(err):
+        try:
+            info["stderr_lines"] = sum(1 for _ in open(err, errors="ignore"))
+            info["stderr_age_h"] = age_h(os.path.getmtime(err))
+        except OSError:
+            pass
+    return info
+
+
+HUB_SCRIPT = r'''
+import os, sys, json, glob, re, time
+root = sys.argv[1]; now = time.time()
+def newest(path):
+    best = 0
+    for dp, dn, fn in os.walk(path):
+        dn[:] = [d for d in dn if d != ".git"]
+        for f in fn:
+            try: best = max(best, os.path.getmtime(os.path.join(dp, f)))
+            except OSError: pass
+    return best or None
+out = {"reachable": True, "root": root, "lanes": {}, "jobs": {}}
+lane_name = None
+for cand in glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json")):
+    lane_name = os.path.basename(os.path.dirname(cand))
+    try: out["status"] = json.load(open(cand)); out["status_age_h"] = round((now - os.path.getmtime(cand)) / 3600, 2)
+    except Exception: pass
+    lane = os.path.dirname(cand)
+    out["lane"] = lane_name
+    out["pending"] = len(glob.glob(os.path.join(lane, "proposals", "*.md")))
+    try:
+        lines = [l.rstrip("\n").split("\t") for l in open(os.path.join(lane, "decisions.log"), errors="ignore")]
+        out["decisions_tail"] = [{"ts": l[0], "verdict": l[1], "slug": l[2], "actor": l[3]} for l in lines[-6:] if len(l) >= 4]
+    except OSError: pass
+    try:
+        g = json.load(open(os.path.join(lane, "gears.json")))
+        out["gears"] = {k: v.get("gear") for k, v in g.get("rules", {}).items()}
+    except Exception: pass
+    aud = sorted(glob.glob(os.path.join(lane, "audit", "audit-*.md")))
+    out["audit_latest"] = os.path.basename(aud[-1]) if aud else None
+    break
+out["knowledge"] = {sub: len(glob.glob(os.path.join(root, "knowledge", sub, "*.md"))) for sub in ("entities", "concepts", "syntheses")}
+for base in ("tools", "workspaces"):
+    for d in glob.glob(os.path.join(root, "raw", base, "*")):
+        if os.path.isdir(d):
+            m = newest(d); out["lanes"][os.path.basename(d)] = round((now - m) / 3600, 2) if m else None
+logp = os.path.expanduser(open(os.path.expanduser("~/.brain-cron-log")).read().strip()) if os.path.exists(os.path.expanduser("~/.brain-cron-log")) else os.path.expanduser("~/Library/Logs/sovs-cron.log")
+if os.path.exists(logp):
+    for line in open(logp, errors="ignore"):
+        m = re.match(r"^(\S+) run job=(\S+) exit=(\d+) dur=(\d+)s", line)
+        if m and m.group(2) != "tg-verdict-poll":
+            out["jobs"][m.group(2)] = {"ts": m.group(1), "exit": int(m.group(3)), "dur_s": int(m.group(4))}
+print(json.dumps(out))
+'''
+
+
+def fetch_hub(root, hub_pointer, want):
+    if not want:
+        return {"reachable": None, "skipped": True}
+    if hub_pointer and ":" in hub_pointer:
+        alias, path = hub_pointer.split(":", 1)
+        try:
+            res = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", alias, "python3", "-", shlex.quote(path)],
+                                 input=HUB_SCRIPT, capture_output=True, text=True, timeout=25)
+            if res.returncode == 0 and res.stdout.strip():
+                d = json.loads(res.stdout)
+                d["via"] = "ssh " + alias
+                return d
+            return {"reachable": False, "error": (res.stderr or "no output").strip()[-200:], "via": "ssh " + alias}
+        except Exception as e:
+            return {"reachable": False, "error": str(e)[:200], "via": "ssh " + alias}
+    # this machine may be the hub
+    if root and glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json")):
+        try:
+            res = subprocess.run([sys.executable, "-", root], input=HUB_SCRIPT, capture_output=True, text=True, timeout=25)
+            d = json.loads(res.stdout)
+            d["via"] = "local"
+            return d
+        except Exception as e:
+            return {"reachable": False, "error": str(e)[:200], "via": "local"}
+    return {"reachable": None, "error": "no ~/.brain-hub pointer and this machine holds no hub lane"}
+
+
+def main():
+    want_json = "--json" in sys.argv
+    want_hub = "--no-hub" not in sys.argv
+    root = os.environ.get("BRAIN_ROOT") or pointer("~/.brain-root")
+    root = os.path.realpath(os.path.expanduser(root)) if root else None
+    host = os.environ.get("BRAIN_HOST") or pointer("~/.brain-host") or socket.gethostname().split(".")[0].lower()
+    core = os.environ.get("BRAIN_CORE") or pointer("~/.brain-core") or ""
+    hub_pointer = pointer("~/.brain-hub")
+    stage = os.environ.get("BRAIN_STAGE") or (os.path.expanduser("~/.vault-staging") if os.path.isdir(os.path.expanduser("~/.vault-staging")) else None)
+    try:
+        rev = subprocess.run(["git", "-C", TEMPLATE_ROOT, "log", "-1", "--format=%h %cs"], capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        rev = None
+
+    out = {"generated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+           "machine": {"vault": root, "vault_name": os.path.basename(root) if root else None, "host": host,
+                       "core": [c for c in core.split(",") if c], "template": TEMPLATE_ROOT, "template_rev": rev,
+                       "staging": stage, "connected": bool(root), "hub_pointer": hub_pointer}}
+    if not root:
+        out["needs_you"] = [{"kind": "not-connected", "text": "This machine is not connected to a brain. Run: sov connect <tool> --vault <path> --host <name> --apply"}]
+        print(json.dumps(out, indent=2) if want_json else "not connected: no ~/.brain-root")
+        return
+
+    hub = fetch_hub(root, hub_pointer, want_hub)
+    out["hub"] = hub
+    hub_lanes = hub.get("lanes", {}) if isinstance(hub, dict) else {}
+
+    # lanes on this machine
+    lanes, seen = [], set()
+    bases = ([os.path.join(stage, "raw", "tools")] if stage else []) + [os.path.join(root, "raw", "tools"), os.path.join(root, "raw", "workspaces")]
+    for base in bases:
+        for d in sorted(glob.glob(os.path.join(base, "*"))):
+            if not os.path.isdir(d) or not os.path.exists(os.path.join(d, "LANE.md")):
+                continue
+            name = os.path.basename(d)
+            if name in seen:
+                continue
+            seen.add(name)
+            fm = frontmatter(os.path.join(d, "LANE.md"))
+            st_dir = os.path.join(stage, "raw", "tools", name) if stage else None
+            v_dir = next((p for p in (os.path.join(root, "raw", "tools", name), os.path.join(root, "raw", "workspaces", name)) if os.path.isdir(p)), None)
+            lanes.append({"lane": name, "producer": fm.get("producer"), "host": fm.get("host"), "read": fm.get("read"),
+                          "write": fm.get("write"), "status": fm.get("status"),
+                          "staging_age_h": age_h(newest_mtime(st_dir)) if st_dir and os.path.isdir(st_dir) else None,
+                          "vault_age_h": age_h(newest_mtime(v_dir)) if v_dir else None,
+                          "hub_age_h": hub_lanes.get(name),
+                          "last_run": manifest_last_run(d), "reads_7d": receipts_7d(d)})
+    out["lanes"] = lanes
+
+    # harness catalog + installed state
+    rows = launchctl_rows()
+    harnesses = []
+    for hd in sorted(glob.glob(os.path.join(TEMPLATE_ROOT, "connectors", "harness", "*"))):
+        h = os.path.basename(hd)
+        if h.startswith("_") or not os.path.isdir(hd):
+            continue
+        meta = {}
+        try:
+            meta = json.load(open(os.path.join(hd, "harness.json")))
+        except Exception:
+            pass
+        prefix = meta.get("lane_prefix", h)
+        lane = "%s-%s" % (prefix, host)
+        label = "com.sovereign.connector.%s" % h
+        hook_path = next((p for p in glob.glob(os.path.join(hd, "session-start.*"))), None)
+        hook_file = os.path.expanduser(meta.get("hook_file", "")) if meta.get("hook_file") else None
+        hook_registered = None
+        if hook_path and hook_file:
+            try:
+                hook_registered = hook_path in open(hook_file, encoding="utf-8").read()
+            except OSError:
+                hook_registered = False
+        lane_dir = next((p for p in ((os.path.join(stage, "raw", "tools", lane) if stage else None),
+                                     os.path.join(root, "raw", "tools", lane)) if p and os.path.isdir(p)), None)
+        loaded = label in rows
+        read_kind = meta.get("read", "hook" if hook_path else "none")
+        read_ok = hook_registered if read_kind == "hook" else (read_kind == "instruction")
+        state = "connected" if (loaded and read_ok) else ("partial" if (loaded or hook_registered) else "not connected")
+        harnesses.append({"id": h, "name": meta.get("name", h), "lane": lane, "lane_dir": lane_dir, "label": label,
+                          "read": read_kind, "hook_file": hook_file, "hook_registered": hook_registered,
+                          "job_loaded": loaded, "job": rows.get(label), "plist": plist_info(label) if loaded or os.path.exists(os.path.expanduser("~/Library/LaunchAgents/%s.plist" % label)) else None,
+                          "last_run": manifest_last_run(lane_dir) if lane_dir else None,
+                          "reads_7d": receipts_7d(lane_dir) if lane_dir else {"total": 0, "real": 0},
+                          "manual_step": meta.get("manual_step"), "state": state,
+                          "has_mirror": os.path.exists(os.path.join(hd, "mirror.sh")),
+                          "instruction": os.path.join(hd, "INSTRUCTION.md") if os.path.exists(os.path.join(hd, "INSTRUCTION.md")) else None})
+    out["harnesses"] = harnesses
+
+    # jobs on this machine
+    jobs = []
+    for label, r in sorted(rows.items()):
+        info = plist_info(label)
+        jobs.append({"label": label, **r, **info})
+    out["jobs"] = jobs
+
+    # needs you
+    needs = []
+    if hub.get("reachable") is False:
+        needs.append({"kind": "hub", "text": "The hub did not answer (%s). Governance state is unknown until it does." % hub.get("via", "?")})
+    if hub.get("pending"):
+        needs.append({"kind": "gate", "text": "%d proposal(s) waiting at the gate. Approve or reject them on Telegram or with curator-approve." % hub["pending"]})
+    for h in harnesses:
+        if h["state"] == "connected" and h["read"] == "hook" and h["reads_7d"]["real"] == 0 and h["manual_step"]:
+            needs.append({"kind": "harness", "harness": h["id"], "text": "%s: %s" % (h["name"], h["manual_step"])})
+        elif h["state"] == "connected" and h["read"] == "instruction" and h["manual_step"]:
+            needs.append({"kind": "harness", "harness": h["id"], "text": "%s: %s" % (h["name"], h["manual_step"])})
+    for j in jobs:
+        if j.get("last_exit") not in (None, 0):
+            needs.append({"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], j.get("stderr") or "its log")})
+        elif j.get("stderr_lines"):
+            needs.append({"kind": "job", "text": "%s wrote %d line(s) to its error log." % (j["label"], j["stderr_lines"])})
+    for l in lanes:
+        sa, va = l.get("staging_age_h"), l.get("vault_age_h")
+        if sa is not None and va is not None and va - sa > 1.0 and va > 2:
+            needs.append({"kind": "relay", "text": "Lane %s: staging is %.1fh old but the vault copy is %.1fh old. The relay may be stuck." % (l["lane"], sa, va)})
+    out["needs_you"] = needs
+
+    if want_json:
+        print(json.dumps(out, indent=2))
+        return
+    # text view
+    m = out["machine"]
+    print("vault   %s\nhost    %s\ncore    %s\nhub     %s" % (m["vault"], m["host"], ",".join(m["core"]) or "(none)",
+          ("ok via %s, last nightly %s" % (hub.get("via"), (hub.get("status") or {}).get("generated_at", "?")[:16])) if hub.get("reachable") else hub.get("error") or "not checked"))
+    def fmt(h): return "-" if h is None else ("%.1fh" % h if h < 48 else "%.0fd" % (h / 24))
+    print("\nlanes (newest file age: staging -> vault -> hub)")
+    for l in lanes:
+        print("  %-22s %-6s %-6s %-6s reads7d=%-3d read: %s" % (l["lane"], fmt(l["staging_age_h"]), fmt(l["vault_age_h"]), fmt(l["hub_age_h"]), l["reads_7d"]["real"], l["read"]))
+    print("\ntools on this machine")
+    for h in harnesses:
+        print("  %-12s %-14s hook=%s job=%s reads7d=%d%s" % (h["id"], h["state"], h["hook_registered"], h["job_loaded"], h["reads_7d"]["real"], ("  NOTE: " + h["manual_step"]) if h["manual_step"] and h["reads_7d"]["real"] == 0 else ""))
+    if needs:
+        print("\nneeds you")
+        for n in needs:
+            print("  - " + n["text"])
+
+
+if __name__ == "__main__":
+    main()

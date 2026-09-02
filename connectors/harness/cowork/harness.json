@@ -1,0 +1,3 @@
+{"name": "Cowork", "lane_prefix": "cowork", "read": "instruction", "hook_file": null, "write": "mirror",
+ "manual_step": "Paste INSTRUCTION.md into each Cowork project's instructions.",
+ "description": "No hooks in Cowork: the read is a pasted instruction; each project space's memory is mirrored."}
