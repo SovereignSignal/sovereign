@@ -22,7 +22,7 @@ Config, all instance-level: ~/.brain-root, ~/.brain-host, ~/.brain-core,
 
 Usage: brain-status [--json] [--no-hub]
 """
-import os, sys, json, glob, time, subprocess, socket, re, plistlib, datetime, shlex
+import os, sys, json, glob, time, subprocess, socket, re, plistlib, datetime, shlex, shutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_ROOT = os.path.abspath(os.path.join(HERE, ".."))
@@ -255,6 +255,56 @@ def _harness_entry(hdir, harness_id):
             "reads_7d": receipts_7d(hdir)["real"], "newest_age_h": age_h(newest_mtime(hdir))}
 
 
+def parse_hosts_md(root):
+    """Owner-kept host registry: the first hosts.md found under raw/workspaces/*/ or
+    workstreams/*/, a markdown table whose header names the columns. Returns {host: {col: val}}."""
+    for pat in ("raw/workspaces/*/hosts.md", "workstreams/*/hosts.md"):
+        for path in sorted(glob.glob(os.path.join(root, pat))):
+            rows, cols = {}, None
+            for line in open(path, encoding="utf-8", errors="ignore"):
+                if not line.startswith("|"):
+                    continue
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                if cols is None:
+                    cols = [c.lower() for c in cells]
+                    continue
+                if all(set(c) <= set("-: ") for c in cells):
+                    continue
+                row = dict(zip(cols, cells))
+                if row.get("host"):
+                    rows[row["host"]] = row
+            if rows:
+                return rows, os.path.relpath(path, root)
+    return {}, None
+
+
+def tailscale_peers():
+    """{lowercased peer hostname: {online, ip, os}} when a Tailscale client is present, else {}."""
+    for cand in (shutil.which("tailscale"), "/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/usr/bin/tailscale"):
+        if cand and os.path.exists(cand):
+            try:
+                out = subprocess.run([cand, "status", "--json"], capture_output=True, text=True, timeout=8).stdout
+                d = json.loads(out)
+            except Exception:
+                return {}
+            peers = {}
+            for node in [d.get("Self") or {}] + list((d.get("Peer") or {}).values()):
+                name = (node.get("HostName") or "").strip().lower()
+                if name:
+                    peers[name] = {"online": bool(node.get("Online")), "ip": (node.get("TailscaleIPs") or [None])[0],
+                                   "os": node.get("OS"), "self": node is d.get("Self")}
+            return peers
+    return {}
+
+
+def port_open(host, port=22, timeout=1.0):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
 def fleet_view(root):
     """Every host the vault knows about, from the lane folders themselves: which tools are
     deployed there, whether each reads (receipts) and writes (manifest), and what it pulls.
@@ -289,8 +339,28 @@ def fleet_view(root):
             hd = os.path.join(d, sub)
             if os.path.isdir(hd) and (os.path.exists(os.path.join(hd, "HARNESS.md")) or os.path.exists(os.path.join(hd, "MANIFEST.md"))):
                 rec["harnesses"].append({**_harness_entry(hd, sub), "lane": name})
+    # owner registry + live network state
+    registry, registry_path = parse_hosts_md(root)
+    peers = tailscale_peers()
     me = pointer("~/.brain-host")
-    return sorted(hosts.values(), key=lambda r: (0 if r["host"] == me else 1, -len(r["harnesses"]), r["host"]))
+    for host, meta in registry.items():
+        hosts.setdefault(host, {"host": host, "lanes": [], "harnesses": []})
+    for rec in hosts.values():
+        meta = registry.get(rec["host"], {})
+        rec["meta"] = {k: meta.get(k) for k in ("kind", "where", "reach", "transport", "identity", "notes", "tailscale")}
+        ts_name = (meta.get("tailscale") or rec["host"]).strip().lower()
+        peer = peers.get(ts_name)
+        if rec["host"] == me:
+            rec["net"] = {"online": True, "ip": (peer or {}).get("ip"), "via": "this machine"}
+        elif peer:
+            rec["net"] = {"online": peer["online"], "ip": peer["ip"], "via": "tailscale"}
+        elif meta.get("reach", "").startswith("ssh "):
+            alias = meta["reach"].split()[1]
+            rec["net"] = {"online": port_open(alias), "ip": None, "via": "port 22 probe"}
+        else:
+            rec["net"] = {"online": None, "ip": None, "via": None}
+    hosts_sorted = sorted(hosts.values(), key=lambda r: (0 if r["host"] == me else 1, -len(r["harnesses"]), r["host"]))
+    return {"hosts": hosts_sorted, "registry": registry_path, "tailscale": bool(peers)}
 
 
 def fetch_hub(root, hub_pointer, want):

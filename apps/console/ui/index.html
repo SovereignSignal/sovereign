@@ -233,32 +233,46 @@
     });
     const found = hs.filter(h => h.detected !== false && h.state !== "connected");
     const tf = d.tools_found || [];
-    const noConnector = tf.filter(t => t.detected && !t.connector);
-    const absent = tf.filter(t => !t.detected && t.connector);
-    cards.push(`<div class="panel tool add"><div><strong style="color:var(--ink)">Add a tool</strong><div style="margin:6px 0 10px">${found.length ? `${found.length} tool${found.length === 1 ? "" : "s"} found on this Mac and not connected yet: ${esc(found.map(h => h.name).join(", "))}.` : "Every tool with a connector is connected on this Mac."}</div>
-      ${noConnector.length ? `<div style="margin:0 0 10px;font-size:12px"><span style="color:var(--ink)">Also found, no connector yet:</span> ${noConnector.map(t => `<span title="${esc(t.note || "")}">${esc(t.name)}</span>`).join(", ")}</div>` : ""}
-      ${absent.length ? `<div style="margin:0 0 10px;font-size:11px;color:var(--muted)">Connectors for tools not on this Mac: ${esc(absent.map(t => t.name).join(", "))}</div>` : ""}
-      ${found.length ? `<button class="small primary" id="connect-all" style="margin-bottom:10px">Connect everything found</button><br>` : ""}
-      <select id="addsel">${hs.map(h => `<option value="${esc(h.id)}">${esc(h.name)}${h.state === "connected" ? " (connected)" : h.detected === false ? " (not found here)" : ""}</option>`).join("")}</select>
-      <button class="small" id="addbtn" style="margin-left:6px">Dry run</button></div></div>`);
-    parts.push(`<section><p class="eyebrow">Tools on this Mac <span class="count">${hs.filter(h => h.state === "connected").length} of ${hs.length} connected</span></p><div class="tools">${cards.join("")}</div></section>`);
+    const rows = tf.map(t => {
+      const h = hs.find(x => x.id === t.connector);
+      let pill, action = "";
+      if (t.connector && h && h.state === "connected") { pill = `<span class="state connected">connected</span>`; }
+      else if (t.connector && t.detected) { pill = `<span class="state partial">found, not connected</span>`; action = `<button class="small primary" data-act="connect" data-harness="${esc(t.connector)}">Connect</button>`; }
+      else if (t.connector) { pill = `<span class="state">connector available, tool not found here</span>`; }
+      else if (t.detected) { pill = `<span class="state">found, no connector yet</span>`; }
+      else { return ""; }
+      return `<tr><td class="name">${esc(t.name)}</td><td>${pill}</td><td class="dim">${esc(t.note || (h && h.lane ? "lane " + h.lane : ""))}</td><td class="r">${action}</td></tr>`;
+    }).filter(Boolean).join("");
+    parts.push(`<section id="tools"><p class="eyebrow">Tools on this Mac <span class="count">${hs.filter(h => h.state === "connected").length} of ${hs.length} with connectors connected</span></p><div class="tools">${cards.join("")}</div>
+      <div class="panel" style="margin-top:12px;overflow:auto"><table>
+        <tr><th>Every tool the catalog recognizes here</th><th>State</th><th>Note</th><th class="r">${found.length ? `<button class="small primary" id="connect-all">Connect everything found</button>` : ""}</th></tr>
+        ${rows}
+      </table></div></section>`);
 
-    // fleet: every host the vault knows about, from the lanes themselves
-    const fleet = d.fleet || [];
+    // fleet: every host the vault knows about, from the lanes plus the owner's hosts.md
+    const fl = d.fleet || {}; const fleet = fl.hosts || [];
     const chip = (h) => {
       const r = h.reads_7d > 0 ? "ok" : "warn";
       const w = h.run_age_h == null ? "" : h.run_age_h <= 0.7 ? "ok" : h.run_age_h <= 24 ? "warn" : "bad";
       const pull = h.projects != null ? `${h.projects} project${h.projects === 1 ? "" : "s"}, ${h.md_files} files` : `${h.md_files} files`;
       return `<span class="chip"><b>${esc(h.harness)}</b> <span class="dot ${r}" title="reads this week: ${h.reads_7d}"></span>◀${h.reads_7d} <span class="dot ${w}" title="last mirror run"></span>▶${fmtAge(h.run_age_h)} <span class="dim">${esc(pull)}</span></span>`;
     };
-    parts.push(`<section id="fleet"><p class="eyebrow">Fleet <span class="count">${fleet.length} hosts · from the lanes in the vault, no ssh</span></p>
+    const netDot = (n) => !n || n.online == null ? "" : n.online ? "ok" : "bad";
+    const netTxt = (n) => !n || n.online == null ? "unknown" : (n.online ? "online" : "offline") + (n.ip ? " · " + n.ip : "") + (n.via && n.via !== "tailscale" ? " · " + n.via : "");
+    parts.push(`<section id="fleet"><p class="eyebrow">Fleet <span class="count">${fleet.length} hosts · lanes in the vault${fl.registry ? " + " + esc(fl.registry) : ""}${fl.tailscale ? " · live from Tailscale" : " · no Tailscale client here, port probes only"}</span></p>
       <div class="panel" style="overflow:auto"><table>
-        <tr><th>Host</th><th>Lanes</th><th>Tools deployed · ◀ reads 7d · ▶ last mirror · what it pulls</th><th class="r">Newest</th></tr>
+        <tr><th>Host</th><th>Reaches the brain</th><th>Network</th><th>Tools deployed · ◀ reads 7d · ▶ last mirror · what it pulls</th><th class="r">Newest</th></tr>
         ${fleet.map(f => {
+          const m = f.meta || {};
           const newest = Math.min(...f.lanes.map(l => l.newest_age_h == null ? Infinity : l.newest_age_h));
-          const lanesTxt = f.lanes.map(l => `<span title="${esc(l.producer || "")}">${esc(l.lane)}${l.status && l.status !== "onboarded" ? ` <span class="badge">${esc(l.status)}</span>` : ""}</span>`).join("<br>");
-          const tools = f.harnesses.length ? f.harnesses.map(chip).join("<br>") : `<span class="dim" style="color:var(--warn)">no tools deployed</span>`;
-          return `<tr><td class="name">${esc(f.host)}</td><td class="dim">${lanesTxt}</td><td>${tools}</td><td class="r mono"><span class="age"><span class="dot ${contentDot(isFinite(newest) ? newest : null)}"></span>${fmtAge(isFinite(newest) ? newest : null)}</span></td></tr>`;
+          const lanesTxt = f.lanes.length ? f.lanes.map(l => `${esc(l.lane)}${l.status && l.status !== "onboarded" ? ` <span class="badge">${esc(l.status)}</span>` : ""}`).join(", ") : "no lane yet";
+          const tools = f.harnesses.length ? f.harnesses.map(chip).join("<br>") : `<span style="color:var(--warn)">no tools deployed</span>`;
+          return `<tr>
+            <td class="name">${esc(f.host)}<div class="dim" style="font-weight:400">${esc([m.kind, m.where].filter(Boolean).join(" · "))}${m.identity ? ` · <span class="badge">${esc(m.identity)}</span>` : ""}</div></td>
+            <td class="dim">${esc(m.transport || "")}${m.notes ? `<div style="font-size:11px">${esc(m.notes)}</div>` : ""}</td>
+            <td class="mono"><span class="age" style="justify-content:flex-start"><span class="dot ${netDot(f.net)}"></span>${esc(netTxt(f.net))}</span></td>
+            <td>${tools}<div class="dim" style="font-size:11px;margin-top:4px">lanes: ${lanesTxt}</div></td>
+            <td class="r mono"><span class="age"><span class="dot ${contentDot(isFinite(newest) ? newest : null)}"></span>${fmtAge(isFinite(newest) ? newest : null)}</span></td></tr>`;
         }).join("")}
       </table></div></section>`);
 
