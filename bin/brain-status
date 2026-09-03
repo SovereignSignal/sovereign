@@ -462,6 +462,12 @@ def main():
                 hook_registered = hook_path in open(hook_file, encoding="utf-8").read()
             except OSError:
                 hook_registered = False
+        elif meta.get("instruction_text_file"):
+            # instruction-based read wire in a plain rules file: registered when the sentinel is there
+            try:
+                hook_registered = meta.get("instruction_sentinel", "[Sovereign]") in open(os.path.expanduser(meta["instruction_text_file"]), encoding="utf-8").read()
+            except OSError:
+                hook_registered = False
         elif meta.get("instruction_glob"):
             # instruction-based read wire: registered when every space carries the sentinel
             total = covered = 0
@@ -521,6 +527,18 @@ def main():
                             "connected": (t.get("connector") in connected_ids) if t.get("connector") else False,
                             "note": t.get("note")})
     out["tools_found"] = tools_found
+
+    # Obsidian, when its CLI is around: sync state and the vault name for open links
+    obs = {"cli": None, "sync": None, "vault_name": os.path.basename(root)}
+    for cand in (shutil.which("obsidian"), "/opt/homebrew/bin/obsidian", "/Applications/Obsidian.app/Contents/MacOS/obsidian-cli"):
+        if cand and os.path.exists(cand):
+            obs["cli"] = cand
+            try:
+                obs["sync"] = subprocess.run([cand, "sync:status"], capture_output=True, text=True, timeout=8).stdout.strip()[:120] or None
+            except Exception:
+                obs["sync"] = None
+            break
+    out["obsidian"] = obs
 
     out["fleet"] = fleet_view(root)
 

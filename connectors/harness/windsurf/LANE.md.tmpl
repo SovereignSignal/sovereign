@@ -1,0 +1,22 @@
+---
+lane: windsurf-{{HOST}}
+producer: Windsurf (Cascade) memories on {{HOST}}
+host: {{HOST}}
+mission: >
+  Windsurf's global rules and the memories Cascade writes on this machine.
+  Read wire by instruction in global_rules.md (Cascade hooks cannot inject
+  context); write wire by mirror.
+write: rsync{{WRITE_VIA}}
+read: {{READ}}
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect windsurf` on {{DATE}}.
+
+Write wire: `connectors/harness/windsurf/mirror.sh` every {{INTERVAL}}s via `{{LABEL}}`,
+mirroring `~/.codeium/windsurf/memories/` (never the binary cascade state). `MANIFEST.md`
+is the heartbeat.
+
+Read wire: the Sovereign block in `global_rules.md`, re-applied by every mirror run.

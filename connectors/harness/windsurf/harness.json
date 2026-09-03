@@ -1,0 +1,4 @@
+{"name": "Windsurf", "lane_prefix": "windsurf", "read": "instruction", "hook_file": null, "write": "mirror", "manual_step": null,
+ "detect": ["~/.codeium/windsurf", "~/Library/Application Support/Windsurf"],
+ "instruction_text_file": "~/.codeium/windsurf/memories/global_rules.md", "instruction_sentinel": "[Sovereign]",
+ "description": "Cascade hooks cannot inject context, so the read instruction is written into global_rules.md, which Cascade reads every turn; the memories folder is mirrored."}

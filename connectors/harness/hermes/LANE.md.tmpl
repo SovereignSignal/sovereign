@@ -1,0 +1,24 @@
+---
+lane: hermes-{{HOST}}
+producer: Hermes agent built-in memory on {{HOST}}
+host: {{HOST}}
+mission: >
+  Hermes' distilled memory (MEMORY.md, USER.md) from this machine. Both wires: a
+  pre_llm_call shell hook injects the brain pack on the first turn of a conversation,
+  the mirror writes this lane. Sessions (SQLite) and SOUL.md never cross.
+write: rsync{{WRITE_VIA}}
+read: {{READ}}
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect hermes` on {{DATE}}.
+
+Write wire: `connectors/harness/hermes/mirror.sh` every {{INTERVAL}}s via `{{LABEL}}`.
+`MANIFEST.md` is the heartbeat.
+
+Read wire: `connectors/harness/hermes/session-start.py`, declared under `hooks: pre_llm_call:`
+in `~/.hermes/config.yaml`, consent recorded in `~/.hermes/shell-hooks-allowlist.json`.
+It injects the core pack (plus a workstream named in the first message) once per conversation.
+`brain-load-usage.md` here is its receipt.

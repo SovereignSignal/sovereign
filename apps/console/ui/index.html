@@ -175,7 +175,8 @@
     const m = d.machine || {}, hub = d.hub || {};
     if (!m.connected) return renderSetup(d);
     $("#vault").textContent = m.vault_name || "Sovereign";
-    $("#sub").innerHTML = `host <code>${esc(m.host)}</code> · template <code>${esc(m.template_rev || "?")}</code> · refreshed ${clock(d.generated_at)}`;
+    const obs = d.obsidian || {};
+    $("#sub").innerHTML = `host <code>${esc(m.host)}</code> · template <code>${esc(m.template_rev || "?")}</code>${obs.sync ? ` · Obsidian: ${esc(obs.sync.toLowerCase().replace(/\.$/, ""))}` : ""} · refreshed ${clock(d.generated_at)}`;
     const hp = $("#hubpill");
     if (hub.reachable) {
       const st = hub.status || {};
@@ -228,6 +229,7 @@
         <div class="actions">
           ${h.job_loaded ? `<button class="small" data-act="kickstart" data-label="${esc(h.label)}">Run mirror now</button>` : ""}
           ${h.lane_dir ? `<button class="small" data-act="reveal" data-path="${esc(h.lane_dir)}">Show lane</button>` : ""}
+          ${h.lane_dir && (d.obsidian || {}).vault_name && h.lane_dir.startsWith(m.vault) ? `<button class="small" data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(d.obsidian.vault_name)}&file=${encodeURIComponent(h.lane_dir.slice(m.vault.length + 1) + "/LANE")}">Open in Obsidian</button>` : ""}
           <button class="small" data-act="connect" data-harness="${esc(h.id)}">${h.state === "connected" ? "Reinstall" : "Connect"}</button>
         </div></div>`;
     });
@@ -334,6 +336,7 @@
     if (act === "reveal") bridge({ cmd: "reveal", path: b.dataset.path });
     if (act === "clearlog") { openDrawer("Clear log", false); bridge({ cmd: "clearlog", path: b.dataset.path }); }
     if (act === "open") bridge({ cmd: "open", path: b.dataset.path });
+    if (act === "openurl") bridge({ cmd: "openurl", url: b.dataset.url });
   });
 
   function refresh() { $("#sub").textContent = "refreshing…"; bridge({ cmd: "status" }); }
