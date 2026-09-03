@@ -186,14 +186,15 @@ def plist_info(label):
 HUB_SCRIPT = r'''
 import os, sys, json, glob, re, time
 root = sys.argv[1]; now = time.time()
-def newest(path):
-    best = 0
+def scan(path):
+    best = 0; n = 0
     for dp, dn, fn in os.walk(path):
         dn[:] = [d for d in dn if d != ".git"]
         for f in fn:
+            n += 1
             try: best = max(best, os.path.getmtime(os.path.join(dp, f)))
             except OSError: pass
-    return best or None
+    return (best or None), n
 out = {"reachable": True, "root": root, "lanes": {}, "jobs": {}}
 lane_name = None
 for cand in glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json")):
@@ -239,7 +240,35 @@ out["knowledge"] = {sub: len(glob.glob(os.path.join(root, "knowledge", sub, "*.m
 for base in ("tools", "workspaces"):
     for d in glob.glob(os.path.join(root, "raw", base, "*")):
         if os.path.isdir(d):
-            m = newest(d); out["lanes"][os.path.basename(d)] = round((now - m) / 3600, 2) if m else None
+            m, n = scan(d)
+            out["lanes"][os.path.basename(d)] = {"age_h": round((now - m) / 3600, 2) if m else None, "files": n}
+
+# Contribution: every trusted card records the raw path it came from, so the archive
+# itself says which producer earned each card. Cards sourced from workstreams are the
+# owner's own desk; the rest are unattributed.
+contrib = {}; origin = {"desk": 0, "producers": 0, "other": 0, "legacy": 0}
+for p2 in glob.glob(os.path.join(root, "knowledge", "*", "*.md")):
+    try: head = open(p2, encoding="utf-8", errors="ignore").read(1200)
+    except OSError: continue
+    m = re.search(r"(?m)^source:\s*(.+)$", head)
+    src = (m.group(1).strip() if m else "")
+    if src.startswith("raw/"):
+        parts = src.split("/")
+        # only raw/tools/<lane> and raw/workspaces/<lane> are real producers; the frozen
+        # raw/imports/ area and anything shallower is legacy provenance, not a producer
+        if len(parts) >= 3 and parts[1] in ("tools", "workspaces"):
+            lane = parts[2].split(" (")[0].strip()
+            e = contrib.setdefault(lane, {"cards": 0, "recent": []})
+            e["cards"] += 1; origin["producers"] += 1
+            try: e["recent"].append([os.path.getmtime(p2), os.path.basename(p2)[:-3], os.path.relpath(p2, root)[:-3]])
+            except OSError: pass
+        else: origin["legacy"] = origin.get("legacy", 0) + 1
+    elif src.startswith("workstreams/"): origin["desk"] += 1
+    else: origin["other"] += 1
+for e in contrib.values():
+    e["recent"] = [x[1:] for x in sorted(e["recent"], reverse=True)[:6]]
+out["contrib"] = contrib
+out["origin"] = origin
 logp = os.path.expanduser(open(os.path.expanduser("~/.brain-cron-log")).read().strip()) if os.path.exists(os.path.expanduser("~/.brain-cron-log")) else os.path.expanduser("~/Library/Logs/sovs-cron.log")
 if os.path.exists(logp):
     for line in open(logp, errors="ignore"):
@@ -326,7 +355,8 @@ def port_open(host, port=22, timeout=1.0):
         return False
 
 
-def fleet_view(root):
+def fleet_view(root, contrib=None):
+    contrib = contrib or {}
     """Every host the vault knows about, from the lane folders themselves: which tools are
     deployed there, whether each reads (receipts) and writes (manifest), and what it pulls.
     Works on any copy of the vault, because these files are plain markdown that syncs."""
@@ -342,7 +372,8 @@ def fleet_view(root):
         host = host_of(fm, name.rsplit("-", 1)[1] if "-" in name else None)
         rec = hosts.setdefault(host, {"host": host, "lanes": [], "harnesses": []})
         entry = {"lane": name, "producer": fm.get("producer"), "read": fm.get("read"), "write": fm.get("write"),
-                 "status": fm.get("status"), "newest_age_h": age_h(newest_mtime(d))}
+                 "status": fm.get("status"), "newest_age_h": age_h(newest_mtime(d)),
+                 "cards": (contrib.get(name) or {}).get("cards", 0)}
         rec["lanes"].append(entry)
         if os.path.exists(os.path.join(d, "MANIFEST.md")) or os.path.exists(os.path.join(d, "memory", "MANIFEST.md")):
             hid = name[:-(len(host) + 1)] if host and name.endswith("-" + host) else name
@@ -355,7 +386,8 @@ def fleet_view(root):
         host = host_of(fm, name)
         rec = hosts.setdefault(host, {"host": host, "lanes": [], "harnesses": []})
         rec["lanes"].append({"lane": name, "producer": fm.get("producer"), "read": fm.get("read"), "write": fm.get("write"),
-                             "status": fm.get("status"), "newest_age_h": age_h(newest_mtime(d))})
+                             "status": fm.get("status"), "newest_age_h": age_h(newest_mtime(d)),
+                             "cards": (contrib.get(name) or {}).get("cards", 0)})
         for sub in sorted(os.listdir(d)):
             hd = os.path.join(d, sub)
             if os.path.isdir(hd) and (os.path.exists(os.path.join(hd, "HARNESS.md")) or os.path.exists(os.path.join(hd, "MANIFEST.md"))):
@@ -437,6 +469,7 @@ def main():
     hub = fetch_hub(root, hub_pointer, want_hub)
     out["hub"] = hub
     hub_lanes = hub.get("lanes", {}) if isinstance(hub, dict) else {}
+    hub_contrib = hub.get("contrib", {}) if isinstance(hub, dict) else {}
 
     # lanes on this machine
     lanes, seen = [], set()
@@ -456,7 +489,10 @@ def main():
                           "write": fm.get("write"), "status": fm.get("status"),
                           "staging_age_h": age_h(newest_mtime(st_dir)) if st_dir and os.path.isdir(st_dir) else None,
                           "vault_age_h": age_h(newest_mtime(v_dir)) if v_dir else None,
-                          "hub_age_h": hub_lanes.get(name),
+                          "hub_age_h": (hub_lanes.get(name) or {}).get("age_h") if isinstance(hub_lanes.get(name), dict) else hub_lanes.get(name),
+                          "hub_files": (hub_lanes.get(name) or {}).get("files") if isinstance(hub_lanes.get(name), dict) else None,
+                          "cards": (hub_contrib.get(name) or {}).get("cards", 0),
+                          "recent_cards": (hub_contrib.get(name) or {}).get("recent", []),
                           "last_run": manifest_last_run(d), "reads_7d": receipts_7d(d)})
     out["lanes"] = lanes
 
@@ -563,7 +599,7 @@ def main():
             break
     out["obsidian"] = obs
 
-    out["fleet"] = fleet_view(root)
+    out["fleet"] = fleet_view(root, hub_contrib)
 
     # jobs on this machine
     jobs = []

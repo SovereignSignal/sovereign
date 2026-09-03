@@ -114,6 +114,14 @@
   .wm i.live { background: var(--live); } .wm i.warn { background: var(--warn); } .wm i.down { background: var(--down); }
   .strip .none { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 
+  /* contribution: cards this producer put into the trusted layer */
+  .contrib { display: inline-flex; align-items: center; gap: 6px; flex: none; width: 92px; justify-content: flex-end; }
+  .contrib .meter { width: 40px; height: 4px; border-radius: 2px; background: var(--rule); overflow: hidden; flex: none; }
+  .contrib .meter i { display: block; height: 100%; background: var(--brass); border-radius: 2px; }
+  .contrib .n { font-family: var(--mono); font-size: 11px; color: var(--ink-2); min-width: 30px; text-align: right; }
+  .contrib .n.zero { color: var(--faint); }
+  .cards { display: flex; flex-wrap: wrap; gap: 5px; }
+
   #inspector { overflow: auto; background: var(--panel); }
   #inspector .pad { padding: 16px 18px 28px; }
   .insp-title { font: 600 15px var(--mono); letter-spacing: -0.02em; }
@@ -198,6 +206,7 @@
         <button data-view="jobs" aria-pressed="false">Jobs</button>
       </div>
       <span class="count" id="listcount"></span>
+      <span class="count" id="listlegend" style="margin-left:0"></span>
     </div>
     <div id="rows" role="listbox" tabindex="0" aria-label="Records"></div>
   </div>
@@ -265,7 +274,7 @@
       return;
     }
     hb.hidden = false;
-    const st = hub.status || {}, k = hub.knowledge || {}, cov = st.coverage || {}, j = hub.jobs || {};
+    const st = hub.status || {}, k = hub.knowledge || {}, cov = st.coverage || {}, j = hub.jobs || {}, org = hub.origin || {};
     const nightly = j["archivist-nightly"];
     const cards = (k.entities || 0) + (k.concepts || 0) + (k.syntheses || 0);
     const sched = ["archivist-nightly", "daily-health-check", "vault-autocommit"].filter(x => j[x]);
@@ -277,7 +286,7 @@
       <div class="cell"><div class="lbl">Outside the window</div><div class="val">${num(st.deferred ?? cov.unjudged_in_window)}</div>
         <div class="sub">of ${num(cov.processable)} in scope${cov.stranded_pre_watermark ? " · " + num(cov.stranded_pre_watermark) + " stranded" : ""}</div></div>
       <div class="cell"><div class="lbl">Trusted cards</div><div class="val">${num(cards)}</div>
-        <div class="sub">${k.entities || 0} ent · ${k.concepts || 0} con · ${k.syntheses || 0} syn</div></div>
+        <div class="sub">${org.desk != null ? `${num(org.desk)} your desk · ${num(org.producers)} producers` : `${k.entities || 0} ent · ${k.concepts || 0} con · ${k.syntheses || 0} syn`}</div></div>
       <div class="cell"><div class="lbl">Schedules</div>
         <div class="val" style="font-size:11.5px;line-height:1.55;font-weight:400">${sched.map(x => `<span class="dot ${j[x].exit === 0 ? "live" : "down"}" style="display:inline-block;margin-right:5px"></span>${esc(x.replace("archivist-", "").replace("daily-", ""))} ${clock(j[x].ts)}`).join("<br>") || "no run log"}</div>
         <div class="sub">audit ${esc((hub.audit_latest || "").replace("audit-", "").replace(".md", "") || "none")}</div></div>`;
@@ -304,7 +313,8 @@
         <span class="desc">${esc([m.kind, m.where].filter(Boolean).join(" · "))}</span>
         ${m.identity ? `<span class="tag">${esc(m.identity)}</span>` : ""}
         <span class="strip">${strip}</span>
-        <span class="num" style="width:50px">${age(newest)}</span>
+        ${contribCell((o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0))}
+        <span class="num" style="width:44px">${age(newest)}</span>
         <span class="chev">›</span>`;
     }
     if (it.kind === "lane") {
@@ -313,8 +323,8 @@
         <span class="name" style="width:164px">${esc(o.lane)}</span>
         <span class="desc">${esc(o.producer || "")}</span>
         <span class="tag ${r === "none" ? "" : "on"}">${esc(r)}</span>
-        <span class="num" style="width:38px">${(o.reads_7d || {}).real || 0}◀</span>
-        <span class="num" style="width:50px">${age(o.vault_age_h)}</span>
+        ${contribCell(o.cards || 0)}
+        <span class="num" style="width:44px">${age(o.vault_age_h)}</span>
         <span class="chev">›</span>`;
     }
     if (it.kind === "tool") {
@@ -338,9 +348,19 @@
       <span class="chev">›</span>`;
   }
 
+  let contribMax = 1;
+  function contribCell(n) {
+    const w = Math.round(Math.min(1, n / contribMax) * 100);
+    return `<span class="contrib" title="${n} trusted card${n === 1 ? "" : "s"} traced to this producer">
+      <span class="meter"><i style="width:${n ? Math.max(6, w) : 0}%"></i></span>
+      <span class="n ${n ? "" : "zero"}">${n || "–"}</span></span>`;
+  }
   function renderList() {
     const list = items();
+    if (view === "hosts") contribMax = Math.max(1, ...list.map(i => (i.o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0)));
+    else if (view === "lanes") contribMax = Math.max(1, ...list.map(i => i.o.cards || 0));
     $("#listcount").textContent = list.length + " " + view;
+    $("#listlegend").textContent = (view === "hosts" || view === "lanes") ? "· cards landed · newest" : "";
     document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
     if (!sel || sel.view !== view || !list.some(i => i.id === sel.id)) sel = list.length ? { view, kind: list[0].kind, id: list[0].id } : null;
     $("#rows").innerHTML = list.map(it => `<div class="row" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`).join("")
@@ -364,6 +384,26 @@
       <div class="wire"><span class="lab">write ▶</span><span class="track"><i class="${wd}"></i></span><span class="v">${age(t.run)} ago</span></div>
       ${t.pulls ? `<div class="pulls">pulls ${esc(t.pulls)}${t.lane ? " · " + esc(t.lane) : ""}</div>` : ""}
       ${local && local.manual_step ? `<div class="note">${esc(local.manual_step)}</div>` : ""}</div>`;
+  }
+  function cardLink(rel, name) {
+    const o = D.obsidian || {};
+    if (!o.vault_name) return `<span class="chip">${esc(name)}</span>`;
+    return `<span class="chip" data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(o.vault_name)}&amp;file=${encodeURIComponent(rel)}">${esc(name)}</span>`;
+  }
+  function contribSect(lanes, who) {
+    const cards = lanes.reduce((a, l) => a + (l.cards || 0), 0);
+    const files = lanes.reduce((a, l) => a + (l.hub_files || 0), 0);
+    const org = (D.hub || {}).origin || {};
+    const attributed = org.producers || 0;
+    const share = attributed ? Math.round(cards / attributed * 100) : 0;
+    const recent = [].concat.apply([], lanes.map(l => l.recent_cards || [])).slice(0, 6);
+    if (!cards && !files) return "";
+    return `<div class="sect"><h3>Contribution to the archive</h3>
+      ${kv([["cards landed", cards ? `${cards} · ${share}% of everything producers have landed` : "none yet"],
+            ["raw offered", files ? files.toLocaleString() + " files" : null],
+            ["kept rate", cards && files ? (cards / files * 100).toFixed(1) + "% of its files became a card" : null]])}
+      ${recent.length ? `<div style="margin-top:8px"><div class="pulls" style="margin-bottom:5px">newest cards it earned</div>
+        <div class="cards">${recent.map(r => cardLink(r[1], r[0])).join("")}</div></div>` : ""}</div>`;
   }
   function obsBtn(lane) {
     const o = D.obsidian || {};
@@ -393,6 +433,7 @@
         <div class="sect"><h3>Tools deployed · ${hs.length}</h3>
           ${hs.length ? hs.map(t => toolBlock(t, isMe ? localTool(t.id) : null)).join("")
             : `<div class="prose" style="color:var(--warn)">No tools deployed on this host.</div>`}</div>
+        ${contribSect((o.lanes || []), o.host)}
         <div class="sect"><h3>Lanes · ${(o.lanes || []).length}</h3><div class="chips">
           ${(o.lanes || []).map(l => `<span class="chip" data-goto="lane:${esc(l.lane)}"><span class="dot ${freshDot(l.newest_age_h)}"></span>${esc(l.lane)} ${age(l.newest_age_h)}</span>`).join("")
             || `<span class="prose" style="color:var(--muted)">none</span>`}</div></div>
@@ -411,6 +452,7 @@
           ["this copy", age(o.vault_age_h) + " ago"],
           ["hub", o.hub_age_h != null ? age(o.hub_age_h) + " ago" : "not seen"],
           ["reads 7d", String((o.reads_7d || {}).real || 0)]])}</div>
+        ${contribSect([o], o.lane)}
         ${o.last_run ? `<div class="sect"><h3>Last mirror run</h3><div class="prose mono">${esc(o.last_run)}</div></div>` : ""}
         <div class="acts">
           ${local && local.lane_dir ? `<button data-act="reveal" data-path="${esc(local.lane_dir)}">Show lane</button>` : ""}
@@ -497,6 +539,8 @@
       if (n && n.harness) { setView("tools"); select("tool", n.harness); }
       else if (n && n.kind === "job") setView("jobs");
       return; }
+    const cardChip = e.target.closest(".chip[data-act='openurl']");
+    if (cardChip) return bridge({ cmd: "openurl", url: cardChip.dataset.url });
     const chip = e.target.closest("[data-goto]");
     if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s"); select(p[0], p[1]); return; }
     const b = e.target.closest("button");
