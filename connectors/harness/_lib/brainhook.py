@@ -55,6 +55,15 @@ def find_brain_load():
 
 
 def lane_dir(root, lane):
+    """Where this harness's receipts live. On a producer box with a git lane
+    (~/.brain-lane), inside that lane under the harness prefix, so the mirror commits
+    them with everything else. Otherwise the per-tool lane under raw/tools/ (via the
+    staging hop on TCC-protected Macs)."""
+    git_lane = os.environ.get("BRAIN_LANE") or pointer("~/.brain-lane")
+    if git_lane and os.path.isdir(os.path.join(root, "raw", "workspaces", git_lane)):
+        host = host_name()
+        prefix = lane[:-(len(host) + 1)] if lane.endswith("-" + host) else lane
+        return os.path.join(root, "raw", "workspaces", git_lane, prefix)
     stage = os.environ.get("BRAIN_STAGE")
     if stage:
         return os.path.join(stage, "raw", "tools", lane)

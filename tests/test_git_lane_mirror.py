@@ -7,6 +7,7 @@ lane branch under raw/workspaces/<lane>/claude-code/.
 """
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -49,6 +50,15 @@ class GitLaneMirror(unittest.TestCase):
             files = git("ls-tree", "-r", "--name-only", "lane/testbox", cwd=bare)
             self.assertIn("raw/workspaces/testbox/claude-code/memory/-home-box-proj/MEMORY.md", files)
             self.assertNotIn("raw/tools", files)
+            # the read wire's receipt goes inside the lane as well, never under raw/tools/
+            hook = ROOT / "connectors" / "harness" / "claude-code" / "session-start.py"
+            (brain / "knowledge" / "me.md").write_text("---\ntype: entity\nsource: o\ncreated: 2026-01-01\n---\n# Me\n")
+            env["BRAIN_CORE"] = "me"
+            r = subprocess.run([sys.executable, str(hook)], input='{"cwd": "%s", "session_id": "s1", "source": "startup"}' % brain,
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((dest / "brain-load-usage.md").exists(), r.stderr)
+            self.assertFalse((brain / "raw" / "tools").exists())
 
 
 if __name__ == "__main__":
