@@ -174,7 +174,10 @@ final class App: NSObject, NSApplicationDelegate {
                 web.takeSnapshot(with: nil) { image, _ in
                     save(image, snap)
                     // second frame: scrolled to the bottom, so the whole page gets reviewed
-                    self.web.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight);") { _, _ in
+                    let anchor = ProcessInfo.processInfo.environment["SOV_SNAPSHOT_ANCHOR"] ?? ""
+                    let js = anchor.isEmpty ? "window.scrollTo(0, document.body.scrollHeight);"
+                        : "var el=document.querySelector(\"\(anchor)\"); if(el){el.scrollIntoView({block:'start'});} else {window.scrollTo(0, document.body.scrollHeight);}"
+                    self.web.evaluateJavaScript(js) { _, _ in
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                             self.web.takeSnapshot(with: nil) { image2, _ in
                                 save(image2, snap.replacingOccurrences(of: ".png", with: "-bottom.png"))

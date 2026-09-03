@@ -251,7 +251,7 @@
       const pull = h.projects != null ? `${h.projects} project${h.projects === 1 ? "" : "s"}, ${h.md_files} files` : `${h.md_files} files`;
       return `<span class="chip"><b>${esc(h.harness)}</b> <span class="dot ${r}" title="reads this week: ${h.reads_7d}"></span>◀${h.reads_7d} <span class="dot ${w}" title="last mirror run"></span>▶${fmtAge(h.run_age_h)} <span class="dim">${esc(pull)}</span></span>`;
     };
-    parts.push(`<section><p class="eyebrow">Fleet <span class="count">${fleet.length} hosts · from the lanes in the vault, no ssh</span></p>
+    parts.push(`<section id="fleet"><p class="eyebrow">Fleet <span class="count">${fleet.length} hosts · from the lanes in the vault, no ssh</span></p>
       <div class="panel" style="overflow:auto"><table>
         <tr><th>Host</th><th>Lanes</th><th>Tools deployed · ◀ reads 7d · ▶ last mirror · what it pulls</th><th class="r">Newest</th></tr>
         ${fleet.map(f => {
