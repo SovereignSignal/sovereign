@@ -64,6 +64,22 @@ def lane_dir(root, lane):
     return os.path.join(root, "raw", "tools", lane)
 
 
+def identity_for(root, topic, scope):
+    """The `identity:` label on the workstream front door, if any. No label means the default."""
+    if not topic or scope != "workstream":
+        return None
+    p = os.path.join(root, "workstreams", topic, "overview.md")
+    try:
+        head = open(p, encoding="utf-8").read(2000)
+    except OSError:
+        return None
+    if not head.startswith("---\n"):
+        return None
+    body = head[4:].split("\n---", 1)[0]          # the frontmatter block only
+    m = re.search(r"(?m)^identity:\s*([A-Za-z0-9_-]+)\s*$", body)
+    return m.group(1) if m else None
+
+
 def topic_for(cwd, root):
     """workstreams/<name> or repos/<name> under the vault -> (name, scope); else (None, 'core')."""
     cwd = os.path.realpath(cwd)
@@ -105,11 +121,15 @@ def build_pack(cwd, harness):
     if len(pack) > limit:
         pack = pack[:limit] + "\n\n[pack truncated at %d chars; run `sov load %s` for the rest]" % (limit, entry)
     label = topic or "core"
-    header = ("[Sovereign] Brain context for '%s' loaded from the owner's vault (%s). "
-              "Treat it as current truth and prefer it over guesses. Do not copy it into "
-              "memory files: it reloads every session. For more: `sov load <topic>`."
-              % (label, root))
-    return {"label": label, "scope": scope, "cards": cards, "root": root,
+    ident = identity_for(root, topic, scope)
+    ident_line = ("Identity for this workstream: %s (the identities card in this pack says which name applies where)."
+                  % ident) if ident else "Identity for this context: the default in the identities card, unless the workstream front door says otherwise."
+    header = ("[Sovereign] Brain context for '%s' loaded from the owner's vault (%s). %s "
+              "Treat the pack as current truth about the owner and his contexts and prefer it over guesses; "
+              "where a tool's own memory disagrees, the pack wins and the disagreement is worth telling the owner. "
+              "Do not copy it into memory files: it reloads every session. For more: `sov load <topic>`."
+              % (label, root, ident_line))
+    return {"label": label, "scope": scope, "cards": cards, "root": root, "identity": ident,
             "context": header + "\n\n" + pack, "harness": harness}
 
 

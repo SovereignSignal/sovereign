@@ -28,6 +28,7 @@ def make_vault(tmp):
         CARD.format(typ="entity", title="Sky", body="A protocol. See [[sky-process]]."))
     (v / "knowledge/concepts/sky-process.md").write_text(
         CARD.format(typ="concept", title="Sky process", body="How Sky work runs."))
+    (v / "workstreams/sky/overview.md").write_text("---\ntype: note\nsource: owner\ncreated: 2026-01-01\nidentity: wolf\n---\n# Sky\n")
     return v
 
 
@@ -58,6 +59,7 @@ class HookTests(unittest.TestCase):
             self.assertIn("# Sky process", ctx)   # one hop of links followed
             self.assertIn("# Me", ctx)            # always-on core rides along
             self.assertIn("Do not copy it into memory files", ctx)
+            self.assertIn("Identity for this workstream: wolf", ctx)
             self.assertIn("'sky'", out["systemMessage"])
             receipt = Path(tmp) / "stage" / "raw" / "tools" / "claude-code-testbox" / "brain-load-usage.md"
             self.assertTrue(receipt.exists())
@@ -71,6 +73,7 @@ class HookTests(unittest.TestCase):
             ctx = out["hookSpecificOutput"]["additionalContext"]
             self.assertIn("# Me", ctx)
             self.assertNotIn("# Sky", ctx)
+            self.assertIn("Identity for this context: the default", ctx)
             self.assertIn("'core'", out["systemMessage"])
 
     def test_not_connected_is_silent_and_exit_zero(self):

@@ -218,7 +218,7 @@
       const rlabel = h.read === "instruction" ? "by instruction" : h.hook_registered ? (reads > 0 ? `${reads} read${reads === 1 ? "" : "s"} this week` : "hook set, no read yet") : "hook missing";
       return `<div class="panel tool">
         <div class="top"><h3>${esc(h.name)}</h3><span class="state ${esc(h.state.replace(" ", "-"))}">${esc(h.state)}</span></div>
-        <div class="wire read"><span class="glyph">◀ read</span><div class="line ${rdot}"><i></i></div><span class="age" title="${esc(rlabel)}">${esc(h.read === "instruction" ? "paste" : reads)}</span></div>
+        <div class="wire read"><span class="glyph">◀ read</span><div class="line ${rdot}"><i></i></div><span class="age" title="${esc(rlabel)}">${esc(h.read === "instruction" ? "auto" : reads)}</span></div>
         <div class="wire write"><span class="glyph">write ▶</span><div class="line ${h.job_loaded ? wdot : "bad"}"><i></i></div><span class="age">${h.job_loaded ? fmtAge(runAge) : "off"}</span></div>
         <div class="dim" style="font-size:11px;color:var(--muted)">lane <code>${esc(h.lane)}</code>${h.job_loaded ? ` · every ${interval ? Math.round(interval[1] / 60) : 15} min` : ""}</div>
         ${h.manual_step && reads === 0 ? `<div class="step">${esc(h.manual_step)}</div>` : ""}
