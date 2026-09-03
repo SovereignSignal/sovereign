@@ -297,8 +297,8 @@
         <tr><th>Job</th><th>Schedule</th><th class="r">Last exit</th><th class="r">Error log</th><th></th></tr>
         ${jobs.map(j => `<tr><td class="name mono">${esc(j.label)}</td><td class="dim">${esc(j.schedule || "")}</td>
           <td class="r mono"><span class="age"><span class="dot ${j.last_exit === 0 ? "ok" : j.last_exit == null ? "" : "bad"}"></span>${j.last_exit == null ? "–" : j.last_exit}</span></td>
-          <td class="r mono">${j.stderr_lines == null ? "–" : j.stderr_lines + (j.stderr_lines === 1 ? " line" : " lines")}</td>
-          <td class="r"><button class="small" data-act="kickstart" data-label="${esc(j.label)}">Run now</button>${j.stderr ? ` <button class="small" data-act="open" data-path="${esc(j.stderr)}">Log</button>` : ""}</td></tr>`).join("")}
+          <td class="r mono">${j.stderr_lines == null ? "–" : j.stderr_lines + (j.stderr_lines === 1 ? " line" : " lines") + (j.stderr_lines && j.stderr_age_h != null ? " · " + fmtAge(j.stderr_age_h) + " old" : "")}</td>
+          <td class="r"><button class="small" data-act="kickstart" data-label="${esc(j.label)}">Run now</button>${j.stderr ? ` <button class="small" data-act="open" data-path="${esc(j.stderr)}">Log</button>` : ""}${j.stderr_lines ? ` <button class="small" data-act="clearlog" data-path="${esc(j.stderr)}" title="empty the error log; the next real error shows again">Clear log</button>` : ""}</td></tr>`).join("")}
       </table></div></section>`);
 
     parts.push(`<footer>Everything on this screen comes from <code>sov status --json</code> on this Mac, plus one ssh call to the hub. The app changes nothing by itself; Connect runs the same <code>sov connect</code> the terminal does.</footer>`);
@@ -332,6 +332,7 @@
     if (act === "connect") connect(b.dataset.harness, false);
     if (act === "kickstart") { openDrawer("Run now: " + b.dataset.label, false); bridge({ cmd: "kickstart", label: b.dataset.label }); }
     if (act === "reveal") bridge({ cmd: "reveal", path: b.dataset.path });
+    if (act === "clearlog") { openDrawer("Clear log", false); bridge({ cmd: "clearlog", path: b.dataset.path }); }
     if (act === "open") bridge({ cmd: "open", path: b.dataset.path });
   });
 

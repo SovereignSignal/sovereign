@@ -550,8 +550,8 @@ def main():
     for j in jobs:
         if j.get("last_exit") not in (None, 0):
             needs.append({"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], j.get("stderr") or "its log")})
-        elif j.get("stderr_lines"):
-            needs.append({"kind": "job", "text": "%s wrote %d line(s) to its error log." % (j["label"], j["stderr_lines"])})
+        elif j.get("stderr_lines") and (j.get("stderr_age_h") if j.get("stderr_age_h") is not None else 0) <= 24:
+            needs.append({"kind": "job", "text": "%s wrote %d line(s) to its error log in the last day." % (j["label"], j["stderr_lines"])})
     for l in lanes:
         sa, va = l.get("staging_age_h"), l.get("vault_age_h")
         if sa is not None and va is not None and va - sa > 1.0 and va > 2:

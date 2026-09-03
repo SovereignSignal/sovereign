@@ -43,6 +43,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             run(["/bin/launchctl", "kickstart", "-k", "gui/\(getuid())/\(label)"]) { out, err, code in
                 self.deliver("kickstart", ["label": label, "exit": code, "out": out + err])
             }
+        case "clearlog":
+            if let p = d["path"] as? String, p.hasSuffix(".log"), p.hasPrefix(NSHomeDirectory()) {
+                try? "".write(toFile: p, atomically: true, encoding: .utf8)
+                deliver("kickstart", ["label": "cleared " + (p as NSString).lastPathComponent, "exit": 0, "out": ""])
+            }
         case "reveal":
             if let p = d["path"] as? String { NSWorkspace.shared.selectFile(p, inFileViewerRootedAtPath: "") }
         case "open":
