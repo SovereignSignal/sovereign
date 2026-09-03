@@ -1,0 +1,21 @@
+{
+  "_": "Tools the status can recognize on a machine. `connector` names the harness folder when one exists. `detect` paths mean the tool is installed. Add a row when a new tool appears; a connector can follow later.",
+  "tools": [
+    {"id": "claude-code", "name": "Claude Code", "connector": "claude-code", "detect": ["~/.claude"]},
+    {"id": "codex", "name": "Codex", "connector": "codex", "detect": ["~/.codex"]},
+    {"id": "cursor", "name": "Cursor", "connector": "cursor", "detect": ["~/.cursor", "~/Library/Application Support/Cursor"]},
+    {"id": "cowork", "name": "Cowork (Claude Desktop)", "connector": "cowork", "detect": ["~/Library/Application Support/Claude/local-agent-mode-sessions"]},
+    {"id": "hermes", "name": "Hermes agent", "connector": null, "detect": ["~/.hermes/config.yaml"], "note": "chat and verdict relay; reads through its own skill, has no memory mirror yet"},
+    {"id": "hermes-desktop", "name": "Hermes desktop app", "connector": null, "detect": ["~/.hermes/hermes-agent/apps/desktop", "/Applications/Hermes.app"], "note": "no lane yet; connect only if it produces something worth curating"},
+    {"id": "gemini-cli", "name": "Gemini CLI", "connector": null, "detect": ["~/.gemini"]},
+    {"id": "opencode", "name": "OpenCode", "connector": null, "detect": ["~/.config/opencode", "~/.opencode"]},
+    {"id": "aider", "name": "Aider", "connector": null, "detect": ["~/.aider.conf.yml", "~/.aider"]},
+    {"id": "continue", "name": "Continue", "connector": null, "detect": ["~/.continue"]},
+    {"id": "windsurf", "name": "Windsurf", "connector": null, "detect": ["~/.codeium/windsurf", "~/Library/Application Support/Windsurf"]},
+    {"id": "zed", "name": "Zed", "connector": null, "detect": ["~/.config/zed"]},
+    {"id": "copilot-cli", "name": "GitHub Copilot CLI", "connector": null, "detect": ["~/.copilot"]},
+    {"id": "vscode", "name": "VS Code", "connector": null, "detect": ["~/Library/Application Support/Code", "~/.config/Code"]},
+    {"id": "chatgpt-desktop", "name": "ChatGPT desktop", "connector": null, "detect": ["~/Library/Application Support/com.openai.chat"]},
+    {"id": "obsidian", "name": "Obsidian", "connector": null, "detect": ["~/Library/Application Support/obsidian", "~/.config/obsidian"], "note": "a reader of the vault itself, not a producer"}
+  ]
+}

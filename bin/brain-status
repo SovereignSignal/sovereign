@@ -27,7 +27,16 @@ import os, sys, json, glob, time, subprocess, socket, re, plistlib, datetime, sh
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_ROOT = os.path.abspath(os.path.join(HERE, ".."))
 NOW = time.time()
-JOB_PREFIXES = ("com.sovereign.", "com.sovereignsignal.", "com.sov.")
+# launchd/systemd labels the status watches. The connector prefix is built in; an
+# instance can add its own legacy prefixes in ~/.brain-job-prefixes (comma separated).
+def _job_prefixes():
+    extra = []
+    try:
+        extra = [x.strip() for x in open(os.path.expanduser("~/.brain-job-prefixes")).read().split(",") if x.strip()]
+    except OSError:
+        pass
+    return tuple(["com.sovereign.", "sovereign-connector-"] + extra)
+JOB_PREFIXES = _job_prefixes()
 
 
 def pointer(p):
@@ -220,6 +229,70 @@ print(json.dumps(out))
 '''
 
 
+def _run_age_from_manifest(last_run_line):
+    m = re.search(r"Last run: (\S+)", last_run_line or "")
+    if not m:
+        return None
+    try:
+        t = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+        return round((NOW - t) / 3600, 2)
+    except ValueError:
+        return None
+
+
+def _harness_entry(hdir, harness_id):
+    last = manifest_last_run(hdir)
+    items = re.search(r"Items mirrored: (\d+)", last or "")
+    md = 0
+    for dp, dn, fn in os.walk(hdir):
+        md += sum(1 for f in fn if f.endswith(".md") and f not in ("MANIFEST.md", "HARNESS.md", "LANE.md", "brain-load-usage.md"))
+    projects = None
+    mem = os.path.join(hdir, "memory")
+    if os.path.isdir(mem):
+        projects = sum(1 for d in os.listdir(mem) if os.path.isdir(os.path.join(mem, d)))
+    return {"harness": harness_id, "last_run": last, "run_age_h": _run_age_from_manifest(last),
+            "items": int(items.group(1)) if items else None, "md_files": md, "projects": projects,
+            "reads_7d": receipts_7d(hdir)["real"], "newest_age_h": age_h(newest_mtime(hdir))}
+
+
+def fleet_view(root):
+    """Every host the vault knows about, from the lane folders themselves: which tools are
+    deployed there, whether each reads (receipts) and writes (manifest), and what it pulls.
+    Works on any copy of the vault, because these files are plain markdown that syncs."""
+    hosts = {}
+    def host_of(fm, fallback):
+        return (fm.get("host") or fallback or "unassigned").strip()
+    for d in sorted(glob.glob(os.path.join(root, "raw", "tools", "*"))):
+        if not os.path.isdir(d):
+            continue
+        name = os.path.basename(d)
+        fm = frontmatter(os.path.join(d, "LANE.md"))
+        # host comes from the lane contract; a tool lane named <prefix>-<host> is the fallback
+        host = host_of(fm, name.rsplit("-", 1)[1] if "-" in name else None)
+        rec = hosts.setdefault(host, {"host": host, "lanes": [], "harnesses": []})
+        entry = {"lane": name, "producer": fm.get("producer"), "read": fm.get("read"), "write": fm.get("write"),
+                 "status": fm.get("status"), "newest_age_h": age_h(newest_mtime(d))}
+        rec["lanes"].append(entry)
+        if os.path.exists(os.path.join(d, "MANIFEST.md")) or os.path.exists(os.path.join(d, "memory", "MANIFEST.md")):
+            hid = name[:-(len(host) + 1)] if host and name.endswith("-" + host) else name
+            rec["harnesses"].append({**_harness_entry(d, hid), "lane": name})
+    for d in sorted(glob.glob(os.path.join(root, "raw", "workspaces", "*"))):
+        if not os.path.isdir(d):
+            continue
+        name = os.path.basename(d)
+        fm = frontmatter(os.path.join(d, "LANE.md"))
+        host = host_of(fm, name)
+        rec = hosts.setdefault(host, {"host": host, "lanes": [], "harnesses": []})
+        rec["lanes"].append({"lane": name, "producer": fm.get("producer"), "read": fm.get("read"), "write": fm.get("write"),
+                             "status": fm.get("status"), "newest_age_h": age_h(newest_mtime(d))})
+        for sub in sorted(os.listdir(d)):
+            hd = os.path.join(d, sub)
+            if os.path.isdir(hd) and (os.path.exists(os.path.join(hd, "HARNESS.md")) or os.path.exists(os.path.join(hd, "MANIFEST.md"))):
+                rec["harnesses"].append({**_harness_entry(hd, sub), "lane": name})
+    me = pointer("~/.brain-host")
+    return sorted(hosts.values(), key=lambda r: (0 if r["host"] == me else 1, -len(r["harnesses"]), r["host"]))
+
+
 def fetch_hub(root, hub_pointer, want):
     if not want:
         return {"reachable": None, "skipped": True}
@@ -364,6 +437,22 @@ def main():
                           "has_mirror": os.path.exists(os.path.join(hd, "mirror.sh")),
                           "instruction": os.path.join(hd, "INSTRUCTION.md") if os.path.exists(os.path.join(hd, "INSTRUCTION.md")) else None})
     out["harnesses"] = harnesses
+
+    # every tool the catalog can recognize on this machine, connector or not
+    tools_found = []
+    try:
+        catalog = json.load(open(os.path.join(TEMPLATE_ROOT, "connectors", "harness", "_lib", "known-tools.json")))["tools"]
+    except Exception:
+        catalog = []
+    connected_ids = {h["id"] for h in harnesses if h["state"] == "connected"}
+    for t in catalog:
+        det = any(os.path.exists(os.path.expanduser(x)) for x in t.get("detect", []))
+        tools_found.append({"id": t["id"], "name": t["name"], "detected": det, "connector": t.get("connector"),
+                            "connected": (t.get("connector") in connected_ids) if t.get("connector") else False,
+                            "note": t.get("note")})
+    out["tools_found"] = tools_found
+
+    out["fleet"] = fleet_view(root)
 
     # jobs on this machine
     jobs = []
