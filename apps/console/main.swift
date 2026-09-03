@@ -180,8 +180,14 @@ final class App: NSObject, NSApplicationDelegate {
                     save(image, snap)
                     // second frame: scrolled to the bottom, so the whole page gets reviewed
                     let anchor = ProcessInfo.processInfo.environment["SOV_SNAPSHOT_ANCHOR"] ?? ""
-                    let js = anchor.isEmpty ? "window.scrollTo(0, document.body.scrollHeight);"
-                        : "var el=document.querySelector(\"\(anchor)\"); if(el){el.scrollIntoView({block:'start'});} else {window.scrollTo(0, document.body.scrollHeight);}"
+                    let js: String
+                    if anchor.hasPrefix("view:") {
+                        js = "window.sovView && window.sovView(\"\(anchor.dropFirst(5))\");"
+                    } else if anchor.isEmpty {
+                        js = "window.scrollTo(0, document.body.scrollHeight);"
+                    } else {
+                        js = "var el=document.querySelector(\"\(anchor)\"); if(el){el.scrollIntoView({block:'start'});} else {window.scrollTo(0, document.body.scrollHeight);}"
+                    }
                     self.web.evaluateJavaScript(js) { _, _ in
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                             self.web.takeSnapshot(with: nil) { image2, _ in

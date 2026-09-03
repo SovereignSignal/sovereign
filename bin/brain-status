@@ -201,6 +201,27 @@ for cand in glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json"
     try: out["status"] = json.load(open(cand)); out["status_age_h"] = round((now - os.path.getmtime(cand)) / 3600, 2)
     except Exception: pass
     lane = os.path.dirname(cand)
+    # A gate verdict rewrites status.json with a minimal shape and drops the run
+    # telemetry. The digest the nightly wrote survives that, so fill the gaps from it.
+    st = out.setdefault("status", {})
+    try:
+        inbox = open(os.path.join(lane, "INBOX.md"), errors="ignore").read()
+        m = re.search(r"(\d+) proposal\(s\) from (\d+) new item", inbox)
+        if m:
+            st.setdefault("new_proposals", int(m.group(1))); st.setdefault("judged", int(m.group(2)))
+        m = re.search(r"Coverage: (\d+) processable . (\d+) judged-ever . (\d+) stranded pre-watermark . (\d+) awaiting", inbox)
+        if m:
+            cov = st.setdefault("coverage", {})
+            cov.setdefault("processable", int(m.group(1))); cov.setdefault("judged_ever", int(m.group(2)))
+            cov.setdefault("stranded_pre_watermark", int(m.group(3))); cov.setdefault("unjudged_in_window", int(m.group(4)))
+        m = re.search(r"(\d+) newer item\(s\) beyond --max were deferred", inbox)
+        if m: st.setdefault("deferred", int(m.group(1)))
+        sec = inbox.split("## Auto-applied", 1)
+        st.setdefault("auto_promoted", len(re.findall(r"(?m)^- \*\*", sec[1])) if len(sec) > 1 else 0)
+        m = re.search(r"(?m)^# Archivist digest . (\S+ \S+)", inbox)
+        if m: out["digest_at"] = m.group(1)
+    except OSError:
+        pass
     out["lane"] = lane_name
     out["pending"] = len(glob.glob(os.path.join(lane, "proposals", "*.md")))
     try:

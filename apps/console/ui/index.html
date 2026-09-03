@@ -5,307 +5,479 @@
 <title>Sovereign</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
+  /* Instrument panel: graphite and brass. Structure and data are monospaced; prose is
+     the only proportional type. Every record is one line, and detail lives in the
+     inspector. The wire strip is the signature: one dual-segment mark per tool, read
+     on the left and write on the right, so a whole host reads as texture. */
   :root {
-    --bg: #F5F6F8; --panel: #FFFFFF; --line: #E3E6EA; --ink: #1A1D22; --muted: #6B7480; --soft: #F0F2F5;
-    --gold: #B8901F; --gold-soft: rgba(184,144,31,.12);
-    --ok: #2DA44E; --warn: #BF8700; --bad: #D1242F; --idle: #A5ADB8;
+    --ground: #FAFAF7; --panel: #FFFFFF; --sunk: #F2F2EE; --rule: #E4E4DE; --rule-soft: #EFEFEA;
+    --ink: #15181C; --ink-2: #3D444E; --muted: #6A7280; --faint: #98A0AC;
+    --brass: #A87C12; --brass-ink: #6E5008; --brass-wash: #FBF3DE;
+    --live: #2E8B57; --warn: #B5810E; --down: #C23B31; --idle: #B9BEC6;
+    --sel: #EDF1F6;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    --shadow: 0 1px 2px rgba(20,24,30,.05), 0 8px 24px rgba(20,24,30,.08);
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #0F1216; --panel: #171B21; --line: #262C35; --ink: #E8EAEE; --muted: #8A93A0; --soft: #1E232B;
-            --gold: #C9A227; --gold-soft: rgba(201,162,39,.14); --ok: #3FB950; --warn: #D29922; --bad: #F85149; --idle: #5B6472; }
+    :root {
+      --ground: #14181D; --panel: #1B2027; --sunk: #1F252D; --rule: #2A313B; --rule-soft: #232A33;
+      --ink: #E9ECEF; --ink-2: #B7C0CB; --muted: #8B95A3; --faint: #707A88;
+      --brass: #D4A73A; --brass-ink: #EFD9A4; --brass-wash: #262114;
+      --live: #3FA96B; --warn: #D19A26; --down: #E0564C; --idle: #4E5763;
+      --sel: #222B36;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
+    }
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
-  body { padding: 0 0 48px; }
-  a { color: inherit; }
-  button { font: inherit; color: var(--ink); background: var(--soft); border: 1px solid var(--line); border-radius: 7px; padding: 5px 11px; cursor: pointer; }
-  button:hover { border-color: var(--muted); }
-  button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
-  button.primary { background: var(--gold); border-color: var(--gold); color: #1A1400; font-weight: 600; }
-  button.small { padding: 3px 9px; font-size: 12px; }
-  button[disabled] { opacity: .5; cursor: default; }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 28px; }
+  html, body { margin: 0; height: 100%; background: var(--ground); color: var(--ink);
+    font: 13px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  button { font: 500 12px var(--sans); color: var(--ink-2); background: var(--panel);
+    border: 1px solid var(--rule); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--faint); color: var(--ink); }
+  button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+  button.brass { background: var(--brass); border-color: var(--brass); color: #17140A; font-weight: 600; }
+  button[disabled] { opacity: .45; cursor: default; }
+  input { font: 12px var(--mono); padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px;
+    background: var(--sunk); color: var(--ink); width: 100%; margin: 4px 0 10px; }
+  input:focus-visible { outline: 2px solid var(--brass); outline-offset: 0; border-color: transparent; }
+  .mono { font-family: var(--mono); font-size: 11.5px; letter-spacing: -0.01em; }
 
-  header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 96%, transparent); backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
-  header .wrap { display: flex; align-items: center; gap: 14px; padding: 38px 28px 12px; }
-  header .crown { width: 22px; height: 22px; color: var(--gold); flex: none; }
-  header h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
-  header .sub { color: var(--muted); font-size: 12px; margin-top: 1px; }
-  header .sub code { font-family: var(--mono); font-size: 11px; }
+  header { flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 34px 20px 10px; border-bottom: 1px solid var(--rule); }
+  .crown { width: 18px; height: 18px; color: var(--brass); flex: none; }
+  header h1 { margin: 0; font: 600 14px var(--sans); letter-spacing: -0.01em; }
+  header .meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 1px; }
   header .grow { flex: 1; }
-  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 12px; white-space: nowrap; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); flex: none; }
-  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); } .dot.gold { background: var(--gold); }
+  .hubpill { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px;
+    color: var(--ink-2); background: var(--panel); border: 1px solid var(--rule); border-radius: 999px;
+    padding: 4px 11px; white-space: nowrap; }
 
-  section { margin-top: 26px; }
-  .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; display: flex; align-items: baseline; gap: 10px; }
-  .eyebrow .count { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); flex: none; }
+  .dot.live { background: var(--live); } .dot.warn { background: var(--warn); }
+  .dot.down { background: var(--down); }
 
-  /* needs you */
-  .needs { border-left: 3px solid var(--gold); }
-  .needs ul { list-style: none; margin: 0; padding: 6px 0; }
-  .needs li { padding: 8px 16px; display: flex; gap: 12px; align-items: flex-start; border-top: 1px solid var(--line); }
-  .needs li:first-child { border-top: 0; }
-  .needs .k { font-family: var(--mono); font-size: 11px; color: var(--gold); min-width: 64px; padding-top: 2px; }
-  .empty { color: var(--muted); padding: 14px 16px; }
+  #needs { flex: none; border-bottom: 1px solid var(--rule); background: var(--brass-wash); }
+  #needs .item { display: flex; gap: 10px; align-items: baseline; padding: 7px 20px;
+    cursor: pointer; border-left: 3px solid var(--brass); }
+  #needs .item + .item { border-top: 1px solid rgba(168,124,18,.2); }
+  #needs .k { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .11em;
+    color: var(--brass); min-width: 54px; }
+  #needs .t { color: var(--brass-ink); font-size: 12px; }
 
-  /* hub */
-  .hub { display: grid; grid-template-columns: repeat(5, 1fr); }
-  .hub .cell { padding: 14px 16px; border-left: 1px solid var(--line); }
-  .hub .cell:first-child { border-left: 0; }
-  .hub .lbl { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-  .hub .val { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-  .hub .val small { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 4px; }
-  .hub .note { font-size: 11px; color: var(--muted); margin-top: 3px; }
-  .verdicts { border-top: 1px solid var(--line); padding: 10px 16px; font-family: var(--mono); font-size: 11px; color: var(--muted); display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 20px; }
-  .verdicts b { color: var(--ink); font-weight: 500; }
+  #hub { flex: none; display: grid; grid-template-columns: repeat(5, 1fr);
+    border-bottom: 1px solid var(--rule); background: var(--panel); }
+  #hub .cell { padding: 9px 16px; border-left: 1px solid var(--rule-soft); min-width: 0; }
+  #hub .cell:first-child { border-left: 0; }
+  #hub .lbl { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); }
+  #hub .val { font: 500 17px var(--mono); letter-spacing: -0.02em; margin-top: 2px; white-space: nowrap; }
+  #hub .sub { font-size: 11px; color: var(--muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #hub .cell.bad .val { color: var(--down); font-size: 13px; }
 
-  /* tools */
-  .tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: 12px; }
-  .tool { padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 8px; min-height: 176px; }
-  .tool .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .tool h3 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .state { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-  .state.connected { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-  .state.partial { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
-  .wire { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
-  .wire .glyph { font-family: var(--mono); font-size: 11px; width: 56px; color: var(--ink); white-space: nowrap; flex: none; }
-  .wire .line { flex: 1; height: 2px; background: var(--line); position: relative; border-radius: 2px; }
-  .wire .line i { position: absolute; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
-  .wire.read .line i { left: 0; } .wire.write .line i { right: 0; }
-  .wire .line.ok { background: color-mix(in srgb, var(--ok) 45%, var(--line)); } .wire .line.ok i { background: var(--ok); }
-  .wire .line.warn { background: color-mix(in srgb, var(--warn) 45%, var(--line)); } .wire .line.warn i { background: var(--warn); }
-  .wire .line.bad { background: color-mix(in srgb, var(--bad) 45%, var(--line)); } .wire .line.bad i { background: var(--bad); }
-  .wire .age { font-family: var(--mono); font-size: 11px; min-width: 52px; text-align: right; color: var(--ink); }
-  .tool .step { font-size: 12px; color: var(--gold); background: var(--gold-soft); border-radius: 7px; padding: 6px 9px; }
-  .tool .actions { margin-top: auto; display: flex; gap: 6px; flex-wrap: wrap; }
-  .tool.add { border-style: dashed; align-items: flex-start; justify-content: center; color: var(--muted); }
-  .tool.add select { font: inherit; padding: 5px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--soft); color: var(--ink); }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 372px; min-height: 0; }
+  #listpane { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--rule); }
+  .bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 14px 8px 20px;
+    border-bottom: 1px solid var(--rule-soft); }
+  .seg { display: inline-flex; background: var(--sunk); border: 1px solid var(--rule); border-radius: 7px; padding: 2px; gap: 2px; }
+  .seg button { border: 0; background: transparent; padding: 3px 11px; border-radius: 5px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .bar .count { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-left: auto; }
 
-  /* wire board + jobs tables */
-  table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: .02em; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  td { padding: 8px 12px; border-top: 1px solid var(--line); vertical-align: middle; }
-  tr:first-child td { border-top: 0; }
-  td.mono, th.r { font-family: var(--mono); font-size: 11px; }
-  th.r, td.r { text-align: right; font-variant-numeric: tabular-nums; }
-  td .age { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
-  td.name { font-weight: 500; }
-  td.dim { color: var(--muted); font-size: 12px; }
-  .badge { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-  .chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; padding: 2px 0; }
-  .chip b { font-weight: 600; font-family: var(--sans); font-size: 12px; }
-  .chip .dim { color: var(--muted); }
+  #rows { overflow: auto; flex: 1; }
+  #rows:focus-visible { outline: none; }
+  .row { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 14px 0 20px;
+    border-bottom: 1px solid var(--rule-soft); cursor: pointer; position: relative; }
+  .row:hover { background: var(--sunk); }
+  .row[aria-selected="true"] { background: var(--sel); }
+  .row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 2px; background: var(--brass); }
+  .row .name { font-family: var(--mono); font-size: 12px; font-weight: 500; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; flex: none; }
+  .row .desc { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .num { font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: right;
+    white-space: nowrap; flex: none; }
+  .row .chev { color: var(--faint); font-size: 11px; width: 8px; flex: none; }
+  .row .tag { font-family: var(--mono); font-size: 10px; color: var(--faint); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 0 5px; line-height: 15px; white-space: nowrap; flex: none; }
+  .row .tag.on { color: var(--live); border-color: color-mix(in srgb, var(--live) 40%, transparent); }
+  .row .tag.mid { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+  .row .tag.off { color: var(--down); border-color: color-mix(in srgb, var(--down) 40%, transparent); }
 
-  /* log drawer */
-  #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%); transition: transform .18s ease; background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -12px 30px rgba(0,0,0,.18); z-index: 20; }
+  .strip { display: inline-flex; gap: 3px; align-items: center; flex: none; }
+  .wm { display: inline-flex; gap: 1px; }
+  .wm i { display: block; width: 5px; height: 11px; background: var(--idle); }
+  .wm i:first-child { border-radius: 2px 1px 1px 2px; }
+  .wm i:last-child { border-radius: 1px 2px 2px 1px; }
+  .wm i.live { background: var(--live); } .wm i.warn { background: var(--warn); } .wm i.down { background: var(--down); }
+  .strip .none { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+
+  #inspector { overflow: auto; background: var(--panel); }
+  #inspector .pad { padding: 16px 18px 28px; }
+  .insp-title { font: 600 15px var(--mono); letter-spacing: -0.02em; }
+  .insp-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .badge { display: inline-block; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--brass); border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent);
+    border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 2px; }
+  .sect { margin-top: 18px; }
+  .sect > h3 { margin: 0 0 7px; font: 600 9.5px var(--mono); text-transform: uppercase;
+    letter-spacing: .14em; color: var(--faint); }
+  .kv { display: grid; grid-template-columns: 82px 1fr; gap: 3px 10px; font-size: 12px; margin: 0; }
+  .kv dt { font-family: var(--mono); font-size: 10.5px; color: var(--faint); padding-top: 1px; }
+  .kv dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+  .tool { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; margin-bottom: 7px; }
+  .tool .top { display: flex; align-items: center; gap: 8px; }
+  .tool .top b { font: 600 12px var(--mono); }
+  .tool .top .sp { flex: 1; }
+  .wire { display: flex; align-items: center; gap: 8px; margin-top: 5px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .wire .lab { width: 54px; color: var(--ink-2); flex: none; white-space: nowrap; }
+  .wire .track { flex: 1; height: 3px; border-radius: 2px; background: var(--rule); position: relative; }
+  .wire .track i { position: absolute; inset: 0; border-radius: 2px; background: var(--idle); }
+  .wire .track i.live { background: var(--live); } .wire .track i.warn { background: var(--warn); }
+  .wire .track i.down { background: var(--down); }
+  .wire .v { width: 96px; text-align: right; color: var(--ink-2); flex: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pulls { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 5px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); background: var(--sunk);
+    border: 1px solid var(--rule); border-radius: 5px; padding: 2px 7px; cursor: pointer; }
+  .chip:hover { border-color: var(--faint); }
+  .chip .dot { display: inline-block; margin-right: 5px; }
+  .note { font-size: 12px; color: var(--brass-ink); background: var(--brass-wash); border-radius: 7px;
+    padding: 7px 9px; margin-top: 7px; }
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
+  .empty { color: var(--muted); font-size: 12px; padding: 40px 18px; text-align: center; }
+  .prose { font-size: 12px; color: var(--ink-2); }
+
+  #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
+    transition: transform .16s ease; background: var(--panel); border-top: 1px solid var(--rule);
+    box-shadow: var(--shadow); z-index: 30; }
   #drawer.open { transform: none; }
-  #drawer .bar { display: flex; align-items: center; gap: 10px; padding: 10px 28px; border-bottom: 1px solid var(--line); }
-  #drawer .bar b { font-weight: 600; }
-  #drawer pre { margin: 0; padding: 12px 28px 16px; max-height: 280px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; }
-  #drawer .grow { flex: 1; }
+  #drawer .bar { padding: 8px 20px; }
+  #drawer b { font: 600 12px var(--mono); }
+  #drawer pre { margin: 0; padding: 10px 20px 16px; max-height: 240px; overflow: auto;
+    font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; color: var(--ink-2); }
+  #drawer .state { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 
-  .field { display: block; font-size: 12px; color: var(--muted); margin: 0 0 12px; }
-  .field input { display: block; width: 100%; margin-top: 4px; font: 13px var(--sans); color: var(--ink); background: var(--soft); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; }
-  .field input:focus { outline: 2px solid var(--gold); outline-offset: 0; border-color: transparent; }
-  footer { margin-top: 36px; color: var(--muted); font-size: 11px; }
-  footer code { font-family: var(--mono); }
-  .loading { color: var(--muted); padding: 40px 0; text-align: center; }
-  @media (prefers-reduced-motion: reduce) { #drawer { transition: none; } }
+  @media (max-width: 960px) {
+    main { grid-template-columns: 1fr; }
+    #inspector { position: fixed; top: 0; right: 0; bottom: 0; width: min(380px, 92vw);
+      border-left: 1px solid var(--rule); box-shadow: var(--shadow);
+      transform: translateX(100%); transition: transform .16s ease; z-index: 20; }
+    #inspector.open { transform: none; }
+    #listpane { border-right: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { #drawer, #inspector { transition: none; } }
 </style>
 </head>
 <body>
 <header>
-  <div class="wrap">
-    <svg class="crown" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 18h18v2H3v-2zm0-2 1.5-9 4.5 4 3-6 3 6 4.5-4L21 16H3z"/></svg>
-    <div>
-      <h1 id="vault">Sovereign</h1>
-      <div class="sub" id="sub">reading status…</div>
-    </div>
-    <div class="grow"></div>
-    <span class="pill" id="hubpill"><span class="dot"></span>hub</span>
-    <button id="refresh" title="Refresh (⌘R)">Refresh</button>
+  <svg class="crown" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 18h18v2H3v-2zm0-2 1.5-9 4.5 4 3-6 3 6 4.5-4L21 16H3z"/></svg>
+  <div>
+    <h1 id="vault">Sovereign</h1>
+    <div class="meta" id="meta">reading status…</div>
   </div>
+  <div class="grow"></div>
+  <span class="hubpill" id="hubpill"><span class="dot"></span>hub</span>
+  <button id="refresh" title="Refresh (⌘R)">Refresh</button>
 </header>
 
-<main class="wrap" id="main"><div class="loading">Asking <code>sov status</code>…</div></main>
+<div id="needs" hidden></div>
+<div id="hub" hidden></div>
+
+<main>
+  <div id="listpane">
+    <div class="bar">
+      <div class="seg" role="group" aria-label="View">
+        <button data-view="hosts" aria-pressed="true">Hosts</button>
+        <button data-view="lanes" aria-pressed="false">Lanes</button>
+        <button data-view="tools" aria-pressed="false">Tools</button>
+        <button data-view="jobs" aria-pressed="false">Jobs</button>
+      </div>
+      <span class="count" id="listcount"></span>
+    </div>
+    <div id="rows" role="listbox" tabindex="0" aria-label="Records"></div>
+  </div>
+  <aside id="inspector"><div class="pad" id="insp"><div class="empty">Select a row to inspect it.</div></div></aside>
+</main>
 
 <div id="drawer">
-  <div class="bar"><b id="drawer-title">Output</b><span class="badge" id="drawer-state"></span><div class="grow"></div>
-    <button class="small primary" id="drawer-apply" hidden>Install</button>
-    <button class="small" id="drawer-close">Close</button></div>
+  <div class="bar"><b id="drawer-title">Output</b><span class="state" id="drawer-state"></span>
+    <span style="flex:1"></span>
+    <button class="brass" id="drawer-apply" hidden>Install</button>
+    <button id="drawer-close">Close</button></div>
   <pre id="drawer-log"></pre>
 </div>
 
 <script>
 (function () {
   const $ = (s, r) => (r || document).querySelector(s);
-  const bridge = (msg) => { try { window.webkit.messageHandlers.sov.postMessage(msg); } catch (e) { console.warn("no bridge", e); } };
-  let state = null, pendingConnect = null;
+  const bridge = (m) => { try { window.webkit.messageHandlers.sov.postMessage(m); } catch (e) { console.warn("no bridge", e); } };
+  let D = null, view = "hosts", sel = null, pendingConnect = null;
 
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const fmtAge = (h) => h == null ? "–" : h < 1 ? Math.max(1, Math.round(h * 60)) + "m" : h < 48 ? (Math.round(h * 10) / 10) + "h" : Math.round(h / 24) + "d";
-  const contentDot = (h) => h == null ? "" : h <= 24 ? "ok" : h <= 24 * 7 ? "warn" : "";
-  const parseRun = (s) => { const m = /Last run: (\S+)/.exec(s || ""); if (!m) return null; const t = Date.parse(m[1]); return isNaN(t) ? null : (Date.now() - t) / 36e5; };
-  const wireDot = (ageH, intervalS) => ageH == null ? "" : ageH * 3600 <= (intervalS || 900) * 2.5 ? "ok" : ageH <= 24 ? "warn" : "bad";
-  const clock = (iso) => { if (!iso) return "?"; const d = new Date(iso); return isNaN(d) ? iso.slice(11, 16) : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
-  const day = (iso) => { if (!iso) return "?"; const d = new Date(iso); return isNaN(d) ? iso.slice(0, 10) : d.toLocaleDateString([], { month: "short", day: "numeric" }); };
+  const age = (h) => h == null ? "–" : h < 1 ? Math.max(1, Math.round(h * 60)) + "m" : h < 48 ? (Math.round(h * 10) / 10) + "h" : Math.round(h / 24) + "d";
+  const clock = (iso) => { if (!iso) return "?"; const d = new Date(iso); return isNaN(d) ? String(iso).slice(11, 16) : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
+  const num = (n) => n == null ? "?" : Number(n).toLocaleString();
+  const freshDot = (h) => h == null ? "" : h <= 24 ? "live" : h <= 168 ? "warn" : "";
+  const runDot = (h, iv) => h == null ? "" : h * 3600 <= (iv || 900) * 2.5 ? "live" : h <= 24 ? "warn" : "down";
+  const readDot = (t) => t.read === "instruction" ? (t.hook_registered === false ? "warn" : "live")
+    : t.trusted === false ? "down" : t.hook_registered ? ((t.reads_7d || {}).real > 0 ? "live" : "warn") : "down";
+  const runAge = (s) => { const m = /Last run: (\S+)/.exec(s || ""); if (!m) return null; const t = Date.parse(m[1]); return isNaN(t) ? null : (Date.now() - t) / 36e5; };
+  const intervalOf = (t) => { const m = /every (\d+)s/.exec(((t && t.plist) || {}).schedule || ""); return m ? +m[1] : 900; };
+  const localTool = (id) => (D.harnesses || []).find(x => x.id === id);
+  const shortPath = (p) => String(p || "").replace(/^.*\/(?=[^/]*$)/, "…/");
 
-  function renderSetup(d) {
-    const m = d.machine || {};
-    $("#vault").textContent = "Sovereign";
-    $("#sub").textContent = "this Mac is not connected to a brain yet";
-    $("#hubpill").innerHTML = `<span class="dot"></span>not connected`;
-    $("#main").innerHTML = `<section><p class="eyebrow">Connect this Mac</p>
-      <div class="panel" style="padding:18px 20px;max-width:640px">
-        <p style="margin:0 0 14px;color:var(--muted)">Point this Mac at a brain once. Every tool found here gets both wires: it reads the brain when a session starts, and its notes flow back to its own lane. Nothing runs until you see the dry run and press Install.</p>
-        <label class="field">Vault folder<input id="f-vault" placeholder="/Users/you/Documents/My Brain"></label>
-        <label class="field">This Mac's short name<input id="f-host" value="${esc(m.host || "")}"></label>
-        <label class="field">Always-on cards, comma separated<input id="f-core" placeholder="me,how-to-work-with-me"></label>
-        <label class="field">Hub, if the vault's hub is another machine (ssh alias:path)<input id="f-hub" placeholder="hub:/Users/you/Brain"></label>
-        <div style="display:flex;gap:8px;margin-top:6px"><button class="primary" id="setup-dry">See the dry run</button></div>
-      </div></section>`;
+  function hz(h) {
+    return { id: h.harness || h.id, name: h.name || h.harness || h.id, lane: h.lane,
+      reads: (h.reads_7d && h.reads_7d.real != null) ? h.reads_7d.real : (h.reads_7d || 0),
+      run: h.run_age_h != null ? h.run_age_h : runAge(h.last_run),
+      pulls: h.projects != null ? h.projects + " project" + (h.projects === 1 ? "" : "s") + ", " + h.md_files + " files"
+           : (h.md_files != null ? h.md_files + " files" : null) };
+  }
+  function wireMark(t, local) {
+    const r = local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
+    const w = runDot(t.run, intervalOf(local));
+    return `<span class="wm" title="${esc(t.id)} · ${t.reads} read${t.reads === 1 ? "" : "s"} this week · mirror ${age(t.run)} ago"><i class="${r}"></i><i class="${w}"></i></span>`;
   }
 
-  function render(d) {
-    state = d;
-    const m = d.machine || {}, hub = d.hub || {};
-    if (!m.connected) return renderSetup(d);
+  function renderTop() {
+    const m = D.machine || {}, hub = D.hub || {}, obs = D.obsidian || {};
     $("#vault").textContent = m.vault_name || "Sovereign";
-    const obs = d.obsidian || {};
-    $("#sub").innerHTML = `host <code>${esc(m.host)}</code> · template <code>${esc(m.template_rev || "?")}</code>${obs.sync ? ` · Obsidian: ${esc(obs.sync.toLowerCase().replace(/\.$/, ""))}` : ""} · refreshed ${clock(d.generated_at)}`;
+    $("#meta").textContent = `${m.host} · ${m.template_rev || "?"}${obs.sync ? " · obsidian " + obs.sync : ""} · ${clock(D.generated_at)}`;
     const hp = $("#hubpill");
-    if (hub.reachable) {
-      const st = hub.status || {};
-      hp.innerHTML = `<span class="dot ok"></span>hub ${esc(hub.via === "local" ? "here" : hub.via.replace("ssh ", "").toUpperCase())} · nightly ${clock(st.generated_at)} · ${hub.pending || 0} waiting`;
-    } else if (hub.reachable === false) {
-      hp.innerHTML = `<span class="dot bad"></span>hub not answering`;
-    } else {
-      hp.innerHTML = `<span class="dot"></span>hub not checked`;
+    if (hub.reachable) hp.innerHTML = `<span class="dot live"></span>hub ${esc((hub.via || "").replace("ssh ", "").toUpperCase() || "here")} · ${hub.pending || 0} waiting`;
+    else if (hub.reachable === false) hp.innerHTML = `<span class="dot down"></span>hub silent`;
+    else hp.innerHTML = `<span class="dot"></span>hub unchecked`;
+
+    const needs = D.needs_you || [], nd = $("#needs");
+    nd.hidden = !needs.length;
+    nd.innerHTML = needs.map((n, i) => `<div class="item" data-need="${i}"><span class="k">${esc(n.kind)}</span><span class="t">${esc(n.text)}</span></div>`).join("");
+
+    const hb = $("#hub");
+    if (!hub.reachable) {
+      hb.hidden = hub.reachable == null;
+      if (!hb.hidden) hb.innerHTML = `<div class="cell bad" style="grid-column:1/-1"><div class="lbl">Hub</div>
+        <div class="val">did not answer</div><div class="sub">${esc(hub.error || "")} · governance state is unknown until it does</div></div>`;
+      return;
     }
-
-    const parts = [];
-    // needs you
-    const needs = d.needs_you || [];
-    parts.push(`<section><p class="eyebrow">Needs you <span class="count">${needs.length ? needs.length : "nothing right now"}</span></p>
-      <div class="panel needs">${needs.length ? `<ul>${needs.map(n => `<li><span class="k">${esc(n.kind)}</span><span>${esc(n.text)}</span></li>`).join("")}</ul>`
-      : `<div class="empty">Every wire is running and nothing is waiting at the gate.</div>`}</div></section>`);
-
-    // hub
-    if (hub.reachable) {
-      const st = hub.status || {}, k = hub.knowledge || {}, cov = st.coverage || {}, j = hub.jobs || {};
-      const nightly = j["archivist-nightly"];
-      parts.push(`<section><p class="eyebrow">Hub <span class="count">${esc(hub.via)} · ${esc(hub.root || "")}</span></p>
-        <div class="panel"><div class="hub">
-          <div class="cell"><div class="lbl">Last nightly</div><div class="val">${clock(st.generated_at)}</div><div class="note">judged ${st.judged ?? "?"} · kept ${st.new_proposals ?? "?"} · landed ${st.auto_promoted ?? "?"}${nightly ? " · " + Math.round(nightly.dur_s / 60) + " min" : ""}</div></div>
-          <div class="cell"><div class="lbl">Waiting at the gate</div><div class="val">${hub.pending ?? "?"}</div><div class="note">${(hub.gears || {}).entity === "ask-first" ? "entities always ask first" : ""}</div></div>
-          <div class="cell"><div class="lbl">Outside the nightly window</div><div class="val">${(st.deferred ?? cov.unjudged_in_window ?? "?").toLocaleString()}</div><div class="note">of ${(cov.processable ?? "?").toLocaleString()} in scope, judged newest first</div></div>
-          <div class="cell"><div class="lbl">Trusted cards</div><div class="val">${((k.entities || 0) + (k.concepts || 0) + (k.syntheses || 0)).toLocaleString()}</div><div class="note">${k.entities || 0} entities · ${k.concepts || 0} concepts · ${k.syntheses || 0} syntheses</div></div>
-          <div class="cell"><div class="lbl">Schedules</div><div class="val" style="font-size:13px;font-weight:500;line-height:1.6">${["archivist-nightly", "daily-health-check", "vault-autocommit"].filter(x => j[x]).map(x => `<span class="dot ${j[x].exit === 0 ? "ok" : "bad"}" style="display:inline-block;margin-right:6px"></span>${esc(x.replace("archivist-", "").replace("daily-", ""))} ${clock(j[x].ts)}`).join("<br>") || "no run log"}</div><div class="note">audit ${esc((hub.audit_latest || "").replace("audit-", "").replace(".md", "") || "none")}</div></div>
-        </div>
-        <div class="verdicts">${(hub.decisions_tail || []).slice(-6).map(v => `<span>${esc(day(v.ts))} <b>${esc(v.verdict)}</b> ${esc(v.slug.replace(".md", ""))} <span style="opacity:.7">${esc(v.actor)}</span></span>`).join("")}</div>
-        </div></section>`);
-    } else if (hub.reachable === false) {
-      parts.push(`<section><p class="eyebrow">Hub</p><div class="panel"><div class="empty">The hub did not answer: ${esc(hub.error || "")}. Governance state is only trusted from the hub, so nothing here says what landed.</div></div></section>`);
-    }
-
-    // tools
-    const hs = d.harnesses || [];
-    const cards = hs.map(h => {
-      const runAge = parseRun(h.last_run), interval = ((h.plist || {}).schedule || "").match(/every (\d+)s/);
-      const wdot = wireDot(runAge, interval ? +interval[1] : 900);
-      const reads = (h.reads_7d || {}).real || 0;
-      const rdot = h.read === "instruction" ? "warn" : h.hook_registered ? (reads > 0 ? "ok" : "warn") : "bad";
-      const rlabel = h.read === "instruction" ? "by instruction" : h.hook_registered ? (reads > 0 ? `${reads} read${reads === 1 ? "" : "s"} this week` : "hook set, no read yet") : "hook missing";
-      return `<div class="panel tool">
-        <div class="top"><h3>${esc(h.name)}</h3><span class="state ${esc(h.state.replace(" ", "-"))}">${esc(h.state)}</span></div>
-        <div class="wire read"><span class="glyph">◀ read</span><div class="line ${rdot}"><i></i></div><span class="age" title="${esc(rlabel)}">${esc(h.read === "instruction" ? "auto" : reads)}</span></div>
-        <div class="wire write"><span class="glyph">write ▶</span><div class="line ${h.job_loaded ? wdot : "bad"}"><i></i></div><span class="age">${h.job_loaded ? fmtAge(runAge) : "off"}</span></div>
-        <div class="dim" style="font-size:11px;color:var(--muted)">lane <code>${esc(h.lane)}</code>${h.job_loaded ? ` · every ${interval ? Math.round(interval[1] / 60) : 15} min` : ""}</div>
-        ${h.manual_step && reads === 0 ? `<div class="step">${esc(h.manual_step)}</div>` : ""}
-        <div class="actions">
-          ${h.job_loaded ? `<button class="small" data-act="kickstart" data-label="${esc(h.label)}">Run mirror now</button>` : ""}
-          ${h.lane_dir ? `<button class="small" data-act="reveal" data-path="${esc(h.lane_dir)}">Show lane</button>` : ""}
-          ${h.lane && (d.obsidian || {}).vault_name ? `<button class="small" data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(d.obsidian.vault_name)}&file=${encodeURIComponent("raw/tools/" + h.lane + "/LANE")}">Open in Obsidian</button>` : ""}
-          <button class="small" data-act="connect" data-harness="${esc(h.id)}">${h.state === "connected" ? "Reinstall" : "Connect"}</button>
-        </div></div>`;
-    });
-    const found = hs.filter(h => h.detected !== false && h.state !== "connected");
-    const tf = d.tools_found || [];
-    const rows = tf.map(t => {
-      const h = hs.find(x => x.id === t.connector);
-      let pill, action = "";
-      if (t.connector && h && h.state === "connected") { pill = `<span class="state connected">connected</span>`; }
-      else if (t.connector && t.detected) { pill = `<span class="state partial">found, not connected</span>`; action = `<button class="small primary" data-act="connect" data-harness="${esc(t.connector)}">Connect</button>`; }
-      else if (t.connector) { pill = `<span class="state">connector available, tool not found here</span>`; }
-      else if (t.detected) { pill = `<span class="state">found, no connector yet</span>`; }
-      else { return ""; }
-      return `<tr><td class="name">${esc(t.name)}</td><td>${pill}</td><td class="dim">${esc(t.note || (h && h.lane ? "lane " + h.lane : ""))}</td><td class="r">${action}</td></tr>`;
-    }).filter(Boolean).join("");
-    parts.push(`<section id="tools"><p class="eyebrow">Tools on this Mac <span class="count">${hs.filter(h => h.state === "connected").length} of ${hs.length} with connectors connected</span></p><div class="tools">${cards.join("")}</div>
-      <div class="panel" style="margin-top:12px;overflow:auto"><table>
-        <tr><th>Every tool the catalog recognizes here</th><th>State</th><th>Note</th><th class="r">${found.length ? `<button class="small primary" id="connect-all">Connect everything found</button>` : ""}</th></tr>
-        ${rows}
-      </table></div></section>`);
-
-    // fleet: every host the vault knows about, from the lanes plus the owner's hosts.md
-    const fl = d.fleet || {}; const fleet = fl.hosts || [];
-    const chip = (h) => {
-      const r = h.reads_7d > 0 ? "ok" : "warn";
-      const w = h.run_age_h == null ? "" : h.run_age_h <= 0.7 ? "ok" : h.run_age_h <= 24 ? "warn" : "bad";
-      const pull = h.projects != null ? `${h.projects} project${h.projects === 1 ? "" : "s"}, ${h.md_files} files` : `${h.md_files} files`;
-      return `<span class="chip"><b>${esc(h.harness)}</b> <span class="dot ${r}" title="reads this week: ${h.reads_7d}"></span>◀${h.reads_7d} <span class="dot ${w}" title="last mirror run"></span>▶${fmtAge(h.run_age_h)} <span class="dim">${esc(pull)}</span></span>`;
-    };
-    const netDot = (n) => !n || n.online == null ? "" : n.online ? "ok" : "bad";
-    const netTxt = (n) => !n || n.online == null ? "unknown" : (n.online ? "online" : "offline") + (n.ip ? " · " + n.ip : "") + (n.via && n.via !== "tailscale" ? " · " + n.via : "");
-    parts.push(`<section id="fleet"><p class="eyebrow">Fleet <span class="count">${fleet.length} hosts · lanes in the vault${fl.registry ? " + " + esc(fl.registry) : ""}${fl.tailscale ? " · live from Tailscale" : " · no Tailscale client here, port probes only"}</span></p>
-      <div class="panel" style="overflow:auto"><table>
-        <tr><th>Host</th><th>Reaches the brain</th><th>Network</th><th>Tools deployed · ◀ reads 7d · ▶ last mirror · what it pulls</th><th class="r">Newest</th></tr>
-        ${fleet.map(f => {
-          const m = f.meta || {};
-          const newest = Math.min(...f.lanes.map(l => l.newest_age_h == null ? Infinity : l.newest_age_h));
-          const lanesTxt = f.lanes.length ? f.lanes.map(l => `${esc(l.lane)}${l.status && l.status !== "onboarded" ? ` <span class="badge">${esc(l.status)}</span>` : ""}`).join(", ") : "no lane yet";
-          const tools = f.harnesses.length ? f.harnesses.map(chip).join("<br>") : `<span style="color:var(--warn)">no tools deployed</span>`;
-          return `<tr>
-            <td class="name">${esc(f.host)}<div class="dim" style="font-weight:400">${esc([m.kind, m.where].filter(Boolean).join(" · "))}${m.identity ? ` · <span class="badge">${esc(m.identity)}</span>` : ""}</div></td>
-            <td class="dim">${esc(m.transport || "")}${m.notes ? `<div style="font-size:11px">${esc(m.notes)}</div>` : ""}</td>
-            <td class="mono"><span class="age" style="justify-content:flex-start"><span class="dot ${netDot(f.net)}"></span>${esc(netTxt(f.net))}</span></td>
-            <td>${tools}<div class="dim" style="font-size:11px;margin-top:4px">lanes: ${lanesTxt}</div></td>
-            <td class="r mono"><span class="age"><span class="dot ${contentDot(isFinite(newest) ? newest : null)}"></span>${fmtAge(isFinite(newest) ? newest : null)}</span></td></tr>`;
-        }).join("")}
-      </table></div></section>`);
-
-    // wire board
-    const lanes = d.lanes || [];
-    parts.push(`<section><p class="eyebrow">Wire board <span class="count">${lanes.length} lanes this Mac can see · newest file age</span></p>
-      <div class="panel" style="overflow:auto"><table>
-        <tr><th>Lane</th><th>Producer</th><th>Read</th><th>Write</th><th class="r">Staging</th><th class="r">Vault</th><th class="r">Hub</th><th class="r">Reads 7d</th></tr>
-        ${lanes.map(l => `<tr>
-          <td class="name">${esc(l.lane)}</td><td class="dim">${esc(l.producer || "")}</td>
-          <td class="dim">${esc((l.read || "none").replace(/\s*\(.*\)$/, ""))}</td><td class="dim">${esc(l.write || "")}</td>
-          <td class="r mono"><span class="age"><span class="dot ${contentDot(l.staging_age_h)}"></span>${fmtAge(l.staging_age_h)}</span></td>
-          <td class="r mono"><span class="age"><span class="dot ${contentDot(l.vault_age_h)}"></span>${fmtAge(l.vault_age_h)}</span></td>
-          <td class="r mono"><span class="age"><span class="dot ${contentDot(l.hub_age_h)}"></span>${fmtAge(l.hub_age_h)}</span></td>
-          <td class="r mono">${(l.reads_7d || {}).real || 0}</td></tr>`).join("")}
-      </table></div></section>`);
-
-    // jobs
-    const jobs = d.jobs || [];
-    parts.push(`<section><p class="eyebrow">Jobs on this Mac <span class="count">launchd</span></p>
-      <div class="panel" style="overflow:auto"><table>
-        <tr><th>Job</th><th>Schedule</th><th class="r">Last exit</th><th class="r">Error log</th><th></th></tr>
-        ${jobs.map(j => `<tr><td class="name mono">${esc(j.label)}</td><td class="dim">${esc(j.schedule || "")}</td>
-          <td class="r mono"><span class="age"><span class="dot ${j.last_exit === 0 ? "ok" : j.last_exit == null ? "" : "bad"}"></span>${j.last_exit == null ? "–" : j.last_exit}</span></td>
-          <td class="r mono">${j.stderr_lines == null ? "–" : j.stderr_lines + (j.stderr_lines === 1 ? " line" : " lines") + (j.stderr_lines && j.stderr_age_h != null ? " · " + fmtAge(j.stderr_age_h) + " old" : "")}</td>
-          <td class="r"><button class="small" data-act="kickstart" data-label="${esc(j.label)}">Run now</button>${j.stderr ? ` <button class="small" data-act="open" data-path="${esc(j.stderr)}">Log</button>` : ""}${j.stderr_lines ? ` <button class="small" data-act="clearlog" data-path="${esc(j.stderr)}" title="empty the error log; the next real error shows again">Clear log</button>` : ""}</td></tr>`).join("")}
-      </table></div></section>`);
-
-    parts.push(`<footer>Everything on this screen comes from <code>sov status --json</code> on this Mac, plus one ssh call to the hub. The app changes nothing by itself; Connect runs the same <code>sov connect</code> the terminal does.</footer>`);
-    $("#main").innerHTML = parts.join("");
+    hb.hidden = false;
+    const st = hub.status || {}, k = hub.knowledge || {}, cov = st.coverage || {}, j = hub.jobs || {};
+    const nightly = j["archivist-nightly"];
+    const cards = (k.entities || 0) + (k.concepts || 0) + (k.syntheses || 0);
+    const sched = ["archivist-nightly", "daily-health-check", "vault-autocommit"].filter(x => j[x]);
+    hb.innerHTML = `
+      <div class="cell"><div class="lbl">Last nightly</div><div class="val">${clock(st.generated_at)}</div>
+        <div class="sub">judged ${st.judged ?? "?"} · kept ${st.new_proposals ?? "?"} · landed ${st.auto_promoted ?? "?"}${nightly ? " · " + Math.round(nightly.dur_s / 60) + "m" : ""}</div></div>
+      <div class="cell"><div class="lbl">At the gate</div><div class="val">${hub.pending ?? "?"}</div>
+        <div class="sub">${(hub.gears || {}).entity === "ask-first" ? "entities always ask first" : "&nbsp;"}</div></div>
+      <div class="cell"><div class="lbl">Outside the window</div><div class="val">${num(st.deferred ?? cov.unjudged_in_window)}</div>
+        <div class="sub">of ${num(cov.processable)} in scope${cov.stranded_pre_watermark ? " · " + num(cov.stranded_pre_watermark) + " stranded" : ""}</div></div>
+      <div class="cell"><div class="lbl">Trusted cards</div><div class="val">${num(cards)}</div>
+        <div class="sub">${k.entities || 0} ent · ${k.concepts || 0} con · ${k.syntheses || 0} syn</div></div>
+      <div class="cell"><div class="lbl">Schedules</div>
+        <div class="val" style="font-size:11.5px;line-height:1.55;font-weight:400">${sched.map(x => `<span class="dot ${j[x].exit === 0 ? "live" : "down"}" style="display:inline-block;margin-right:5px"></span>${esc(x.replace("archivist-", "").replace("daily-", ""))} ${clock(j[x].ts)}`).join("<br>") || "no run log"}</div>
+        <div class="sub">audit ${esc((hub.audit_latest || "").replace("audit-", "").replace(".md", "") || "none")}</div></div>`;
   }
+
+  function items() {
+    if (view === "hosts") return ((D.fleet || {}).hosts || []).map(h => ({ kind: "host", id: h.host, o: h }));
+    if (view === "lanes") return (D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }));
+    if (view === "tools") return (D.tools_found || []).filter(t => t.detected || t.connector).map(t => ({ kind: "tool", id: t.id, o: t }));
+    return (D.jobs || []).map(j => ({ kind: "job", id: j.label, o: j }));
+  }
+
+  function rowHTML(it) {
+    const o = it.o;
+    if (it.kind === "host") {
+      const m = o.meta || {}, net = o.net || {};
+      const hs = (o.harnesses || []).map(hz);
+      const isMe = o.host === (D.machine || {}).host;
+      const ages = (o.lanes || []).map(l => l.newest_age_h).filter(x => x != null);
+      const newest = ages.length ? Math.min.apply(null, ages) : null;
+      const strip = hs.length ? hs.map(t => wireMark(t, isMe ? localTool(t.id) : null)).join("") : `<span class="none">no tools</span>`;
+      return `<span class="dot ${net.online == null ? "" : net.online ? "live" : "down"}" title="${esc(net.online == null ? "network unknown" : (net.online ? "online" : "offline") + (net.ip ? " · " + net.ip : ""))}"></span>
+        <span class="name" style="width:142px">${esc(o.host)}</span>
+        <span class="desc">${esc([m.kind, m.where].filter(Boolean).join(" · "))}</span>
+        ${m.identity ? `<span class="tag">${esc(m.identity)}</span>` : ""}
+        <span class="strip">${strip}</span>
+        <span class="num" style="width:50px">${age(newest)}</span>
+        <span class="chev">›</span>`;
+    }
+    if (it.kind === "lane") {
+      const r = (o.read || "none").replace(/\s*\(.*\)$/, "");
+      return `<span class="dot ${freshDot(o.vault_age_h)}"></span>
+        <span class="name" style="width:164px">${esc(o.lane)}</span>
+        <span class="desc">${esc(o.producer || "")}</span>
+        <span class="tag ${r === "none" ? "" : "on"}">${esc(r)}</span>
+        <span class="num" style="width:38px">${(o.reads_7d || {}).real || 0}◀</span>
+        <span class="num" style="width:50px">${age(o.vault_age_h)}</span>
+        <span class="chev">›</span>`;
+    }
+    if (it.kind === "tool") {
+      const h = o.connector ? localTool(o.connector) : null;
+      const state = h ? h.state : (o.detected ? "no connector" : "not here");
+      const cls = state === "connected" ? "on" : state === "partial" ? "mid" : state === "not connected" ? "off" : "";
+      const t = h ? hz(h) : null;
+      return `<span class="dot ${state === "connected" ? "live" : o.detected ? "warn" : ""}"></span>
+        <span class="name" style="width:178px">${esc(o.name)}</span>
+        <span class="desc">${esc(h ? "lane " + h.lane : (o.note || ""))}</span>
+        <span class="tag ${cls}">${esc(state)}</span>
+        <span class="strip">${t ? wireMark(t, h) : ""}</span>
+        <span class="num" style="width:46px">${t ? age(t.run) : ""}</span>
+        <span class="chev">›</span>`;
+    }
+    const j = o;
+    return `<span class="dot ${j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down"}"></span>
+      <span class="name" style="flex:1;min-width:0">${esc(j.label)}</span>
+      <span class="num" style="width:90px">${esc((j.schedule || "").replace("every ", ""))}</span>
+      <span class="tag ${j.stderr_lines ? "mid" : ""}">${j.stderr_lines == null ? "no log" : j.stderr_lines + " err"}</span>
+      <span class="chev">›</span>`;
+  }
+
+  function renderList() {
+    const list = items();
+    $("#listcount").textContent = list.length + " " + view;
+    document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
+    if (!sel || sel.view !== view || !list.some(i => i.id === sel.id)) sel = list.length ? { view, kind: list[0].kind, id: list[0].id } : null;
+    $("#rows").innerHTML = list.map(it => `<div class="row" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`).join("")
+      || `<div class="empty">Nothing here yet.</div>`;
+  }
+
+  function kv(pairs) {
+    return `<dl class="kv">${pairs.filter(p => p[1] != null && p[1] !== "").map(p => `<dt>${esc(p[0])}</dt><dd>${p[2] === "raw" ? p[1] : esc(p[1])}</dd>`).join("")}</dl>`;
+  }
+  function toolBlock(t, local, title) {
+    const rd = local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
+    const wd = runDot(t.run, intervalOf(local));
+    const readLabel = local && local.read === "instruction" ? "by instruction"
+      : local && local.trusted === false ? "not trusted"
+      : local && local.hook_registered === false ? "hook missing"
+      : t.reads + " this week";
+    return `<div class="tool">
+      <div class="top"><b>${esc(title || t.name || t.id)}</b><span class="sp"></span>
+        ${local && local.state ? `<span class="tag ${local.state === "connected" ? "on" : "mid"}" style="font-family:var(--mono);font-size:10px;border:1px solid var(--rule);border-radius:4px;padding:0 5px">${esc(local.state)}</span>` : ""}</div>
+      <div class="wire"><span class="lab">◀ read</span><span class="track"><i class="${rd}"></i></span><span class="v">${esc(readLabel)}</span></div>
+      <div class="wire"><span class="lab">write ▶</span><span class="track"><i class="${wd}"></i></span><span class="v">${age(t.run)} ago</span></div>
+      ${t.pulls ? `<div class="pulls">pulls ${esc(t.pulls)}${t.lane ? " · " + esc(t.lane) : ""}</div>` : ""}
+      ${local && local.manual_step ? `<div class="note">${esc(local.manual_step)}</div>` : ""}</div>`;
+  }
+  function obsBtn(lane) {
+    const o = D.obsidian || {};
+    if (!o.vault_name || !lane) return "";
+    return `<button data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(o.vault_name)}&amp;file=${encodeURIComponent("raw/tools/" + lane + "/LANE")}">Open in Obsidian</button>`;
+  }
+
+  function renderInspector() {
+    const box = $("#insp");
+    if (!sel) { box.innerHTML = `<div class="empty">Select a row to inspect it.</div>`; return; }
+    const it = items().find(i => i.id === sel.id);
+    if (!it) { box.innerHTML = `<div class="empty">That record is gone.</div>`; return; }
+    const o = it.o, me = (D.machine || {}).host;
+
+    if (it.kind === "host") {
+      const m = o.meta || {}, net = o.net || {}, isMe = o.host === me;
+      const hs = (o.harnesses || []).map(hz);
+      box.innerHTML = `
+        <div class="insp-title">${esc(o.host)}${isMe ? `<span class="badge">this machine</span>` : ""}</div>
+        <div class="insp-sub">${esc([m.kind, m.where].filter(Boolean).join(" · ") || "not in the host registry")}</div>
+        <div class="sect"><h3>Network</h3>${kv([
+          ["state", `<span class="dot ${net.online == null ? "" : net.online ? "live" : "down"}" style="display:inline-block;margin-right:6px"></span>${net.online == null ? "unknown" : net.online ? "online" : "offline"}`, "raw"],
+          ["address", net.ip ? `<span class="mono">${esc(net.ip)}</span>` : null, "raw"],
+          ["seen via", net.via], ["reach", m.reach]])}</div>
+        <div class="sect"><h3>Reaches the brain</h3><div class="prose">${esc(m.transport || "no transport recorded")}
+          ${m.notes ? `<div style="color:var(--muted);margin-top:4px">${esc(m.notes)}</div>` : ""}</div></div>
+        <div class="sect"><h3>Tools deployed · ${hs.length}</h3>
+          ${hs.length ? hs.map(t => toolBlock(t, isMe ? localTool(t.id) : null)).join("")
+            : `<div class="prose" style="color:var(--warn)">No tools deployed on this host.</div>`}</div>
+        <div class="sect"><h3>Lanes · ${(o.lanes || []).length}</h3><div class="chips">
+          ${(o.lanes || []).map(l => `<span class="chip" data-goto="lane:${esc(l.lane)}"><span class="dot ${freshDot(l.newest_age_h)}"></span>${esc(l.lane)} ${age(l.newest_age_h)}</span>`).join("")
+            || `<span class="prose" style="color:var(--muted)">none</span>`}</div></div>
+        ${m.identity ? `<div class="sect"><h3>Identity</h3><div class="prose">Sessions here default to <span class="mono">${esc(m.identity)}</span>.</div></div>` : ""}`;
+      return;
+    }
+
+    if (it.kind === "lane") {
+      const local = (D.harnesses || []).find(h => h.lane === o.lane);
+      box.innerHTML = `
+        <div class="insp-title">${esc(o.lane)}</div>
+        <div class="insp-sub">${esc(o.producer || "")}</div>
+        <div class="sect"><h3>Contract</h3>${kv([["host", o.host], ["read", o.read], ["write", o.write], ["status", o.status]])}</div>
+        <div class="sect"><h3>Freshness · newest file</h3>${kv([
+          ["staging", o.staging_age_h != null ? age(o.staging_age_h) + " ago" : "not staged here"],
+          ["this copy", age(o.vault_age_h) + " ago"],
+          ["hub", o.hub_age_h != null ? age(o.hub_age_h) + " ago" : "not seen"],
+          ["reads 7d", String((o.reads_7d || {}).real || 0)]])}</div>
+        ${o.last_run ? `<div class="sect"><h3>Last mirror run</h3><div class="prose mono">${esc(o.last_run)}</div></div>` : ""}
+        <div class="acts">
+          ${local && local.lane_dir ? `<button data-act="reveal" data-path="${esc(local.lane_dir)}">Show lane</button>` : ""}
+          ${obsBtn(o.lane)}
+          ${local && local.job_loaded ? `<button data-act="kickstart" data-label="${esc(local.label)}">Run mirror now</button>` : ""}</div>`;
+      return;
+    }
+
+    if (it.kind === "tool") {
+      const h = o.connector ? localTool(o.connector) : null;
+      const t = h ? hz(h) : null;
+      box.innerHTML = `
+        <div class="insp-title">${esc(o.name)}</div>
+        <div class="insp-sub">${esc(o.note || (h ? "lane " + h.lane : "no connector for this tool yet"))}</div>
+        ${t ? `<div class="sect"><h3>Wires</h3>${toolBlock(t, h, "both wires")}</div>` : ""}
+        ${h ? `<div class="sect"><h3>Read wire</h3>${kv([
+            ["kind", h.read],
+            ["declared in", h.hook_file ? `<span class="mono">${esc(shortPath(h.hook_file))}</span>` : "n/a", "raw"],
+            ["registered", h.hook_registered == null ? "n/a" : (h.hook_registered ? "yes" : "no")],
+            ["trusted", h.trusted == null ? "n/a" : (h.trusted ? "yes" : "no")],
+            ["reads 7d", String(t.reads)]])}</div>
+          <div class="sect"><h3>Write wire</h3>${kv([
+            ["job", `<span class="mono">${esc(h.label)}</span>`, "raw"],
+            ["loaded", h.job_loaded ? "yes" : "no"],
+            ["schedule", (h.plist || {}).schedule],
+            ["last run", t.run != null ? age(t.run) + " ago" : "never"],
+            ["pulls", t.pulls]])}</div>`
+          : `<div class="sect"><h3>State</h3><div class="prose">${o.detected
+              ? "Found on this machine. No connector exists for it yet, so it neither reads the brain nor writes a lane."
+              : "Not installed on this machine."}</div></div>`}
+        <div class="acts">
+          ${o.connector && o.detected ? `<button class="${h && h.state === "connected" ? "" : "brass"}" data-act="connect" data-harness="${esc(o.connector)}">${h && h.state === "connected" ? "Reinstall" : "Connect"}</button>` : ""}
+          ${h && h.job_loaded ? `<button data-act="kickstart" data-label="${esc(h.label)}">Run mirror now</button>` : ""}
+          ${h && h.lane_dir ? `<button data-act="reveal" data-path="${esc(h.lane_dir)}">Show lane</button>` : ""}
+          ${h ? obsBtn(h.lane) : ""}</div>`;
+      return;
+    }
+
+    const j = o;
+    box.innerHTML = `
+      <div class="insp-title" style="font-size:13px">${esc(j.label)}</div>
+      <div class="insp-sub">${esc(j.schedule || "")}</div>
+      <div class="sect"><h3>Run state</h3>${kv([
+        ["last exit", `<span class="dot ${j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down"}" style="display:inline-block;margin-right:6px"></span>${j.last_exit == null ? "unknown" : j.last_exit}`, "raw"],
+        ["running", j.pid ? "pid " + j.pid : "idle between runs"],
+        ["program", j.program ? `<span class="mono">${esc(j.program)}</span>` : null, "raw"]])}</div>
+      <div class="sect"><h3>Error log</h3>${kv([
+        ["lines", j.stderr_lines == null ? "no log file" : String(j.stderr_lines)],
+        ["last write", j.stderr_age_h != null ? age(j.stderr_age_h) + " ago" : null],
+        ["path", j.stderr ? `<span class="mono">${esc(shortPath(j.stderr))}</span>` : null, "raw"]])}
+        ${j.stderr_lines && j.stderr_age_h > 24 ? `<div class="prose" style="color:var(--muted);margin-top:6px">Older than a day, so it is history rather than a task.</div>` : ""}</div>
+      <div class="acts">
+        <button data-act="kickstart" data-label="${esc(j.label)}">Run now</button>
+        ${j.stderr ? `<button data-act="open" data-path="${esc(j.stderr)}">Open log</button>` : ""}
+        ${j.stderr_lines ? `<button data-act="clearlog" data-path="${esc(j.stderr)}">Clear log</button>` : ""}</div>`;
+  }
+
+  function render(d) { D = d; renderTop(); renderList(); renderInspector(); }
+
+  function select(kind, id) {
+    sel = { view, kind, id };
+    document.querySelectorAll(".row").forEach(r => r.setAttribute("aria-selected", String(r.dataset.id === id)));
+    renderInspector();
+    if (window.innerWidth <= 960) $("#inspector").classList.add("open");
+  }
+  function setView(v) { view = v; sel = null; renderList(); renderInspector(); }
+  window.sovView = setView;   // design QA: snapshot a specific view
 
   function openDrawer(title, showApply) {
     $("#drawer-title").textContent = title; $("#drawer-log").textContent = ""; $("#drawer-state").textContent = "running";
@@ -314,36 +486,62 @@
   function connect(harness, apply, extra) {
     extra = extra || (pendingConnect && pendingConnect.extra) || {};
     pendingConnect = { harness, apply, extra };
-    openDrawer(`${apply ? "Installing" : "Dry run:"} ${harness === "all" ? "every tool found on this Mac" : harness}`, !apply);
-    bridge(Object.assign({ cmd: "connect", harness, apply: !!apply, host: extra.host || (state && state.machine && state.machine.host) || "" }, extra));
+    openDrawer((apply ? "Installing " : "Dry run: ") + (harness === "all" ? "every tool found" : harness), !apply);
+    bridge(Object.assign({ cmd: "connect", harness, apply: !!apply, host: extra.host || (D.machine || {}).host || "" }, extra));
   }
 
   document.addEventListener("click", (e) => {
-    const b = e.target.closest("button"); if (!b) return;
-    if (b.id === "refresh") return refresh();
-    if (b.id === "drawer-close") { $("#drawer").classList.remove("open"); return; }
-    if (b.id === "drawer-apply") { if (pendingConnect) connect(pendingConnect.harness, true); return; }
-    if (b.id === "addbtn") { connect($("#addsel").value, false); return; }
-    if (b.id === "connect-all") { connect("all", false); return; }
-    if (b.id === "setup-dry") {
-      const extra = { vault: $("#f-vault").value.trim(), host: $("#f-host").value.trim(), core: $("#f-core").value.trim(), hub: $("#f-hub").value.trim() };
-      if (!extra.vault) { $("#f-vault").focus(); return; }
-      connect("all", false, extra); return;
+    const seg = e.target.closest(".seg button"); if (seg) return setView(seg.dataset.view);
+    const need = e.target.closest("[data-need]");
+    if (need) { const n = (D.needs_you || [])[+need.dataset.need];
+      if (n && n.harness) { setView("tools"); select("tool", n.harness); }
+      else if (n && n.kind === "job") setView("jobs");
+      return; }
+    const chip = e.target.closest("[data-goto]");
+    if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s"); select(p[0], p[1]); return; }
+    const b = e.target.closest("button");
+    if (b) {
+      if (b.id === "refresh") return refresh();
+      if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
+      if (b.id === "drawer-apply") { if (pendingConnect) connect(pendingConnect.harness, true); return; }
+      const act = b.dataset.act;
+      if (act === "connect") return connect(b.dataset.harness, false, {});
+      if (act === "kickstart") { openDrawer("Run now: " + b.dataset.label, false); return bridge({ cmd: "kickstart", label: b.dataset.label }); }
+      if (act === "reveal") return bridge({ cmd: "reveal", path: b.dataset.path });
+      if (act === "open") return bridge({ cmd: "open", path: b.dataset.path });
+      if (act === "openurl") return bridge({ cmd: "openurl", url: b.dataset.url });
+      if (act === "clearlog") { openDrawer("Clear log", false); return bridge({ cmd: "clearlog", path: b.dataset.path }); }
+      return;
     }
-    const act = b.dataset.act;
-    if (act === "connect") connect(b.dataset.harness, false);
-    if (act === "kickstart") { openDrawer("Run now: " + b.dataset.label, false); bridge({ cmd: "kickstart", label: b.dataset.label }); }
-    if (act === "reveal") bridge({ cmd: "reveal", path: b.dataset.path });
-    if (act === "clearlog") { openDrawer("Clear log", false); bridge({ cmd: "clearlog", path: b.dataset.path }); }
-    if (act === "open") bridge({ cmd: "open", path: b.dataset.path });
-    if (act === "openurl") bridge({ cmd: "openurl", url: b.dataset.url });
+    const row = e.target.closest(".row");
+    if (row) { const it = items().find(i => i.id === row.dataset.id); if (it) select(it.kind, it.id); }
   });
 
-  function refresh() { $("#sub").textContent = "refreshing…"; bridge({ cmd: "status" }); }
+  $("#rows").addEventListener("keydown", (e) => {
+    const list = items(); if (!list.length) return;
+    let i = list.findIndex(x => sel && x.id === sel.id);
+    if (e.key === "ArrowDown") { e.preventDefault(); i = Math.min(list.length - 1, i + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); i = Math.max(0, i - 1); }
+    else return;
+    select(list[i].kind, list[i].id);
+    const el = document.querySelector('.row[data-id="' + CSS.escape(list[i].id) + '"]');
+    if (el) el.scrollIntoView({ block: "nearest" });
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "r") { e.preventDefault(); refresh(); }
+    if (e.key === "Escape") { $("#drawer").classList.remove("open"); $("#inspector").classList.remove("open"); }
+    if (!e.metaKey && !e.ctrlKey && /^[1-4]$/.test(e.key) && document.activeElement.tagName !== "INPUT") {
+      setView(["hosts", "lanes", "tools", "jobs"][+e.key - 1]);
+    }
+  });
+
+  function refresh() { bridge({ cmd: "status" }); }
   window.sovRefresh = refresh;
   window.sovDeliver = function (kind, payload) {
     if (kind === "status") {
-      if (payload.error) { $("#main").innerHTML = `<section><div class="panel"><div class="empty">${esc(payload.error)}</div></div></section>`; $("#sub").textContent = "status unavailable"; return; }
+      if (payload.error) { $("#insp").innerHTML = `<div class="empty">${esc(payload.error)}</div>`; $("#meta").textContent = "status unavailable"; return; }
+      if (payload.machine && !payload.machine.connected) return renderSetup(payload);
       render(payload);
     } else if (kind === "log") {
       const log = $("#drawer-log"); log.textContent += payload.line + "\n"; log.scrollTop = log.scrollHeight;
@@ -353,11 +551,35 @@
         if (pendingConnect && pendingConnect.apply) { pendingConnect = null; setTimeout(refresh, 800); }
       }
     } else if (kind === "kickstart") {
-      $("#drawer-log").textContent += (payload.exit === 0 ? "started " + payload.label : "launchctl exit " + payload.exit + "\n" + payload.out) + "\n";
-      $("#drawer-state").textContent = payload.exit === 0 ? "started" : "failed"; setTimeout(refresh, 4000);
+      $("#drawer-log").textContent += (payload.exit === 0 ? "started " + payload.label : "exit " + payload.exit + "\n" + payload.out) + "\n";
+      $("#drawer-state").textContent = payload.exit === 0 ? "started" : "failed";
+      setTimeout(refresh, 4000);
     }
   };
-  document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "r") { e.preventDefault(); refresh(); } if (e.key === "Escape") $("#drawer").classList.remove("open"); });
+
+  function renderSetup(d) {
+    D = d;
+    $("#vault").textContent = "Sovereign";
+    $("#meta").textContent = "this machine is not connected to a brain yet";
+    $("#hubpill").innerHTML = `<span class="dot"></span>not connected`;
+    $("#needs").hidden = true; $("#hub").hidden = true;
+    $("#rows").innerHTML = `<div class="empty">No lanes yet.</div>`;
+    $("#insp").innerHTML = `<div class="insp-title">Connect this machine</div>
+      <div class="insp-sub">Point it at a brain once. Every tool found here gets both wires: it reads the brain when a session starts, and its notes flow back to its own lane.</div>
+      <div class="sect"><h3>Setup</h3>
+        <div class="prose">Vault folder<input id="f-vault" placeholder="/Users/you/Documents/My Brain"></div>
+        <div class="prose">This machine's short name<input id="f-host" value="${esc((d.machine || {}).host || "")}"></div>
+        <div class="prose">Always-on cards<input id="f-core" placeholder="me,how-to-work-with-me"></div>
+        <div class="prose">Hub, if the vault lives on another machine<input id="f-hub" placeholder="hub:/Users/you/Brain"></div>
+        <button class="brass" id="setup-dry">See the dry run</button></div>`;
+    $("#setup-dry").onclick = () => {
+      const extra = { vault: $("#f-vault").value.trim(), host: $("#f-host").value.trim(),
+                      core: $("#f-core").value.trim(), hub: $("#f-hub").value.trim() };
+      if (!extra.vault) return $("#f-vault").focus();
+      connect("all", false, extra);
+    };
+  }
+
   refresh();
   setInterval(refresh, 60000);
 })();
