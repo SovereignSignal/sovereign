@@ -4,3 +4,4 @@
 # superseded in-place backups — git history is the undo
 *.pre-*
 __pycache__/
+apps/console/build/
