@@ -229,7 +229,7 @@
         <div class="actions">
           ${h.job_loaded ? `<button class="small" data-act="kickstart" data-label="${esc(h.label)}">Run mirror now</button>` : ""}
           ${h.lane_dir ? `<button class="small" data-act="reveal" data-path="${esc(h.lane_dir)}">Show lane</button>` : ""}
-          ${h.lane_dir && (d.obsidian || {}).vault_name && h.lane_dir.startsWith(m.vault) ? `<button class="small" data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(d.obsidian.vault_name)}&file=${encodeURIComponent(h.lane_dir.slice(m.vault.length + 1) + "/LANE")}">Open in Obsidian</button>` : ""}
+          ${h.lane && (d.obsidian || {}).vault_name ? `<button class="small" data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(d.obsidian.vault_name)}&file=${encodeURIComponent("raw/tools/" + h.lane + "/LANE")}">Open in Obsidian</button>` : ""}
           <button class="small" data-act="connect" data-harness="${esc(h.id)}">${h.state === "connected" ? "Reinstall" : "Connect"}</button>
         </div></div>`;
     });

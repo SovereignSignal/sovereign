@@ -534,7 +534,9 @@ def main():
         if cand and os.path.exists(cand):
             obs["cli"] = cand
             try:
-                obs["sync"] = subprocess.run([cand, "sync:status"], capture_output=True, text=True, timeout=8).stdout.strip()[:120] or None
+                raw = subprocess.run([cand, "sync:status"], capture_output=True, text=True, timeout=8).stdout.strip()
+                first = (raw.splitlines() or [""])[0]
+                obs["sync"] = re.sub(r"(?i)^status:\s*", "", first).strip()[:40] or None
             except Exception:
                 obs["sync"] = None
             break
