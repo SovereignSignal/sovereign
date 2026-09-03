@@ -32,7 +32,7 @@ done
 
 sov_manifest "$DEST/memory" "$LANE" "Claude Code memory mirror manifest" "$ok" "$failed" \
   "Each folder under \`memory/\` is one Claude Code project; the folder name is the" \
-  "project's working directory as Claude Code encodes it (slashes become dashes)." "" "${lines[@]}"
+  "project's working directory as Claude Code encodes it (slashes become dashes)." "" ${lines[@]+"${lines[@]}"}
 # the lane-level heartbeat the health check and sov status read
 cp "$DEST/memory/MANIFEST.md" "$DEST/MANIFEST.md"
 exit 0

@@ -62,5 +62,5 @@ mkdir -p "$DEST/config"
 [ -f "$SRC_CLI/argv.json" ] && rsync -a "$SRC_CLI/argv.json" "$DEST/config/"
 [ -f "$SRC_APP/User/settings.json" ] && rsync -a "$SRC_APP/User/settings.json" "$DEST/config/"
 
-sov_manifest "$DEST" "$LANE" "Cursor mirror manifest" "$ok" "$failed" "${lines[@]}"
+sov_manifest "$DEST" "$LANE" "Cursor mirror manifest" "$ok" "$failed" ${lines[@]+"${lines[@]}"}
 exit 0
