@@ -17,7 +17,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../_lib/mirror-common.sh"
 
 LANE="cursor-$BRAIN_HOST_RESOLVED"
-DEST="$(sov_dest "$LANE")" || exit 0
+DEST="$(sov_dest "$LANE" "cursor")" || exit 0
 SRC_CLI="$HOME/.cursor"
 SRC_APP="$HOME/Library/Application Support/Cursor"
 [ -d "$SRC_CLI" ] || exit 0
@@ -63,4 +63,5 @@ mkdir -p "$DEST/config"
 [ -f "$SRC_APP/User/settings.json" ] && rsync -a "$SRC_APP/User/settings.json" "$DEST/config/"
 
 sov_manifest "$DEST" "$LANE" "Cursor mirror manifest" "$ok" "$failed" ${lines[@]+"${lines[@]}"}
+sov_git_publish "$DEST" "Cursor mirror"
 exit 0

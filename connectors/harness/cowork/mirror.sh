@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../_lib/mirror-common.sh"
 
 LANE="cowork-$BRAIN_HOST_RESOLVED"
-DEST="$(sov_dest "$LANE")" || exit 0
+DEST="$(sov_dest "$LANE" "cowork")" || exit 0
 SRC="${COWORK_SESSIONS:-$HOME/Library/Application Support/Claude/local-agent-mode-sessions}"
 [ -d "$SRC" ] || exit 0
 mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 0; }
@@ -32,4 +32,5 @@ sov_manifest "$DEST" "$LANE" "Cowork memory mirror manifest" "$ok" "$failed" \
   "Each folder is one Cowork project space's memory." "" ${lines[@]+"${lines[@]}"}
 # the read wire: every space carries the Sovereign instruction, new spaces included
 /usr/bin/python3 "$HERE/ensure-instruction.py" >> "$DEST/MANIFEST.md" 2>&1 || true
+sov_git_publish "$DEST" "Cowork memory mirror"
 exit 0

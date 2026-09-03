@@ -96,7 +96,28 @@ def receipts_7d(lane_dir):
     return {"total": n, "real": real}
 
 
+def systemd_rows():
+    """Linux: sovereign-connector-* user timers."""
+    rows = {}
+    try:
+        out = subprocess.run(["systemctl", "--user", "list-timers", "--all", "--no-legend", "--no-pager"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return rows
+    for line in out.splitlines():
+        m = re.search(r"(sovereign-connector-[\w-]+)\.timer", line)
+        if m:
+            label = m.group(1)
+            try:
+                st = subprocess.run(["systemctl", "--user", "show", label + ".service", "-p", "ExecMainStatus", "--value"], capture_output=True, text=True, timeout=10).stdout.strip()
+            except Exception:
+                st = ""
+            rows[label] = {"pid": None, "last_exit": int(st) if st.lstrip("-").isdigit() else None}
+    return rows
+
+
 def launchctl_rows():
+    if sys.platform != "darwin":
+        return systemd_rows()
     """Jobs in this user's GUI domain. `launchctl list` sees them only from inside that
     session (an ssh shell sees none), so every plist we know of is also probed with
     `launchctl print gui/<uid>/<label>`, which answers from anywhere."""
@@ -289,7 +310,7 @@ def main():
             pass
         prefix = meta.get("lane_prefix", h)
         lane = "%s-%s" % (prefix, host)
-        label = "com.sovereign.connector.%s" % h
+        label = ("com.sovereign.connector.%s" if sys.platform == "darwin" else "sovereign-connector-%s") % h
         hook_path = next((p for p in glob.glob(os.path.join(hd, "session-start.*"))), None)
         hook_file = os.path.expanduser(meta.get("hook_file", "")) if meta.get("hook_file") else None
         hook_registered = None
@@ -312,8 +333,14 @@ def main():
                 except Exception:
                     pass
             hook_registered = (total > 0 and covered == total)
-        lane_dir = next((p for p in ((os.path.join(stage, "raw", "tools", lane) if stage else None),
-                                     os.path.join(root, "raw", "tools", lane)) if p and os.path.isdir(p)), None)
+        git_lane = pointer("~/.brain-lane")
+        if git_lane and os.path.isdir(os.path.join(root, "raw", "workspaces", git_lane)):
+            lane = git_lane
+            lane_dir = os.path.join(root, "raw", "workspaces", git_lane, prefix)
+            lane_dir = lane_dir if os.path.isdir(lane_dir) else None
+        else:
+            lane_dir = next((p for p in ((os.path.join(stage, "raw", "tools", lane) if stage else None),
+                                         os.path.join(root, "raw", "tools", lane)) if p and os.path.isdir(p)), None)
         loaded = label in rows
         trusted = None
         if meta.get("trust_check") and hook_registered:
@@ -342,6 +369,9 @@ def main():
     jobs = []
     for label, r in sorted(rows.items()):
         info = plist_info(label)
+        if sys.platform != "darwin":
+            info = {"plist": None, "schedule": "systemd timer", "program": None,
+                    "stderr": os.path.expanduser("~/.local/state/sovereign/%s.error.log" % label), "stderr_lines": None, "stderr_age_h": None}
         jobs.append({"label": label, **r, **info})
     out["jobs"] = jobs
 

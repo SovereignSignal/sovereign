@@ -48,13 +48,22 @@ sov_resolve() {
   [ -d "$VAULT/knowledge" ] || { echo "not a brain: $VAULT has no knowledge/ folder"; exit 66; }
   [ -n "$CORE" ] || echo "note: no always-on core (--core a,b,c or ~/.brain-core); packs will be topic-only"
   LANE="$LANE_PREFIX-$HOST"
-  if [ -d "$HOME/.vault-staging" ]; then
-    LANE_DIR="$HOME/.vault-staging/raw/tools/$LANE"; WRITE_VIA=" (via staging)"
+  GIT_LANE="$(_pointer "$HOME/.brain-lane")"
+  if [ -n "$GIT_LANE" ] && grep -qsE "^write:[[:space:]]*git-branch" "$VAULT/raw/workspaces/$GIT_LANE/LANE.md"; then
+    LANE="$GIT_LANE"; LANE_DIR="$VAULT/raw/workspaces/$GIT_LANE/$LANE_PREFIX"; WRITE_VIA=" (git lane $GIT_LANE, branch pushed by the mirror)"
+  elif [ -d "$HOME/.vault-staging" ]; then
+    GIT_LANE=""; LANE_DIR="$HOME/.vault-staging/raw/tools/$LANE"; WRITE_VIA=" (via staging)"
   else
-    LANE_DIR="$VAULT/raw/tools/$LANE"; WRITE_VIA=""
+    GIT_LANE=""; LANE_DIR="$VAULT/raw/tools/$LANE"; WRITE_VIA=""
   fi
-  LABEL="${LABEL:-com.sovereign.connector.$HARNESS}"
-  PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+  PLATFORM="$(uname -s)"
+  if [ "$PLATFORM" = "Darwin" ]; then
+    LABEL="${LABEL:-com.sovereign.connector.$HARNESS}"
+    PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+  else
+    LABEL="${LABEL:-sovereign-connector-$HARNESS}"
+    PLIST="$HOME/.config/systemd/user/$LABEL.service"
+  fi
   TODAY="$(date +%F)"
 }
 
@@ -134,6 +143,7 @@ EOF
 sov_install_launchd() {
   local mirror="$1"
   chmod +x "$mirror" 2>/dev/null || true
+  if [ "$PLATFORM" != "Darwin" ]; then sov_install_timer "$mirror"; return; fi
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
   cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -163,9 +173,46 @@ EOF
   say "[launchd] $LABEL every ${INTERVAL}s"
 }
 
+# Linux: a systemd user timer. Needs linger so it runs without a login session:
+#   sudo loginctl enable-linger $USER   (printed as a reminder when it is off)
+sov_install_timer() {
+  local mirror="$1" logdir="$HOME/.local/state/sovereign"
+  mkdir -p "$HOME/.config/systemd/user" "$logdir"
+  {
+    echo "[Unit]"; echo "Description=Sovereign connector: $HARNESS write wire"; echo
+    echo "[Service]"; echo "Type=oneshot"; echo "ExecStart=/bin/bash $mirror"
+    echo "StandardOutput=append:$logdir/$LABEL.log"; echo "StandardError=append:$logdir/$LABEL.error.log"
+  } > "$PLIST"
+  {
+    echo "[Unit]"; echo "Description=Sovereign connector: $HARNESS every ${INTERVAL}s"; echo
+    echo "[Timer]"; echo "OnBootSec=120"; echo "OnUnitActiveSec=${INTERVAL}"; echo "Unit=$LABEL.service"; echo
+    echo "[Install]"; echo "WantedBy=timers.target"
+  } > "${PLIST%.service}.timer"
+  systemctl --user daemon-reload
+  if systemctl --user enable --now "$LABEL.timer" >/dev/null 2>&1; then
+    say "[systemd] $LABEL.timer every ${INTERVAL}s (logs: $logdir)"
+  else
+    say "[systemd] could not enable $LABEL.timer (is a user session running?)"
+  fi
+  if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
+    say "[systemd] NOTE: linger is off for $USER, so the timer only runs while you are logged in. Fix once: sudo loginctl enable-linger $USER"
+  fi
+}
+
 sov_lane_contract() {
   local tmpl="$1" readline="$2"
   mkdir -p "$LANE_DIR"
+  if [ -n "${GIT_LANE:-}" ]; then
+    # the box's LANE.md is the owner's contract; record this harness beside it instead
+    {
+      echo "---"; echo "type: capture"; echo "source: $GIT_LANE"; echo "created: $TODAY"; echo "title: $HARNESS connector on $HOST"; echo "---"; echo
+      echo "Connected $TODAY by \`sov connect $HARNESS\` on host $HOST, inside lane \`$GIT_LANE\`."
+      echo "Read wire: $readline. Write wire: \`connectors/harness/$HARNESS/mirror.sh\` every ${INTERVAL}s as \`$LABEL\`,"
+      echo "committed and pushed on the lane branch. \`MANIFEST.md\` here is the heartbeat; \`brain-load-usage.md\` the read receipt."
+    } > "$LANE_DIR/HARNESS.md"
+    say "[lane] HARNESS.md written in $LANE_DIR (the box LANE.md stays the owner's)"
+    return
+  fi
   if [ -f "$LANE_DIR/LANE.md" ]; then
     cp "$LANE_DIR/LANE.md" "$LANE_DIR/.LANE.md.bak-$(date +%Y%m%d-%H%M%S)"
     /usr/bin/python3 - "$LANE_DIR/LANE.md" "$readline" "$HARNESS" "$TODAY" "$LABEL" "$INTERVAL" <<'EOF'

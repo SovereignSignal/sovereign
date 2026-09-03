@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../_lib/mirror-common.sh"
 
 LANE="codex-memory-$BRAIN_HOST_RESOLVED"
-DEST="$(sov_dest "$LANE")" || exit 0
+DEST="$(sov_dest "$LANE" "codex-memory")" || exit 0
 SRC="$HOME/.codex/memories"
 mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 0; }
 
@@ -26,4 +26,5 @@ if [ -d "$SRC" ] && [ -n "$(find "$SRC" -type f -print -quit 2>/dev/null)" ]; th
 fi
 sov_manifest "$DEST" "$LANE" "Codex memory mirror manifest" "$ok" "$failed" \
   "Source: \`~/.codex/memories/\` (working tree). Markdown files in the lane: $n."
+sov_git_publish "$DEST" "Codex memory mirror"
 exit 0
