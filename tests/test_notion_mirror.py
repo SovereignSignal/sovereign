@@ -157,6 +157,7 @@ class FullRun(unittest.TestCase):
             self.assertTrue((lane / P4).exists())
             self.assertTrue((cfg.state_dir / "last-status").read_text().startswith("FAILED "))
             self.assertIsNone(State(cfg.state_dir).read_cursor())
+            self.assertIsNone(State(cfg.state_dir).read_last_full())
 
 
 class Check(unittest.TestCase):
@@ -171,6 +172,88 @@ class Check(unittest.TestCase):
             self.assertEqual(out["roots"], {hid(1): "Root"})
             self.assertEqual(out["missing_roots"], [hid(99)])
             self.assertEqual(paths_of(lane), ["LANE.md"])
+
+
+class DeltaRun(unittest.TestCase):
+    def test_delta_rewrites_only_the_changed_page_and_advances_the_cursor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            stamps = {p: (lane / p).stat().st_mtime_ns for p in (P1, P3, P4, P5, P6)}
+            client.blocks[hid(2)] = [para(20, "New body.")]
+            client.pages[hid(2)]["last_edited_time"] = LATER
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.mode, "delta")
+            self.assertEqual((rep.written, rep.errors), (1, []))
+            self.assertIn("New body.", (lane / P2).read_text())
+            for p, before in stamps.items():
+                self.assertEqual((lane / p).stat().st_mtime_ns, before, p)
+            self.assertEqual(State(cfg.state_dir).read_cursor(), LATER)
+            self.assertEqual(client.queries, 1)  # only the full run queried rows
+
+    def test_delta_row_change_rebuilds_csv_from_cells_without_requery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.pages[hid(4)]["properties"]["Status"] = {"type": "select", "select": {"name": "Done"}}
+            client.pages[hid(4)]["last_edited_time"] = LATER
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual((lane / P4).read_text(), "# Alive\n\nStatus: Done\n\nverse\n")
+            self.assertEqual((lane / P3).read_text(), "\ufeffName,Status\nAlive,Done\nAtlantic,\n")
+            self.assertEqual(client.queries, 1)
+
+    def test_delta_schema_change_requeries_the_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.data_sources[hid(30)]["properties"] = {"Name": {"type": "title"}, "Status": {"type": "select"}, "Year": {"type": "number"}}
+            client.data_sources[hid(30)]["last_edited_time"] = LATER
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            self.assertTrue((lane / P3).read_text().startswith("\ufeffName,Status,Year\n"))
+            self.assertEqual(client.queries, 2)
+
+    def test_delta_new_page_under_unknown_parent_fetches_the_chain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.add_page(7, "Archive", client.under(1), edited="2026-08-01T00:00:00.000Z")  # older than the window
+            client.add_page(8, "Deep", client.under(7), edited=LATER)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            self.assertTrue((lane / ("Private & Shared/Root/Archive/Deep %s.md" % hid(8))).exists())
+
+    def test_delta_error_keeps_the_cursor_and_fails_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.pages[hid(2)]["last_edited_time"] = LATER
+            client.fail_children_for.add(hid(2))
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(len(rep.errors), 1)
+            self.assertEqual(State(cfg.state_dir).read_cursor(), EDIT)
+            self.assertTrue((cfg.state_dir / "last-status").read_text().startswith("FAILED "))
+            client.fail_children_for.clear()
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(State(cfg.state_dir).read_cursor(), LATER)
+
+    def test_delta_without_cursor_runs_full(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.mode, "full")
+            self.assertEqual(rep.written, 6)
+
+    def test_delta_dry_run_reports_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.retitle(6, "Words", LATER)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta(dry_run=True)
+            self.assertEqual(rep.would_move, [(P6, "Private & Shared/Root/Music/LW Songs/Alive/Words %s.md" % hid(6))])
+            self.assertTrue((lane / P6).exists())
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 check   prove the token, list reachable roots against the required ones, count items
 full    walk everything, reconcile moves and deletions, requery every database
-delta   (Task 9) search since the cursor, rewrite only what changed
+delta   search since the cursor with overlap, rewrite only what changed
 
 Writes are atomic and hash-compared, so an unchanged page keeps its mtime. Errors on one
 item never stop the run; they are reported, the status says FAILED, and the cursor does
@@ -27,6 +27,16 @@ from .state import Manifest, State, atomic_write, write_if_changed
 CHILD_KINDS = ("child_page", "child_database")
 ITEM_FIELDS = ("id", "kind", "title", "parent_kind", "parent_id", "last_edited", "ds_id", "db_id", "inline")
 HEX = set("0123456789abcdef")
+OVERLAP_MINUTES = 10
+
+
+def _minus_minutes(stamp: str, minutes: int) -> str:
+    """Notion stamps look like 2026-09-01T16:00:00.000Z. Subtract and keep the shape."""
+    try:
+        dt = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError:
+        return stamp
+    return (dt - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 @dataclass
@@ -198,13 +208,69 @@ class Mirror:
         self._apply_deletes(deleted, old, rep)
         self._prune_empty_dirs()
         self.manifest.save()
-        self.state.write_last_full()
         if rep.errors:
+            # no last-full: tomorrow's run is a full walk again, so errored items outside the delta window are retried within a day instead of waiting for the weekly walk
             self.state.fail("full: %d error(s), first: %s" % (len(rep.errors), rep.errors[0]))
         else:
             newest = max((it["last_edited"] for it in items.values()), default="")
             if newest:
                 self.state.write_cursor(newest)
+            self.state.write_last_full()
+            self.state.ok(rep.summary())
+        return rep
+
+    # -- delta ----------------------------------------------------------------------
+
+    def _ensure_parents(self, items: Dict[str, dict], fresh: Dict[str, dict], rep: Report) -> None:
+        """A changed page whose ancestors were not in the window: fetch the chain upward
+        until it meets something we already know."""
+        for it in list(fresh.values()):
+            kind, pid = it["parent_kind"], it["parent_id"]
+            while pid and pid not in items and kind in ("page", "database"):
+                try:
+                    if kind == "page":
+                        parent = item_from(self.client.page(pid))
+                    else:
+                        db = self.client.database(pid)
+                        sources = db.get("data_sources") or []
+                        if not sources:
+                            break
+                        parent = item_from(self.client.data_source(norm_id(sources[0].get("id"))))
+                except NotionError as exc:
+                    rep.warnings.append("parent %s of %s unreachable: %s" % (pid, it["id"], exc))
+                    break
+                items[parent["id"]] = parent
+                kind, pid = parent["parent_kind"], parent["parent_id"]
+
+    def delta(self, dry_run: bool = False) -> Report:
+        cursor = self.state.read_cursor()
+        if not cursor or not self.manifest.items:
+            return self.full(dry_run)
+        rep = Report("delta", dry_run)
+        old = self.manifest.items
+        fresh = self._walk(since=_minus_minutes(cursor, OVERLAP_MINUTES))
+        items: Dict[str, dict] = {i: dict(e) for i, e in old.items()}
+        changed = [i for i, it in fresh.items() if i not in old or old[i].get("last_edited") != it["last_edited"]]
+        items.update(fresh)
+        self._ensure_parents(items, fresh, rep)
+        paths, orphans = self._paths_for(items)
+        rep.orphans = len(orphans)
+        moves = [(old[i]["path"], paths[i]) for i in items if i in old and old[i].get("path") and old[i]["path"] != paths[i]]
+        rep.would_write = [paths[i] for i in changed]
+        rep.would_move = moves
+        if dry_run:
+            return rep
+
+        self.manifest.items = {i: _entry_from(it, paths[i], old.get(i)) for i, it in items.items()}
+        self._apply_moves(moves, rep)
+        new_parents = [i for i in items if i not in old and i not in fresh]
+        self._render_and_write(items, changed + new_parents, paths, rep)
+        self.manifest.save()
+        if rep.errors:
+            self.state.fail("delta: %d error(s), first: %s" % (len(rep.errors), rep.errors[0]))
+        else:
+            newest = max([it["last_edited"] for it in fresh.values()] + [cursor])
+            self.state.write_cursor(newest)
             self.state.ok(rep.summary())
         return rep
 
