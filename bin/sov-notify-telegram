@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""sov-notify-telegram — send one alert to Telegram over HTTPS. Body on stdin.
+
+Why this exists alongside sov-notify-email: hosts that can watch your fleet from
+outside it are usually cloud VMs, and cloud providers block outbound SMTP by
+default (DigitalOcean blocks 25, 465 and 587). An off-site watcher that can detect
+an outage but not report it is worse than none, because it looks like coverage.
+HTTPS is open essentially everywhere, so this is the transport that survives.
+
+Config in ~/.config/sovs-cron/telegram-infra.env (same shape the hub already uses):
+
+    TG_BOT_TOKEN=123456:AA...
+    TG_CHAT_ID=<chat-id>
+
+Pick the file with TG_ENV_FILE, or override either value from the environment.
+
+    echo "fleet down" | sov-notify-telegram
+    sov-notify-telegram --check          # report readiness, send nothing
+
+Exits nonzero when it could not send, and never prints the token.
+"""
+
+import argparse
+import io
+import json
+import os
+import socket
+import sys
+import urllib.error
+import urllib.request
+
+CONF_PATH = os.path.expanduser(
+    os.environ.get("TG_ENV_FILE", "~/.config/sovs-cron/telegram-infra.env"))
+API = "https://api.telegram.org"
+# Telegram's hard cap is 4096 characters; leave room for the trailing signature.
+LIMIT = 3900
+
+
+def conf():
+    out = {}
+    try:
+        with io.open(CONF_PATH, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return out
+
+
+CONF = conf()
+
+
+def setting(name, default=""):
+    v = os.environ.get(name)
+    if v is None or v == "":
+        v = CONF.get(name, default)
+    return v
+
+
+def missing():
+    return [n for n in ("TG_BOT_TOKEN", "TG_CHAT_ID") if not setting(n)]
+
+
+def send(body):
+    gaps = missing()
+    if gaps:
+        sys.stderr.write("sov-notify-telegram: not configured (%s missing from %s)\n"
+                         % (", ".join(gaps), CONF_PATH))
+        return 2
+    token = setting("TG_BOT_TOKEN")
+    chat = setting("TG_CHAT_ID")
+
+    # Which machine noticed is the whole point of an off-site watcher.
+    text = "%s\n\nreported by %s" % (body.rstrip(), socket.gethostname())
+    if len(text) > LIMIT:
+        text = text[:LIMIT] + "\n... (truncated)"
+
+    data = json.dumps({"chat_id": chat, "text": text,
+                       "disable_web_page_preview": True}).encode("utf-8")
+    req = urllib.request.Request(
+        "%s/bot%s/sendMessage" % (API, token), data=data,
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            ok = json.loads(r.read().decode("utf-8")).get("ok")
+        if not ok:
+            sys.stderr.write("sov-notify-telegram: API returned ok=false\n")
+            return 1
+    except urllib.error.HTTPError as e:
+        # The URL carries the token, so report the code only, never the URL.
+        sys.stderr.write("sov-notify-telegram: send failed: HTTP %s\n" % e.code)
+        return 1
+    except Exception as e:
+        sys.stderr.write("sov-notify-telegram: send failed: %s\n"
+                         % str(e).replace(token, "***"))
+        return 1
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--check", action="store_true",
+                    help="report whether sending is configured, send nothing")
+    args = ap.parse_args()
+
+    if args.check:
+        gaps = missing()
+        if gaps:
+            print("not configured: %s missing from %s" % (", ".join(gaps), CONF_PATH))
+            return 2
+        print("configured: chat %s via %s" % (setting("TG_CHAT_ID"), CONF_PATH))
+        return 0
+
+    body = sys.stdin.read() if not sys.stdin.isatty() else ""
+    if not body.strip():
+        sys.stderr.write("sov-notify-telegram: nothing on stdin, not sending\n")
+        return 2
+    return send(body)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as e:
+        sys.stderr.write("sov-notify-telegram: %s\n" % e)
+        sys.exit(1)

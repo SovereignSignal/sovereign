@@ -28,11 +28,18 @@ one-line machine-readable summary and alerts on nothing.
   SOV_FLEET_RED       hosts down at once that make it an infrastructure event
                       (default: 3, or a third of the fleet, whichever is larger)
   SOV_FLEET_CRITICAL  comma-separated hosts whose absence is red on its own
-  SOV_FLEET_ESCALATE  path to an executable fed the message on stdin when the event
-                      is RED. Unset means no escalation. This is how a red event
-                      reaches a louder channel than the routine one. It is a program
-                      path, not a shell string, so nothing here is ever interpreted
-                      by a shell; wrap it in a two-line script if you need env vars.
+  SOV_FLEET_NOTIFY    comma-separated executable paths fed EVERY message on stdin.
+                      Use on a host with nothing else delivering stdout, so its
+                      recoveries and yellows are not lost to a log file.
+  SOV_FLEET_ESCALATE  comma-separated executable paths, each fed the message on
+                      stdin when the event is RED. Unset means no escalation. This
+                      is how a red event reaches louder channels than the routine
+                      one, and listing more than one matters: an off-site watcher
+                      whose only transport is blocked looks like coverage and is
+                      not. These are program paths, never shell strings, so nothing
+                      here is interpreted by a shell; wrap one in a two-line script
+                      if it needs env vars. A failing notifier is logged and never
+                      stops the others.
 """
 
 import datetime
@@ -79,7 +86,11 @@ STATE = os.path.expanduser(
     setting("SOV_FLEET_STATE", "~/.local/state/sovs-cron/fleet-watch.json"))
 IGNORE = {h.strip() for h in setting("SOV_FLEET_IGNORE").split(",") if h.strip()}
 REALERT = int(setting("SOV_FLEET_REALERT", "60") or 60)
-ESCALATE = setting("SOV_FLEET_ESCALATE").strip()
+ESCALATE = [x.strip() for x in setting("SOV_FLEET_ESCALATE").split(",") if x.strip()]
+# Notifiers that get EVERY message, not just red. A host with no cron wrapper
+# to deliver stdout would otherwise lose its yellows and its recoveries to a
+# log file, which is how an off-site watcher ends up telling nobody anything.
+NOTIFY = [x.strip() for x in setting("SOV_FLEET_NOTIFY").split(",") if x.strip()]
 # Hosts whose absence is an emergency on its own, whatever the count. An
 # off-site watcher exists mainly to notice that the hub died, and one host
 # down would otherwise be a yellow it never escalates.
@@ -313,11 +324,14 @@ def main():
 
     msg = "\n".join(lines)
     print(msg)
-    if red and ESCALATE:
+    for path in NOTIFY + (ESCALATE if red else []):
         try:
-            subprocess.run([ESCALATE], input=msg, text=True, timeout=60)
+            r = subprocess.run([path], input=msg, text=True, timeout=60)
+            if r.returncode != 0:
+                sys.stderr.write("fleet-watch: notifier %s exited %d\n"
+                                 % (path, r.returncode))
         except Exception as e:
-            sys.stderr.write("fleet-watch: escalation failed: %s\n" % e)
+            sys.stderr.write("fleet-watch: notifier %s failed: %s\n" % (path, e))
     return 0
 
 
