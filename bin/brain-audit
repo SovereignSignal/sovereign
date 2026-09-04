@@ -174,7 +174,9 @@ def rel(p):
     return os.path.relpath(p, VAULT)
 
 # ---------- gather the trusted layer ----------
-TYPE_DIRS = {"entity": "entities", "concept": "concepts", "synthesis": "syntheses"}
+TYPE_DIRS = {"entity": "entities", "concept": "concepts", "synthesis": "syntheses",
+             # added to Part 1 2026-09-04; homed with the syntheses, no new folder
+             "plan": "syntheses", "review": "syntheses"}
 cards = sorted(glob.glob(K + "/**/*.md", recursive=True))
 slugs = {os.path.basename(p)[:-3] for p in cards}
 cross_layer_slugs = {
@@ -197,7 +199,7 @@ def frontmatter(text):
     return fm
 
 # ---------- 1+2+3: labels, one-screen, flatness ----------
-for sub in TYPE_DIRS.values():
+for sub in sorted(set(TYPE_DIRS.values())):
     d = os.path.join(K, sub)
     if os.path.isdir(d):
         deep = [x for x in glob.glob(d + "/*/") ]

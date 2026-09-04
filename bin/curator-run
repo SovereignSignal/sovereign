@@ -31,6 +31,9 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
 Usage: curator-run [--since-days N] [--max N] [--dry] [--self-test]
 """
 import os, re, json, glob, sys, time, argparse, hashlib, urllib.request, urllib.error, subprocess, urllib.parse
+# per-document judge briefs (bin/_curator_brief.py); realpath because brain-bin/ symlinks here
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import _curator_brief as _brief
 from datetime import datetime, timezone
 
 def _pointer(path):
@@ -84,6 +87,8 @@ ap.add_argument("--max", type=int, default=40, help="max new items to judge this
 ap.add_argument("--dry", action="store_true", help="judge and report, write nothing")
 ap.add_argument("--init", action="store_true", help="set the watermark to now (forward-only) and exit")
 ap.add_argument("--self-test", action="store_true", help="run the auto-promote decision-logic self-test and exit")
+ap.add_argument("--dump-brief", metavar="FILE", help="write the FULL untargeted judge brief to FILE and exit (offline harness)")
+ap.add_argument("--brief-for", metavar="SOURCE", help="print the targeted judge brief this run would build for SOURCE and exit")
 a = ap.parse_args()
 
 
@@ -314,8 +319,54 @@ def _taste_allowed(text):
     return any(rx.search(text) for rx in _TASTE_ALLOW)
 
 
+def _note_created(path):
+    """Frontmatter `created:` label of a note, or None."""
+    try:
+        t = open(path, encoding="utf-8", errors="ignore").read(2000)
+    except OSError:
+        return None
+    if not t.startswith("---"):
+        return None
+    end = t.find("\n---", 3)
+    m = re.search(r"^created:\s*(\S+)", t[3 : end if end != -1 else len(t)], re.M)
+    return m.group(1) if m else None
+
+
+DECISIONS = os.path.join(LANE, "decisions.log")
+
+
+def _last_landed_days(slug):
+    """Days since the gate (owner or gear) last landed this card, read from the
+    append-only decisions log. None when it never has or the log is unreadable,
+    which the decision treats as no hold."""
+    latest = None
+    try:
+        for line in open(DECISIONS, encoding="utf-8", errors="ignore"):
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 3 or parts[1] != "approved" or parts[2] != slug + ".md":
+                continue
+            try:
+                from datetime import datetime as _dt  # local: safe wherever this sits
+                t = _dt.fromisoformat(parts[0]).timestamp()
+            except ValueError:
+                continue
+            latest = t if latest is None or t > latest else latest
+    except OSError:
+        return None
+    return None if latest is None else (time.time() - latest) / 86400
+
+
+def _body_words(card_text):
+    """Word count of a drafted card, frontmatter excluded."""
+    t = card_text or ""
+    if t.startswith("---"):
+        end = t.find("\n---", 3)
+        t = t[end + 4:] if end != -1 else t
+    return len(t.split())
+
+
 def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promoted_so_far, cap,
-                         *, screen_flagged, taste_flagged):
+                         *, screen_flagged, taste_flagged, last_landed_days=None, body_words=None):
     """Pure decision: may this proposal auto-promote as an act-and-report UPDATE?
 
     Fires ONLY when all hold: the source passed the injection screen, the drafted
@@ -351,6 +402,13 @@ def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promote
         return False, f"confidence '{confidence}' not in grant {allowed}"
     if target_type != typ:
         return False, "update_of target missing or not a card of the same type"
+    # 2026-09-04 update-path guards (remediation step 3). Not vetoes: a hold queues
+    # the update for the owner with a note; nothing is dropped. The two kwargs default
+    # to None (unknown = no hold) because unlike the vetoes they are not safety gates.
+    if last_landed_days is not None and last_landed_days < 7:
+        return False, f"cool-down: {update_of} landed {last_landed_days:.1f}d ago; no auto-update inside 7 days"
+    if body_words is not None and body_words > 450:
+        return False, f"length: merged body is {body_words} words, over the 450-word one-screen line; wants a split"
     if promoted_so_far >= cap:
         return False, f"per-run auto-promote cap reached ({cap})"
     return True, ""
@@ -379,8 +437,8 @@ def _decide_auto_promote_new(typ, confidence, update_of, collides, rules, promot
         # stay at ask-first." Entities never auto-promote regardless of what
         # gears.json says — a config typo must not override the standard.
         return False, "entity: never graduates past ask-first (law)"
-    if typ not in ("concept", "synthesis"):
-        # Only the standard's two gradable knowledge types can hold a new-card
+    if typ not in ("concept", "synthesis", "plan", "review"):
+        # Only the standard's gradable knowledge types (plan and review since 2026-09-04) can hold a new-card
         # gear at all; entity is refused above by law, and an unknown type is a
         # bug, not a grant. Syntheses became eligible with the 2026-08-10 owner
         # grant (act-and-report for HIGH and MED concepts AND syntheses, new
@@ -907,6 +965,19 @@ def _self_test():
         ("taste-flagged body cannot auto-reject either", False,
          _decide_auto_reject("concept", "news-no-engagement", C, 0, 10,
                              screen_flagged=False, taste_flagged=True)),
+        # 2026-09-04 step-3 guards and the two new types
+        ("update inside the 7-day cool-down is held for the owner", False,
+         _decide_auto_promote("concept", "high", "card-a", "concept", G, 0, 5,
+                              screen_flagged=False, taste_flagged=False, last_landed_days=2.5)),
+        ("update after the cool-down proceeds", True,
+         _decide_auto_promote("concept", "high", "card-a", "concept", G, 0, 5,
+                              screen_flagged=False, taste_flagged=False, last_landed_days=9.0)),
+        ("merged body over 450 words is held with a split note", False,
+         _decide_auto_promote("concept", "high", "card-a", "concept", G, 0, 5,
+                              screen_flagged=False, taste_flagged=False, body_words=451)),
+        ("a plan is gradable in principle but holds no grant, so it queues", False,
+         _decide_auto_promote_new("plan", "high", None, False, GN, 0, 5,
+                                  screen_flagged=False, taste_flagged=False)),
     ]
     for name, want, (got, why) in veto_cases:
         ok = got is want
@@ -988,6 +1059,16 @@ def _self_test():
                      == "email address x2, evm wallet address"))
     _cap_env = os.environ.pop("ARCHIVIST_AUTO_PROMOTE_MAX", None)
     fn_cases.append(("default auto-promote cap is 12 (2026-08-10 grant)", _auto_cap() == 12))
+    # 2026-09-04: the targeted brief and the body-word guard are plain predicates
+    fn_cases.append(("targeted brief: a source naming a card sees that card",
+                     "ens-meta-gov-working-group" in _brief.targeted_index(
+                         "notes from the ENS meta-governance working group call",
+                         {"ens-meta-gov-working-group": {"ens", "meta", "gov", "working", "group"},
+                          "polymarket-bot": {"polymarket", "bot"}})))
+    fn_cases.append(("targeted brief: an unrelated source sees no cards",
+                     _brief.targeted_index("weather", {"polymarket-bot": {"polymarket", "bot"}}) == []))
+    fn_cases.append(("body words exclude the frontmatter",
+                     _body_words("---\ntype: concept\ncreated: 2026-01-01\n---\n\none two three") == 3))
     os.environ["ARCHIVIST_AUTO_PROMOTE_MAX"] = "3"
     fn_cases.append(("ARCHIVIST_AUTO_PROMOTE_MAX still overrides the default", _auto_cap() == 3))
     os.environ["ARCHIVIST_AUTO_PROMOTE_MAX"] = "not-a-number"
@@ -1123,7 +1204,7 @@ def _model_lock(job):
                 raise SystemExit(3)
             time.sleep(60)
 
-_MODEL_LOCK = _model_lock("curator-run")
+_MODEL_LOCK = None if (a.dump_brief or a.brief_for) else _model_lock("curator-run")
 
 os.makedirs(PROP, exist_ok=True)
 if a.init:
@@ -1391,8 +1472,12 @@ def _auto_promote(props, meta):
                                             _note_type(tp) if tp else None,
                                             rules, len(out["applied"]), cap,
                                             screen_flagged=bool(pr.get("screen_flagged")),
-                                            taste_flagged=bool(pr.get("taste_flagged")))
+                                            taste_flagged=bool(pr.get("taste_flagged")),
+                                            last_landed_days=_last_landed_days(target),
+                                            body_words=_body_words(pr.get("card", "")))
         if not ok:
+            if _why_not.startswith(("cool-down", "length")):
+                pr["hold_note"] = _why_not  # surfaces in the INBOX bullet
             continue  # stays pending for the owner's gate — the normal path
         if target in {x["target"] for x in out["applied"]}:
             continue  # second update to the same card this run: owner's call, stays pending
@@ -1446,7 +1531,7 @@ def _auto_promote(props, meta):
                   file=sys.stderr)
     return out
 
-SYS = (
+_SYS_HEAD = (
  "You are the curator of a plain-text knowledge brain. "
  "Your job: decide whether ONE piece of raw material holds DURABLE, REUSABLE knowledge "
  "worth a one-screen card. Write clear, factual card bodies.\n\n"
@@ -1471,7 +1556,11 @@ SYS = (
  "a process; a concept is a reusable idea/playbook/mechanism NOT tied to one named thing. Before "
  "choosing 'concept', check how sibling cards on similar subjects are typed and match them. News "
  "items, events, rulings, announcements, and grant applications are NOT entities; if durable at all "
- "they are a concept or an update_of an existing card. Usually SKIP.\n\n"
+ "they are a concept or an update_of an existing card. Usually SKIP. "
+ "A plan is a plan of record: sequenced work with owners and gates, kept current. A review is a "
+ "retrospective or assessment of something that happened, with verdicts. Both pull several things "
+ "together and live with the syntheses; use them only when the source IS such a document, never to "
+ "relabel a concept.\n\n"
  "CONFIG IS NOT KNOWLEDGE: if the source is a SKILL.md, a scheduled-job file, a template, a tool or "
  "CLI wrapper, or a glossary/index that a running job reads, do NOT copy its operating parameters "
  "(query IDs, cadences, source lists, templates, style/render specs, command steps). SKIP it, or at "
@@ -1502,14 +1591,24 @@ SYS = (
  "under a different slug lead-token (e.g. unichain- vs unichain-partner-, os4ls vs open-source-for-science, "
  "gear vs vara). Match on the subject, the primary URL, and the source path — not the slug prefix — and "
  "set update_of to the richest matching card. "
- "Existing knowledge slugs (link with [[slug]]; never duplicate): " + index + ". "
+ ""
+)
+
+# The three lists the brief used to carry in full: every slug, every pending proposal,
+# every rejected topic. Kept in full ONLY for --dump-brief and the offline harness.
+# The judge sees targeted versions (brief_for below).
+_INDEX_FULL = "Existing knowledge slugs (link with [[slug]]; never duplicate): " + index + ". "
+_PENDING_CLAUSE = (""
  + (("Slugs ALREADY PROPOSED and awaiting the owner's gate — never propose these again, and do not "
      "[[link]] to them (they are not cards yet); if your item is the same subject as one, set "
-     "update_of to that slug or skip: " + ", ".join(sorted(pending)) + ". ") if pending else "")
+     "update_of to that slug or skip: " + ", ".join(sorted(pending)) + ". ") if pending else ""))
+_REJECTED_FULL = (""
  + (("Topics the OWNER HAS REJECTED at the gate — do NOT propose these again unless the source holds "
      "materially NEW facts beyond what was rejected (then set update_of to a real card slug, or state "
-     "the new facts in reason): " + ", ".join(sorted(rejected_topics)) + ". ") if rejected_topics else "")
- + 'Respond with ONE JSON object: {"promote":true|false,"reason":"<=20 words","type":"entity|concept|synthesis|null",'
+     "the new facts in reason): " + ", ".join(sorted(rejected_topics)) + ". ") if rejected_topics else ""))
+
+_SYS_TAIL = (""
+ + 'Respond with ONE JSON object: {"promote":true|false,"reason":"<=20 words","type":"entity|concept|synthesis|plan|review|null",'
  '"slug":"kebab-case","title":"","body":"factual prose, one screen, [[links]], NO markdown heading",'
  '"why":"1-2 sentences: why this matters to the owner\'s work, written for a future reader",'
  '"confidence":"high|med|low","update_of":"existing-slug or null"'
@@ -1521,6 +1620,35 @@ SYS = (
  'with underscores, or a reference_/feedback_/project_/date prefix, is a file in the loading dock, '
  'not a card \u2014 name it in plain text if needed, never in [[...]]. If unsure a slug is a real card, omit the link.'
 )
+
+
+# The old brief, whole: 591 slugs plus 538 rejected topics in front of every source.
+# Measured 2026-09-03: keep rate 50% (July) -> 3% (September) across the 2026-08-10
+# judge switch, and re-judging skipped sources with the same rules minus these two
+# lists flipped 3 of 14 to keep, two of them clearly right, at a quarter of the time.
+# The lists still do a job (link, update instead of duplicate, do not re-propose the
+# refused), so brief_for keeps them, targeted to the source at hand.
+SYS = _SYS_HEAD + _INDEX_FULL + _PENDING_CLAUSE + _REJECTED_FULL + _SYS_TAIL
+_CARD_TERMS = _brief.card_terms(K)
+
+
+def brief_for(txt):
+    """The judge's brief for ONE source: the shared rules, taste and exemplars, plus only
+    the existing slugs and rejected topics whose words appear in this text."""
+    return (_SYS_HEAD
+            + _brief.index_clause(_brief.targeted_index(txt, _CARD_TERMS, 30))
+            + _PENDING_CLAUSE
+            + _brief.rejected_clause(_brief.targeted_rejected(txt, rejected_topics, 15))
+            + _SYS_TAIL)
+
+
+if a.dump_brief:
+    open(a.dump_brief, "w", encoding="utf-8").write(SYS)
+    print(f"curator-run: full brief written to {a.dump_brief} ({len(SYS)} chars)")
+    raise SystemExit(0)
+if a.brief_for:
+    sys.stdout.write(brief_for(open(a.brief_for, encoding="utf-8", errors="ignore").read()[:12000]))
+    raise SystemExit(0)
 
 
 def _post_json(req, timeout):
@@ -1540,7 +1668,7 @@ def judge(path):
     name = os.path.relpath(path, VAULT)
     payload = json.dumps({"model": MODEL, "temperature": 0.1, "stream": False,
         "response_format": {"type": "json_object"},
-        "messages": [{"role": "system", "content": SYS},
+        "messages": [{"role": "system", "content": brief_for(txt)},
                      {"role": "user", "content": f"SOURCE: {name}\n\n{txt}"}]}).encode()
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
     out = _post_json(req, 480)["choices"][0]["message"]["content"]
@@ -1573,7 +1701,7 @@ def judge_update(path, target, target_path):
             "CARD SHAPE, one screen) and why = why this update matters.")
     payload = json.dumps({"model": MODEL, "temperature": 0.1, "stream": False,
         "response_format": {"type": "json_object"},
-        "messages": [{"role": "system", "content": SYS},
+        "messages": [{"role": "system", "content": brief_for(txt + "\n" + card)},
                      {"role": "user", "content": user}]}).encode()
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
     out = _post_json(req, 480)["choices"][0]["message"]["content"]
@@ -1624,7 +1752,7 @@ for p in cands:
         judgments.append({**base_judgment, "promote": False, "reason": (v or {}).get("reason", "")})
         continue
     slug, typ = v.get("slug", ""), v.get("type", "")
-    if not slug or typ not in ("entity", "concept", "synthesis"):
+    if not slug or typ not in ("entity", "concept", "synthesis", "plan", "review"):
         judgments.append({**base_judgment, "promote": False, "reason": "invalid promote payload", "raw": v})
         continue
     # deterministic rejection-memory guard: a topic the owner rejected never re-enters
@@ -1728,7 +1856,12 @@ for p in cands:
               f"'{_TASTE_CREDENTIAL_CLASS}' value(s) redacted from {slug}; the live value "
               f"is still in the source file {src} — rotate it and clean the source, the "
               "brain cannot do either for you", file=sys.stderr)
-    card = (f"---\ntype: {typ}\nsource: {src}\ncreated: {datetime.now().strftime('%Y-%m-%d')}\n"
+    # Preserve created on updates (2026-09-04): a card's birthday is the day it first
+    # landed, not the day a merge rewrote it. Git already tracks the change dates.
+    _upd = v.get("update_of")
+    _existing = _knowledge_path(_upd) if _upd else None
+    _created = (_note_created(_existing) if _existing else None) or datetime.now().strftime('%Y-%m-%d')
+    card = (f"---\ntype: {typ}\nsource: {src}\ncreated: {_created}\n"
             f"title: {title}\n---\n\n# {title}\n\n{body}\n")
     # Deterministic taste veto over the REDACTED body: only the judgment classes
     # (a private money figure, a labeled secret value) can still demote to
@@ -1876,7 +2009,8 @@ if not a.dry:
         tag = "UPDATE " + pr["update_of"] if pr.get("update_of") else "new"
         flag = " ⚠ SCREENED" if pr.get("screen_flagged") else ""
         flag += " ⚠ TASTE" if pr.get("taste_flagged") else ""
-        lines.append(f"- **{pr['slug']}** ({pr['type']}, {pr['confidence']}, {tag}){flag} — {pr['reason']}\n  from `{pr['src']}`")
+        lines.append(f"- **{pr['slug']}** ({pr['type']}, {pr['confidence']}, {tag}){flag} — {pr['reason']}"
+                     f"{' · held: ' + pr['hold_note'] if pr.get('hold_note') else ''}\n  from `{pr['src']}`")
     if auto["applied"] or auto["failures"]:
         lines += ["", "## Auto-applied (act-and-report)",
                   "_Applied by the auto-promote gears (actor `auto-gear`): `auto_approve_update_confidence` "

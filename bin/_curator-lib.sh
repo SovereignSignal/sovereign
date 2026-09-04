@@ -36,7 +36,11 @@ fm_get(){ # file key
 
 # knowledge type -> subfolder (echoes empty if not a knowledge type)
 type_subdir(){ case "$1" in
-  entity) echo entities;; concept) echo concepts;; synthesis) echo syntheses;; *) echo "";; esac }
+  entity) echo entities;; concept) echo concepts;; synthesis) echo syntheses;;
+  # plan and review were added to Part 1 on 2026-09-04 (owner sign-off). Both are
+  # writeups that pull several things together, so they live with the syntheses;
+  # no new folder, and every tool that walks knowledge/ by folder keeps working.
+  plan|review) echo syntheses;; *) echo "";; esac }
 
 # validate a candidate knowledge note; prints problems to stdout; returns nonzero if invalid
 validate_note(){ # file

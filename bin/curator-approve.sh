@@ -52,6 +52,18 @@ dest="$KNOWLEDGE/$sub/$(basename "$prop")"
 slug="$(basename "$prop" .md)"
 mkdir -p "$KNOWLEDGE/$sub"
 update_landing=0
+# Cross-folder collision (2026-09-04). The same slug in ANOTHER type's folder is a
+# type conflict, not an update: never land beside it, never --force over it. The
+# owner picks the canonical type. Two files with one basename is ambiguous in
+# Obsidian, which is how the five cross-folder pairs in the audit came to be.
+for other in entities concepts syntheses; do
+  [ "$other" = "$sub" ] && continue
+  if [ -e "$KNOWLEDGE/$other/$(basename "$prop")" ]; then
+    echo "REFUSED, knowledge/$other/$(basename "$prop") already exists with a different type."
+    echo "Type conflict: this proposal is a $(fm_get "$prop" type); the existing card lives in $other/. Pick the canonical type, merge by hand, then curator-retire the other."
+    exit 1
+  fi
+done
 if [ -e "$dest" ] && [ "$FORCE" -ne 1 ]; then
   if declared_same_slug_update "$PROPOSALS/.meta.json" "$slug"; then
     update_landing=1
