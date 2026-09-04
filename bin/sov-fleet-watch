@@ -18,6 +18,10 @@ stdout as healthy and stays silent, so a normal day is quiet. Always exits 0 so 
 wrapper never reports this watcher itself as a failed job.
 
 Config, all optional and all instance data (the mechanism ships general):
+Settings come from the environment first, then ~/.config/sovs-cron/fleet-watch.env
+(KEY=VALUE lines), so every reporter shares one ignore list. `--json` prints a
+one-line machine-readable summary and alerts on nothing.
+
   SOV_FLEET_STATE     state file (default ~/.local/state/sovs-cron/fleet-watch.json)
   SOV_FLEET_IGNORE    comma-separated hostnames never counted (phones, laptops)
   SOV_FLEET_REALERT   minutes between reminders while still down (default 60)
@@ -31,17 +35,50 @@ Config, all optional and all instance data (the mechanism ships general):
 """
 
 import datetime
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
 
+CONF_PATH = os.path.expanduser(
+    os.environ.get("SOV_FLEET_CONF", "~/.config/sovs-cron/fleet-watch.env"))
+
+
+def _conf():
+    """KEY=VALUE lines, so this watcher and anything else that reports on the
+    fleet (the daily health check) share one ignore list instead of drifting."""
+    out = {}
+    try:
+        with io.open(CONF_PATH, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return out
+
+
+CONF = _conf()
+
+
+def setting(name, default=""):
+    """Environment wins, then the shared config file, then the default."""
+    v = os.environ.get(name)
+    if v is None or v == "":
+        v = CONF.get(name, default)
+    return v
+
+
 STATE = os.path.expanduser(
-    os.environ.get("SOV_FLEET_STATE", "~/.local/state/sovs-cron/fleet-watch.json"))
-IGNORE = {h.strip() for h in os.environ.get("SOV_FLEET_IGNORE", "").split(",") if h.strip()}
-REALERT = int(os.environ.get("SOV_FLEET_REALERT", "60"))
-ESCALATE = os.environ.get("SOV_FLEET_ESCALATE", "").strip()
+    setting("SOV_FLEET_STATE", "~/.local/state/sovs-cron/fleet-watch.json"))
+IGNORE = {h.strip() for h in setting("SOV_FLEET_IGNORE").split(",") if h.strip()}
+REALERT = int(setting("SOV_FLEET_REALERT", "60") or 60)
+ESCALATE = setting("SOV_FLEET_ESCALATE").strip()
 
 
 def now():
@@ -79,11 +116,23 @@ def tailscale_bin():
     return None
 
 
-def read_fleet():
-    """Return {host: online_bool}, or None when Tailscale cannot be read.
+def base_name(name):
+    """The name before disambiguation. Two peers can share a hostname, so we
+    append an address to the second one; the ignore list must still match it."""
+    return name.split(" (")[0] if name.endswith(")") and " (" in name else name
 
-    None is deliberately different from "everything is offline": if the watcher
-    cannot see the tailnet it must not claim the fleet died.
+
+def ignored(name):
+    return base_name(name) in IGNORE
+
+
+def read_cli():
+    """{host: (online, ip)} from the Tailscale CLI, or None if it cannot be read.
+
+    The macOS CLI proxies to the GUI app. Outside an interactive session it tries
+    to launch that app, fails, and prints "The Tailscale GUI failed to start" to
+    stdout **with exit code 0**, so a returncode check is not enough and the JSON
+    parse is what actually catches it.
     """
     tb = tailscale_bin()
     if not tb:
@@ -91,18 +140,70 @@ def read_fleet():
     try:
         out = subprocess.run([tb, "status", "--json"], capture_output=True,
                              text=True, timeout=30)
-        if out.returncode != 0 or not out.stdout.strip():
+        if not out.stdout.strip():
             return None
         d = json.loads(out.stdout)
     except Exception:
         return None
-    fleet = {}
+    seen = {}
     for p in (d.get("Peer") or {}).values():
         name = p.get("HostName") or (p.get("DNSName") or "").split(".")[0]
-        if not name or name in IGNORE:
+        if not name:
             continue
-        fleet[name] = bool(p.get("Online"))
-    return fleet or None
+        ip = (p.get("TailscaleIPs") or [""])[0]
+        if name in seen:
+            name = "%s (%s)" % (name, ip or p.get("ID", "?"))
+        seen[name] = (bool(p.get("Online")), ip)
+    return seen or None
+
+
+def reachable(ip):
+    """One ping. Portable on purpose: ping's timeout flags mean different things
+    on macOS and Linux, so the subprocess timeout is the deadline."""
+    try:
+        r = subprocess.run(["ping", "-c", "1", ip],
+                           capture_output=True, timeout=4)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def probe_roster(roster):
+    """Ask the network instead of the control plane: can this machine actually
+    reach each host? Used when the CLI is unavailable, which on the hub is most
+    of the time. Also the signal that matters more, since a peer the control
+    plane calls online is still useless if the hub cannot reach it."""
+    if not roster:
+        return None
+    out = {}
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            for name, ok in zip(roster, ex.map(reachable, roster.values())):
+                out[name] = ok
+    except Exception:
+        for name, ip in roster.items():
+            out[name] = reachable(ip)
+    return out or None
+
+
+def read_fleet():
+    """Return {host: online_bool}, or None when the fleet cannot be assessed.
+
+    None is deliberately different from "everything is offline": if the watcher
+    cannot see the fleet it must not claim the fleet died.
+    """
+    cli = read_cli()
+    if cli is not None:
+        # Remember every address so the ping fallback keeps working when the CLI
+        # stops answering, which is how this stays alive on the hub.
+        st = load_state()
+        st["roster"] = {n: ip for n, (_, ip) in cli.items() if ip}
+        save_state(st)
+        return {n: up for n, (up, _) in cli.items() if not ignored(n)}
+    roster = {n: ip for n, ip in (load_state().get("roster") or {}).items()
+              if not ignored(n)}
+    return probe_roster(roster)
 
 
 def load_state():
@@ -124,7 +225,21 @@ def save_state(st):
         sys.stderr.write("fleet-watch: could not save state: %s\n" % e)
 
 
+def summary_json():
+    """One machine-readable line for other reporters. Never alarms by itself:
+    an unreadable tailnet is reported as unknown, never as an outage."""
+    fleet = read_fleet()
+    print(json.dumps({
+        "unknown": fleet is None,
+        "total": 0 if fleet is None else len(fleet),
+        "offline": sorted(h for h, up in (fleet or {}).items() if not up),
+    }))
+    return 0
+
+
 def main():
+    if "--json" in sys.argv[1:]:
+        return summary_json()
     fleet = read_fleet()
     if fleet is None:
         # Say so once rather than every run, so a broken watcher is visible but not noisy.
