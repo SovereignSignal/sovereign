@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""sov-fleet-watch — notice when the fleet goes dark, and keep saying so.
+
+Why this exists: the fleet monitors already here are level-triggered and run on a
+long cadence, so a real outage produces exactly one message. On 2026-09-04 a switch
+stopped forwarding at 04:57, fifteen hosts dropped, the six-hourly Proxmox monitor
+correctly reported "Nodes 0/0 online" at 06:15, and that single message went to the
+infra channel and was never seen. Five hours later the owner still believed the only
+problem was a stale heartbeat.
+
+So this watcher is edge-triggered with a repeat: it speaks when hosts go away, keeps
+reminding while they are still away, and says so again when they come back. It reads
+Tailscale rather than the LAN on purpose, because the hub roams between networks and
+its own subnet says nothing about whether the fleet is up.
+
+Contract: prints nothing when nothing has changed. The cron wrapper treats empty
+stdout as healthy and stays silent, so a normal day is quiet. Always exits 0 so the
+wrapper never reports this watcher itself as a failed job.
+
+Config, all optional and all instance data (the mechanism ships general):
+  SOV_FLEET_STATE     state file (default ~/.local/state/sovs-cron/fleet-watch.json)
+  SOV_FLEET_IGNORE    comma-separated hostnames never counted (phones, laptops)
+  SOV_FLEET_REALERT   minutes between reminders while still down (default 60)
+  SOV_FLEET_RED       hosts down at once that make it an infrastructure event
+                      (default: 3, or a third of the fleet, whichever is larger)
+  SOV_FLEET_ESCALATE  path to an executable fed the message on stdin when the event
+                      is RED. Unset means no escalation. This is how a red event
+                      reaches a louder channel than the routine one. It is a program
+                      path, not a shell string, so nothing here is ever interpreted
+                      by a shell; wrap it in a two-line script if you need env vars.
+"""
+
+import datetime
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+STATE = os.path.expanduser(
+    os.environ.get("SOV_FLEET_STATE", "~/.local/state/sovs-cron/fleet-watch.json"))
+IGNORE = {h.strip() for h in os.environ.get("SOV_FLEET_IGNORE", "").split(",") if h.strip()}
+REALERT = int(os.environ.get("SOV_FLEET_REALERT", "60"))
+ESCALATE = os.environ.get("SOV_FLEET_ESCALATE", "").strip()
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def iso(t):
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse(s):
+    try:
+        return datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.timezone.utc)
+    except Exception:
+        return None
+
+
+def ago(t):
+    """Human duration since t, at the resolution a person actually wants."""
+    m = int((now() - t).total_seconds() // 60)
+    if m < 60:
+        return "%dm" % m
+    if m < 1440:
+        return "%dh%02dm" % (m // 60, m % 60)
+    return "%dd%dh" % (m // 1440, (m % 1440) // 60)
+
+
+def tailscale_bin():
+    for p in (shutil.which("tailscale"),
+              "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+              "/usr/bin/tailscale", "/usr/local/bin/tailscale"):
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+def read_fleet():
+    """Return {host: online_bool}, or None when Tailscale cannot be read.
+
+    None is deliberately different from "everything is offline": if the watcher
+    cannot see the tailnet it must not claim the fleet died.
+    """
+    tb = tailscale_bin()
+    if not tb:
+        return None
+    try:
+        out = subprocess.run([tb, "status", "--json"], capture_output=True,
+                             text=True, timeout=30)
+        if out.returncode != 0 or not out.stdout.strip():
+            return None
+        d = json.loads(out.stdout)
+    except Exception:
+        return None
+    fleet = {}
+    for p in (d.get("Peer") or {}).values():
+        name = p.get("HostName") or (p.get("DNSName") or "").split(".")[0]
+        if not name or name in IGNORE:
+            continue
+        fleet[name] = bool(p.get("Online"))
+    return fleet or None
+
+
+def load_state():
+    try:
+        with open(STATE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(st):
+    try:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        tmp = STATE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(st, f, indent=1)
+        os.replace(tmp, STATE)
+    except Exception as e:
+        sys.stderr.write("fleet-watch: could not save state: %s\n" % e)
+
+
+def main():
+    fleet = read_fleet()
+    if fleet is None:
+        # Say so once rather than every run, so a broken watcher is visible but not noisy.
+        st = load_state()
+        if not st.get("blind"):
+            st["blind"] = iso(now())
+            save_state(st)
+            print("Fleet watch: cannot read Tailscale on this host. The fleet's state is "
+                  "unknown, not healthy. Check that tailscaled is running.")
+        return 0
+
+    st = load_state()
+    st.pop("blind", None)
+    was = st.get("offline") or {}          # host -> iso first seen offline
+    offline = sorted(h for h, up in fleet.items() if not up)
+    online = sorted(h for h, up in fleet.items() if up)
+
+    red_at = int(os.environ.get("SOV_FLEET_RED", "0")) or max(3, len(fleet) // 3)
+    new = [h for h in offline if h not in was]
+    back = sorted(h for h in was if h not in offline)
+    still = [h for h in offline if h in was]
+
+    now_iso = iso(now())
+    st["offline"] = {h: (was.get(h) or now_iso) for h in offline}
+
+    lines, red = [], False
+
+    if new:
+        red = len(offline) >= red_at
+        head = ("Fleet DOWN: %d of %d hosts unreachable" % (len(offline), len(fleet))
+                if red else "Fleet: %d host(s) went offline" % len(new))
+        lines.append(head)
+        lines.append("  just now: " + ", ".join(new))
+        if still:
+            lines.append("  already down: " + ", ".join(still))
+        if red:
+            lines.append("  %d hosts at once points at shared infrastructure "
+                         "(switch, power, or uplink), not at the hosts." % len(offline))
+        st["last_alert"] = now_iso
+
+    elif still:
+        last = parse(st.get("last_alert") or "")
+        if not last or (now() - last).total_seconds() >= REALERT * 60:
+            oldest = min(parse(st["offline"][h]) or now() for h in still)
+            red = len(offline) >= red_at
+            lines.append("Fleet STILL DOWN: %d of %d hosts unreachable for %s"
+                         % (len(offline), len(fleet), ago(oldest)))
+            lines.append("  " + ", ".join(still))
+            st["last_alert"] = now_iso
+
+    if back:
+        lines.append("Fleet recovered: %s back online (%d of %d up)"
+                     % (", ".join(back), len(online), len(fleet)))
+        if not offline:
+            st.pop("last_alert", None)
+
+    save_state(st)
+    if not lines:
+        return 0
+
+    msg = "\n".join(lines)
+    print(msg)
+    if red and ESCALATE:
+        try:
+            subprocess.run([ESCALATE], input=msg, text=True, timeout=60)
+        except Exception as e:
+            sys.stderr.write("fleet-watch: escalation failed: %s\n" % e)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as e:               # never let the watcher fail its own job
+        sys.stderr.write("fleet-watch: %s\n" % e)
+        sys.exit(0)
