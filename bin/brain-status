@@ -90,6 +90,21 @@ def manifest_last_run(lane_dir):
     return None
 
 
+def one_line(path):
+    if not path:
+        return None
+    try:
+        return open(os.path.expanduser(path), encoding="utf-8").readline().strip() or None
+    except OSError:
+        return None
+
+
+def file_last_run(meta):
+    """A job that keeps its own last-success file (one ISO timestamp) reports it in the manifest's shape."""
+    ts = one_line(meta.get("last_success_file"))
+    return "Last run: %s" % ts if ts else None
+
+
 def receipts_7d(lane_dir):
     p = os.path.join(lane_dir, "brain-load-usage.md")
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%MZ")
@@ -346,11 +361,16 @@ def _run_age_from_manifest(last_run_line):
     m = re.search(r"Last run: (\S+)", last_run_line or "")
     if not m:
         return None
+    ts = m.group(1)
     try:
-        t = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
-        return round((NOW - t) / 3600, 2)
+        t = datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
     except ValueError:
-        return None
+        try:   # any ISO-8601 with an offset, as a job's own last-success file may keep it
+            d = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            t = (d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)).timestamp()
+        except ValueError:
+            return None
+    return round((NOW - t) / 3600, 2)
 
 
 def _harness_entry(hdir, harness_id):
@@ -642,7 +662,7 @@ def main():
         except Exception:
             pass
         prefix = meta.get("lane_prefix", h)
-        lane = "%s-%s" % (prefix, host)
+        lane = meta.get("lane") or "%s-%s" % (prefix, host)   # a fixed name means one lane on every machine (cloud pulls)
         label = ("com.sovereign.connector.%s" if sys.platform == "darwin" else "sovereign-connector-%s") % h
         hook_path = next((p for p in glob.glob(os.path.join(hd, "session-start.*"))), None)
         hook_file = os.path.expanduser(meta.get("hook_file", "")) if meta.get("hook_file") else None
@@ -689,7 +709,12 @@ def main():
             except Exception:
                 trusted = None
         read_kind = meta.get("read", "hook" if hook_path else "none")
-        read_ok = hook_registered if read_kind == "hook" else (hook_registered if hook_registered is not None else read_kind == "instruction")
+        if read_kind == "hook":
+            read_ok = hook_registered
+        elif read_kind == "none":
+            read_ok = True                       # write-only pipe: loaded is connected
+        else:
+            read_ok = hook_registered if hook_registered is not None else read_kind == "instruction"
         if trusted is False:
             read_ok = False
         state = "connected" if (loaded and read_ok) else ("partial" if (loaded or hook_registered) else "not connected")
@@ -697,9 +722,10 @@ def main():
         harnesses.append({"id": h, "name": meta.get("name", h), "lane": lane, "lane_dir": lane_dir, "label": label, "detected": detected,
                           "read": read_kind, "hook_file": hook_file, "hook_registered": hook_registered, "trusted": trusted,
                           "job_loaded": loaded, "job": rows.get(label), "plist": plist_info(label) if loaded or os.path.exists(os.path.expanduser("~/Library/LaunchAgents/%s.plist" % label)) else None,
-                          "last_run": manifest_last_run(lane_dir) if lane_dir else None,
+                          "last_run": file_last_run(meta) or (manifest_last_run(lane_dir) if lane_dir else None),
+                          "last_status": one_line(meta.get("last_status_file")),
                           "reads_7d": receipts_7d(lane_dir) if lane_dir else {"total": 0, "real": 0},
-                          "manual_step": meta.get("manual_step"), "state": state,
+                          "manual_step": meta.get("manual_step"), "secret": meta.get("secret"), "state": state,
                           "has_mirror": os.path.exists(os.path.join(hd, "mirror.sh")),
                           "instruction": os.path.join(hd, "INSTRUCTION.md") if os.path.exists(os.path.join(hd, "INSTRUCTION.md")) else None})
     out["harnesses"] = harnesses
@@ -712,7 +738,7 @@ def main():
         catalog = []
     connected_ids = {h["id"] for h in harnesses if h["state"] == "connected"}
     for t in catalog:
-        det = any(os.path.exists(os.path.expanduser(x)) for x in t.get("detect", []))
+        det = any(os.path.exists(os.path.expanduser(x)) for x in t.get("detect", [])) if t.get("detect") else None
         tools_found.append({"id": t["id"], "name": t["name"], "detected": det, "connector": t.get("connector"),
                             "connected": (t.get("connector") in connected_ids) if t.get("connector") else False,
                             "note": t.get("note")})

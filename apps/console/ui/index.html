@@ -280,6 +280,10 @@
   .dash .tile:hover { border-color: var(--faint); }
   @media (max-width: 760px) { .tiles { grid-template-columns: repeat(2, 1fr); } .p-row { flex-direction: column; } }
 
+  .insp input.secret { width: 100%; box-sizing: border-box; font: 12px var(--mono); padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sunk); color: var(--ink); }
+  .insp input.secret:focus { outline: 2px solid var(--brass); outline-offset: 1px; }
+  .insp .secret-help { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
+
   #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
     transition: transform .16s ease; background: var(--panel); border-top: 1px solid var(--rule); box-shadow: var(--shadow); z-index: 30; }
   #drawer.open { transform: none; }
@@ -289,6 +293,7 @@
     font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; color: var(--ink-2); }
   #drawer .state { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
   @media (prefers-reduced-motion: reduce) { #drawer, #inspector { transition: none; } }
+  body.qa #drawer, body.qa #inspector { transition: none; }   /* snapshot QA: an occluded web view gets no animation frames */
 </style>
 </head>
 <body>
@@ -621,7 +626,7 @@ window.onerror = function (msg, src, line, col) {
     }
     if (it.kind === "tool") {
       const h = o.connector ? localTool(o.connector) : null;
-      const state = h ? h.state : (o.detected ? "no connector" : "not here");
+      const state = h ? h.state : (o.detected ? "no connector" : o.detected === null ? "cloud" : "not here");
       const cls = state === "connected" ? "on" : state === "partial" ? "mid" : state === "not connected" ? "off" : "";
       const t = h ? hz(h) : null;
       return `${dot(state === "connected" ? "live" : o.detected ? "warn" : "", state)}
@@ -826,13 +831,18 @@ window.onerror = function (msg, src, line, col) {
             ["job", `<span class="mono">${esc(h.label)}</span>`, "raw"],
             ["loaded", h.job_loaded ? "yes" : "no"],
             ["schedule", (h.plist || {}).schedule],
-            ["last run", t.run != null ? age(t.run) + " ago" : "never"],
+            ["last run", t.run != null ? age(t.run) + " ago" : (h.last_run ? h.last_run.replace(/^Last run: /, "") : "never")],
+            ...(h.last_status ? [["status", h.last_status]] : []),
             ["pulls", t.pulls]])}</div>`
           : `<div class="sect"><h2>State</h2><div class="prose">${o.detected
               ? "Found on this machine. No connector exists for it yet, so it neither reads the brain nor writes a lane."
+              : o.detected === null ? "A cloud service: there is nothing to find on this machine. Connect installs the scheduled pull."
               : "Not installed on this machine."}</div></div>`}
+        ${h && h.secret && h.secret.env ? `<div class="sect"><h2>${esc(h.secret.label || h.secret.env)}</h2>
+          <input type="password" class="secret" id="secret-${esc(o.connector)}" data-env="${esc(h.secret.env)}" autocomplete="off" spellcheck="false" placeholder="${h.state === "connected" ? "kept on this machine; paste again only to replace it" : "paste it here, then Connect"}">
+          ${h.secret.help ? `<div class="secret-help">${esc(h.secret.help)}</div>` : ""}</div>` : ""}
         <div class="acts">
-          ${o.connector && o.detected ? `<button class="${h && h.state === "connected" ? "" : "brass"}" data-act="connect" data-harness="${esc(o.connector)}">${h && h.state === "connected" ? "Reinstall" : "Connect"}</button>` : ""}
+          ${o.connector && o.detected !== false ? `<button class="${h && h.state === "connected" ? "" : "brass"}" data-act="connect" data-harness="${esc(o.connector)}">${h && h.state === "connected" ? "Reinstall" : "Connect"}</button>` : ""}
           ${h && h.job_loaded ? `<button data-act="kickstart" data-label="${esc(h.label)}">Run mirror now</button>` : ""}
           ${h && h.lane_dir ? `<button data-act="reveal" data-path="${esc(h.lane_dir)}">Show lane</button>` : ""}
           ${h ? obsBtn("raw/tools/" + h.lane + "/LANE") : ""}</div>`;
@@ -1008,7 +1018,11 @@ window.onerror = function (msg, src, line, col) {
       if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
       if (b.id === "drawer-apply") { if (pendingConnect) connect(pendingConnect.harness, true); return; }
       const act = b.dataset.act;
-      if (act === "connect") return connect(b.dataset.harness, false, {});
+      if (act === "connect") {   // a secret travels in memory to the bridge, which puts it in the child's environment only
+        const f = document.getElementById("secret-" + b.dataset.harness), extra = {};
+        if (f && f.value) { extra.secret = f.value; extra.secretEnv = f.dataset.env; }
+        return connect(b.dataset.harness, false, extra);
+      }
       if (act === "kickstart") { openDrawer("Run now: " + b.dataset.label, false); return bridge({ cmd: "kickstart", label: b.dataset.label }); }
       if (act === "reveal") return bridge({ cmd: "reveal", path: b.dataset.path });
       if (act === "open") return bridge({ cmd: "open", path: b.dataset.path });

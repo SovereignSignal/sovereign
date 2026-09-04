@@ -69,7 +69,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 if let v = d[key] as? String, !v.isEmpty { args += [flag, v] }
             }
             if (d["apply"] as? Bool) == true { args.append("--apply") }
-            stream(args, id: "connect")
+            // a secret rides in the child's environment only: never on argv, never in the log
+            var secretEnv: [String: String] = [:]
+            if let v = d["secret"] as? String, let k = d["secretEnv"] as? String, !v.isEmpty,
+               k.range(of: "^[A-Z_][A-Z0-9_]*$", options: .regularExpression) != nil { secretEnv[k] = v }
+            stream(args, id: "connect", env: secretEnv)
         case "kickstart":
             guard let label = d["label"] as? String else { return }
             run(["/bin/launchctl", "kickstart", "-k", "gui/\(getuid())/\(label)"]) { out, err, code in
@@ -146,12 +150,12 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    func stream(_ args: [String], id: String) {
+    func stream(_ args: [String], id: String, env extra: [String: String] = [:]) {
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: args[0])
             p.arguments = Array(args.dropFirst())
-            p.environment = self.env()
+            p.environment = self.env().merging(extra) { _, new in new }
             let o = Pipe()
             p.standardOutput = o; p.standardError = o
             self.deliver("log", ["id": id, "line": "$ " + args.map { $0.hasPrefix("/") ? ($0 as NSString).lastPathComponent : $0 }.joined(separator: " "), "state": "start"])
@@ -296,7 +300,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                     } else {
                         js = "var el=document.querySelector(\"\(anchor)\"); if(el){el.scrollIntoView({block:'start'});} else {window.scrollTo(0, document.body.scrollHeight);}"
                     }
-                    self.web.evaluateJavaScript(js) { _, _ in
+                    self.web.evaluateJavaScript("document.body.classList.add('qa');" + js) { _, _ in
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                             self.web.takeSnapshot(with: nil) { image2, _ in
                                 save(image2, snap.replacingOccurrences(of: ".png", with: "-bottom.png"))
