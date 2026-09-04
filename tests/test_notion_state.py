@@ -33,6 +33,15 @@ class Writes(unittest.TestCase):
     def test_sha256(self):
         self.assertEqual(sha256_bytes(b"abc")[:12], "ba7816bf8f01")
 
+    def test_atomic_write_removes_the_part_file_when_the_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "x.md"
+            p.write_bytes(b"keep")
+            with self.assertRaises(TypeError):
+                atomic_write(p, "not bytes")  # type: ignore[arg-type]
+            self.assertEqual(sorted(os.listdir(tmp)), ["x.md"])
+            self.assertEqual(p.read_bytes(), b"keep")
+
 
 class ManifestRoundTrip(unittest.TestCase):
     def test_save_load_and_rows_of(self):
@@ -76,6 +85,13 @@ class StateFiles(unittest.TestCase):
             self.assertEqual((Path(tmp) / "last-success").read_text().strip(), success)
             s.log("a line")
             self.assertIn("a line", (Path(tmp) / "mirror.log").read_text())
+
+    def test_fail_survives_an_unwritable_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s = State(Path(tmp))
+            (Path(tmp) / "mirror.log").mkdir()  # a directory where the log file should be
+            s.fail("boom")
+            self.assertTrue((Path(tmp) / "last-status").read_text().startswith("FAILED "))
 
 
 if __name__ == "__main__":

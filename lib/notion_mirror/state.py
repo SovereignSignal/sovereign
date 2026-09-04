@@ -34,9 +34,14 @@ def atomic_write(path: Path, data: bytes) -> None:
     """Write beside the target and rename over it, so a reader never sees a partial file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".part")
-    with open(tmp, "wb") as fh:
-        fh.write(data)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    except Exception:
+        if tmp.exists():
+            os.unlink(tmp)
+        raise
 
 
 def write_if_changed(path: Path, data: bytes) -> bool:
@@ -111,6 +116,9 @@ class State:
 
     def log(self, line: str) -> None:
         stamp = time.strftime(STAMP)
-        with open(self.root / "mirror.log", "a", encoding="utf-8") as fh:
-            fh.write("[%s] %s\n" % (stamp, line))
+        try:
+            with open(self.root / "mirror.log", "a", encoding="utf-8") as fh:
+                fh.write("[%s] %s\n" % (stamp, line))
+        except OSError:
+            print("could not write to mirror.log", file=sys.stderr)
         print("[%s] %s" % (stamp, line), file=sys.stderr)
