@@ -187,3 +187,116 @@ def render_blocks(blocks: List[dict], links: Links, attachments: list, page_path
             add("<!-- unsupported: %s -->\n\n" % kind, None)
     out = "".join(pieces)
     return out.rstrip("\n") + "\n" if out.strip() else ""
+
+
+# --- properties, page assembly, CSV ------------------------------------------------
+
+
+def _number(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def property_text(prop: dict, links: Links) -> str:
+    kind = prop.get("type", "")
+    value = prop.get(kind)
+    if value is None:
+        return ""
+    if kind in ("title", "rich_text"):
+        return plain_text(value)
+    if kind in ("select", "status"):
+        return value.get("name", "")
+    if kind == "multi_select":
+        return ", ".join(v.get("name", "") for v in value)
+    if kind == "date":
+        start, end = value.get("start") or "", value.get("end")
+        return "%s to %s" % (start, end) if end else start
+    if kind == "checkbox":
+        return "Yes" if value else "No"
+    if kind == "number":
+        return _number(value)
+    if kind in ("url", "email", "phone_number"):
+        return str(value)
+    if kind == "people":
+        return ", ".join(p.get("name") or p.get("id", "") for p in value)
+    if kind == "files":
+        return ", ".join(f.get("name", "") for f in value)
+    if kind == "relation":
+        return ", ".join(links.title(r.get("id", "")) or norm_id(r.get("id", "")) for r in value)
+    if kind == "formula":
+        inner = value.get("type", "")
+        return property_text({"type": inner, inner: value.get(inner)}, links) if inner else ""
+    if kind == "rollup":
+        inner = value.get("type", "")
+        if inner == "array":
+            return ", ".join(property_text(v, links) for v in value.get("array", []))
+        return property_text({"type": inner, inner: value.get(inner)}, links) if inner else ""
+    if kind == "string":
+        return str(value)
+    if kind == "boolean":
+        return "Yes" if value else "No"
+    if kind in ("created_time", "last_edited_time"):
+        return str(value)
+    if kind in ("created_by", "last_edited_by"):
+        return value.get("name") or value.get("id", "")
+    if kind == "unique_id":
+        prefix = value.get("prefix")
+        return "%s-%s" % (prefix, value.get("number")) if prefix else str(value.get("number", ""))
+    if kind == "verification":
+        return value.get("state", "")
+    return ""
+
+
+def property_order(schema_props: Dict[str, dict]) -> List[str]:
+    names = list(schema_props.keys())
+    titles = [n for n in names if (schema_props[n] or {}).get("type") == "title"]
+    return titles + [n for n in names if n not in titles]
+
+
+def render_page(item: dict, page_obj: dict, blocks: List[dict], links: Links, attachments: list,
+                page_path: str, schema_props: Optional[Dict[str, dict]] = None) -> str:
+    title = item.get("title") or "Untitled"
+    out = "# %s\n" % title
+    props = page_obj.get("properties") or {}
+    if item.get("kind") == "row":
+        lines = []
+        for name in property_order(schema_props or props):
+            prop = props.get(name)
+            if not prop or prop.get("type") == "title":
+                continue
+            text = property_text(prop, links)
+            if text:
+                lines.append("%s: %s" % (name, text))
+        if lines:
+            out += "\n" + "\n".join(lines) + "\n"
+    body = render_blocks(blocks, links, attachments, page_path)
+    if body:
+        out += "\n" + body
+    return out
+
+
+def row_cells(schema_props: Dict[str, dict], page_obj: dict, links: Links) -> List[str]:
+    props = page_obj.get("properties") or {}
+    return [property_text(props[name], links) if name in props else "" for name in property_order(schema_props)]
+
+
+def render_csv(schema_props: Dict[str, dict], rows: List[dict], links: Links) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(property_order(schema_props))
+    for page_obj in rows:
+        writer.writerow(row_cells(schema_props, page_obj, links))
+    return "﻿" + buf.getvalue()
+
+
+def csv_from_cells(header: List[str], cells: List[List[str]]) -> str:
+    """Rebuild a CSV from cached cells (the delta path, no requery)."""
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(header)
+    for row_cells_ in cells:
+        writer.writerow(row_cells_)
+    return "﻿" + buf.getvalue()
