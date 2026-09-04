@@ -183,9 +183,8 @@ class Mirror:
             elif len(rep.mismatches) < 200:
                 rep.mismatches.append((i, p, disk.get(i, "")))
 
-        # full walks everything: every item is a render candidate, and write_if_changed's
-        # hash compare (not a last_edited filter) is what keeps a re-run idempotent.
-        changed = list(items.keys())
+        changed = [i for i, it in items.items()
+                   if it["kind"] == "database" or i not in old or old[i].get("last_edited") != it["last_edited"]]
         moves = [(old[i]["path"], paths[i]) for i in items if i in old and old[i].get("path") and old[i]["path"] != paths[i]]
         rep.would_write = [paths[i] for i in changed]
         rep.would_move = moves

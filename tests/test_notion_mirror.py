@@ -77,12 +77,16 @@ class FullRun(unittest.TestCase):
             self.assertEqual(State(cfg.state_dir).read_cursor(), EDIT)
             self.assertIsNotNone(State(cfg.state_dir).read_last_full())
 
-    def test_full_is_idempotent(self):
+    def test_full_is_idempotent_and_refetches_only_databases(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg, client, lane = workspace(tmp)
             Mirror(client, cfg, State(cfg.state_dir)).full()
+            before = client.requests
             rep = Mirror(client, cfg, State(cfg.state_dir)).full()
-            self.assertEqual((rep.written, rep.unchanged, rep.moved, rep.deleted), (0, 6, 0, 0))
+            # nothing edited: no page is re-rendered; only the database is requeried and found unchanged
+            self.assertEqual((rep.written, rep.unchanged, rep.moved, rep.deleted), (0, 1, 0, 0))
+            self.assertEqual(client.queries, 2)
+            self.assertEqual(client.requests - before, 3)  # search, data_source schema, query_rows
 
     def test_dry_run_writes_nothing_and_reports_the_oracle(self):
         with tempfile.TemporaryDirectory() as tmp:
