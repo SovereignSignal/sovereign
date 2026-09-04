@@ -27,6 +27,7 @@ one-line machine-readable summary and alerts on nothing.
   SOV_FLEET_REALERT   minutes between reminders while still down (default 60)
   SOV_FLEET_RED       hosts down at once that make it an infrastructure event
                       (default: 3, or a third of the fleet, whichever is larger)
+  SOV_FLEET_CRITICAL  comma-separated hosts whose absence is red on its own
   SOV_FLEET_ESCALATE  path to an executable fed the message on stdin when the event
                       is RED. Unset means no escalation. This is how a red event
                       reaches a louder channel than the routine one. It is a program
@@ -79,6 +80,10 @@ STATE = os.path.expanduser(
 IGNORE = {h.strip() for h in setting("SOV_FLEET_IGNORE").split(",") if h.strip()}
 REALERT = int(setting("SOV_FLEET_REALERT", "60") or 60)
 ESCALATE = setting("SOV_FLEET_ESCALATE").strip()
+# Hosts whose absence is an emergency on its own, whatever the count. An
+# off-site watcher exists mainly to notice that the hub died, and one host
+# down would otherwise be a yellow it never escalates.
+CRITICAL = {h.strip() for h in setting("SOV_FLEET_CRITICAL").split(",") if h.strip()}
 
 
 def now():
@@ -257,7 +262,10 @@ def main():
     offline = sorted(h for h, up in fleet.items() if not up)
     online = sorted(h for h, up in fleet.items() if up)
 
-    red_at = int(os.environ.get("SOV_FLEET_RED", "0")) or max(3, len(fleet) // 3)
+    red_at = int(setting("SOV_FLEET_RED", "0") or 0) or max(3, len(fleet) // 3)
+
+    def is_red(down):
+        return len(down) >= red_at or any(base_name(h) in CRITICAL for h in down)
     new = [h for h in offline if h not in was]
     back = sorted(h for h in was if h not in offline)
     still = [h for h in offline if h in was]
@@ -268,14 +276,17 @@ def main():
     lines, red = [], False
 
     if new:
-        red = len(offline) >= red_at
+        red = is_red(offline)
         head = ("Fleet DOWN: %d of %d hosts unreachable" % (len(offline), len(fleet))
                 if red else "Fleet: %d host(s) went offline" % len(new))
         lines.append(head)
         lines.append("  just now: " + ", ".join(new))
         if still:
             lines.append("  already down: " + ", ".join(still))
-        if red:
+        crit = [h for h in offline if base_name(h) in CRITICAL]
+        if crit:
+            lines.append("  critical host down: " + ", ".join(crit))
+        if red and len(offline) >= red_at:
             lines.append("  %d hosts at once points at shared infrastructure "
                          "(switch, power, or uplink), not at the hosts." % len(offline))
         st["last_alert"] = now_iso
@@ -284,7 +295,7 @@ def main():
         last = parse(st.get("last_alert") or "")
         if not last or (now() - last).total_seconds() >= REALERT * 60:
             oldest = min(parse(st["offline"][h]) or now() for h in still)
-            red = len(offline) >= red_at
+            red = is_red(offline)
             lines.append("Fleet STILL DOWN: %d of %d hosts unreachable for %s"
                          % (len(offline), len(fleet), ago(oldest)))
             lines.append("  " + ", ".join(still))

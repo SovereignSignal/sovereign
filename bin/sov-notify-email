@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""sov-notify-email — send one alert by email. Reads the body on stdin.
+
+Why email: chat delivery depends on one app being unmuted, and a channel nobody
+watches is the same as no alert (2026-09-04: a fleet outage was correctly reported
+to a muted bot and ran five hours unseen). Email is a second, independent path.
+
+Plain SMTP on purpose, so it works with Gmail, Google Workspace, Fastmail, or any
+relay, and adds no vendor. Configure it once in ~/.config/sovs-cron/email.env:
+
+    SOV_SMTP_HOST=smtp.gmail.com
+    SOV_SMTP_PORT=587          # 587 STARTTLS (usual), or 465 implicit TLS
+    SOV_SMTP_USER=you@example.com
+    SOV_SMTP_PASS=an-app-password
+    SOV_EMAIL_TO=you@example.com
+    SOV_EMAIL_FROM=            # optional, defaults to SOV_SMTP_USER
+    SOV_EMAIL_SUBJECT_PREFIX=  # optional, defaults to "[sovereign]"
+
+Environment overrides the file. Usage:
+
+    echo "something broke" | sov-notify-email
+    sov-notify-email --subject "Fleet DOWN" < message.txt
+    sov-notify-email --check            # send nothing, just report readiness
+
+Exits nonzero when it could not send, so a caller can log the failure. It never
+raises, and it never prints the password.
+"""
+
+import argparse
+import io
+import os
+import smtplib
+import socket
+import ssl
+import sys
+from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
+
+CONF_PATH = os.path.expanduser(
+    os.environ.get("SOV_EMAIL_CONF", "~/.config/sovs-cron/email.env"))
+
+
+def conf():
+    out = {}
+    try:
+        with io.open(CONF_PATH, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return out
+
+
+CONF = conf()
+
+
+def setting(name, default=""):
+    v = os.environ.get(name)
+    if v is None or v == "":
+        v = CONF.get(name, default)
+    return v
+
+
+def missing():
+    """Which required settings are absent. Kept separate so --check can report
+    readiness without sending anything."""
+    need = ("SOV_SMTP_HOST", "SOV_SMTP_USER", "SOV_SMTP_PASS", "SOV_EMAIL_TO")
+    return [n for n in need if not setting(n)]
+
+
+def send(body, subject):
+    gaps = missing()
+    if gaps:
+        sys.stderr.write(
+            "sov-notify-email: not configured (%s missing from %s)\n"
+            % (", ".join(gaps), CONF_PATH))
+        return 2
+
+    host = setting("SOV_SMTP_HOST")
+    port = int(setting("SOV_SMTP_PORT", "587") or 587)
+    user = setting("SOV_SMTP_USER")
+    password = setting("SOV_SMTP_PASS")
+    to = [a.strip() for a in setting("SOV_EMAIL_TO").split(",") if a.strip()]
+    sender = setting("SOV_EMAIL_FROM") or user
+    prefix = setting("SOV_EMAIL_SUBJECT_PREFIX", "[sovereign]")
+
+    msg = EmailMessage()
+    msg["From"] = sender
+    msg["To"] = ", ".join(to)
+    msg["Subject"] = ("%s %s" % (prefix, subject)).strip()
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid()
+    # Which machine noticed matters: the whole point of a second watcher off-site
+    # is knowing whether the report came from inside the outage or outside it.
+    msg.set_content("%s\n\n-- \nreported by %s\n" % (body.rstrip(), socket.gethostname()))
+
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=30,
+                                  context=ssl.create_default_context()) as s:
+                s.login(user, password)
+                s.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=30) as s:
+                s.ehlo()
+                s.starttls(context=ssl.create_default_context())
+                s.ehlo()
+                s.login(user, password)
+                s.send_message(msg)
+    except Exception as e:
+        # Never echo the password back, not even inside a library's error text.
+        sys.stderr.write("sov-notify-email: send failed: %s\n"
+                         % str(e).replace(password, "***"))
+        return 1
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--subject", default="")
+    ap.add_argument("--check", action="store_true",
+                    help="report whether sending is configured, send nothing")
+    args = ap.parse_args()
+
+    if args.check:
+        gaps = missing()
+        if gaps:
+            print("not configured: %s missing from %s" % (", ".join(gaps), CONF_PATH))
+            return 2
+        print("configured: %s via %s:%s -> %s"
+              % (setting("SOV_EMAIL_FROM") or setting("SOV_SMTP_USER"),
+                 setting("SOV_SMTP_HOST"), setting("SOV_SMTP_PORT", "587"),
+                 setting("SOV_EMAIL_TO")))
+        return 0
+
+    body = sys.stdin.read() if not sys.stdin.isatty() else ""
+    if not body.strip():
+        sys.stderr.write("sov-notify-email: nothing on stdin, not sending\n")
+        return 2
+    subject = args.subject or body.strip().splitlines()[0][:120]
+    return send(body, subject)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as e:
+        sys.stderr.write("sov-notify-email: %s\n" % e)
+        sys.exit(1)
