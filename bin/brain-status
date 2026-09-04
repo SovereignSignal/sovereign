@@ -515,12 +515,16 @@ def archive_shape(root):
         links.discard(slug)
         for l in links:
             inbound[l] = inbound.get(l, 0) + 1
+        week = None
         try:
-            age = (today - datetime.date.fromisoformat(fm.get("created", ""))).days
+            cd = datetime.date.fromisoformat(fm.get("created", ""))
+            age = (today - cd).days
+            y, w, _ = cd.isocalendar()
+            week = "%d-W%02d" % (y, w)
         except ValueError:
             age = None
         cards.append({"slug": slug, "rel": os.path.relpath(p, root)[:-3], "type": fm.get("type") or "?",
-                      "month": (fm.get("created") or "")[:7] or "?", "src": bucket,
+                      "month": (fm.get("created") or "")[:7] or "?", "week": week, "src": bucket,
                       "title": fm.get("title") or slug, "words": len(body.split()),
                       "out": len(links), "age_d": age, "targets": sorted(links)})
     for c in cards:

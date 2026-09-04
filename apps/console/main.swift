@@ -20,7 +20,7 @@ enum Settings {
     static var location: String { get { d.string(forKey: "sov.where") ?? "dock" } set { d.set(newValue, forKey: "sov.where") } }
     static var loginItem: Bool { get { d.bool(forKey: "sov.loginItem") } set { d.set(newValue, forKey: "sov.loginItem") } }
     static var refresh: Int { get { let v = d.integer(forKey: "sov.refresh"); return v > 0 ? v : 60 } set { d.set(newValue, forKey: "sov.refresh") } }
-    static var defaultView: String { get { d.string(forKey: "sov.defaultView") ?? "archive" } set { d.set(newValue, forKey: "sov.defaultView") } }
+    static var defaultView: String { get { d.string(forKey: "sov.defaultView") ?? "hosts" } set { d.set(newValue, forKey: "sov.defaultView") } }
     static var lastError: String? = nil
 
     static func dict(probe: Bool = false) -> [String: Any] {

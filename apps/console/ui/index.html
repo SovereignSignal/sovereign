@@ -234,6 +234,52 @@
   label.radio input, label.check input { width: auto; margin: 0; }
   @media (max-width: 900px) { #pulse .tile .s { display: none; } }
 
+  /* the archive as a picture */
+  .dash { padding: 4px 16px 24px; }
+  .panel { padding: 12px 0 10px; border-bottom: 1px solid var(--rule-soft); }
+  .panel:last-child { border-bottom: 0; }
+  .p-head { display: flex; align-items: baseline; gap: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-bottom: 8px; }
+  .p-head b { font: 600 15px var(--mono); color: var(--ink); letter-spacing: -0.02em; }
+  .p-row { display: flex; gap: 28px; align-items: stretch; }
+  .p-col { min-width: 0; } .p-col.grow { flex: 1; }
+  .stack.big { height: 14px; gap: 2px; margin: 0 0 8px; border-radius: 4px; }
+  .sg { border: 0; padding: 0; min-width: 3px; border-radius: 0; cursor: pointer; display: block; height: 100%; }
+  .sg.s1 { background: var(--s1); } .sg.s2 { background: var(--s2); } .sg.s3 { background: var(--s3); } .sg.s4 { background: var(--s4); }
+  .sg:hover { filter: brightness(1.15); }
+  .legend .lg { border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+  .legend .lg:hover { color: var(--ink); }
+  .cols { display: flex; align-items: flex-end; gap: 6px; height: 128px; }
+  .col { flex: 1; min-width: 0; display: block; height: 128px; border: 0; background: transparent; padding: 0; cursor: pointer; }
+  .col .tot { display: block; font: 10px var(--mono); color: var(--muted); text-align: center; height: 14px; line-height: 14px; }
+  .col .stk { display: flex; flex-direction: column-reverse; gap: 2px; height: 100px; }
+  .col .stk i { display: block; border-radius: 0; }
+  .col .stk i:last-child { border-radius: 3px 3px 0 0; }
+  .col .stk i.s1 { background: var(--s1); } .col .stk i.s2 { background: var(--s2); } .col .stk i.s3 { background: var(--s3); } .col .stk i.s4 { background: var(--s4); }
+  .col:hover .bar i { filter: brightness(1.15); }
+  .col .lbl { display: block; font: 10px var(--mono); color: var(--faint); text-align: center; height: 14px; line-height: 14px; white-space: nowrap; }
+  .chart { border: 0; background: transparent; padding: 0; cursor: pointer; display: block; border-radius: 6px; }
+  .chart:hover { background: var(--sunk); }
+  .keep .lab { font: 10px var(--mono); fill: var(--muted); } .keep .lab.hot { fill: var(--brass); font-weight: 600; }
+  .keep .ax { font: 10px var(--mono); fill: var(--faint); }
+  .hbar { display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; border: 0; background: transparent; padding: 0;
+    font-family: var(--mono); color: var(--ink-2); cursor: pointer; text-align: left; }
+  .hbar .l { width: 96px; flex: none; font-size: 11.5px; }
+  .hbar .track { flex: 0 0 34%; height: 8px; border-radius: 3px; background: var(--rule); overflow: hidden; }
+  .hbar .track i { display: block; height: 100%; background: var(--brass); border-radius: 3px; }
+  .hbar .n { width: 42px; text-align: right; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .hbar .p { width: 36px; color: var(--muted); font-size: 10.5px; }
+  .hbar .x { flex: 1; min-width: 0; color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbar:hover .l { color: var(--ink); }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .dash .tile { display: flex; flex-direction: column; gap: 4px; padding: 9px 11px; border: 1px solid var(--rule); border-radius: 8px;
+    background: var(--panel); text-align: left; cursor: pointer; min-width: 0; }
+  .dash .tile b { font: 600 16px var(--mono); color: var(--ink); letter-spacing: -0.02em; }
+  .dash .tile .l { font-size: 11px; color: var(--muted); }
+  .dash .tile .meter { width: 100%; }
+  .dash .tile .p { font: 10.5px var(--mono); color: var(--faint); }
+  .dash .tile:hover { border-color: var(--faint); }
+  @media (max-width: 760px) { .tiles { grid-template-columns: repeat(2, 1fr); } .p-row { flex-direction: column; } }
+
   #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
     transition: transform .16s ease; background: var(--panel); border-top: 1px solid var(--rule); box-shadow: var(--shadow); z-index: 30; }
   #drawer.open { transform: none; }
@@ -264,8 +310,8 @@
     <div class="bar">
       <span class="nav"><button id="back" class="quiet" aria-label="Back" title="Back (⌘[)" disabled>◀</button><button id="fwd" class="quiet" aria-label="Forward" title="Forward (⌘])" disabled>▶</button></span>
       <div class="seg" role="group" aria-label="View">
-        <button data-view="archive" aria-pressed="true">Archive</button>
-        <button data-view="hosts" aria-pressed="false">Hosts</button>
+        <button data-view="hosts" aria-pressed="true">Hosts</button>
+        <button data-view="archive" aria-pressed="false">Archive</button>
         <button data-view="lanes" aria-pressed="false">Lanes</button>
         <button data-view="tools" aria-pressed="false">Tools</button>
         <button data-view="jobs" aria-pressed="false">Jobs</button>
@@ -290,20 +336,17 @@
 window.onerror = function (msg, src, line, col) {
   var g = document.getElementById("glance") || document.getElementById("insp");
   if (g) { g.hidden = false; g.innerHTML += '<div class="empty" style="color:var(--down)">Script error: ' + String(msg) + ' at ' + line + ':' + col + '</div>'; }
+  var c = document.getElementById("listcount"); if (c) c.textContent = "script error " + line + ":" + col + " " + String(msg).slice(0, 80);
 };
 (function () {
   const $ = (s, r) => (r || document).querySelector(s);
   const bridge = (m) => { try { window.webkit.messageHandlers.sov.postMessage(m); } catch (e) { console.warn("no bridge", e); } };
-  let D = null, view = "archive", sel = null, pendingConnect = null, pinned = false, armed = null;
+  let D = null, view = "hosts", sel = null, pendingConnect = null, pinned = false, armed = null;
   const GLANCE = location.hash.startsWith("#glance");
   document.body.classList.toggle("glance", GLANCE);
   if (location.hash === "#glance-qa") document.body.classList.add("qa");
   let S = { where: "dock", loginItem: false, refresh: 60, defaultView: "archive", loginState: "unavailable" };
   let gotSettings = false, timer = null, settingsOpen = false, domIdentity = null;
-  // Archive sections remember whether they are open; the gate and the judge start open,
-  // the rest start folded so the view opens quiet.
-  let secOpen = { gate: true, judge: true, composition: false, sources: false, health: false };
-  try { Object.assign(secOpen, JSON.parse(localStorage.getItem("sov.sections") || "{}")); } catch (e) {}
   const hist = { stack: [], i: -1 };
   try { pinned = localStorage.getItem("sov.pinned") === "1"; } catch (e) {}
   document.body.classList.toggle("pinned", pinned);
@@ -388,68 +431,131 @@ window.onerror = function (msg, src, line, col) {
   }
 
   // ---------- rows ----------
+  // ---------- the archive, as a picture ----------
   const SERIES = { concept: "s1", entity: "s2", synthesis: "s3" };
-  function archiveRows() {
-    const a = arch(), h = hub(), st = h.status || {}, cov = st.coverage || {};
-    if (!a.total) return [{ kind: "quiet", id: "no-archive", text: a.error ? "Archive could not be read: " + a.error : "No cards yet." }];
-    const rows = [], cards = a.cards || [];
-    const bySlug = {}; cards.forEach(c => bySlug[c.slug] = c);
-    const head = (id, label, n) => rows.push({ kind: "head", id: "h-" + id, section: id, label, n });
-    const arow = (id, label, desc, n, share, cls, list, extra) => rows.push({ kind: "arch", id, label, desc, n, share, cls, list: list || [], extra: extra || {} });
-
-    // the gate first: it is the only thing here that asks something of the owner
-    const props = h.proposals || [];
-    head("gate", "At the gate", props.length ? `${num(h.pending)} waiting` : "");
-    if (!props.length) rows.push({ kind: "quiet", id: "gate-empty", text: "Nothing waiting at the gate." });
-    props.forEach(p => rows.push({ kind: "prop", id: "p:" + p.slug, o: p }));
-
-    head("judge", "The judge", (h.judge || {}).total_judged ? num(h.judge.total_judged) + " judged all time" : "");
-    const weeks = ((h.judge || {}).weeks) || [];
-    weeks.slice(-8).reverse().forEach(w => arow("w:" + w.week, w.week.replace("-W", " week "), `${num(w.judged)} judged · ${num(w.kept)} kept`, pct(w.kept, w.judged), w.judged ? w.kept / w.judged : 0, "", [], { week: w }));
-    arow("backlog", "unjudged in window", "material the nightly has not reached", num(st.deferred ?? cov.unjudged_in_window), cov.processable ? (st.deferred ?? cov.unjudged_in_window) / cov.processable : 0, "warn", [], { kv: [["processable", num(cov.processable)], ["judged ever", num(cov.judged_ever)], ["stranded pre-watermark", num(cov.stranded_pre_watermark)], ["last run judged", num(st.judged)], ["last run kept", num(st.new_proposals)]] });
-    const bd = h.burndown || {};
-    arow("burndown", "burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "runs every 2h through the backlog; stops itself under 2% kept", bd.stopped ? "stopped" : "running", bd.stopped ? 1 : 0, bd.stopped ? "down" : "live", [], { kv: [["state", bd.stopped ? "stopped by the 2% floor" : "armed"], ["note", bd.note || "—"]] });
-    const gears = h.gears || {}, gvals = [...new Set(Object.values(gears))];
-    if (gvals.length === 1 && Object.keys(gears).length) arow("gears", "gears", `${Object.keys(gears).join(", ")}: ${gvals[0] === "ask-first" ? "every card waits for you" : gvals[0]}`, gvals[0], gvals[0] === "ask-first" ? 0 : 1, gvals[0] === "ask-first" ? "" : "live", [], { kv: [["gear", gvals[0]], ["basis", h.gears_note || ""]] });
-    else Object.entries(gears).forEach(([t, g]) => arow("gear:" + t, t, g === "ask-first" ? "every card waits for you" : g, g, g === "ask-first" ? 0 : 1, g === "ask-first" ? "" : "live", [], { kv: [["gear", g], ["basis", h.gears_note || ""]] }));
-
-    head("composition", "What the archive is", `${num(a.total)} cards`);
-    const bt = a.by_type || {};
-    Object.entries(bt).sort((x, y) => y[1] - x[1]).forEach(([t, n]) => arow("type:" + t, t, "", num(n), n / a.total, SERIES[t] || "s4", cards.filter(c => c.type === t).map(c => c.slug)));
-    const bm = a.by_month || {};
-    Object.keys(bm).sort().reverse().forEach(mo => arow("month:" + mo, mo, "cards created", num(bm[mo]), bm[mo] / Math.max(...Object.values(bm)), "", cards.filter(c => c.month === mo).map(c => c.slug)));
-
-    head("sources", "Where it comes from", "");
-    const bs = a.by_src || {};
-    const maxS = Math.max(...Object.values(bs));
-    Object.entries(bs).sort((x, y) => y[1] - x[1]).forEach(([s, n]) => arow("src:" + s, s, s === "desk" ? "your own desk, workstreams" : s === "web" ? "web sources" : s === "legacy" ? "one-time imports" : s === "other" ? "unattributed" : "producer lane", num(n), n / maxS, "", cards.filter(c => c.src === s).map(c => c.slug)));
-
-    head("health", "How well it hangs together", "");
-    const wd = a.words || {};
-    arow("orphans", "no inbound links", "cards nothing points at", num((a.orphans || []).length), (a.orphans || []).length / a.total, "warn", a.orphans);
-    arow("zerolink", "no outbound links", "cards that link to nothing", num((a.zero_link || []).length), (a.zero_link || []).length / a.total, "warn", a.zero_link);
-    arow("dangling", "dangling links", "targets that are not cards", num((a.dangling || []).length), 0, "down", [], { dangling: a.dangling || [] });
-    arow("long", "over 450 words", "past the one-screen line", num((a.over_length || []).length), (a.over_length || []).length / a.total, "warn", a.over_length, { kv: [["median", wd.median + " words"], ["p90", wd.p90 + " words"], ["longest", wd.max + " words"]] });
-    if (arguments[0] === "all") return rows;   // unfolded, for finding a row's section
-    // fold: a closed section keeps only its header, which then says how much it hides
-    const out = []; let cur = null, hidden = 0, curHead = null;
-    for (const r of rows) {
-      if (r.kind === "head") {
-        if (curHead && hidden) curHead.n = (curHead.n ? curHead.n + " · " : "") + hidden + " rows";
-        cur = r.section; curHead = r; hidden = 0; r.open = secOpen[cur] !== false; out.push(r);
-      } else if (!cur || secOpen[cur] !== false) out.push(r);
-      else hidden++;
-    }
-    if (curHead && hidden) curHead.n = (curHead.n ? curHead.n + " · " : "") + hidden + " rows";
+  function isoWeekKey(d) {
+    const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day);
+    const y = t.getUTCFullYear(), w = Math.ceil((((t - Date.UTC(y, 0, 1)) / 864e5) + 1) / 7);
+    return y + "-W" + String(w).padStart(2, "0");
+  }
+  function lastWeeks(n) {
+    const out = [], now = new Date();
+    for (let i = n - 1; i >= 0; i--) { const x = new Date(now); x.setDate(now.getDate() - 7 * i); out.push({ key: isoWeekKey(x), date: x }); }
     return out;
   }
-  function toggleSection(sec) {
-    secOpen[sec] = secOpen[sec] === false;
-    try { localStorage.setItem("sov.sections", JSON.stringify(secOpen)); } catch (e) {}
-    renderList();
+  const monthOf = (d) => d.toLocaleDateString([], { month: "short" });
+  const PRODUCER_X = ["desk", "web", "legacy", "other"];
+
+  // everything the drawer can open, whether or not it is drawn as a row
+  function archiveItems() {
+    const a = arch(), h = hub(), st = h.status || {}, cov = st.coverage || {};
+    const cards = a.cards || [], props = h.proposals || [];
+    const its = [{ kind: "head", id: "h-gate", section: "gate", label: "At the gate", n: props.length ? num(h.pending) + " waiting" : "nothing waiting" }];
+    props.forEach(p => its.push({ kind: "prop", id: "p:" + p.slug, o: p }));
+    if (!a.total) return its;
+    const arow = (id, label, desc, list, extra) => its.push({ kind: "arch", id, label, desc, list: list || [], extra: extra || {} });
+    Object.entries(a.by_type || {}).forEach(([t, n]) => arow("type:" + t, t, num(n) + " cards", cards.filter(c => c.type === t).map(c => c.slug)));
+    lastWeeks(14).forEach(w => {
+      const cs = cards.filter(c => c.week === w.key), bt = {};
+      cs.forEach(c => bt[c.type] = (bt[c.type] || 0) + 1);
+      arow("week:" + w.key, w.key.replace("-W", " week "), num(cs.length) + " cards landed", cs.map(c => c.slug),
+           { kv: Object.entries(bt).sort((x, y) => y[1] - x[1]).map(([t, n]) => [t, num(n)]) });
+    });
+    const weeks = ((h.judge || {}).weeks) || [], last = weeks[weeks.length - 1], bd = h.burndown || {};
+    arow("judge", "the judge", "keep rate by week, and what sits behind it", [], {
+      kv: [["this week", last ? `${num(last.kept)} of ${num(last.judged)} kept · ${pct(last.kept, last.judged)}` : "no judgments yet"],
+           ["all time", num((h.judge || {}).total_judged) + " judged"],
+           ["last run", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)} kept` : "?"],
+           ["unjudged", num(st.deferred ?? cov.unjudged_in_window) + " of " + num(cov.processable) + " in scope"],
+           ["stranded", num(cov.stranded_pre_watermark) + " behind the watermark"],
+           ["burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "running every 2h, stops itself under 2% kept"]],
+      gears: h.gears || {}, gears_note: h.gears_note });
+    const bs = a.by_src || {};
+    Object.keys(bs).forEach(sname => arow("src:" + sname, sname, num(bs[sname]) + " cards", cards.filter(c => c.src === sname).map(c => c.slug)));
+    const prod = Object.entries(bs).filter(([x]) => !PRODUCER_X.includes(x)).sort((x, y) => y[1] - x[1]);
+    arow("desk", "your desk", "cards distilled from your own workstreams", cards.filter(c => c.src === "desk").map(c => c.slug));
+    arow("producers", "producers", prod.length + " lanes have landed cards", cards.filter(c => !PRODUCER_X.includes(c.src)).map(c => c.slug), { producers: prod });
+    arow("unattributed", "unattributed", "web sources, one-time imports, unknown", cards.filter(c => ["web", "legacy", "other"].includes(c.src)).map(c => c.slug));
+    const wd = a.words || {};
+    arow("orphans", "no inbound links", "cards nothing points at", a.orphans || []);
+    arow("zerolink", "no outbound links", "cards that link to nothing", a.zero_link || []);
+    arow("dangling", "dangling links", "targets that are not cards", [], { dangling: a.dangling || [] });
+    arow("long", "over 450 words", "past the one-screen line", a.over_length || [], { kv: [["median", wd.median + " words"], ["p90", wd.p90 + " words"], ["longest", wd.max + " words"]] });
+    return its;
+  }
+
+  function renderDash() {
+    const a = arch(), h = hub(), cards = a.cards || [], total = a.total || 0;
+    if (!total) return `<div class="empty">${esc(a.error ? "Archive could not be read: " + a.error : "No cards yet.")}</div>`;
+    const W = Math.max(320, ($("#rows").clientWidth || 800) - 32);
+    const open = (id) => `data-open="${esc(id)}"`;
+
+    // composition: one bar, the whole archive, labels on the marks
+    const order = Object.entries(a.by_type || {}).sort((x, y) => y[1] - x[1]);
+    const comp = `<section class="panel" data-dash="composition">
+      <div class="p-head"><b>${num(total)} cards</b><span>the trusted layer, by type</span></div>
+      <div class="stack big" role="img" aria-label="${esc(order.map(([t, n]) => n + " " + t).join(", "))}">${order.map(([t, n]) => `<button class="sg ${SERIES[t] || "s4"}" style="flex:${n}" ${open("type:" + t)} title="${esc(t)}: ${num(n)} cards, ${pct(n, total)}"></button>`).join("")}</div>
+      <div class="legend">${order.map(([t, n]) => `<button class="lg" ${open("type:" + t)}><i class="${SERIES[t] || "s4"}"></i>${esc(t)} ${num(n)} · ${pct(n, total)}</button>`).join("")}</div></section>`;
+
+    // the pulse: cards landed per week, and the judge's keep rate over the same weeks
+    const weeks = lastWeeks(14);
+    const perWeek = weeks.map(w => { const cs = cards.filter(c => c.week === w.key), bt = {}; cs.forEach(c => bt[c.type] = (bt[c.type] || 0) + 1); return { key: w.key, date: w.date, n: cs.length, bt }; });
+    const maxN = Math.max(1, ...perWeek.map(w => w.n));
+    const peaks = perWeek.map((w, i) => [w.n, i]).sort((x, y) => y[0] - x[0]).slice(0, 3).filter(x => x[0] > 0).map(x => x[1]);
+    const cols = perWeek.map((w, i) => {
+      const segs = order.map(([t]) => w.bt[t] ? `<i class="${SERIES[t] || "s4"}" style="height:${(w.bt[t] / maxN * 100).toFixed(1)}%"></i>` : "").join("");
+      const lbl = (i === 0 || perWeek[i - 1].date.getMonth() !== w.date.getMonth()) ? monthOf(w.date) : "";
+      return `<button class="col" ${open("week:" + w.key)} title="${esc(w.key.replace("-W", " week "))}: ${w.n} cards landed"><span class="tot">${peaks.includes(i) ? w.n : ""}</span><span class="stk">${segs}</span><span class="lbl">${lbl}</span></button>`;
+    }).join("");
+    const jw = ((h.judge || {}).weeks) || [], byKey = {}; jw.forEach(x => byKey[x.week] = x);
+    const have = weeks.map((w, i) => { const x = byKey[w.key]; return x && x.judged ? { i, v: 100 * x.kept / x.judged, x } : null; }).filter(Boolean);
+    let line = `<div class="empty" style="padding:24px 0">no judgments yet</div>`;
+    if (have.length >= 2) {
+      const cw = Math.max(180, Math.round(W * 0.36)), ch = 128, pad = 16, top = 22, bottom = 18;
+      const X = (i) => pad + i * (cw - 2 * pad) / (weeks.length - 1), Y = (v) => top + (100 - v) / 100 * (ch - top - bottom);
+      const step = (cw - 2 * pad) / (weeks.length - 1);
+      const d = have.map((p, k) => (k ? "L" : "M") + X(p.i).toFixed(1) + " " + Y(p.v).toFixed(1)).join(" ");
+      const first = have[0], lastp = have[have.length - 1];
+      line = `<svg class="keep" width="${cw}" height="${ch}" viewBox="0 0 ${cw} ${ch}" role="img" aria-label="keep rate by week, ${Math.round(first.v)}% to ${Math.round(lastp.v)}%">
+        <path d="${d}" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        ${have.map(p => `<rect x="${(X(p.i) - step / 2).toFixed(1)}" y="0" width="${step.toFixed(1)}" height="${ch}" fill="transparent"><title>${esc(p.x.week.replace("-W", " week "))}: ${num(p.x.kept)} of ${num(p.x.judged)} kept, ${Math.round(p.v)}%</title></rect>`).join("")}
+        <circle cx="${X(lastp.i).toFixed(1)}" cy="${Y(lastp.v).toFixed(1)}" r="3.5" fill="var(--brass)" stroke="var(--panel)" stroke-width="2"/>
+        <text x="${X(first.i).toFixed(1)}" y="${(Y(first.v) - 8).toFixed(1)}" class="lab" text-anchor="middle">${Math.round(first.v)}%</text>
+        <text x="${X(lastp.i).toFixed(1)}" y="${(Y(lastp.v) - 9).toFixed(1)}" class="lab hot" text-anchor="middle">${Math.round(lastp.v)}%</text>
+        ${weeks.map((w, i) => (i === 0 || weeks[i - 1].date.getMonth() !== w.date.getMonth()) ? `<text x="${X(i).toFixed(1)}" y="${ch - 4}" class="ax" text-anchor="middle">${monthOf(w.date)}</text>` : "").join("")}
+      </svg>`;
+    }
+    const pulse = `<section class="panel" data-dash="judge"><div class="p-row">
+      <div class="p-col grow"><div class="p-head"><span>cards landed, by week</span></div><div class="cols">${cols}</div></div>
+      <div class="p-col"><div class="p-head"><span>the judge, keep rate</span></div><button class="chart" ${open("judge")} title="the judge">${line}</button></div>
+    </div></section>`;
+
+    // sources: ranked bars, honest at any width
+    const bs = a.by_src || {};
+    const desk = bs.desk || 0, unat = (bs.web || 0) + (bs.legacy || 0) + (bs.other || 0);
+    const prod = Object.entries(bs).filter(([x]) => !PRODUCER_X.includes(x)).sort((x, y) => y[1] - x[1]);
+    const prodN = prod.reduce((acc, [, n]) => acc + n, 0), maxS = Math.max(desk, prodN, unat, 1);
+    const hbar = (id, label, n, extra) => `<button class="hbar" ${open(id)} title="${esc(label)}: ${num(n)} cards, ${pct(n, total)}"><span class="l">${esc(label)}</span><span class="track"><i style="width:${(n / maxS * 100).toFixed(1)}%"></i></span><span class="n">${num(n)}</span><span class="p">${pct(n, total)}</span><span class="x">${extra || ""}</span></button>`;
+    const src = `<section class="panel" data-dash="sources"><div class="p-head"><span>where it comes from</span></div>
+      ${hbar("desk", "your desk", desk)}
+      ${hbar("producers", "producers", prodN, prod.slice(0, 4).map(([x, n]) => esc(x) + " " + n).join(" · ") + (prod.length > 4 ? ` · +${prod.length - 4} more` : ""))}
+      ${hbar("unattributed", "unattributed", unat)}</section>`;
+
+    // health: four figures with a meter that carries severity
+    const tile = (id, n, label, share) => {
+      const cls = share == null ? "" : share > 0.3 ? "down" : share > 0.1 ? "warn" : "";
+      return `<button class="tile" ${open(id)}><b>${num(n)}</b><span class="l">${esc(label)}</span>${share != null ? `<span class="meter"><i class="${cls}" style="width:${(Math.min(1, share) * 100).toFixed(0)}%"></i></span><span class="p">${pct(n, total)} of cards</span>` : `<span class="p">&nbsp;</span>`}</button>`;
+    };
+    const health = `<section class="panel" data-dash="health"><div class="p-head"><span>how well it hangs together</span></div><div class="tiles">
+      ${tile("orphans", (a.orphans || []).length, "no inbound links", (a.orphans || []).length / total)}
+      ${tile("zerolink", (a.zero_link || []).length, "link to nothing", (a.zero_link || []).length / total)}
+      ${tile("dangling", (a.dangling || []).length, "dangling targets", null)}
+      ${tile("long", (a.over_length || []).length, "over 450 words", (a.over_length || []).length / total)}</div></section>`;
+    return `<div class="dash">${comp}${pulse}${src}${health}</div>`;
   }
   function items() {
-    if (view === "archive") return archiveRows();
+    if (view === "archive") return archiveItems();
     if (view === "hosts") return ((D.fleet || {}).hosts || []).map(h => ({ kind: "host", id: h.host, o: h }));
     if (view === "lanes") return (D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }));
     if (view === "tools") return (D.tools_found || []).filter(t => t.detected || t.connector).map(t => ({ kind: "tool", id: t.id, o: t }));
@@ -466,7 +572,7 @@ window.onerror = function (msg, src, line, col) {
   }
   function rowHTML(it) {
     const o = it.o;
-    if (it.kind === "head") return `<span class="name"><i class="tri">${it.open ? "▾" : "▸"}</i>${esc(it.label)}</span><span class="desc"></span><span class="num">${esc(it.n || "")}</span>`;
+    if (it.kind === "head") return `<span class="name">${esc(it.label)}</span><span class="desc"></span><span class="num">${esc(it.n || "")}</span>`;
     if (it.kind === "quiet") return `<span class="desc">${esc(it.text)}</span>`;
     if (it.kind === "arch") {
       return `<span class="name" style="width:172px">${esc(it.label)}</span>
@@ -545,12 +651,11 @@ window.onerror = function (msg, src, line, col) {
     $("#listcount").textContent = view === "archive" ? "" : n + " " + view;
     document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
     if (sel && (sel.view !== view || !list.some(i => i.id === sel.id))) sel = null;
-    $("#rows").innerHTML = list.map((it, i) => selectable(it)
+    const shown = view === "archive" ? list.filter(i => i.kind === "head" || i.kind === "quiet" || i.kind === "prop") : list;
+    const rowsHTML = shown.map((it, i) => selectable(it)
       ? `<div class="row" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
-      : it.kind === "head"
-        ? `<div class="row head" id="r${i}" data-section="${esc(it.section)}" role="button" tabindex="0" aria-expanded="${String(!!it.open)}">${rowHTML(it)}</div>`
-        : `<div class="row ${it.kind}" id="r${i}" aria-hidden="true">${rowHTML(it)}</div>`).join("")
-      || `<div class="empty">Nothing here yet.</div>`;
+      : `<div class="row ${it.kind}" id="r${i}" ${it.kind === "head" ? `data-section="${esc(it.section)}"` : ""} aria-hidden="true">${rowHTML(it)}</div>`).join("");
+    $("#rows").innerHTML = (rowsHTML || (view === "archive" ? "" : `<div class="empty">Nothing here yet.</div>`)) + (view === "archive" ? renderDash() : "");
     syncActive();
   }
   function syncActive() {
@@ -649,6 +754,8 @@ window.onerror = function (msg, src, line, col) {
       if (x.kv) body += `<div class="sect">${kv(x.kv)}</div>`;
       if (x.week) body += `<div class="sect">${kv([["judged", num(x.week.judged)], ["kept", num(x.week.kept)], ["keep rate", pct(x.week.kept, x.week.judged)]])}</div>`;
       if (it.id.startsWith("type:") || it.id === "h-composition") body += compositionSect();
+      if (x.gears && Object.keys(x.gears).length) body += `<div class="sect"><h2>Gears</h2><table class="t"><tr><th>type</th><th>gear</th></tr>${Object.entries(x.gears).map(([t, g]) => `<tr><td>${esc(t)}</td><td>${esc(g)}</td></tr>`).join("")}</table>${x.gears_note ? `<div class="prose" style="margin-top:6px;color:var(--muted)">${esc(x.gears_note)}</div>` : ""}</div>`;
+      if (x.producers) body += `<div class="sect"><h2>By producer</h2><table class="t"><tr><th>lane</th><th class="n">cards</th></tr>${x.producers.map(([p, n]) => `<tr><td><button class="chip" data-open="src:${esc(p)}">${esc(p)}</button></td><td class="n">${num(n)}</td></tr>`).join("")}</table></div>`;
       if (x.dangling) body += `<div class="sect"><h2>Targets that are not cards</h2><table class="t"><tr><th>link</th><th>from</th></tr>${x.dangling.map(d => `<tr><td class="mono">${esc(d.target)}</td><td>${d.from.map(f => cardLink("knowledge/" + f, f)).join(" ")}</td></tr>`).join("")}</table></div>`;
       if (it.list.length) body += `<div class="sect"><h2>${num(it.list.length)} cards</h2>${cardChips(it.list)}</div>`;
       if (!body) body = `<div class="empty">Nothing more to show for this row.</div>`;
@@ -829,20 +936,8 @@ window.onerror = function (msg, src, line, col) {
     renderTop(); renderList(); renderInspector();
     if (hist.i < 0) commit();
   }
-  function sectionOf(id) {
-    let cur = null;
-    for (const r of archiveRows("all")) { if (r.kind === "head") cur = r.section; else if (r.id === id) return cur; }
-    return null;
-  }
-  // a row by id in the current view, looking past folded sections in Archive
-  function findRow(id) {
-    return items().find(i => i.id === id) || (view === "archive" ? archiveRows("all").find(i => i.id === id) : null);
-  }
+  const findRow = (id) => items().find(i => i.id === id);
   function select(kind, id, open) {
-    if (view === "archive" && !items().some(i => i.id === id)) {
-      const sec = sectionOf(id);
-      if (sec && secOpen[sec] === false) { secOpen[sec] = true; try { localStorage.setItem("sov.sections", JSON.stringify(secOpen)); } catch (e) {} renderList(); }
-    }
     sel = { view, kind, id };
     document.querySelectorAll(".row[role=option]").forEach(r => r.setAttribute("aria-selected", String(r.dataset.id === id)));
     syncActive();
@@ -852,10 +947,7 @@ window.onerror = function (msg, src, line, col) {
   }
   function setView(v, opts) {
     view = v; sel = null; settingsOpen = false; renderList(); renderInspector();
-    if (opts && opts.section) {
-      if (secOpen[opts.section] === false) { secOpen[opts.section] = true; try { localStorage.setItem("sov.sections", JSON.stringify(secOpen)); } catch (e) {} renderList(); }
-      const h = document.querySelector('.row.head[data-section="' + opts.section + '"]'); if (h) h.scrollIntoView({ block: "start" });
-    }
+    if (opts && opts.section) { const h = document.querySelector('[data-dash="' + opts.section + '"], .row.head[data-section="' + opts.section + '"]'); if (h) h.scrollIntoView({ block: "start" }); }
     if (opts && opts.open) { const first = items().find(selectable); if (first) return select(first.kind, first.id, true); }
     if (!(opts && opts.silent)) commit();
   }
@@ -863,7 +955,8 @@ window.onerror = function (msg, src, line, col) {
     const parts = String(v).split("+"), name = parts[0];
     if (name === "settings") return openSettings();
     const mode = parts.find(p => p.startsWith("open")) || "", id = mode.includes(":") ? mode.slice(mode.indexOf(":") + 1) : "";
-    setView(name, { open: mode === "open" && !id, silent: !!id });
+    const at = parts.find(p => p.startsWith("at:"));
+    setView(name, { open: mode === "open" && !id, silent: !!id, section: at ? at.slice(3) : undefined });
     if (id) { const it = findRow(id); if (it) select(it.kind, it.id, true); }
     if (parts.includes("back")) setTimeout(back, 120);
   };
@@ -899,8 +992,8 @@ window.onerror = function (msg, src, line, col) {
     if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s", { silent: true }); const it = findRow(p[1]); select(it ? it.kind : p[0], p[1], true); return; }
     const grow = e.target.closest(".g-row[data-place]");
     if (grow) { let pl = null; try { pl = JSON.parse(grow.dataset.place); } catch (x) {} return bridge({ cmd: "showConsole", place: pl }); }
-    const hd = e.target.closest(".row.head[data-section]");
-    if (hd) return toggleSection(hd.dataset.section);
+    const opn = e.target.closest("[data-open]");
+    if (opn) { const it = findRow(opn.dataset.open); if (it) select(it.kind, it.id, true); return; }
     const b = e.target.closest("button");
     if (b) {
       if (b.id === "refresh" || b.id === "g-refresh") return refresh();
@@ -937,9 +1030,8 @@ window.onerror = function (msg, src, line, col) {
   });
 
   $("#rows").addEventListener("keydown", (e) => {
-    const hd = document.activeElement && document.activeElement.closest && document.activeElement.closest(".row.head[data-section]");
-    if (hd && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); return toggleSection(hd.dataset.section); }
-    const list = items().filter(selectable); if (!list.length) return;
+    const dom = new Set([...document.querySelectorAll(".row[role=option]")].map(r => r.dataset.id));
+    const list = items().filter(i => selectable(i) && dom.has(i.id)); if (!list.length) return;
     let i = list.findIndex(x => sel && x.id === sel.id);
     if (e.key === "ArrowDown") { e.preventDefault(); i = Math.min(list.length - 1, i + 1); }
     else if (e.key === "ArrowUp") { e.preventDefault(); i = Math.max(0, i - 1); }
@@ -959,7 +1051,7 @@ window.onerror = function (msg, src, line, col) {
     if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); openSettings(); }
     if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !pinned) { closeInspector(); commit(); } }
     if (typing || e.metaKey || e.ctrlKey) return;
-    if (/^[1-5]$/.test(e.key)) setView(["archive", "hosts", "lanes", "tools", "jobs"][+e.key - 1]);
+    if (/^[1-5]$/.test(e.key)) setView(["hosts", "archive", "lanes", "tools", "jobs"][+e.key - 1]);
     if (e.key === "p") setPinned(!pinned);
   });
 
@@ -1022,6 +1114,11 @@ window.onerror = function (msg, src, line, col) {
     };
   }
 
+  let rsz = null;
+  new ResizeObserver(() => {
+    if (view !== "archive" || !D) return;
+    clearTimeout(rsz); rsz = setTimeout(() => { const d = document.querySelector(".dash"); if (d) d.outerHTML = renderDash(); }, 120);
+  }).observe($("#rows"));
   bridge({ cmd: "settings" });
   setTimeout(refresh, 40);
   resetTimer();
