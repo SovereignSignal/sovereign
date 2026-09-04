@@ -156,8 +156,8 @@ class Properties(unittest.TestCase):
 
     def test_csv_has_bom_header_in_schema_order_and_quoted_cells(self):
         out = render_csv(SCHEMA, [row("Alive", status="IP", types=("Rock",)), row("Atlantic, City", tab="https://t")], LINKS)
-        self.assertTrue(out.startswith("﻿"))
-        lines = out.lstrip("﻿").splitlines()
+        self.assertTrue(out.startswith("\ufeff"))
+        lines = out.lstrip("\ufeff").splitlines()
         self.assertEqual(lines[0], "Song,Lyrics,Status,Tab,Type")
         self.assertEqual(lines[1], "Alive,,IP,,Rock")
         self.assertEqual(lines[2], '"Atlantic, City",,,https://t,')

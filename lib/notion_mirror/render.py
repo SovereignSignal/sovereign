@@ -289,7 +289,7 @@ def render_csv(schema_props: Dict[str, dict], rows: List[dict], links: Links) ->
     writer.writerow(property_order(schema_props))
     for page_obj in rows:
         writer.writerow(row_cells(schema_props, page_obj, links))
-    return "﻿" + buf.getvalue()
+    return "\ufeff" + buf.getvalue()
 
 
 def csv_from_cells(header: List[str], cells: List[List[str]]) -> str:
@@ -299,4 +299,4 @@ def csv_from_cells(header: List[str], cells: List[List[str]]) -> str:
     writer.writerow(header)
     for row_cells_ in cells:
         writer.writerow(row_cells_)
-    return "﻿" + buf.getvalue()
+    return "\ufeff" + buf.getvalue()
