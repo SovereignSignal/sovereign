@@ -21,7 +21,7 @@ Example:
   BRAIN_ROOT=~/vault BRAIN_CORE=me,how-to-work-with-me brain-load some-topic
   # or drop the path in ~/.brain-root and the csv in ~/.brain-core so it just works
 """
-import sys, os, re, argparse, glob, json
+import sys, os, re, argparse, glob, json, shutil, subprocess
 from collections import deque
 
 # Ships EMPTY: the mechanism is generic, the answers are yours. Per-brain aliases
@@ -80,9 +80,76 @@ def card_path(slug):
     r = glob.glob(os.path.join(K, "**", slug + ".md"), recursive=True)
     return r[0] if r else None
 
+
+def _tokens(x):
+    return [t for t in re.split(r"[^a-z0-9]+", x.lower()) if t]
+
+
+def _best_slug(term, slugs):
+    """Rank candidate slugs by how much of the term they cover. Every token of the term
+    must appear, then prefer the shortest match, so a general card beats a narrower one."""
+    want = set(_tokens(term))
+    if not want:
+        return None
+    scored = []
+    for sl in slugs:
+        have = set(_tokens(sl))
+        hit = len(want & have)
+        if hit == len(want):
+            scored.append((0, len(have), sl))
+        elif len(want) > 2 and hit == len(want) - 1:
+            scored.append((1, len(have), sl))
+    return sorted(scored)[0][2] if scored else None
+
+
+def _obsidian_cli():
+    """An Obsidian CLI, if this machine has one. Optional by design: the brain's own
+    retrieval is filenames and links, and any index on top is disposable."""
+    for c in (shutil.which("obsidian"), "/Applications/Obsidian.app/Contents/MacOS/obsidian-cli"):
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
+def resolve_entry(term, root):
+    """Turn a spoken topic into a real card slug.
+
+    Exact slug wins. Then a deterministic match against the slugs on disk, which needs no
+    index and no running app. Only if both miss does it ask Obsidian to search the trusted
+    layer. Fails soft everywhere: any error, timeout, or missing CLI leaves the term as-is
+    and the caller reports a core-only pack.
+    """
+    if card_path(term):
+        return term, None
+    slugs = [os.path.basename(x)[:-3] for x in glob.glob(os.path.join(K, "**", "*.md"), recursive=True)]
+    hit = _best_slug(term, slugs)
+    if hit:
+        return hit, "slug match"
+    cli = _obsidian_cli()
+    if not cli:
+        return term, None
+    try:
+        out = subprocess.run([cli, "vault=" + os.path.basename(root), "search",
+                              "query=" + " ".join(_tokens(term)), "path=knowledge",
+                              "limit=12", "format=json"],
+                             capture_output=True, text=True, timeout=12).stdout.strip()
+        hits = json.loads(out) if out.startswith("[") else []
+    except Exception:
+        return term, None
+    found = [os.path.basename(h)[:-3] for h in hits if h.endswith(".md")]
+    hit = _best_slug(term, found)
+    if hit and card_path(hit):
+        return hit, "obsidian search"
+    # a hit that does not cover the term is worse than none: the caller says core-only
+    # rather than handing an agent a confidently wrong slice
+    return term, None
+
 def links_in(path):
     txt = open(path, encoding="utf-8", errors="ignore").read()
     return sorted(set(re.findall(r'\[\[([a-z0-9-]+)\]\]', txt)))
+
+# an unknown topic gets one chance to resolve before we fall back to a core-only pack
+entry, resolved_by = resolve_entry(entry, a.root)
 
 # breadth-first from the entry, following links up to --depth hops
 order, seen, q = [], set(), deque([(entry, 0)])
@@ -108,7 +175,8 @@ missing_entry = not card_path(entry)
 if missing_entry:
     sys.stderr.write(f"brain-load: no knowledge card for entry '{requested_entry}'; output is core-only\n")
 elif entry != requested_entry:
-    sys.stderr.write(f"brain-load: alias '{requested_entry}' -> '{entry}'\n")
+    via = f" via {resolved_by}" if resolved_by else ""
+    sys.stderr.write(f"brain-load: '{requested_entry}' -> '{entry}'{via}\n")
 
 shown_entry = requested_entry if entry == requested_entry else f"{requested_entry} -> {entry}"
 print(f"# Brain context pack — {shown_entry}")
