@@ -185,6 +185,7 @@ def plist_info(label):
 
 HUB_SCRIPT = r'''
 import os, sys, json, glob, re, time
+import datetime
 root = sys.argv[1]; now = time.time()
 def scan(path):
     best = 0; n = 0
@@ -233,10 +234,72 @@ for cand in glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json"
         g = json.load(open(os.path.join(lane, "gears.json")))
         out["gears"] = {k: v.get("gear") for k, v in g.get("rules", {}).items()}
     except Exception: pass
+    # the judge, by ISO week: judgments.jsonl is append-only and hub-only, so this is
+    # the one place the keep-rate trend can be read (50% -> 3% went unseen for a month)
+    try:
+        wk = {}
+        for line in open(os.path.join(lane, "judgments.jsonl"), errors="ignore"):
+            try: d = json.loads(line)
+            except Exception: continue
+            ts = (d.get("timestamp") or "")[:10]
+            if len(ts) != 10: continue
+            try: y, w, _ = datetime.date.fromisoformat(ts).isocalendar()
+            except ValueError: continue
+            e = wk.setdefault("%d-W%02d" % (y, w), [0, 0])
+            e[0] += 1
+            if d.get("promote"): e[1] += 1
+        keys = sorted(wk)[-12:]
+        out["judge"] = {"weeks": [{"week": k, "judged": wk[k][0], "kept": wk[k][1]} for k in keys],
+                        "total_judged": sum(v[0] for v in wk.values())}
+    except OSError:
+        pass
+    # the queue, for the gate: what each pending proposal is and why it is waiting.
+    # The INBOX bullet carries confidence, flags, reason and any hold note; .meta.json
+    # carries confidence/update_of; the proposal file carries the card itself.
+    try: pmeta = json.load(open(os.path.join(lane, "proposals", ".meta.json")))
+    except Exception: pmeta = {}
+    try: inbox_txt = open(os.path.join(lane, "INBOX.md"), errors="ignore").read()
+    except OSError: inbox_txt = ""
+    props = []
+    for pp in sorted(glob.glob(os.path.join(lane, "proposals", "*.md")), key=os.path.getmtime, reverse=True)[:60]:
+        slug = os.path.basename(pp)[:-3]
+        try: txt = open(pp, encoding="utf-8", errors="ignore").read()
+        except OSError: continue
+        fm, body = {}, txt
+        if txt.startswith("---"):
+            end = txt.find("\n---", 3)
+            fm = dict(re.findall(r"(?m)^(\w+):\s*(.*)$", txt[3:end])); body = txt[end + 4:]
+        m = re.search(r"(?m)^- \*\*%s\*\* \(([^)]*)\)((?: ⚠ \w+)*) — (.*)$" % re.escape(slug), inbox_txt)
+        head = m.group(1).split(", ") if m else []
+        reason = m.group(3) if m else ""
+        hold = None
+        if " · held: " in reason:
+            reason, hold = reason.split(" · held: ", 1)
+        mm = pmeta.get(slug) or {}
+        upd = mm.get("update_of") or (head[2][7:] if len(head) > 2 and head[2].startswith("UPDATE ") else None)
+        props.append({"slug": slug, "type": fm.get("type"), "title": fm.get("title") or slug, "source": fm.get("source"),
+                      "confidence": mm.get("confidence") or (head[1] if len(head) > 1 else None),
+                      "update_of": upd, "flags": [f for f in (m.group(2).split(" ⚠ ") if m else []) if f],
+                      "reason": reason, "hold": hold, "words": len(body.split()),
+                      "age_h": round((now - os.path.getmtime(pp)) / 3600, 1), "body": body.strip()[:2500]})
+    out["proposals"] = props
+    stop = os.path.join(lane, ".burndown-stop")
+    out["burndown"] = {"stopped": os.path.exists(stop),
+                       "note": (open(stop, errors="ignore").read().strip()[:200] if os.path.exists(stop) else None)}
+    try:
+        gb = g.get("_grants_basis", "")
+        i = gb.rfind(" 20")
+        out["gears_note"] = (gb[i + 1:] if i != -1 else gb)[:420]
+    except Exception:
+        pass
     aud = sorted(glob.glob(os.path.join(lane, "audit", "audit-*.md")))
     out["audit_latest"] = os.path.basename(aud[-1]) if aud else None
     break
 out["knowledge"] = {sub: len(glob.glob(os.path.join(root, "knowledge", sub, "*.md"))) for sub in ("entities", "concepts", "syntheses")}
+try:
+    out["hub_host"] = __import__("socket").gethostname().split(".")[0]
+except Exception:
+    pass
 for base in ("tools", "workspaces"):
     for d in glob.glob(os.path.join(root, "raw", base, "*")):
         if os.path.isdir(d):
@@ -414,6 +477,72 @@ def fleet_view(root, contrib=None):
             rec["net"] = {"online": None, "ip": None, "via": None}
     hosts_sorted = sorted(hosts.values(), key=lambda r: (0 if r["host"] == me else 1, -len(r["harnesses"]), r["host"]))
     return {"hosts": hosts_sorted, "registry": registry_path, "tailscale": bool(peers)}
+
+
+def archive_shape(root):
+    """The trusted layer, measured from the cards themselves: type and month mix, where
+    cards come from, how long they run, and how well they link. The knowledge folder
+    syncs to every machine, so this costs no hub call; the console turns it into the
+    Archive view. Every list is slugs, so a count can open the cards behind it."""
+    K = os.path.join(root, "knowledge")
+    WIKI = re.compile(r"\[\[([^\]|#]+?)(?:[|#][^\]]*)?\]\]")
+    cards, inbound, slugs = [], {}, set()
+    today = datetime.date.today()
+    for p in sorted(glob.glob(os.path.join(K, "**", "*.md"), recursive=True)):
+        try:
+            t = open(p, encoding="utf-8", errors="ignore").read()
+        except OSError:
+            continue
+        slug = os.path.basename(p)[:-3]
+        slugs.add(slug)
+        fm, body = {}, t
+        if t.startswith("---"):
+            end = t.find("\n---", 3)
+            fm = dict(re.findall(r"(?m)^(\w+):\s*(.*)$", t[3:end])); body = t[end + 4:]
+        src = fm.get("source", "")
+        m = re.match(r"raw/(tools|workspaces)/([^/]+)", src)
+        if m:
+            bucket = m.group(2).split(" (")[0].strip()
+        elif src.startswith("workstreams/") or src in ("sov", "owner"):
+            bucket = "desk"
+        elif src.startswith("http"):
+            bucket = "web"
+        elif src.startswith("raw/"):
+            bucket = "legacy"
+        else:
+            bucket = "other"
+        links = {x.strip().rsplit("/", 1)[-1] for x in WIKI.findall(body)}
+        links.discard(slug)
+        for l in links:
+            inbound[l] = inbound.get(l, 0) + 1
+        try:
+            age = (today - datetime.date.fromisoformat(fm.get("created", ""))).days
+        except ValueError:
+            age = None
+        cards.append({"slug": slug, "rel": os.path.relpath(p, root)[:-3], "type": fm.get("type") or "?",
+                      "month": (fm.get("created") or "")[:7] or "?", "src": bucket,
+                      "title": fm.get("title") or slug, "words": len(body.split()),
+                      "out": len(links), "age_d": age, "targets": sorted(links)})
+    for c in cards:
+        c["in"] = inbound.get(c["slug"], 0)
+    dangling = {}
+    for c in cards:
+        for l in c.pop("targets"):
+            if l not in slugs:
+                dangling.setdefault(l, []).append(c["slug"])
+    words = sorted(c["words"] for c in cards) or [0]
+    def count(key):
+        d = {}
+        for c in cards:
+            d[c[key]] = d.get(c[key], 0) + 1
+        return d
+    return {"cards": cards, "total": len(cards),
+            "by_type": count("type"), "by_month": count("month"), "by_src": count("src"),
+            "words": {"median": words[len(words) // 2], "p90": words[int(len(words) * 0.9)], "max": words[-1]},
+            "orphans": [c["slug"] for c in cards if c["in"] == 0],
+            "zero_link": [c["slug"] for c in cards if c["out"] == 0],
+            "over_length": [c["slug"] for c in cards if c["words"] > 450],
+            "dangling": [{"target": k, "from": v} for k, v in sorted(dangling.items(), key=lambda kv: -len(kv[1]))]}
 
 
 def fetch_hub(root, hub_pointer, want):
@@ -600,6 +729,12 @@ def main():
     out["obsidian"] = obs
 
     out["fleet"] = fleet_view(root, hub_contrib)
+
+    # the archive itself, from the cards (no hub call; the trusted layer syncs everywhere)
+    try:
+        out["archive"] = archive_shape(root)
+    except Exception as e:
+        out["archive"] = {"error": str(e)[:200]}
 
     # jobs on this machine
     jobs = []

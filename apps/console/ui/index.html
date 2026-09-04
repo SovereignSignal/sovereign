@@ -4,28 +4,36 @@
 <meta charset="utf-8">
 <title>Sovereign</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <style>
   /* Instrument panel: graphite and brass. Structure and data are monospaced; prose is
-     the only proportional type. Every record is one line, and detail lives in the
-     inspector. The wire strip is the signature: one dual-segment mark per tool, read
-     on the left and write on the right, so a whole host reads as texture. */
+     the only proportional type. At rest the app is a pulse line and a list, nothing
+     else. Every record is one line; detail lives in a drawer that opens on click and
+     leaves when dismissed, so the resting state stays small. The wire strip is the
+     signature: one dual-segment mark per tool, read on the left, write on the right. */
   :root {
+    color-scheme: light;
     --ground: #FAFAF7; --panel: #FFFFFF; --sunk: #F2F2EE; --rule: #E4E4DE; --rule-soft: #EFEFEA;
     --ink: #15181C; --ink-2: #3D444E; --muted: #6A7280; --faint: #98A0AC;
     --brass: #A87C12; --brass-ink: #6E5008; --brass-wash: #FBF3DE;
     --live: #2E8B57; --warn: #B5810E; --down: #C23B31; --idle: #B9BEC6;
     --sel: #EDF1F6;
+    /* categorical series for the archive's composition, validated against this surface */
+    --s1: #A87C12; --s2: #2F6FBF; --s3: #2E8B57; --s4: #98A0AC;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     --shadow: 0 1px 2px rgba(20,24,30,.05), 0 8px 24px rgba(20,24,30,.08);
+    --drawer: 400px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
+      color-scheme: dark;
       --ground: #14181D; --panel: #1B2027; --sunk: #1F252D; --rule: #2A313B; --rule-soft: #232A33;
       --ink: #E9ECEF; --ink-2: #B7C0CB; --muted: #8B95A3; --faint: #707A88;
       --brass: #D4A73A; --brass-ink: #EFD9A4; --brass-wash: #262114;
       --live: #3FA96B; --warn: #D19A26; --down: #E0564C; --idle: #4E5763;
       --sel: #222B36;
+      --s1: #B58620; --s2: #4F89D2; --s3: #39A064; --s4: #707A88;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
     }
   }
@@ -38,73 +46,90 @@
   button:hover { border-color: var(--faint); color: var(--ink); }
   button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
   button.brass { background: var(--brass); border-color: var(--brass); color: #17140A; font-weight: 600; }
+  button.danger { color: var(--down); border-color: color-mix(in srgb, var(--down) 45%, transparent); }
+  button.danger.confirm { background: var(--down); border-color: var(--down); color: #fff; }
+  button.quiet { border-color: transparent; background: transparent; color: var(--muted); padding: 2px 6px; }
   button[disabled] { opacity: .45; cursor: default; }
+  label { display: block; font-size: 12px; color: var(--ink-2); }
   input { font: 12px var(--mono); padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px;
     background: var(--sunk); color: var(--ink); width: 100%; margin: 4px 0 10px; }
   input:focus-visible { outline: 2px solid var(--brass); outline-offset: 0; border-color: transparent; }
   .mono { font-family: var(--mono); font-size: 11.5px; letter-spacing: -0.01em; }
+  .num, .val, .n, .tile b { font-variant-numeric: tabular-nums; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-  header { flex: none; display: flex; align-items: center; gap: 12px;
-    padding: 34px 20px 10px; border-bottom: 1px solid var(--rule); }
-  .crown { width: 18px; height: 18px; color: var(--brass); flex: none; }
-  header h1 { margin: 0; font: 600 14px var(--sans); letter-spacing: -0.01em; }
-  header .meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 1px; }
-  header .grow { flex: 1; }
-  .hubpill { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px;
+  header { flex: none; display: flex; align-items: center; gap: 10px; height: 52px;
+    padding: 24px 16px 0; border-bottom: 1px solid var(--rule); }
+  .crown { width: 15px; height: 15px; color: var(--brass); flex: none; }
+  header h1 { margin: 0; font: 600 13px var(--sans); letter-spacing: -0.01em; white-space: nowrap; }
+  header .meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  header .grow { flex: 1; min-width: 0; }
+  .hubpill { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 10.5px;
     color: var(--ink-2); background: var(--panel); border: 1px solid var(--rule); border-radius: 999px;
-    padding: 4px 11px; white-space: nowrap; }
+    padding: 3px 10px; white-space: nowrap; }
 
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); flex: none; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); flex: none; display: inline-block; }
   .dot.live { background: var(--live); } .dot.warn { background: var(--warn); }
   .dot.down { background: var(--down); }
 
   #needs { flex: none; border-bottom: 1px solid var(--rule); background: var(--brass-wash); }
-  #needs .item { display: flex; gap: 10px; align-items: baseline; padding: 7px 20px;
+  #needs .item { display: flex; gap: 10px; align-items: baseline; padding: 6px 16px;
     cursor: pointer; border-left: 3px solid var(--brass); }
   #needs .item + .item { border-top: 1px solid rgba(168,124,18,.2); }
-  #needs .k { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .11em;
-    color: var(--brass); min-width: 54px; }
+  #needs .k { font-family: var(--mono); font-size: 10px; color: var(--brass); min-width: 54px; }
   #needs .t { color: var(--brass-ink); font-size: 12px; }
 
-  #hub { flex: none; display: grid; grid-template-columns: repeat(5, 1fr);
-    border-bottom: 1px solid var(--rule); background: var(--panel); }
-  #hub .cell { padding: 9px 16px; border-left: 1px solid var(--rule-soft); min-width: 0; }
-  #hub .cell:first-child { border-left: 0; }
-  #hub .lbl { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); }
-  #hub .val { font: 500 17px var(--mono); letter-spacing: -0.02em; margin-top: 2px; white-space: nowrap; }
-  #hub .sub { font-size: 11px; color: var(--muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #hub .cell.bad .val { color: var(--down); font-size: 13px; }
+  /* the pulse: the four numbers that move, each a door into the Archive view */
+  #pulse { flex: none; display: flex; align-items: stretch; border-bottom: 1px solid var(--rule); background: var(--panel); }
+  #pulse .tile { flex: 1; display: flex; align-items: center; gap: 9px; min-width: 0; height: 40px; padding: 0 14px;
+    border: 0; border-left: 1px solid var(--rule-soft); border-radius: 0; background: transparent; text-align: left;
+    font-family: var(--mono); color: var(--ink-2); }
+  #pulse .tile:first-child { border-left: 0; }
+  #pulse .tile:hover { background: var(--sunk); color: var(--ink); }
+  #pulse .tile .l { font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+  #pulse .tile b { font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+  #pulse .tile .s { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  #pulse .tile svg { margin-left: auto; }
+  #pulse .tile.bad b { color: var(--down); }
+  #pulse svg { flex: none; }
 
-  main { flex: 1; display: grid; grid-template-columns: 1fr 372px; min-height: 0; }
-  #listpane { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--rule); }
-  .bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 14px 8px 20px;
+  main { flex: 1; display: grid; grid-template-columns: 1fr; min-height: 0; position: relative; }
+  body.pinned main { grid-template-columns: 1fr var(--drawer); }
+  #listpane { display: flex; flex-direction: column; min-width: 0; }
+  .bar { flex: none; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px 0 16px;
     border-bottom: 1px solid var(--rule-soft); }
   .seg { display: inline-flex; background: var(--sunk); border: 1px solid var(--rule); border-radius: 7px; padding: 2px; gap: 2px; }
-  .seg button { border: 0; background: transparent; padding: 3px 11px; border-radius: 5px;
+  .seg button { border: 0; background: transparent; padding: 2px 10px; border-radius: 5px;
     font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
-  .bar .count { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-left: auto; }
+  .bar .count { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-left: auto; white-space: nowrap; }
 
   #rows { overflow: auto; flex: 1; }
-  #rows:focus-visible { outline: none; }
-  .row { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 14px 0 20px;
+  #rows:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--brass); }
+  .row { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 12px 0 16px;
     border-bottom: 1px solid var(--rule-soft); cursor: pointer; position: relative; }
   .row:hover { background: var(--sunk); }
   .row[aria-selected="true"] { background: var(--sel); }
-  .row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0;
-    width: 2px; background: var(--brass); }
+  .row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--brass); }
+  .row.head { height: 26px; cursor: default; background: var(--ground); position: sticky; top: 0; z-index: 1;
+    border-bottom: 1px solid var(--rule); }
+  .row.head:hover { background: var(--ground); }
+  .row.head .name { color: var(--muted); font-weight: 500; font-size: 11px; width: auto; }
+  .row.head .num { color: var(--faint); }
+  .row.quiet { cursor: default; color: var(--muted); font-size: 12px; }
+  .row.quiet:hover { background: transparent; }
   .row .name { font-family: var(--mono); font-size: 12px; font-weight: 500; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; flex: none; }
-  .row .desc { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row .num { font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: right;
-    white-space: nowrap; flex: none; }
+  .row .desc { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .num { font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: right; white-space: nowrap; flex: none; }
   .row .chev { color: var(--faint); font-size: 11px; width: 8px; flex: none; }
   .row .tag { font-family: var(--mono); font-size: 10px; color: var(--faint); border: 1px solid var(--rule);
     border-radius: 4px; padding: 0 5px; line-height: 15px; white-space: nowrap; flex: none; }
   .row .tag.on { color: var(--live); border-color: color-mix(in srgb, var(--live) 40%, transparent); }
   .row .tag.mid { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
   .row .tag.off { color: var(--down); border-color: color-mix(in srgb, var(--down) 40%, transparent); }
+  .row .tag.hold { color: var(--brass); border-color: color-mix(in srgb, var(--brass) 45%, transparent); }
 
   .strip { display: inline-flex; gap: 3px; align-items: center; flex: none; }
   .wm { display: inline-flex; gap: 1px; }
@@ -114,103 +139,106 @@
   .wm i.live { background: var(--live); } .wm i.warn { background: var(--warn); } .wm i.down { background: var(--down); }
   .strip .none { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 
-  /* contribution: cards this producer put into the trusted layer */
-  .contrib { display: inline-flex; align-items: center; gap: 6px; flex: none; width: 92px; justify-content: flex-end; }
-  .contrib .meter { width: 40px; height: 4px; border-radius: 2px; background: var(--rule); overflow: hidden; flex: none; }
-  .contrib .meter i { display: block; height: 100%; background: var(--brass); border-radius: 2px; }
+  /* a share of something, as a thin bar: brass by default, a series color when the row is a series */
+  .meter { width: 72px; height: 4px; border-radius: 2px; background: var(--rule); overflow: hidden; flex: none; }
+  .meter i { display: block; height: 100%; background: var(--brass); border-radius: 2px; }
+  .meter i.s1 { background: var(--s1); } .meter i.s2 { background: var(--s2); } .meter i.s3 { background: var(--s3); } .meter i.s4 { background: var(--s4); }
+  .meter i.live { background: var(--live); } .meter i.warn { background: var(--warn); } .meter i.down { background: var(--down); }
+  .contrib { display: inline-flex; align-items: center; gap: 6px; flex: none; width: 82px; justify-content: flex-end; }
+  .contrib .meter { width: 40px; }
   .contrib .n { font-family: var(--mono); font-size: 11px; color: var(--ink-2); min-width: 30px; text-align: right; }
   .contrib .n.zero { color: var(--faint); }
   .cards { display: flex; flex-wrap: wrap; gap: 5px; }
 
-  #inspector { overflow: auto; background: var(--panel); }
-  #inspector .pad { padding: 16px 18px 28px; }
-  .insp-title { font: 600 15px var(--mono); letter-spacing: -0.02em; }
-  .insp-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
-  .badge { display: inline-block; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase;
-    letter-spacing: .08em; color: var(--brass); border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent);
-    border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 2px; }
-  .sect { margin-top: 18px; }
-  .sect > h3 { margin: 0 0 7px; font: 600 9.5px var(--mono); text-transform: uppercase;
-    letter-spacing: .14em; color: var(--faint); }
+  /* the drawer: hidden at rest, over the list on demand, docked when pinned */
+  #inspector { position: absolute; top: 0; right: 0; bottom: 0; width: min(var(--drawer), 92vw); overflow: auto;
+    background: var(--panel); border-left: 1px solid var(--rule); box-shadow: var(--shadow);
+    transform: translateX(102%); transition: transform .16s ease; z-index: 20; }
+  #inspector.open { transform: none; }
+  body.pinned #inspector { position: static; transform: none; box-shadow: none; width: auto; }
+  #inspector .pad { padding: 12px 16px 28px; }
+  .insp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .insp-head .sp { flex: 1; }
+  .insp-title { font: 600 14px var(--mono); letter-spacing: -0.02em; overflow-wrap: anywhere; }
+  .insp-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .badge { display: inline-block; font-family: var(--mono); font-size: 9.5px; color: var(--brass);
+    border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent); border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 2px; }
+  .sect { margin-top: 16px; }
+  .sect > h2 { margin: 0 0 6px; font: 500 10.5px var(--mono); color: var(--faint); }
   .kv { display: grid; grid-template-columns: 82px 1fr; gap: 3px 10px; font-size: 12px; margin: 0; }
   .kv dt { font-family: var(--mono); font-size: 10.5px; color: var(--faint); padding-top: 1px; }
   .kv dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
-  .tool { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; margin-bottom: 7px; }
+  .tool { border: 1px solid var(--rule); border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; }
   .tool .top { display: flex; align-items: center; gap: 8px; }
   .tool .top b { font: 600 12px var(--mono); }
   .tool .top .sp { flex: 1; }
-  .wire { display: flex; align-items: center; gap: 8px; margin-top: 5px;
-    font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .wire { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
   .wire .lab { width: 54px; color: var(--ink-2); flex: none; white-space: nowrap; }
   .wire .track { flex: 1; height: 3px; border-radius: 2px; background: var(--rule); position: relative; }
   .wire .track i { position: absolute; inset: 0; border-radius: 2px; background: var(--idle); }
-  .wire .track i.live { background: var(--live); } .wire .track i.warn { background: var(--warn); }
-  .wire .track i.down { background: var(--down); }
-  .wire .v { width: 96px; text-align: right; color: var(--ink-2); flex: none;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wire .track i.live { background: var(--live); } .wire .track i.warn { background: var(--warn); } .wire .track i.down { background: var(--down); }
+  .wire .v { width: 96px; text-align: right; color: var(--ink-2); flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pulls { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 5px; }
   .chips { display: flex; flex-wrap: wrap; gap: 5px; }
   .chip { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); background: var(--sunk);
-    border: 1px solid var(--rule); border-radius: 5px; padding: 2px 7px; cursor: pointer; }
+    border: 1px solid var(--rule); border-radius: 5px; padding: 2px 7px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chip:hover { border-color: var(--faint); }
-  .chip .dot { display: inline-block; margin-right: 5px; }
-  .note { font-size: 12px; color: var(--brass-ink); background: var(--brass-wash); border-radius: 7px;
-    padding: 7px 9px; margin-top: 7px; }
-  .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
+  .chip .dot { margin-right: 5px; }
+  .note { font-size: 12px; color: var(--brass-ink); background: var(--brass-wash); border-radius: 7px; padding: 7px 9px; margin-top: 7px; }
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
   .empty { color: var(--muted); font-size: 12px; padding: 40px 18px; text-align: center; }
   .prose { font-size: 12px; color: var(--ink-2); }
+  .card-body { font-size: 12px; color: var(--ink-2); line-height: 1.5; max-height: 42vh; overflow: auto;
+    border: 1px solid var(--rule); border-radius: 8px; padding: 9px 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .stack { display: flex; height: 8px; border-radius: 3px; overflow: hidden; gap: 2px; margin: 6px 0 4px; }
+  .stack i { display: block; height: 100%; min-width: 2px; }
+  .stack i.s1 { background: var(--s1); } .stack i.s2 { background: var(--s2); } .stack i.s3 { background: var(--s3); } .stack i.s4 { background: var(--s4); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .legend i.s1 { background: var(--s1); } .legend i.s2 { background: var(--s2); } .legend i.s3 { background: var(--s3); } .legend i.s4 { background: var(--s4); }
+  table.t { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+  table.t th, table.t td { text-align: left; padding: 3px 6px 3px 0; border-bottom: 1px solid var(--rule-soft); }
+  table.t th { font: 500 10.5px var(--mono); color: var(--faint); }
+  table.t td.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
   #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
-    transition: transform .16s ease; background: var(--panel); border-top: 1px solid var(--rule);
-    box-shadow: var(--shadow); z-index: 30; }
+    transition: transform .16s ease; background: var(--panel); border-top: 1px solid var(--rule); box-shadow: var(--shadow); z-index: 30; }
   #drawer.open { transform: none; }
-  #drawer .bar { padding: 8px 20px; }
+  #drawer .bar { padding: 0 16px; }
   #drawer b { font: 600 12px var(--mono); }
-  #drawer pre { margin: 0; padding: 10px 20px 16px; max-height: 240px; overflow: auto;
+  #drawer pre { margin: 0; padding: 10px 16px 14px; max-height: 220px; overflow: auto;
     font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; color: var(--ink-2); }
   #drawer .state { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
-
-  @media (max-width: 960px) {
-    main { grid-template-columns: 1fr; }
-    #inspector { position: fixed; top: 0; right: 0; bottom: 0; width: min(380px, 92vw);
-      border-left: 1px solid var(--rule); box-shadow: var(--shadow);
-      transform: translateX(100%); transition: transform .16s ease; z-index: 20; }
-    #inspector.open { transform: none; }
-    #listpane { border-right: 0; }
-  }
   @media (prefers-reduced-motion: reduce) { #drawer, #inspector { transition: none; } }
 </style>
 </head>
 <body>
 <header>
   <svg class="crown" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 18h18v2H3v-2zm0-2 1.5-9 4.5 4 3-6 3 6 4.5-4L21 16H3z"/></svg>
-  <div>
-    <h1 id="vault">Sovereign</h1>
-    <div class="meta" id="meta">reading status…</div>
-  </div>
-  <div class="grow"></div>
+  <h1 id="vault">Sovereign</h1>
+  <div class="meta grow" id="meta">reading status…</div>
   <span class="hubpill" id="hubpill"><span class="dot"></span>hub</span>
   <button id="refresh" title="Refresh (⌘R)">Refresh</button>
 </header>
 
 <div id="needs" hidden></div>
-<div id="hub" hidden></div>
+<div id="pulse" hidden></div>
 
 <main>
   <div id="listpane">
     <div class="bar">
       <div class="seg" role="group" aria-label="View">
-        <button data-view="hosts" aria-pressed="true">Hosts</button>
+        <button data-view="archive" aria-pressed="true">Archive</button>
+        <button data-view="hosts" aria-pressed="false">Hosts</button>
         <button data-view="lanes" aria-pressed="false">Lanes</button>
         <button data-view="tools" aria-pressed="false">Tools</button>
         <button data-view="jobs" aria-pressed="false">Jobs</button>
       </div>
       <span class="count" id="listcount"></span>
-      <span class="count" id="listlegend" style="margin-left:0"></span>
     </div>
     <div id="rows" role="listbox" tabindex="0" aria-label="Records"></div>
   </div>
-  <aside id="inspector"><div class="pad" id="insp"><div class="empty">Select a row to inspect it.</div></div></aside>
+  <aside id="inspector" aria-label="Detail"><div class="pad" id="insp"></div></aside>
 </main>
 
 <div id="drawer">
@@ -225,12 +253,15 @@
 (function () {
   const $ = (s, r) => (r || document).querySelector(s);
   const bridge = (m) => { try { window.webkit.messageHandlers.sov.postMessage(m); } catch (e) { console.warn("no bridge", e); } };
-  let D = null, view = "hosts", sel = null, pendingConnect = null;
+  let D = null, view = "archive", sel = null, pendingConnect = null, pinned = false, armed = null;
+  try { pinned = localStorage.getItem("sov.pinned") === "1"; } catch (e) {}
+  document.body.classList.toggle("pinned", pinned);
 
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const age = (h) => h == null ? "–" : h < 1 ? Math.max(1, Math.round(h * 60)) + "m" : h < 48 ? (Math.round(h * 10) / 10) + "h" : Math.round(h / 24) + "d";
   const clock = (iso) => { if (!iso) return "?"; const d = new Date(iso); return isNaN(d) ? String(iso).slice(11, 16) : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
   const num = (n) => n == null ? "?" : Number(n).toLocaleString();
+  const pct = (a, b) => b ? Math.round(100 * a / b) + "%" : "–";
   const freshDot = (h) => h == null ? "" : h <= 24 ? "live" : h <= 168 ? "warn" : "";
   const runDot = (h, iv) => h == null ? "" : h * 3600 <= (iv || 900) * 2.5 ? "live" : h <= 24 ? "warn" : "down";
   const readDot = (t) => t.read === "instruction" ? (t.hook_registered === false ? "warn" : "live")
@@ -239,6 +270,9 @@
   const intervalOf = (t) => { const m = /every (\d+)s/.exec(((t && t.plist) || {}).schedule || ""); return m ? +m[1] : 900; };
   const localTool = (id) => (D.harnesses || []).find(x => x.id === id);
   const shortPath = (p) => String(p || "").replace(/^.*\/(?=[^/]*$)/, "…/");
+  const dot = (cls, text) => `<span class="dot ${cls}"></span><span class="sr">${esc(text)}</span>`;
+  const hub = () => (D && D.hub) || {};
+  const arch = () => (D && D.archive) || {};
 
   function hz(h) {
     return { id: h.harness || h.id, name: h.name || h.harness || h.id, lane: h.lane,
@@ -252,101 +286,109 @@
     const w = runDot(t.run, intervalOf(local));
     return `<span class="wm" title="${esc(t.id)} · ${t.reads} read${t.reads === 1 ? "" : "s"} this week · mirror ${age(t.run)} ago"><i class="${r}"></i><i class="${w}"></i></span>`;
   }
+  function meter(share, cls) {
+    const w = Math.round(Math.min(1, Math.max(0, share || 0)) * 100);
+    return `<span class="meter"><i class="${cls || ""}" style="width:${share ? Math.max(4, w) : 0}%"></i></span>`;
+  }
+  function sparkline(pts) {
+    // keep rate by week: 2px line in the de-emphasis hue, the latest week in brass with a surface ring
+    if (!pts || pts.length < 2) return "";
+    const W = 64, H = 16, n = pts.length, x = (i) => 2 + i * (W - 4) / (n - 1), y = (v) => H - 2 - v / 100 * (H - 4);
+    const d = pts.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1)).join(" ");
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${d}" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${x(n - 1).toFixed(1)}" cy="${y(pts[n - 1]).toFixed(1)}" r="3" fill="var(--brass)" stroke="var(--panel)" stroke-width="2"/></svg>`;
+  }
 
+  // ---------- top: header, needs, pulse ----------
   function renderTop() {
-    const m = D.machine || {}, hub = D.hub || {}, obs = D.obsidian || {};
+    const m = D.machine || {}, h = hub(), obs = D.obsidian || {};
     $("#vault").textContent = m.vault_name || "Sovereign";
     $("#meta").textContent = `${m.host} · ${m.template_rev || "?"}${obs.sync ? " · obsidian " + obs.sync : ""} · ${clock(D.generated_at)}`;
-    const hp = $("#hubpill");
-    if (hub.reachable) hp.innerHTML = `<span class="dot live"></span>hub ${esc((hub.via || "").replace("ssh ", "").toUpperCase() || "here")} · ${hub.pending || 0} waiting`;
-    else if (hub.reachable === false) hp.innerHTML = `<span class="dot down"></span>hub silent`;
-    else hp.innerHTML = `<span class="dot"></span>hub unchecked`;
+    const hp = $("#hubpill"), j = h.jobs || {}, nightly = j["archivist-nightly"];
+    if (h.reachable) hp.innerHTML = `${dot("live", "hub online")}hub ${esc(((h.via || "").startsWith("ssh ") ? h.via.slice(4) : (h.hub_host || "here")).toLowerCase())}${nightly ? " · nightly " + clock(nightly.ts) : ""}`;
+    else if (h.reachable === false) hp.innerHTML = `${dot("down", "hub offline")}hub silent`;
+    else hp.innerHTML = `${dot("", "hub unchecked")}hub unchecked`;
 
     const needs = D.needs_you || [], nd = $("#needs");
     nd.hidden = !needs.length;
-    nd.innerHTML = needs.map((n, i) => `<div class="item" data-need="${i}"><span class="k">${esc(n.kind)}</span><span class="t">${esc(n.text)}</span></div>`).join("");
+    nd.innerHTML = needs.map((n, i) => `<div class="item" data-need="${i}" role="button" tabindex="0"><span class="k">${esc(n.kind)}</span><span class="t">${esc(n.text)}</span></div>`).join("");
 
-    const hb = $("#hub");
-    if (!hub.reachable) {
-      hb.hidden = hub.reachable == null;
-      if (!hb.hidden) hb.innerHTML = `<div class="cell bad" style="grid-column:1/-1"><div class="lbl">Hub</div>
-        <div class="val">did not answer</div><div class="sub">${esc(hub.error || "")} · governance state is unknown until it does</div></div>`;
+    const pb = $("#pulse");
+    if (!h.reachable) {
+      pb.hidden = h.reachable == null;
+      if (!pb.hidden) pb.innerHTML = `<div class="tile bad" style="flex:1"><b>hub did not answer</b><span class="s">${esc(h.error || "")} · governance state is unknown until it does</span></div>`;
       return;
     }
-    hb.hidden = false;
-    const st = hub.status || {}, k = hub.knowledge || {}, cov = st.coverage || {}, j = hub.jobs || {}, org = hub.origin || {};
-    const nightly = j["archivist-nightly"];
-    const cards = (k.entities || 0) + (k.concepts || 0) + (k.syntheses || 0);
-    const sched = ["archivist-nightly", "daily-health-check", "vault-autocommit"].filter(x => j[x]);
-    hb.innerHTML = `
-      <div class="cell"><div class="lbl">Last nightly</div><div class="val">${clock(st.generated_at)}</div>
-        <div class="sub">judged ${st.judged ?? "?"} · kept ${st.new_proposals ?? "?"} · landed ${st.auto_promoted ?? "?"}${nightly ? " · " + Math.round(nightly.dur_s / 60) + "m" : ""}</div></div>
-      <div class="cell"><div class="lbl">At the gate</div><div class="val">${hub.pending ?? "?"}</div>
-        <div class="sub">${(hub.gears || {}).entity === "ask-first" ? "entities always ask first" : "&nbsp;"}</div></div>
-      <div class="cell"><div class="lbl">Outside the window</div><div class="val">${num(st.deferred ?? cov.unjudged_in_window)}</div>
-        <div class="sub">of ${num(cov.processable)} in scope${cov.stranded_pre_watermark ? " · " + num(cov.stranded_pre_watermark) + " stranded" : ""}</div></div>
-      <div class="cell"><div class="lbl">Trusted cards</div><div class="val">${num(cards)}</div>
-        <div class="sub">${org.desk != null ? `${num(org.desk)} your desk · ${num(org.producers)} producers` : `${k.entities || 0} ent · ${k.concepts || 0} con · ${k.syntheses || 0} syn`}</div></div>
-      <div class="cell"><div class="lbl">Schedules</div>
-        <div class="val" style="font-size:11.5px;line-height:1.55;font-weight:400">${sched.map(x => `<span class="dot ${j[x].exit === 0 ? "live" : "down"}" style="display:inline-block;margin-right:5px"></span>${esc(x.replace("archivist-", "").replace("daily-", ""))} ${clock(j[x].ts)}`).join("<br>") || "no run log"}</div>
-        <div class="sub">audit ${esc((hub.audit_latest || "").replace("audit-", "").replace(".md", "") || "none")}</div></div>`;
+    pb.hidden = false;
+    const st = h.status || {}, cov = st.coverage || {}, a = arch(), weeks = ((h.judge || {}).weeks) || [];
+    const rates = weeks.map(w => w.judged ? 100 * w.kept / w.judged : 0);
+    const last = weeks[weeks.length - 1];
+    const awaiting = st.deferred ?? cov.unjudged_in_window;
+    const pending = h.pending ?? 0;
+    pb.innerHTML = `
+      <button class="tile ${pending ? "" : ""}" data-goto-section="gate" title="Open the gate">
+        <span class="l">at the gate</span><b>${num(pending)}</b><span class="s">${pending ? "waiting for you" : "nothing waiting"}</span></button>
+      <button class="tile" data-goto-section="judge" title="Open the judge">
+        <span class="l">judge kept</span><b>${st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)}` : "?"}</b>
+        <span class="s">${last ? "wk " + pct(last.kept, last.judged) : ""}</span>${sparkline(rates)}</button>
+      <button class="tile" data-goto-section="judge" title="Open the backlog">
+        <span class="l">unjudged</span><b>${num(awaiting)}</b><span class="s">of ${num(cov.processable)}${cov.stranded_pre_watermark ? " · " + num(cov.stranded_pre_watermark) + " stranded" : ""}${(h.burndown || {}).stopped ? " · burn-down stopped" : ""}</span></button>
+      <button class="tile" data-goto-section="composition" title="Open the archive">
+        <span class="l">cards</span><b>${num(a.total)}</b><span class="s">${a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : ""}</span></button>`;
   }
 
+  // ---------- rows ----------
+  const SERIES = { concept: "s1", entity: "s2", synthesis: "s3" };
+  function archiveRows() {
+    const a = arch(), h = hub(), st = h.status || {}, cov = st.coverage || {};
+    if (!a.total) return [{ kind: "quiet", id: "no-archive", text: a.error ? "Archive could not be read: " + a.error : "No cards yet." }];
+    const rows = [], cards = a.cards || [];
+    const bySlug = {}; cards.forEach(c => bySlug[c.slug] = c);
+    const head = (id, label, n) => rows.push({ kind: "head", id: "h-" + id, section: id, label, n });
+    const arow = (id, label, desc, n, share, cls, list, extra) => rows.push({ kind: "arch", id, label, desc, n, share, cls, list: list || [], extra: extra || {} });
+
+    // the gate first: it is the only thing here that asks something of the owner
+    const props = h.proposals || [];
+    head("gate", "At the gate", props.length ? `${num(h.pending)} waiting` : "");
+    if (!props.length) rows.push({ kind: "quiet", id: "gate-empty", text: "Nothing waiting at the gate." });
+    props.forEach(p => rows.push({ kind: "prop", id: "p:" + p.slug, o: p }));
+
+    head("judge", "The judge", (h.judge || {}).total_judged ? num(h.judge.total_judged) + " judged all time" : "");
+    const weeks = ((h.judge || {}).weeks) || [];
+    weeks.slice(-8).reverse().forEach(w => arow("w:" + w.week, w.week.replace("-W", " week "), `${num(w.judged)} judged · ${num(w.kept)} kept`, pct(w.kept, w.judged), w.judged ? w.kept / w.judged : 0, "", [], { week: w }));
+    arow("backlog", "unjudged in window", "material the nightly has not reached", num(st.deferred ?? cov.unjudged_in_window), cov.processable ? (st.deferred ?? cov.unjudged_in_window) / cov.processable : 0, "warn", [], { kv: [["processable", num(cov.processable)], ["judged ever", num(cov.judged_ever)], ["stranded pre-watermark", num(cov.stranded_pre_watermark)], ["last run judged", num(st.judged)], ["last run kept", num(st.new_proposals)]] });
+    const bd = h.burndown || {};
+    arow("burndown", "burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "runs every 2h through the backlog; stops itself under 2% kept", bd.stopped ? "stopped" : "running", bd.stopped ? 1 : 0, bd.stopped ? "down" : "live", [], { kv: [["state", bd.stopped ? "stopped by the 2% floor" : "armed"], ["note", bd.note || "—"]] });
+    const gears = h.gears || {}, gvals = [...new Set(Object.values(gears))];
+    if (gvals.length === 1 && Object.keys(gears).length) arow("gears", "gears", `${Object.keys(gears).join(", ")}: ${gvals[0] === "ask-first" ? "every card waits for you" : gvals[0]}`, gvals[0], gvals[0] === "ask-first" ? 0 : 1, gvals[0] === "ask-first" ? "" : "live", [], { kv: [["gear", gvals[0]], ["basis", h.gears_note || ""]] });
+    else Object.entries(gears).forEach(([t, g]) => arow("gear:" + t, t, g === "ask-first" ? "every card waits for you" : g, g, g === "ask-first" ? 0 : 1, g === "ask-first" ? "" : "live", [], { kv: [["gear", g], ["basis", h.gears_note || ""]] }));
+
+    head("composition", "What the archive is", `${num(a.total)} cards`);
+    const bt = a.by_type || {};
+    Object.entries(bt).sort((x, y) => y[1] - x[1]).forEach(([t, n]) => arow("type:" + t, t, "", num(n), n / a.total, SERIES[t] || "s4", cards.filter(c => c.type === t).map(c => c.slug)));
+    const bm = a.by_month || {};
+    Object.keys(bm).sort().reverse().forEach(mo => arow("month:" + mo, mo, "cards created", num(bm[mo]), bm[mo] / Math.max(...Object.values(bm)), "", cards.filter(c => c.month === mo).map(c => c.slug)));
+
+    head("sources", "Where it comes from", "");
+    const bs = a.by_src || {};
+    const maxS = Math.max(...Object.values(bs));
+    Object.entries(bs).sort((x, y) => y[1] - x[1]).forEach(([s, n]) => arow("src:" + s, s, s === "desk" ? "your own desk, workstreams" : s === "web" ? "web sources" : s === "legacy" ? "one-time imports" : s === "other" ? "unattributed" : "producer lane", num(n), n / maxS, "", cards.filter(c => c.src === s).map(c => c.slug)));
+
+    head("health", "How well it hangs together", "");
+    const wd = a.words || {};
+    arow("orphans", "no inbound links", "cards nothing points at", num((a.orphans || []).length), (a.orphans || []).length / a.total, "warn", a.orphans);
+    arow("zerolink", "no outbound links", "cards that link to nothing", num((a.zero_link || []).length), (a.zero_link || []).length / a.total, "warn", a.zero_link);
+    arow("dangling", "dangling links", "targets that are not cards", num((a.dangling || []).length), 0, "down", [], { dangling: a.dangling || [] });
+    arow("long", "over 450 words", "past the one-screen line", num((a.over_length || []).length), (a.over_length || []).length / a.total, "warn", a.over_length, { kv: [["median", wd.median + " words"], ["p90", wd.p90 + " words"], ["longest", wd.max + " words"]] });
+    return rows;
+  }
   function items() {
+    if (view === "archive") return archiveRows();
     if (view === "hosts") return ((D.fleet || {}).hosts || []).map(h => ({ kind: "host", id: h.host, o: h }));
     if (view === "lanes") return (D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }));
     if (view === "tools") return (D.tools_found || []).filter(t => t.detected || t.connector).map(t => ({ kind: "tool", id: t.id, o: t }));
     return (D.jobs || []).map(j => ({ kind: "job", id: j.label, o: j }));
   }
-
-  function rowHTML(it) {
-    const o = it.o;
-    if (it.kind === "host") {
-      const m = o.meta || {}, net = o.net || {};
-      const hs = (o.harnesses || []).map(hz);
-      const isMe = o.host === (D.machine || {}).host;
-      const ages = (o.lanes || []).map(l => l.newest_age_h).filter(x => x != null);
-      const newest = ages.length ? Math.min.apply(null, ages) : null;
-      const strip = hs.length ? hs.map(t => wireMark(t, isMe ? localTool(t.id) : null)).join("") : `<span class="none">no tools</span>`;
-      return `<span class="dot ${net.online == null ? "" : net.online ? "live" : "down"}" title="${esc(net.online == null ? "network unknown" : (net.online ? "online" : "offline") + (net.ip ? " · " + net.ip : ""))}"></span>
-        <span class="name" style="width:142px">${esc(o.host)}</span>
-        <span class="desc">${esc([m.kind, m.where].filter(Boolean).join(" · "))}</span>
-        ${m.identity ? `<span class="tag">${esc(m.identity)}</span>` : ""}
-        <span class="strip">${strip}</span>
-        ${contribCell((o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0))}
-        <span class="num" style="width:44px">${age(newest)}</span>
-        <span class="chev">›</span>`;
-    }
-    if (it.kind === "lane") {
-      const r = (o.read || "none").replace(/\s*\(.*\)$/, "");
-      return `<span class="dot ${freshDot(o.vault_age_h)}"></span>
-        <span class="name" style="width:164px">${esc(o.lane)}</span>
-        <span class="desc">${esc(o.producer || "")}</span>
-        <span class="tag ${r === "none" ? "" : "on"}">${esc(r)}</span>
-        ${contribCell(o.cards || 0)}
-        <span class="num" style="width:44px">${age(o.vault_age_h)}</span>
-        <span class="chev">›</span>`;
-    }
-    if (it.kind === "tool") {
-      const h = o.connector ? localTool(o.connector) : null;
-      const state = h ? h.state : (o.detected ? "no connector" : "not here");
-      const cls = state === "connected" ? "on" : state === "partial" ? "mid" : state === "not connected" ? "off" : "";
-      const t = h ? hz(h) : null;
-      return `<span class="dot ${state === "connected" ? "live" : o.detected ? "warn" : ""}"></span>
-        <span class="name" style="width:178px">${esc(o.name)}</span>
-        <span class="desc">${esc(h ? "lane " + h.lane : (o.note || ""))}</span>
-        <span class="tag ${cls}">${esc(state)}</span>
-        <span class="strip">${t ? wireMark(t, h) : ""}</span>
-        <span class="num" style="width:46px">${t ? age(t.run) : ""}</span>
-        <span class="chev">›</span>`;
-    }
-    const j = o;
-    return `<span class="dot ${j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down"}"></span>
-      <span class="name" style="flex:1;min-width:0">${esc(j.label)}</span>
-      <span class="num" style="width:90px">${esc((j.schedule || "").replace("every ", ""))}</span>
-      <span class="tag ${j.stderr_lines ? "mid" : ""}">${j.stderr_lines == null ? "no log" : j.stderr_lines + " err"}</span>
-      <span class="chev">›</span>`;
-  }
+  const selectable = (it) => it.kind !== "head" && it.kind !== "quiet";
 
   let contribMax = 1;
   function contribCell(n) {
@@ -355,28 +397,103 @@
       <span class="meter"><i style="width:${n ? Math.max(6, w) : 0}%"></i></span>
       <span class="n ${n ? "" : "zero"}">${n || "–"}</span></span>`;
   }
+  function rowHTML(it) {
+    const o = it.o;
+    if (it.kind === "head") return `<span class="name">${esc(it.label)}</span><span class="desc"></span><span class="num">${esc(it.n || "")}</span>`;
+    if (it.kind === "quiet") return `<span class="desc">${esc(it.text)}</span>`;
+    if (it.kind === "arch") {
+      return `<span class="name" style="width:172px">${esc(it.label)}</span>
+        <span class="desc">${esc(it.desc || "")}</span>
+        ${meter(it.share, it.cls)}
+        <span class="num" style="width:58px">${esc(it.n)}</span>
+        <span class="chev">${it.list.length || it.extra.dangling || it.extra.kv ? "›" : ""}</span>`;
+    }
+    if (it.kind === "prop") {
+      const p = o, conf = (p.confidence || "").toLowerCase();
+      return `${dot(conf === "high" ? "live" : conf === "med" ? "warn" : "", conf ? conf + " confidence" : "confidence unknown")}
+        <span class="name" style="width:190px">${esc(p.slug)}</span>
+        <span class="desc">${esc(p.reason || p.title || "")}</span>
+        ${p.update_of ? `<span class="tag">update</span>` : ""}
+        ${p.hold ? `<span class="tag hold">held</span>` : ""}
+        ${(p.flags || []).map(f => `<span class="tag mid">${esc(f.toLowerCase())}</span>`).join("")}
+        <span class="tag">${esc(p.type || "?")}</span>
+        <span class="num" style="width:40px">${age(p.age_h)}</span>
+        <span class="chev">›</span>`;
+    }
+    if (it.kind === "host") {
+      const m = o.meta || {}, net = o.net || {};
+      const hs = (o.harnesses || []).map(hz);
+      const isMe = o.host === (D.machine || {}).host;
+      const ages = (o.lanes || []).map(l => l.newest_age_h).filter(x => x != null);
+      const newest = ages.length ? Math.min.apply(null, ages) : null;
+      const strip = hs.length ? hs.map(t => wireMark(t, isMe ? localTool(t.id) : null)).join("") : `<span class="none">no tools</span>`;
+      return `${dot(net.online == null ? "" : net.online ? "live" : "down", net.online == null ? "network unknown" : net.online ? "online" : "offline")}
+        <span class="name" style="width:138px">${esc(o.host)}</span>
+        <span class="desc">${esc([m.kind, m.where].filter(Boolean).join(" · "))}</span>
+        ${m.identity ? `<span class="tag">${esc(m.identity)}</span>` : ""}
+        <span class="strip">${strip}</span>
+        ${contribCell((o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0))}
+        <span class="num" style="width:40px">${age(newest)}</span>
+        <span class="chev">›</span>`;
+    }
+    if (it.kind === "lane") {
+      const r = (o.read || "none").replace(/\s*\(.*\)$/, "");
+      return `${dot(freshDot(o.vault_age_h), o.vault_age_h == null ? "age unknown" : o.vault_age_h <= 24 ? "fresh" : o.vault_age_h <= 168 ? "this week" : "stale")}
+        <span class="name" style="width:160px">${esc(o.lane)}</span>
+        <span class="desc">${esc(o.producer || "")}</span>
+        <span class="tag ${r === "none" ? "" : "on"}">${esc(r)}</span>
+        ${contribCell(o.cards || 0)}
+        <span class="num" style="width:40px">${age(o.vault_age_h)}</span>
+        <span class="chev">›</span>`;
+    }
+    if (it.kind === "tool") {
+      const h = o.connector ? localTool(o.connector) : null;
+      const state = h ? h.state : (o.detected ? "no connector" : "not here");
+      const cls = state === "connected" ? "on" : state === "partial" ? "mid" : state === "not connected" ? "off" : "";
+      const t = h ? hz(h) : null;
+      return `${dot(state === "connected" ? "live" : o.detected ? "warn" : "", state)}
+        <span class="name" style="width:174px">${esc(o.name)}</span>
+        <span class="desc">${esc(h ? "lane " + h.lane : (o.note || ""))}</span>
+        <span class="tag ${cls}">${esc(state)}</span>
+        <span class="strip">${t ? wireMark(t, h) : ""}</span>
+        <span class="num" style="width:40px">${t ? age(t.run) : ""}</span>
+        <span class="chev">›</span>`;
+    }
+    const j = o;
+    return `${dot(j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down", j.last_exit === 0 ? "last run ok" : j.last_exit == null ? "no run yet" : "last run failed")}
+      <span class="name" style="flex:1;min-width:0">${esc(j.label)}</span>
+      <span class="num" style="width:90px">${esc((j.schedule || "").replace("every ", ""))}</span>
+      <span class="tag ${j.stderr_lines ? "mid" : ""}">${j.stderr_lines == null ? "no log" : j.stderr_lines + " err"}</span>
+      <span class="chev">›</span>`;
+  }
   function renderList() {
     const list = items();
     if (view === "hosts") contribMax = Math.max(1, ...list.map(i => (i.o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0)));
     else if (view === "lanes") contribMax = Math.max(1, ...list.map(i => i.o.cards || 0));
-    $("#listcount").textContent = list.length + " " + view;
-    $("#listlegend").textContent = (view === "hosts" || view === "lanes") ? "· cards landed · newest" : "";
+    const n = list.filter(selectable).length;
+    $("#listcount").textContent = view === "archive" ? "" : n + " " + view;
     document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
-    if (!sel || sel.view !== view || !list.some(i => i.id === sel.id)) sel = list.length ? { view, kind: list[0].kind, id: list[0].id } : null;
-    $("#rows").innerHTML = list.map(it => `<div class="row" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`).join("")
+    if (sel && (sel.view !== view || !list.some(i => i.id === sel.id))) sel = null;
+    $("#rows").innerHTML = list.map((it, i) => selectable(it)
+      ? `<div class="row" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
+      : `<div class="row ${it.kind}" id="r${i}" ${it.kind === "head" ? `data-section="${esc(it.section)}"` : ""} aria-hidden="true">${rowHTML(it)}</div>`).join("")
       || `<div class="empty">Nothing here yet.</div>`;
+    syncActive();
+  }
+  function syncActive() {
+    const el = sel ? document.querySelector('.row[data-id="' + CSS.escape(sel.id) + '"]') : null;
+    if (el) $("#rows").setAttribute("aria-activedescendant", el.id); else $("#rows").removeAttribute("aria-activedescendant");
   }
 
+  // ---------- the drawer ----------
   function kv(pairs) {
     return `<dl class="kv">${pairs.filter(p => p[1] != null && p[1] !== "").map(p => `<dt>${esc(p[0])}</dt><dd>${p[2] === "raw" ? p[1] : esc(p[1])}</dd>`).join("")}</dl>`;
   }
   function toolBlock(t, local, title) {
     const rd = local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
     const wd = runDot(t.run, intervalOf(local));
-    const readLabel = local && local.read === "instruction" ? "by instruction"
-      : local && local.trusted === false ? "not trusted"
-      : local && local.hook_registered === false ? "hook missing"
-      : t.reads + " this week";
+    const readLabel = local && local.read === "instruction" ? "by instruction" : local && local.trusted === false ? "not trusted"
+      : local && local.hook_registered === false ? "hook missing" : t.reads + " this week";
     return `<div class="tool">
       <div class="top"><b>${esc(title || t.name || t.id)}</b><span class="sp"></span>
         ${local && local.state ? `<span class="tag ${local.state === "connected" ? "on" : "mid"}" style="font-family:var(--mono);font-size:10px;border:1px solid var(--rule);border-radius:4px;padding:0 5px">${esc(local.state)}</span>` : ""}</div>
@@ -388,118 +505,138 @@
   function cardLink(rel, name) {
     const o = D.obsidian || {};
     if (!o.vault_name) return `<span class="chip">${esc(name)}</span>`;
-    return `<span class="chip" data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(o.vault_name)}&amp;file=${encodeURIComponent(rel)}">${esc(name)}</span>`;
+    return `<button class="chip" data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(o.vault_name)}&file=${encodeURIComponent(rel)}" title="Open in Obsidian">${esc(name)}</button>`;
   }
-  function contribSect(lanes, who) {
+  function cardChips(slugs, limit) {
+    const a = arch(), by = {}; (a.cards || []).forEach(c => by[c.slug] = c);
+    const shown = slugs.slice(0, limit || 80);
+    return `<div class="cards">${shown.map(s => cardLink((by[s] || {}).rel || ("knowledge/" + s), s)).join("")}</div>
+      ${slugs.length > shown.length ? `<div class="pulls">+${slugs.length - shown.length} more</div>` : ""}`;
+  }
+  function contribSect(lanes) {
     const cards = lanes.reduce((a, l) => a + (l.cards || 0), 0);
     const files = lanes.reduce((a, l) => a + (l.hub_files || 0), 0);
-    const org = (D.hub || {}).origin || {};
-    const attributed = org.producers || 0;
-    const share = attributed ? Math.round(cards / attributed * 100) : 0;
+    const org = hub().origin || {};
+    const share = org.producers ? Math.round(cards / org.producers * 100) : 0;
     const recent = [].concat.apply([], lanes.map(l => l.recent_cards || [])).slice(0, 6);
     if (!cards && !files) return "";
-    return `<div class="sect"><h3>Contribution to the archive</h3>
-      ${kv([["cards landed", cards ? `${cards} · ${share}% of everything producers have landed` : "none yet"],
+    return `<div class="sect"><h2>Contribution to the archive</h2>
+      ${kv([["cards landed", cards ? `${cards} · ${share}% of what producers have landed` : "none yet"],
             ["raw offered", files ? files.toLocaleString() + " files" : null],
             ["kept rate", cards && files ? (cards / files * 100).toFixed(1) + "% of its files became a card" : null]])}
       ${recent.length ? `<div style="margin-top:8px"><div class="pulls" style="margin-bottom:5px">newest cards it earned</div>
         <div class="cards">${recent.map(r => cardLink(r[1], r[0])).join("")}</div></div>` : ""}</div>`;
   }
-  function obsBtn(lane) {
+  function obsBtn(rel, label) {
     const o = D.obsidian || {};
-    if (!o.vault_name || !lane) return "";
-    return `<button data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(o.vault_name)}&amp;file=${encodeURIComponent("raw/tools/" + lane + "/LANE")}">Open in Obsidian</button>`;
+    if (!o.vault_name || !rel) return "";
+    return `<button data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(o.vault_name)}&file=${encodeURIComponent(rel)}">${esc(label || "Open in Obsidian")}</button>`;
   }
+  const head = (title, sub, badge) => `<div class="insp-head"><div style="min-width:0"><div class="insp-title">${title}${badge ? `<span class="badge">${esc(badge)}</span>` : ""}</div>${sub ? `<div class="insp-sub">${sub}</div>` : ""}</div><span class="sp"></span>
+    <button class="quiet" id="pin" aria-pressed="${String(pinned)}" title="Keep the panel open (p)">${pinned ? "Unpin" : "Pin"}</button>
+    <button class="quiet" id="insp-close" title="Close (Esc)" aria-label="Close">✕</button></div>`;
 
   function renderInspector() {
     const box = $("#insp");
-    if (!sel) { box.innerHTML = `<div class="empty">Select a row to inspect it.</div>`; return; }
-    const it = items().find(i => i.id === sel.id);
-    if (!it) { box.innerHTML = `<div class="empty">That record is gone.</div>`; return; }
+    const it = sel ? items().find(i => i.id === sel.id) : null;
+    if (!it) { box.innerHTML = `<div class="insp-head"><span class="sp"></span><button class="quiet" id="insp-close" aria-label="Close">✕</button></div><div class="empty">Select a row to see its detail.</div>`; return; }
     const o = it.o, me = (D.machine || {}).host;
 
+    if (it.kind === "arch") {
+      const x = it.extra || {};
+      let body = "";
+      if (x.kv) body += `<div class="sect">${kv(x.kv)}</div>`;
+      if (x.week) body += `<div class="sect">${kv([["judged", num(x.week.judged)], ["kept", num(x.week.kept)], ["keep rate", pct(x.week.kept, x.week.judged)]])}</div>`;
+      if (it.id.startsWith("type:") || it.id === "h-composition") body += compositionSect();
+      if (x.dangling) body += `<div class="sect"><h2>Targets that are not cards</h2><table class="t"><tr><th>link</th><th>from</th></tr>${x.dangling.map(d => `<tr><td class="mono">${esc(d.target)}</td><td>${d.from.map(f => cardLink("knowledge/" + f, f)).join(" ")}</td></tr>`).join("")}</table></div>`;
+      if (it.list.length) body += `<div class="sect"><h2>${num(it.list.length)} cards</h2>${cardChips(it.list)}</div>`;
+      if (!body) body = `<div class="empty">Nothing more to show for this row.</div>`;
+      box.innerHTML = head(esc(it.label), esc(it.desc || "")) + body;
+      return;
+    }
+    if (it.kind === "prop") {
+      const p = o;
+      box.innerHTML = head(esc(p.title || p.slug), `${esc(p.type || "?")} · ${esc(p.confidence || "?")} confidence${p.update_of ? ` · update of <span class="mono">${esc(p.update_of)}</span>` : ""}`, p.hold ? "held" : "") +
+        `${p.reason ? `<div class="prose">${esc(p.reason)}</div>` : ""}
+        ${p.hold ? `<div class="note">Held for you: ${esc(p.hold)}</div>` : ""}
+        ${(p.flags || []).length ? `<div class="note">${esc(p.flags.join(", "))}: the gears stepped aside, this one is yours to call.</div>` : ""}
+        <div class="sect">${kv([["slug", `<span class="mono">${esc(p.slug)}</span>`, "raw"], ["from", p.source ? `<span class="mono">${esc(p.source)}</span>` : null, "raw"], ["length", p.words + " words"], ["waiting", age(p.age_h)]])}</div>
+        <div class="sect"><h2>The card as drafted</h2><div class="card-body">${esc(p.body || "(empty)")}</div></div>
+        <div class="acts">
+          <button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}">Approve</button>
+          <button class="danger" data-act="gate" data-verb="reject" data-slug="${esc(p.slug)}">Reject</button>
+          ${p.source ? obsBtn(p.source.replace(/\.md$/, ""), "Open source") : ""}</div>`;
+      return;
+    }
     if (it.kind === "host") {
       const m = o.meta || {}, net = o.net || {}, isMe = o.host === me;
       const hs = (o.harnesses || []).map(hz);
-      box.innerHTML = `
-        <div class="insp-title">${esc(o.host)}${isMe ? `<span class="badge">this machine</span>` : ""}</div>
-        <div class="insp-sub">${esc([m.kind, m.where].filter(Boolean).join(" · ") || "not in the host registry")}</div>
-        <div class="sect"><h3>Network</h3>${kv([
-          ["state", `<span class="dot ${net.online == null ? "" : net.online ? "live" : "down"}" style="display:inline-block;margin-right:6px"></span>${net.online == null ? "unknown" : net.online ? "online" : "offline"}`, "raw"],
+      box.innerHTML = head(esc(o.host), esc([m.kind, m.where].filter(Boolean).join(" · ") || "not in the host registry"), isMe ? "this machine" : "") + `
+        <div class="sect"><h2>Network</h2>${kv([
+          ["state", `${dot(net.online == null ? "" : net.online ? "live" : "down", "")} ${net.online == null ? "unknown" : net.online ? "online" : "offline"}`, "raw"],
           ["address", net.ip ? `<span class="mono">${esc(net.ip)}</span>` : null, "raw"],
           ["seen via", net.via], ["reach", m.reach]])}</div>
-        <div class="sect"><h3>Reaches the brain</h3><div class="prose">${esc(m.transport || "no transport recorded")}
+        <div class="sect"><h2>Reaches the brain</h2><div class="prose">${esc(m.transport || "no transport recorded")}
           ${m.notes ? `<div style="color:var(--muted);margin-top:4px">${esc(m.notes)}</div>` : ""}</div></div>
-        <div class="sect"><h3>Tools deployed · ${hs.length}</h3>
-          ${hs.length ? hs.map(t => toolBlock(t, isMe ? localTool(t.id) : null)).join("")
-            : `<div class="prose" style="color:var(--warn)">No tools deployed on this host.</div>`}</div>
-        ${contribSect((o.lanes || []), o.host)}
-        <div class="sect"><h3>Lanes · ${(o.lanes || []).length}</h3><div class="chips">
-          ${(o.lanes || []).map(l => `<span class="chip" data-goto="lane:${esc(l.lane)}"><span class="dot ${freshDot(l.newest_age_h)}"></span>${esc(l.lane)} ${age(l.newest_age_h)}</span>`).join("")
-            || `<span class="prose" style="color:var(--muted)">none</span>`}</div></div>
-        ${m.identity ? `<div class="sect"><h3>Identity</h3><div class="prose">Sessions here default to <span class="mono">${esc(m.identity)}</span>.</div></div>` : ""}`;
+        <div class="sect"><h2>Tools deployed · ${hs.length}</h2>
+          ${hs.length ? hs.map(t => toolBlock(t, isMe ? localTool(t.id) : null)).join("") : `<div class="prose" style="color:var(--warn)">No tools deployed on this host.</div>`}</div>
+        ${contribSect(o.lanes || [])}
+        <div class="sect"><h2>Lanes · ${(o.lanes || []).length}</h2><div class="chips">
+          ${(o.lanes || []).map(l => `<button class="chip" data-goto="lane:${esc(l.lane)}">${dot(freshDot(l.newest_age_h), "")}${esc(l.lane)} ${age(l.newest_age_h)}</button>`).join("") || `<span class="prose" style="color:var(--muted)">none</span>`}</div></div>
+        ${m.identity ? `<div class="sect"><h2>Identity</h2><div class="prose">Sessions here default to <span class="mono">${esc(m.identity)}</span>.</div></div>` : ""}`;
       return;
     }
-
     if (it.kind === "lane") {
       const local = (D.harnesses || []).find(h => h.lane === o.lane);
-      box.innerHTML = `
-        <div class="insp-title">${esc(o.lane)}</div>
-        <div class="insp-sub">${esc(o.producer || "")}</div>
-        <div class="sect"><h3>Contract</h3>${kv([["host", o.host], ["read", o.read], ["write", o.write], ["status", o.status]])}</div>
-        <div class="sect"><h3>Freshness · newest file</h3>${kv([
+      box.innerHTML = head(esc(o.lane), esc(o.producer || "")) + `
+        <div class="sect"><h2>Contract</h2>${kv([["host", o.host], ["read", o.read], ["write", o.write], ["status", o.status]])}</div>
+        <div class="sect"><h2>Freshness · newest file</h2>${kv([
           ["staging", o.staging_age_h != null ? age(o.staging_age_h) + " ago" : "not staged here"],
           ["this copy", age(o.vault_age_h) + " ago"],
           ["hub", o.hub_age_h != null ? age(o.hub_age_h) + " ago" : "not seen"],
           ["reads 7d", String((o.reads_7d || {}).real || 0)]])}</div>
-        ${contribSect([o], o.lane)}
-        ${o.last_run ? `<div class="sect"><h3>Last mirror run</h3><div class="prose mono">${esc(o.last_run)}</div></div>` : ""}
+        ${contribSect([o])}
+        ${o.last_run ? `<div class="sect"><h2>Last mirror run</h2><div class="prose mono">${esc(o.last_run)}</div></div>` : ""}
         <div class="acts">
           ${local && local.lane_dir ? `<button data-act="reveal" data-path="${esc(local.lane_dir)}">Show lane</button>` : ""}
-          ${obsBtn(o.lane)}
+          ${obsBtn("raw/tools/" + o.lane + "/LANE")}
           ${local && local.job_loaded ? `<button data-act="kickstart" data-label="${esc(local.label)}">Run mirror now</button>` : ""}</div>`;
       return;
     }
-
     if (it.kind === "tool") {
       const h = o.connector ? localTool(o.connector) : null;
       const t = h ? hz(h) : null;
-      box.innerHTML = `
-        <div class="insp-title">${esc(o.name)}</div>
-        <div class="insp-sub">${esc(o.note || (h ? "lane " + h.lane : "no connector for this tool yet"))}</div>
-        ${t ? `<div class="sect"><h3>Wires</h3>${toolBlock(t, h, "both wires")}</div>` : ""}
-        ${h ? `<div class="sect"><h3>Read wire</h3>${kv([
+      box.innerHTML = head(esc(o.name), esc(o.note || (h ? "lane " + h.lane : "no connector for this tool yet"))) + `
+        ${t ? `<div class="sect"><h2>Wires</h2>${toolBlock(t, h, "both wires")}</div>` : ""}
+        ${h ? `<div class="sect"><h2>Read wire</h2>${kv([
             ["kind", h.read],
             ["declared in", h.hook_file ? `<span class="mono">${esc(shortPath(h.hook_file))}</span>` : "n/a", "raw"],
             ["registered", h.hook_registered == null ? "n/a" : (h.hook_registered ? "yes" : "no")],
             ["trusted", h.trusted == null ? "n/a" : (h.trusted ? "yes" : "no")],
             ["reads 7d", String(t.reads)]])}</div>
-          <div class="sect"><h3>Write wire</h3>${kv([
+          <div class="sect"><h2>Write wire</h2>${kv([
             ["job", `<span class="mono">${esc(h.label)}</span>`, "raw"],
             ["loaded", h.job_loaded ? "yes" : "no"],
             ["schedule", (h.plist || {}).schedule],
             ["last run", t.run != null ? age(t.run) + " ago" : "never"],
             ["pulls", t.pulls]])}</div>`
-          : `<div class="sect"><h3>State</h3><div class="prose">${o.detected
+          : `<div class="sect"><h2>State</h2><div class="prose">${o.detected
               ? "Found on this machine. No connector exists for it yet, so it neither reads the brain nor writes a lane."
               : "Not installed on this machine."}</div></div>`}
         <div class="acts">
           ${o.connector && o.detected ? `<button class="${h && h.state === "connected" ? "" : "brass"}" data-act="connect" data-harness="${esc(o.connector)}">${h && h.state === "connected" ? "Reinstall" : "Connect"}</button>` : ""}
           ${h && h.job_loaded ? `<button data-act="kickstart" data-label="${esc(h.label)}">Run mirror now</button>` : ""}
           ${h && h.lane_dir ? `<button data-act="reveal" data-path="${esc(h.lane_dir)}">Show lane</button>` : ""}
-          ${h ? obsBtn(h.lane) : ""}</div>`;
+          ${h ? obsBtn("raw/tools/" + h.lane + "/LANE") : ""}</div>`;
       return;
     }
-
     const j = o;
-    box.innerHTML = `
-      <div class="insp-title" style="font-size:13px">${esc(j.label)}</div>
-      <div class="insp-sub">${esc(j.schedule || "")}</div>
-      <div class="sect"><h3>Run state</h3>${kv([
-        ["last exit", `<span class="dot ${j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down"}" style="display:inline-block;margin-right:6px"></span>${j.last_exit == null ? "unknown" : j.last_exit}`, "raw"],
+    box.innerHTML = head(esc(j.label), esc(j.schedule || "")) + `
+      <div class="sect"><h2>Run state</h2>${kv([
+        ["last exit", `${dot(j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down", "")} ${j.last_exit == null ? "unknown" : j.last_exit}`, "raw"],
         ["running", j.pid ? "pid " + j.pid : "idle between runs"],
         ["program", j.program ? `<span class="mono">${esc(j.program)}</span>` : null, "raw"]])}</div>
-      <div class="sect"><h3>Error log</h3>${kv([
+      <div class="sect"><h2>Error log</h2>${kv([
         ["lines", j.stderr_lines == null ? "no log file" : String(j.stderr_lines)],
         ["last write", j.stderr_age_h != null ? age(j.stderr_age_h) + " ago" : null],
         ["path", j.stderr ? `<span class="mono">${esc(shortPath(j.stderr))}</span>` : null, "raw"]])}
@@ -507,22 +644,46 @@
       <div class="acts">
         <button data-act="kickstart" data-label="${esc(j.label)}">Run now</button>
         ${j.stderr ? `<button data-act="open" data-path="${esc(j.stderr)}">Open log</button>` : ""}
-        ${j.stderr_lines ? `<button data-act="clearlog" data-path="${esc(j.stderr)}">Clear log</button>` : ""}</div>`;
+        ${j.stderr_lines ? `<button class="danger" data-act="clearlog" data-path="${esc(j.stderr)}">Clear log</button>` : ""}</div>`;
+  }
+  function compositionSect() {
+    const a = arch(), bt = a.by_type || {}, total = a.total || 1;
+    const order = Object.entries(bt).sort((x, y) => y[1] - x[1]);
+    return `<div class="sect"><h2>${num(a.total)} cards by type</h2>
+      <div class="stack" role="img" aria-label="${esc(order.map(([t, n]) => n + " " + t).join(", "))}">${order.map(([t, n]) => `<i class="${SERIES[t] || "s4"}" style="flex:${n}"></i>`).join("")}</div>
+      <div class="legend">${order.map(([t, n]) => `<span><i class="${SERIES[t] || "s4"}"></i>${esc(t)} ${num(n)} · ${pct(n, total)}</span>`).join("")}</div></div>`;
+  }
+
+  function openInspector() { $("#inspector").classList.add("open"); $("#inspector").setAttribute("aria-hidden", "false"); }
+  function closeInspector() { if (pinned) return; $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
+  function setPinned(v) {
+    pinned = !!v; document.body.classList.toggle("pinned", pinned);
+    try { localStorage.setItem("sov.pinned", pinned ? "1" : "0"); } catch (e) {}
+    if (pinned) openInspector();
+    renderInspector();
   }
 
   function render(d) { D = d; renderTop(); renderList(); renderInspector(); }
-
-  function select(kind, id) {
+  function select(kind, id, open) {
     sel = { view, kind, id };
-    document.querySelectorAll(".row").forEach(r => r.setAttribute("aria-selected", String(r.dataset.id === id)));
+    document.querySelectorAll(".row[role=option]").forEach(r => r.setAttribute("aria-selected", String(r.dataset.id === id)));
+    syncActive();
     renderInspector();
-    if (window.innerWidth <= 960) $("#inspector").classList.add("open");
+    if (open) openInspector();
   }
-  function setView(v) { view = v; sel = null; renderList(); renderInspector(); }
-  window.sovView = setView;   // design QA: snapshot a specific view
+  function setView(v, opts) {
+    view = v; sel = null; renderList(); renderInspector();
+    if (opts && opts.section) { const h = document.querySelector('.row.head[data-section="' + opts.section + '"]'); if (h) h.scrollIntoView({ block: "start" }); }
+    if (opts && opts.open) { const first = items().find(selectable); if (first) select(first.kind, first.id, true); }
+  }
+  window.sovView = (v) => {   // design QA: "archive", "archive+open", "archive+open:orphans"
+    const [name, rest] = String(v).split("+"); const [mode, id] = (rest || "").split(/:(.*)/);
+    setView(name, { open: mode === "open" && !id });
+    if (id) { const it = items().find(i => i.id === id); if (it) select(it.kind, it.id, true); }
+  };
 
   function openDrawer(title, showApply) {
-    $("#drawer-title").textContent = title; $("#drawer-log").textContent = ""; $("#drawer-state").textContent = "running";
+    $("#drawer-title").textContent = title; $("#drawer-log").textContent = ""; $("#drawer-state").textContent = "running…";
     $("#drawer-apply").hidden = !showApply; $("#drawer-apply").disabled = true; $("#drawer").classList.add("open");
   }
   function connect(harness, apply, extra) {
@@ -531,21 +692,30 @@
     openDrawer((apply ? "Installing " : "Dry run: ") + (harness === "all" ? "every tool found" : harness), !apply);
     bridge(Object.assign({ cmd: "connect", harness, apply: !!apply, host: extra.host || (D.machine || {}).host || "" }, extra));
   }
+  // destructive actions arm on the first click and fire on the second, within four seconds
+  function armOrFire(b, label, fire) {
+    if (armed && armed.el === b) { clearTimeout(armed.t); armed = null; b.classList.remove("confirm"); b.textContent = label; return fire(); }
+    if (armed) { clearTimeout(armed.t); armed.el.classList.remove("confirm"); armed.el.textContent = armed.label; }
+    b.classList.add("confirm"); b.textContent = "Confirm " + label.toLowerCase();
+    armed = { el: b, label, t: setTimeout(() => { b.classList.remove("confirm"); b.textContent = label; armed = null; }, 4000) };
+  }
 
   document.addEventListener("click", (e) => {
     const seg = e.target.closest(".seg button"); if (seg) return setView(seg.dataset.view);
+    const tile = e.target.closest("#pulse .tile[data-goto-section]"); if (tile) return setView("archive", { section: tile.dataset.gotoSection });
     const need = e.target.closest("[data-need]");
     if (need) { const n = (D.needs_you || [])[+need.dataset.need];
-      if (n && n.harness) { setView("tools"); select("tool", n.harness); }
+      if (n && n.harness) { setView("tools"); select("tool", n.harness, true); }
+      else if (n && n.kind === "gate") setView("archive", { section: "gate" });
       else if (n && n.kind === "job") setView("jobs");
       return; }
-    const cardChip = e.target.closest(".chip[data-act='openurl']");
-    if (cardChip) return bridge({ cmd: "openurl", url: cardChip.dataset.url });
     const chip = e.target.closest("[data-goto]");
-    if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s"); select(p[0], p[1]); return; }
+    if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s"); select(p[0], p[1], true); return; }
     const b = e.target.closest("button");
     if (b) {
       if (b.id === "refresh") return refresh();
+      if (b.id === "pin") return setPinned(!pinned);
+      if (b.id === "insp-close") { pinned ? setPinned(false) : closeInspector(); return; }
       if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
       if (b.id === "drawer-apply") { if (pendingConnect) connect(pendingConnect.harness, true); return; }
       const act = b.dataset.act;
@@ -554,37 +724,49 @@
       if (act === "reveal") return bridge({ cmd: "reveal", path: b.dataset.path });
       if (act === "open") return bridge({ cmd: "open", path: b.dataset.path });
       if (act === "openurl") return bridge({ cmd: "openurl", url: b.dataset.url });
-      if (act === "clearlog") { openDrawer("Clear log", false); return bridge({ cmd: "clearlog", path: b.dataset.path }); }
+      if (act === "clearlog") return armOrFire(b, "Clear log", () => { openDrawer("Clear log", false); bridge({ cmd: "clearlog", path: b.dataset.path }); });
+      if (act === "gate") {
+        const verb = b.dataset.verb, slug = b.dataset.slug, via = hub().via || "local";
+        const fire = () => { openDrawer((verb === "approve" ? "Approving " : "Rejecting ") + slug, false); bridge({ cmd: "gate", verb, slug, via, reason: "console" }); };
+        return verb === "reject" ? armOrFire(b, "Reject", fire) : fire();
+      }
       return;
     }
-    const row = e.target.closest(".row");
-    if (row) { const it = items().find(i => i.id === row.dataset.id); if (it) select(it.kind, it.id); }
+    const row = e.target.closest(".row[role=option]");
+    if (row) { const it = items().find(i => i.id === row.dataset.id); if (it) select(it.kind, it.id, true); }
+  });
+  document.addEventListener("keydown", (e) => {
+    const need = e.target.closest && e.target.closest("[data-need]");
+    if (need && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); need.click(); }
   });
 
   $("#rows").addEventListener("keydown", (e) => {
-    const list = items(); if (!list.length) return;
+    const list = items().filter(selectable); if (!list.length) return;
     let i = list.findIndex(x => sel && x.id === sel.id);
     if (e.key === "ArrowDown") { e.preventDefault(); i = Math.min(list.length - 1, i + 1); }
     else if (e.key === "ArrowUp") { e.preventDefault(); i = Math.max(0, i - 1); }
+    else if (e.key === "Enter" || e.key === "i") { e.preventDefault(); if (i >= 0) return select(list[i].kind, list[i].id, true); i = 0; }
     else return;
-    select(list[i].kind, list[i].id);
+    const open = $("#inspector").classList.contains("open") || pinned;
+    select(list[i].kind, list[i].id, open);
     const el = document.querySelector('.row[data-id="' + CSS.escape(list[i].id) + '"]');
     if (el) el.scrollIntoView({ block: "nearest" });
   });
 
   document.addEventListener("keydown", (e) => {
+    const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
     if ((e.metaKey || e.ctrlKey) && e.key === "r") { e.preventDefault(); refresh(); }
-    if (e.key === "Escape") { $("#drawer").classList.remove("open"); $("#inspector").classList.remove("open"); }
-    if (!e.metaKey && !e.ctrlKey && /^[1-4]$/.test(e.key) && document.activeElement.tagName !== "INPUT") {
-      setView(["hosts", "lanes", "tools", "jobs"][+e.key - 1]);
-    }
+    if (e.key === "Escape") { $("#drawer").classList.remove("open"); closeInspector(); }
+    if (typing || e.metaKey || e.ctrlKey) return;
+    if (/^[1-5]$/.test(e.key)) setView(["archive", "hosts", "lanes", "tools", "jobs"][+e.key - 1]);
+    if (e.key === "p") setPinned(!pinned);
   });
 
   function refresh() { bridge({ cmd: "status" }); }
   window.sovRefresh = refresh;
   window.sovDeliver = function (kind, payload) {
     if (kind === "status") {
-      if (payload.error) { $("#insp").innerHTML = `<div class="empty">${esc(payload.error)}</div>`; $("#meta").textContent = "status unavailable"; return; }
+      if (payload.error) { $("#insp").innerHTML = `<div class="empty">${esc(payload.error)}</div>`; openInspector(); $("#meta").textContent = "status unavailable"; return; }
       if (payload.machine && !payload.machine.connected) return renderSetup(payload);
       render(payload);
     } else if (kind === "log") {
@@ -593,6 +775,7 @@
         $("#drawer-state").textContent = payload.exit === 0 ? "done" : "exit " + payload.exit;
         if (pendingConnect && !pendingConnect.apply && payload.exit === 0) $("#drawer-apply").disabled = false;
         if (pendingConnect && pendingConnect.apply) { pendingConnect = null; setTimeout(refresh, 800); }
+        if (payload.id === "gate") setTimeout(refresh, 1200);
       }
     } else if (kind === "kickstart") {
       $("#drawer-log").textContent += (payload.exit === 0 ? "started " + payload.label : "exit " + payload.exit + "\n" + payload.out) + "\n";
@@ -605,20 +788,20 @@
     D = d;
     $("#vault").textContent = "Sovereign";
     $("#meta").textContent = "this machine is not connected to a brain yet";
-    $("#hubpill").innerHTML = `<span class="dot"></span>not connected`;
-    $("#needs").hidden = true; $("#hub").hidden = true;
+    $("#hubpill").innerHTML = `${dot("", "not connected")}not connected`;
+    $("#needs").hidden = true; $("#pulse").hidden = true;
     $("#rows").innerHTML = `<div class="empty">No lanes yet.</div>`;
     $("#insp").innerHTML = `<div class="insp-title">Connect this machine</div>
       <div class="insp-sub">Point it at a brain once. Every tool found here gets both wires: it reads the brain when a session starts, and its notes flow back to its own lane.</div>
-      <div class="sect"><h3>Setup</h3>
-        <div class="prose">Vault folder<input id="f-vault" placeholder="/Users/you/Documents/My Brain"></div>
-        <div class="prose">This machine's short name<input id="f-host" value="${esc((d.machine || {}).host || "")}"></div>
-        <div class="prose">Always-on cards<input id="f-core" placeholder="me,how-to-work-with-me"></div>
-        <div class="prose">Hub, if the vault lives on another machine<input id="f-hub" placeholder="hub:/Users/you/Brain"></div>
+      <div class="sect"><h2>Setup</h2>
+        <label for="f-vault">Vault folder<input id="f-vault" name="vault" autocomplete="off" spellcheck="false" placeholder="/Users/you/Documents/My Brain…"></label>
+        <label for="f-host">This machine's short name<input id="f-host" name="host" autocomplete="off" spellcheck="false" value="${esc((d.machine || {}).host || "")}"></label>
+        <label for="f-core">Always-on cards<input id="f-core" name="core" autocomplete="off" spellcheck="false" placeholder="me,how-to-work-with-me…"></label>
+        <label for="f-hub">Hub, if the vault lives on another machine<input id="f-hub" name="hub" autocomplete="off" spellcheck="false" placeholder="hub:/Users/you/Brain…"></label>
         <button class="brass" id="setup-dry">See the dry run</button></div>`;
+    openInspector();
     $("#setup-dry").onclick = () => {
-      const extra = { vault: $("#f-vault").value.trim(), host: $("#f-host").value.trim(),
-                      core: $("#f-core").value.trim(), hub: $("#f-hub").value.trim() };
+      const extra = { vault: $("#f-vault").value.trim(), host: $("#f-host").value.trim(), core: $("#f-core").value.trim(), hub: $("#f-hub").value.trim() };
       if (!extra.vault) return $("#f-vault").focus();
       connect("all", false, extra);
     };

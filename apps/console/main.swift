@@ -54,6 +54,23 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             if let p = d["path"] as? String { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
         case "openurl":
             if let u = d["url"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
+        case "gate":
+            // The owner's gate. Runs `sov gate <verb> <slug>` where the hub lives: over ssh
+            // when ~/.brain-hub points elsewhere, locally when this machine is the hub.
+            // Inputs are whitelisted before they touch a shell: the verb is one of two
+            // words, the slug is kebab-case, the alias is a hostname, the reason is quoted.
+            guard let verb = d["verb"] as? String, ["approve", "reject"].contains(verb),
+                  let slug = d["slug"] as? String,
+                  slug.range(of: "^[a-z0-9][a-z0-9-]{0,120}$", options: .regularExpression) != nil else { return }
+            let reason = String(((d["reason"] as? String) ?? "").replacingOccurrences(of: "'", with: "").prefix(200))
+            let via = (d["via"] as? String) ?? "local"
+            if via.hasPrefix("ssh "), let alias = via.split(separator: " ").last.map(String.init),
+               alias.range(of: "^[A-Za-z0-9._-]+$", options: .regularExpression) != nil {
+                let remote = "PATH=\"$HOME/brain-bin:$HOME/.local/bin:$PATH\" sov gate \(verb) \(slug) '\(reason)'"
+                stream(["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", alias, remote], id: "gate")
+            } else if let sov = sov {
+                stream([sov, "gate", verb, slug, reason], id: "gate")
+            }
         default: break
         }
     }
@@ -151,10 +168,10 @@ final class App: NSObject, NSApplicationDelegate {
         bridge.web = web
         web.setValue(false, forKey: "drawsBackground")
 
-        let frame = NSRect(x: 120, y: 120, width: 1080, height: 760)
+        let frame = NSRect(x: 120, y: 120, width: 900, height: 600)
         window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Sovereign"
-        window.minSize = NSSize(width: 820, height: 520)
+        window.minSize = NSSize(width: 720, height: 460)
         window.titlebarAppearsTransparent = true
         window.contentView = web
         window.setFrameAutosaveName("SovereignConsole")

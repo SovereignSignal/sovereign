@@ -36,6 +36,22 @@ case "$cmd" in
     [ -n "$hook" ] || { echo "no session-start hook for $h"; exit 66; }
     printf '{"cwd":"%s","session_id":"manual","source":"startup"}' "$PWD" | /usr/bin/python3 "$hook";;
   status)   exec /usr/bin/python3 "$BIN/brain-status" "$@";;
+  gate)
+    # The owner's gate from a console or a shell: sov gate approve|reject <slug> [reason].
+    # Runs the same deterministic scripts the Telegram poller and the gears use, as a
+    # named actor, so the decisions log says who moved the card. Never --force.
+    verb="${1:-}"; shift || true
+    export SOVS_VAULT="${SOVS_VAULT:-$(cat "$HOME/.brain-root" 2>/dev/null)}"
+    if [ -z "${CURATOR_LANE:-}" ]; then
+      st="$(ls "$SOVS_VAULT"/raw/workspaces/*/status.json 2>/dev/null | head -1)"
+      CURATOR_LANE="$(basename "$(dirname "$st")")"
+    fi
+    export CURATOR_LANE CURATOR_ACTOR="${CURATOR_ACTOR:-console-owner}"
+    case "$verb" in
+      approve) exec /bin/bash "$BIN/curator-approve.sh" "$@";;
+      reject)  exec /bin/bash "$BIN/curator-reject.sh" "$@";;
+      *) echo "usage: sov gate approve|reject <slug> [reason]" >&2; exit 64;;
+    esac;;
   help|-h|--help) sed -n '2,15p' "$SELF";;
   *) echo "sov: unknown command '$cmd'"; sed -n '2,15p' "$SELF"; exit 64;;
 esac
