@@ -36,19 +36,60 @@ sov_dest() {
   else echo "mirror: no destination (set ~/.brain-root, or create ~/.vault-staging)" >&2; return 1; fi
 }
 
+# Several connectors share one lane repo and their timers fire on the same tick, so
+# their git calls collide on .git/index.lock and one loses. git has no lock of its own
+# for add/commit, so take one here. mkdir is atomic on every POSIX filesystem and,
+# unlike flock, exists on macOS too.
+sov_git_lock() {
+  local lock="$1" waited=0
+  # A lock still held after 10 minutes belonged to a run that died; reclaim it.
+  if [ -d "$lock" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+    echo "mirror: reclaiming a publish lock left behind by a dead run" >&2
+    rmdir "$lock" 2>/dev/null
+  fi
+  while ! mkdir "$lock" 2>/dev/null; do
+    waited=$((waited + 2))
+    if [ "$waited" -ge 60 ]; then
+      echo "mirror: publish lock still held after ${waited}s; skipping this tick" >&2
+      return 1
+    fi
+    sleep 2
+  done
+  return 0
+}
+
 # On a git lane: commit what the mirror wrote and push the lane branch. Best effort,
 # same rules as brain-capture: only the declared lane branch, never another ref.
+# Never silent: a connector that cannot commit leaves the working tree dirty, and a
+# dirty tree makes brain-capture abort, which stops the lane heartbeat. That failure
+# has to reach the log or it costs days.
 sov_git_publish() {
-  local dest="$1" what="$2" gl branch cur
+  local dest="$1" what="$2" gl branch cur lock rc
   gl="$(sov_git_lane_dir)" || return 0
   branch="$(grep -E "^branch:" "$gl/LANE.md" | sed -E "s/^branch:[[:space:]]*//" | tr -d " ")"
   branch="${branch:-lane/$BRAIN_LANE_RESOLVED}"
   cur="$(git -C "$BRAIN_ROOT_RESOLVED" branch --show-current 2>/dev/null)"
   if [ "$cur" != "$branch" ]; then echo "mirror: on '$cur', lane branch is '$branch'; not committing" >&2; return 0; fi
-  git -C "$BRAIN_ROOT_RESOLVED" add -A -- "$dest" 2>/dev/null || return 0
+  lock="$BRAIN_ROOT_RESOLVED/.git/sov-publish.lock"
+  sov_git_lock "$lock" || return 0
+  sov_git_publish_locked "$dest" "$what" "$branch"; rc=$?
+  rmdir "$lock" 2>/dev/null
+  return $rc
+}
+
+sov_git_publish_locked() {
+  local dest="$1" what="$2" branch="$3" err
+  if ! err="$(git -C "$BRAIN_ROOT_RESOLVED" add -A -- "$dest" 2>&1)"; then
+    echo "mirror: git add failed for $dest: $err" >&2; return 0
+  fi
   if git -C "$BRAIN_ROOT_RESOLVED" diff --cached --quiet -- "$dest"; then return 0; fi
-  git -C "$BRAIN_ROOT_RESOLVED" commit -q -m "capture: $what $(date -u +%FT%TZ)" -- "$dest" 2>/dev/null || return 0
-  git -C "$BRAIN_ROOT_RESOLVED" push -q origin "$branch" 2>>/dev/stderr || echo "mirror: push of $branch failed (will retry next run)" >&2
+  if ! err="$(git -C "$BRAIN_ROOT_RESOLVED" commit -q -m "capture: $what $(date -u +%FT%TZ)" -- "$dest" 2>&1)"; then
+    echo "mirror: commit failed for $dest: $err" >&2; return 0
+  fi
+  if ! err="$(git -C "$BRAIN_ROOT_RESOLVED" push -q origin "$branch" 2>&1)"; then
+    echo "mirror: push of $branch failed (will retry next run): $err" >&2; return 0
+  fi
+  return 0
 }
 
 sov_manifest() {
