@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 
 from .config import norm_id
 from .model import plain_text
-from .paths import folder_for
+from .paths import folder_for, sanitize
 
 INDENT = "    "
 LINK_SAFE = "/()!*'~,-._"
@@ -82,6 +82,9 @@ def _file_target(block: dict, body: dict, page_path: str, attachments: list) -> 
     url = (body.get("file") or body.get("file_upload") or {}).get("url", "")
     raw_name = body.get("name") or posixpath.basename(urllib.parse.urlsplit(url).path) or block.get("id", "file")
     name = urllib.parse.unquote(raw_name)
+    name = sanitize(name)
+    if not name or name == "." or name == "..":
+        name = block.get("id", "file")
     dest = posixpath.join(folder_for(page_path), name.replace(" ", "_"))
     if url:
         attachments.append((url, dest))

@@ -91,6 +91,19 @@ class Blocks(unittest.TestCase):
         self.assertEqual(out, "[y.pdf](https://x/y.pdf)\n\n<!-- unsupported: flux_capacitor -->\n")
         self.assertEqual(att, [])
 
+    def test_attachment_name_cannot_escape_the_page_folder(self):
+        import posixpath
+        evil = {"object": "block", "id": "e1", "type": "file", "file": {"type": "file", "file": {"url": "https://s3/x/y?sig=1"}, "name": "../../etc/passwd", "caption": []}}
+        dot = {"object": "block", "id": "e2", "type": "file", "file": {"type": "file", "file": {"url": "https://s3/x/z?sig=1"}, "name": "..", "caption": []}}
+        att = []
+        render_blocks([evil, dot], LINKS, att, PAGE)
+        self.assertEqual(len(att), 2)
+        for url, dest in att:
+            self.assertEqual(posixpath.dirname(dest), "Private & Shared/Home")
+            self.assertNotIn("..", posixpath.basename(dest).split("_")[0] if posixpath.basename(dest) in (".", "..") else "")
+        self.assertEqual(att[0][1], "Private & Shared/Home/.._.._etc_passwd")
+        self.assertEqual(att[1][1], "Private & Shared/Home/e2")
+
 
 if __name__ == "__main__":
     unittest.main()
