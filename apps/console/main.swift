@@ -1,14 +1,46 @@
 // Sovereign console: a thin native shell around `sov status --json`.
 //
-// One window, one WKWebView, one bridge. The UI (ui/index.html) asks for
-// status, the shell runs `sov`, and hands the JSON back. Actions the UI can
-// request: refresh, connect a tool (dry run, then --apply), run a mirror now,
-// reveal a lane in Finder, open a URL. Nothing else. The app never writes the
-// vault; every change goes through the same `sov connect` the terminal uses.
+// Two ways in, one UI. The window is the full console. The menu-bar item pops a
+// small Glance panel (the same ui/index.html loaded with #glance) that shows the
+// numbers that move and opens the window at the right place. A bridge per web
+// view runs `sov`, streams command output, and hands JSON back. The app never
+// writes the vault; the gate goes through `sov gate`, connectors through
+// `sov connect`, exactly as the terminal does.
+//
+// Settings live in UserDefaults on each machine: where the app lives (Dock,
+// menu bar, both), open at login, refresh interval, default view.
 //
 // Build: apps/console/build.sh (swiftc, no Xcode project needed).
 import Cocoa
 import WebKit
+import ServiceManagement
+
+enum Settings {
+    static let d = UserDefaults.standard
+    static var location: String { get { d.string(forKey: "sov.where") ?? "dock" } set { d.set(newValue, forKey: "sov.where") } }
+    static var loginItem: Bool { get { d.bool(forKey: "sov.loginItem") } set { d.set(newValue, forKey: "sov.loginItem") } }
+    static var refresh: Int { get { let v = d.integer(forKey: "sov.refresh"); return v > 0 ? v : 60 } set { d.set(newValue, forKey: "sov.refresh") } }
+    static var defaultView: String { get { d.string(forKey: "sov.defaultView") ?? "archive" } set { d.set(newValue, forKey: "sov.defaultView") } }
+    static var lastError: String? = nil
+
+    static func dict(probe: Bool = false) -> [String: Any] {
+        // Asking launchd about the login item is synchronous and can block an ad-hoc
+        // signed app; do it only when the settings pane is open, never on the boot path.
+        var login = loginItem ? "on (as saved)" : "off"
+        if probe, #available(macOS 13, *) {
+            switch SMAppService.mainApp.status {
+            case .enabled: login = "on"
+            case .requiresApproval: login = "needs approval in System Settings › Login Items"
+            default: login = "off"
+            }
+        }
+        var out: [String: Any] = ["where": location, "loginItem": loginItem, "loginState": login,
+                                  "refresh": refresh, "defaultView": defaultView,
+                                  "bundle": Bundle.main.bundlePath]
+        if let e = lastError { out["error"] = e }
+        return out
+    }
+}
 
 final class Bridge: NSObject, WKScriptMessageHandler {
     weak var web: WKWebView?
@@ -71,6 +103,21 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             } else if let sov = sov {
                 stream([sov, "gate", verb, slug, reason], id: "gate")
             }
+        case "settings":
+            deliver("settings", Settings.dict(probe: (d["probe"] as? Bool) == true))
+        case "setSettings":
+            if let w = d["where"] as? String, ["dock", "menubar", "both"].contains(w) { Settings.location = w }
+            var loginChanged = false
+            if let l = d["loginItem"] as? Bool, l != Settings.loginItem { Settings.loginItem = l; loginChanged = true }
+            if let r = d["refresh"] as? Int, r >= 15, r <= 3600 { Settings.refresh = r }
+            if let v = d["defaultView"] as? String, ["archive", "hosts", "lanes", "tools", "jobs"].contains(v) { Settings.defaultView = v }
+            DispatchQueue.main.async { App.shared.applySettings(loginChanged: loginChanged); App.shared.broadcastSettings() }
+        case "showConsole":
+            DispatchQueue.main.async { App.shared.showConsole(place: d["place"] as? [String: Any]) }
+        case "closeGlance":
+            DispatchQueue.main.async { App.shared.popover?.performClose(nil) }
+        case "quit":
+            DispatchQueue.main.async { NSApp.terminate(nil) }
         default: break
         }
     }
@@ -137,20 +184,56 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     }
 }
 
+func log(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
+
 @main
-final class App: NSObject, NSApplicationDelegate {
+final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+    func webView(_ w: WKWebView, didFailProvisionalNavigation n: WKNavigation!, withError e: Error) { log("navigation failed: \(e)") }
+    func webView(_ w: WKWebView, didFail n: WKNavigation!, withError e: Error) { log("navigation failed late: \(e)") }
+    func webView(_ w: WKWebView, didFinish n: WKNavigation!) { log("loaded \(w.url?.absoluteString ?? "?")") }
+    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { log("web content process terminated") }
     static var shared: App!
     var window: NSWindow!
     var web: WKWebView!
     var bridge: Bridge!
+    var statusItem: NSStatusItem?
+    var popover: NSPopover?
+    var glanceWeb: WKWebView?
+    var glanceBridge: Bridge?
+    var sovPath: String?
+    let glanceSize = NSSize(width: 420, height: 468)
+    var qaGlance: Bool { ProcessInfo.processInfo.environment["SOV_GLANCE"] == "1" }
 
     static func main() {
         let app = NSApplication.shared
         let d = App()
         App.shared = d
         app.delegate = d
-        app.setActivationPolicy(.regular)
+        app.setActivationPolicy(Settings.location == "menubar" ? .accessory : .regular)
         app.run()
+    }
+
+    private func makeWeb() -> (WKWebView, Bridge) {
+        let b = Bridge(sov: sovPath)
+        let cfg = WKWebViewConfiguration()
+        cfg.userContentController.add(b, name: "sov")
+        cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        let w = WKWebView(frame: .zero, configuration: cfg)
+        w.navigationDelegate = self
+        b.web = w
+        w.setValue(false, forKey: "drawsBackground")
+        return (w, b)
+    }
+
+    private func load(_ w: WKWebView, glance: Bool) {
+        // resourceURL is relative to the bundle; resolve it, or URLComponents keeps only the
+        // relative part and loadFileURL is handed a path with no scheme that never loads
+        guard let ui = Bundle.main.resourceURL?.appendingPathComponent("ui/index.html").absoluteURL else { return }
+        var comps = URLComponents(url: ui, resolvingAgainstBaseURL: true)!
+        comps.fragment = glance ? (qaGlance ? "glance-qa" : "glance") : nil
+        let target = comps.url ?? ui
+        log("loading \(target.absoluteString)")
+        w.loadFileURL(target, allowingReadAccessTo: ui.deletingLastPathComponent())
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -159,43 +242,51 @@ final class App: NSObject, NSApplicationDelegate {
         if let a = ProcessInfo.processInfo.environment["SOV_APPEARANCE"] {
             NSApp.appearance = NSAppearance(named: a == "dark" ? .darkAqua : .aqua)
         }
-        let sovPath = ["\(NSHomeDirectory())/brain-bin/sov", "/usr/local/bin/sov", "/opt/homebrew/bin/sov"].first { FileManager.default.isExecutableFile(atPath: $0) }
-        bridge = Bridge(sov: sovPath)
-        let cfg = WKWebViewConfiguration()
-        cfg.userContentController.add(bridge, name: "sov")
-        cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        web = WKWebView(frame: .zero, configuration: cfg)
-        bridge.web = web
-        web.setValue(false, forKey: "drawsBackground")
+        sovPath = ["\(NSHomeDirectory())/brain-bin/sov", "/usr/local/bin/sov", "/opt/homebrew/bin/sov"].first { FileManager.default.isExecutableFile(atPath: $0) }
+        let (w, b) = makeWeb()
+        web = w; bridge = b
 
-        let frame = NSRect(x: 120, y: 120, width: 900, height: 600)
+        let frame = qaGlance ? NSRect(x: 120, y: 120, width: glanceSize.width, height: glanceSize.height)
+                             : NSRect(x: 120, y: 120, width: 900, height: 600)
         window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Sovereign"
-        window.minSize = NSSize(width: 720, height: 460)
+        window.minSize = qaGlance ? glanceSize : NSSize(width: 720, height: 460)
         window.titlebarAppearsTransparent = true
         window.contentView = web
-        window.setFrameAutosaveName("SovereignConsole")
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        window.isReleasedWhenClosed = false
+        if !qaGlance { window.setFrameAutosaveName("SovereignConsole") }
 
-        if let ui = Bundle.main.resourceURL?.appendingPathComponent("ui/index.html") {
-            web.loadFileURL(ui, allowingReadAccessTo: ui.deletingLastPathComponent())
+        applySettings()
+        // Menu-bar-only installs start quiet: the panel appears when the crown is clicked.
+        let snapshotting = !(ProcessInfo.processInfo.environment["SOV_SNAPSHOT"] ?? "").isEmpty
+        if Settings.location != "menubar" || snapshotting {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
         }
+        // Load after the window is on screen: a web view that loads while hidden may
+        // stay suspended, and takeSnapshot on it never returns.
+        load(web, glance: qaGlance)
 
         // Design QA without screen-recording permission: SOV_SNAPSHOT=/path.png makes the
         // app photograph its own web view once status has rendered, then quit.
         if let snap = ProcessInfo.processInfo.environment["SOV_SNAPSHOT"], !snap.isEmpty {
             let delay = Double(ProcessInfo.processInfo.environment["SOV_SNAPSHOT_DELAY"] ?? "") ?? 7
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay + 20) {
+                FileHandle.standardError.write("snapshot watchdog: no frame after \(delay + 20)s, giving up\n".data(using: .utf8)!)
+                exit(2)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
                 func save(_ image: NSImage?, _ path: String) {
+                    if image == nil { log("snapshot returned no image for \(path)") }
                     if let image = image, let tiff = image.tiffRepresentation,
                        let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) {
                         try? png.write(to: URL(fileURLWithPath: path))
                     }
                 }
-                web.takeSnapshot(with: nil) { image, _ in
+                web.takeSnapshot(with: nil) { image, err in
+                    if let err = err { log("snapshot error: \(err)") }
                     save(image, snap)
-                    // second frame: scrolled to the bottom, so the whole page gets reviewed
+                    // second frame: after the anchor (a view, a row, a settings pane, or the bottom)
                     let anchor = ProcessInfo.processInfo.environment["SOV_SNAPSHOT_ANCHOR"] ?? ""
                     let js: String
                     if anchor.hasPrefix("view:") {
@@ -206,7 +297,7 @@ final class App: NSObject, NSApplicationDelegate {
                         js = "var el=document.querySelector(\"\(anchor)\"); if(el){el.scrollIntoView({block:'start'});} else {window.scrollTo(0, document.body.scrollHeight);}"
                     }
                     self.web.evaluateJavaScript(js) { _, _ in
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                             self.web.takeSnapshot(with: nil) { image2, _ in
                                 save(image2, snap.replacingOccurrences(of: ".png", with: "-bottom.png"))
                                 NSApp.terminate(nil)
@@ -218,7 +309,91 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    // ---- settings ----
+
+    func applySettings(loginChanged: Bool = false) {
+        let loc = Settings.location
+        NSApp.setActivationPolicy(loc == "menubar" ? .accessory : .regular)
+        if loc == "dock" {
+            if let item = statusItem { NSStatusBar.system.removeStatusItem(item); statusItem = nil }
+            popover?.performClose(nil)
+        } else if statusItem == nil {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            item.button?.image = crownImage()
+            item.button?.toolTip = "Sovereign"
+            item.button?.target = self
+            item.button?.action = #selector(toggleGlance(_:))
+            statusItem = item
+        }
+        Settings.lastError = nil
+        if loginChanged, #available(macOS 13, *) {
+            do {
+                if Settings.loginItem { if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() } }
+                else if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
+            } catch {
+                Settings.lastError = "Open at login: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func broadcastSettings() {
+        bridge?.deliver("settings", Settings.dict(probe: true))
+        glanceBridge?.deliver("settings", Settings.dict(probe: true))
+    }
+
+    private func crownImage() -> NSImage {
+        // The same crown as the UI, drawn as a template image so it follows the menu bar's ink.
+        let img = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { _ in
+            let p = NSBezierPath()
+            let s: CGFloat = 18.0 / 24.0
+            func pt(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: x * s, y: y * s) }
+            p.move(to: pt(3, 16)); p.line(to: pt(4.5, 7)); p.line(to: pt(9, 11)); p.line(to: pt(12, 5))
+            p.line(to: pt(15, 11)); p.line(to: pt(19.5, 7)); p.line(to: pt(21, 16)); p.close()
+            p.appendRect(NSRect(x: 3 * s, y: 18 * s, width: 18 * s, height: 2.2 * s))
+            NSColor.black.setFill(); p.fill()
+            return true
+        }
+        img.isTemplate = true
+        return img
+    }
+
+    // ---- glance ----
+
+    @objc func toggleGlance(_ sender: Any?) {
+        if let p = popover, p.isShown { p.performClose(nil); return }
+        if glanceWeb == nil {
+            let (w, b) = makeWeb()
+            w.frame = NSRect(origin: .zero, size: glanceSize)
+            glanceWeb = w; glanceBridge = b
+            load(w, glance: true)
+            let vc = NSViewController()
+            vc.view = w
+            let p = NSPopover()
+            p.behavior = .transient
+            p.contentSize = glanceSize
+            p.contentViewController = vc
+            popover = p
+        }
+        guard let button = statusItem?.button, let p = popover else { return }
+        glanceWeb?.evaluateJavaScript("window.sovRefresh && window.sovRefresh();", completionHandler: nil)
+        p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func showConsole(place: [String: Any]?) {
+        popover?.performClose(nil)
+        if qaGlance { return }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        if let place = place { bridge.deliver("goto", place) }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { Settings.location == "dock" }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { window.makeKeyAndOrderFront(nil) }
+        return true
+    }
 
     private func buildMenu() {
         let main = NSMenu()
@@ -226,6 +401,7 @@ final class App: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Sovereign", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         appMenu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Sovereign", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -239,4 +415,5 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func refresh() { web.evaluateJavaScript("window.sovRefresh && window.sovRefresh();", completionHandler: nil) }
+    @objc func openSettings() { showConsole(place: ["settings": true]) }
 }

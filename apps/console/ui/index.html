@@ -201,6 +201,39 @@
   table.t th { font: 500 10.5px var(--mono); color: var(--faint); }
   table.t td.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
+  .nav { display: inline-flex; gap: 2px; margin-right: 2px; }
+  .nav button { padding: 2px 6px; font-size: 11px; }
+  .row.head .tri { font-style: normal; display: inline-block; width: 12px; color: var(--faint); }
+  .row.head:hover { background: var(--sunk); cursor: pointer; }
+
+  /* Glance: the small box. The same page, loaded with #glance, in a menu-bar popover. */
+  #glance { display: none; }
+  body.glance header, body.glance #needs, body.glance #pulse, body.glance main, body.glance #drawer { display: none; }
+  body.glance #glance { display: flex; flex-direction: column; height: 100%; }
+  body.glance.qa #glance { padding-top: 22px; }
+  .g-head { display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--rule); }
+  .g-head b { font: 600 13px var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .g-head .sp, .g-foot .sp { flex: 1; }
+  .g-rows { flex: 1; overflow: auto; }
+  .g-row { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 14px; border: 0;
+    border-bottom: 1px solid var(--rule-soft); border-radius: 0; background: transparent; text-align: left;
+    font-family: var(--mono); color: var(--ink-2); }
+  .g-row:hover { background: var(--sunk); }
+  .g-row .l { font-size: 10.5px; color: var(--faint); width: 84px; flex: none; }
+  .g-row b { font-size: 14px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .g-row .s { font-size: 10.5px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; }
+  .g-row .s.wrap { white-space: normal; line-height: 1.3; font-family: var(--sans); font-size: 11.5px; color: var(--brass-ink); }
+  .g-row.hot b { color: var(--brass); }
+  .g-row.need { background: var(--brass-wash); height: auto; padding: 8px 14px; }
+  .g-foot { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 12px 0 14px; border-top: 1px solid var(--rule); }
+  .g-foot .meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  select { font: 12px var(--sans); color: var(--ink); background: var(--sunk); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; }
+  label.radio, label.check { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+  label.radio input, label.check input { width: auto; margin: 0; }
+  @media (max-width: 900px) { #pulse .tile .s { display: none; } }
+
   #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
     transition: transform .16s ease; background: var(--panel); border-top: 1px solid var(--rule); box-shadow: var(--shadow); z-index: 30; }
   #drawer.open { transform: none; }
@@ -219,14 +252,17 @@
   <div class="meta grow" id="meta">reading status…</div>
   <span class="hubpill" id="hubpill"><span class="dot"></span>hub</span>
   <button id="refresh" title="Refresh (⌘R)">Refresh</button>
+  <button id="gear" class="quiet" title="Settings (⌘,)" aria-label="Settings">⚙</button>
 </header>
 
 <div id="needs" hidden></div>
 <div id="pulse" hidden></div>
+<div id="glance" hidden></div>
 
 <main>
   <div id="listpane">
     <div class="bar">
+      <span class="nav"><button id="back" class="quiet" aria-label="Back" title="Back (⌘[)" disabled>◀</button><button id="fwd" class="quiet" aria-label="Forward" title="Forward (⌘])" disabled>▶</button></span>
       <div class="seg" role="group" aria-label="View">
         <button data-view="archive" aria-pressed="true">Archive</button>
         <button data-view="hosts" aria-pressed="false">Hosts</button>
@@ -250,10 +286,25 @@
 </div>
 
 <script>
+// A script error must never be a blank page: paint it where the eye lands.
+window.onerror = function (msg, src, line, col) {
+  var g = document.getElementById("glance") || document.getElementById("insp");
+  if (g) { g.hidden = false; g.innerHTML += '<div class="empty" style="color:var(--down)">Script error: ' + String(msg) + ' at ' + line + ':' + col + '</div>'; }
+};
 (function () {
   const $ = (s, r) => (r || document).querySelector(s);
   const bridge = (m) => { try { window.webkit.messageHandlers.sov.postMessage(m); } catch (e) { console.warn("no bridge", e); } };
   let D = null, view = "archive", sel = null, pendingConnect = null, pinned = false, armed = null;
+  const GLANCE = location.hash.startsWith("#glance");
+  document.body.classList.toggle("glance", GLANCE);
+  if (location.hash === "#glance-qa") document.body.classList.add("qa");
+  let S = { where: "dock", loginItem: false, refresh: 60, defaultView: "archive", loginState: "unavailable" };
+  let gotSettings = false, timer = null, settingsOpen = false, domIdentity = null;
+  // Archive sections remember whether they are open; the gate and the judge start open,
+  // the rest start folded so the view opens quiet.
+  let secOpen = { gate: true, judge: true, composition: false, sources: false, health: false };
+  try { Object.assign(secOpen, JSON.parse(localStorage.getItem("sov.sections") || "{}")); } catch (e) {}
+  const hist = { stack: [], i: -1 };
   try { pinned = localStorage.getItem("sov.pinned") === "1"; } catch (e) {}
   document.body.classList.toggle("pinned", pinned);
 
@@ -379,7 +430,23 @@
     arow("zerolink", "no outbound links", "cards that link to nothing", num((a.zero_link || []).length), (a.zero_link || []).length / a.total, "warn", a.zero_link);
     arow("dangling", "dangling links", "targets that are not cards", num((a.dangling || []).length), 0, "down", [], { dangling: a.dangling || [] });
     arow("long", "over 450 words", "past the one-screen line", num((a.over_length || []).length), (a.over_length || []).length / a.total, "warn", a.over_length, { kv: [["median", wd.median + " words"], ["p90", wd.p90 + " words"], ["longest", wd.max + " words"]] });
-    return rows;
+    if (arguments[0] === "all") return rows;   // unfolded, for finding a row's section
+    // fold: a closed section keeps only its header, which then says how much it hides
+    const out = []; let cur = null, hidden = 0, curHead = null;
+    for (const r of rows) {
+      if (r.kind === "head") {
+        if (curHead && hidden) curHead.n = (curHead.n ? curHead.n + " · " : "") + hidden + " rows";
+        cur = r.section; curHead = r; hidden = 0; r.open = secOpen[cur] !== false; out.push(r);
+      } else if (!cur || secOpen[cur] !== false) out.push(r);
+      else hidden++;
+    }
+    if (curHead && hidden) curHead.n = (curHead.n ? curHead.n + " · " : "") + hidden + " rows";
+    return out;
+  }
+  function toggleSection(sec) {
+    secOpen[sec] = secOpen[sec] === false;
+    try { localStorage.setItem("sov.sections", JSON.stringify(secOpen)); } catch (e) {}
+    renderList();
   }
   function items() {
     if (view === "archive") return archiveRows();
@@ -399,7 +466,7 @@
   }
   function rowHTML(it) {
     const o = it.o;
-    if (it.kind === "head") return `<span class="name">${esc(it.label)}</span><span class="desc"></span><span class="num">${esc(it.n || "")}</span>`;
+    if (it.kind === "head") return `<span class="name"><i class="tri">${it.open ? "▾" : "▸"}</i>${esc(it.label)}</span><span class="desc"></span><span class="num">${esc(it.n || "")}</span>`;
     if (it.kind === "quiet") return `<span class="desc">${esc(it.text)}</span>`;
     if (it.kind === "arch") {
       return `<span class="name" style="width:172px">${esc(it.label)}</span>
@@ -430,7 +497,7 @@
       return `${dot(net.online == null ? "" : net.online ? "live" : "down", net.online == null ? "network unknown" : net.online ? "online" : "offline")}
         <span class="name" style="width:138px">${esc(o.host)}</span>
         <span class="desc">${esc([m.kind, m.where].filter(Boolean).join(" · "))}</span>
-        ${m.identity ? `<span class="tag">${esc(m.identity)}</span>` : ""}
+        ${m.identity && m.identity !== domIdentity ? `<span class="tag">${esc(m.identity)}</span>` : ""}
         <span class="strip">${strip}</span>
         ${contribCell((o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0))}
         <span class="num" style="width:40px">${age(newest)}</span>
@@ -468,7 +535,11 @@
   }
   function renderList() {
     const list = items();
-    if (view === "hosts") contribMax = Math.max(1, ...list.map(i => (i.o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0)));
+    if (view === "hosts") {
+      contribMax = Math.max(1, ...list.map(i => (i.o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0)));
+      const ids = {}; list.forEach(i => { const id = (i.o.meta || {}).identity; if (id) ids[id] = (ids[id] || 0) + 1; });
+      domIdentity = Object.keys(ids).sort((x, y) => ids[y] - ids[x])[0] || null;
+    }
     else if (view === "lanes") contribMax = Math.max(1, ...list.map(i => i.o.cards || 0));
     const n = list.filter(selectable).length;
     $("#listcount").textContent = view === "archive" ? "" : n + " " + view;
@@ -476,7 +547,9 @@
     if (sel && (sel.view !== view || !list.some(i => i.id === sel.id))) sel = null;
     $("#rows").innerHTML = list.map((it, i) => selectable(it)
       ? `<div class="row" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
-      : `<div class="row ${it.kind}" id="r${i}" ${it.kind === "head" ? `data-section="${esc(it.section)}"` : ""} aria-hidden="true">${rowHTML(it)}</div>`).join("")
+      : it.kind === "head"
+        ? `<div class="row head" id="r${i}" data-section="${esc(it.section)}" role="button" tabindex="0" aria-expanded="${String(!!it.open)}">${rowHTML(it)}</div>`
+        : `<div class="row ${it.kind}" id="r${i}" aria-hidden="true">${rowHTML(it)}</div>`).join("")
       || `<div class="empty">Nothing here yet.</div>`;
     syncActive();
   }
@@ -536,8 +609,36 @@
     <button class="quiet" id="pin" aria-pressed="${String(pinned)}" title="Keep the panel open (p)">${pinned ? "Unpin" : "Pin"}</button>
     <button class="quiet" id="insp-close" title="Close (Esc)" aria-label="Close">✕</button></div>`;
 
+  function settingsHTML() {
+    const opt = (v, label) => `<label class="radio"><input type="radio" name="where" value="${v}" ${S.where === v ? "checked" : ""}> ${label}</label>`;
+    const login = S.loginState === "on" ? "Registered with macOS." : S.loginState === "off" ? "Not registered." : S.loginState;
+    return head("Settings", "Saved on this Mac") + `
+      <div class="sect"><h2>Where the app lives</h2>
+        ${opt("dock", "Dock")}${opt("menubar", "Menu bar only")}${opt("both", "Dock and menu bar")}
+        <div class="prose" style="color:var(--muted);margin-top:4px">The menu bar puts a crown up top; click it for the glance panel. Menu bar only hides the Dock icon.</div></div>
+      <div class="sect"><h2>Startup</h2>
+        <label class="check"><input type="checkbox" id="s-login" ${S.loginItem ? "checked" : ""}> Open at login</label>
+        <div class="prose" style="color:var(--muted)">${esc(login)}</div></div>
+      <div class="sect"><h2>Refresh every</h2><select id="s-refresh">${[30, 60, 300, 900].map(v => `<option value="${v}" ${S.refresh === v ? "selected" : ""}>${v < 60 ? v + " seconds" : (v / 60) + " minute" + (v > 60 ? "s" : "")}</option>`).join("")}</select></div>
+      <div class="sect"><h2>Open on</h2><select id="s-view">${["archive", "hosts", "lanes", "tools", "jobs"].map(v => `<option value="${v}" ${S.defaultView === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select></div>
+      <div class="sect"><h2>Detail panel</h2><label class="check"><input type="checkbox" id="s-pin" ${pinned ? "checked" : ""}> Keep it open beside the list</label></div>
+      ${S.error ? `<div class="note">${esc(S.error)}</div>` : ""}
+      <div class="acts"><button class="brass" id="s-save">Save settings</button><span class="pulls" id="s-state" aria-live="polite"></span></div>`;
+  }
+  function openSettings() { settingsOpen = true; renderInspector(); openInspector(); commit(); bridge({ cmd: "settings", probe: true }); }
+  let saving = false;
+  function saveSettings() {
+    saving = true;
+    const where = (document.querySelector('input[name="where"]:checked') || {}).value || S.where;
+    const wantPin = $("#s-pin").checked;
+    if (wantPin !== pinned) setPinned(wantPin);
+    $("#s-state").textContent = "Saving…";
+    bridge({ cmd: "setSettings", where, loginItem: $("#s-login").checked, refresh: +$("#s-refresh").value, defaultView: $("#s-view").value });
+  }
+
   function renderInspector() {
     const box = $("#insp");
+    if (settingsOpen) { box.innerHTML = settingsHTML(); return; }
     const it = sel ? items().find(i => i.id === sel.id) : null;
     if (!it) { box.innerHTML = `<div class="insp-head"><span class="sp"></span><button class="quiet" id="insp-close" aria-label="Close">✕</button></div><div class="empty">Select a row to see its detail.</div>`; return; }
     const o = it.o, me = (D.machine || {}).host;
@@ -655,7 +756,7 @@
   }
 
   function openInspector() { $("#inspector").classList.add("open"); $("#inspector").setAttribute("aria-hidden", "false"); }
-  function closeInspector() { if (pinned) return; $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
+  function closeInspector() { settingsOpen = false; if (pinned) { renderInspector(); return; } $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
   function setPinned(v) {
     pinned = !!v; document.body.classList.toggle("pinned", pinned);
     try { localStorage.setItem("sov.pinned", pinned ? "1" : "0"); } catch (e) {}
@@ -663,23 +764,108 @@
     renderInspector();
   }
 
-  function render(d) { D = d; renderTop(); renderList(); renderInspector(); }
+  // ---------- history: every move is a place you can come back to ----------
+  function place() {
+    return { view, sel: sel ? { kind: sel.kind, id: sel.id } : null, settings: settingsOpen,
+             open: $("#inspector").classList.contains("open"), scroll: $("#rows").scrollTop };
+  }
+  function samePlace(a, b) {
+    return !!a && !!b && a.view === b.view && a.open === b.open && a.settings === b.settings
+      && ((a.sel && a.sel.id) || null) === ((b.sel && b.sel.id) || null);
+  }
+  function commit() {
+    const p = place();
+    if (samePlace(hist.stack[hist.i], p)) return;
+    hist.stack = hist.stack.slice(0, hist.i + 1); hist.stack.push(p); hist.i = hist.stack.length - 1;
+    updateNav();
+  }
+  function applyPlace(p) {
+    settingsOpen = !!p.settings; view = p.view;
+    sel = p.sel ? { view: p.view, kind: p.sel.kind, id: p.sel.id } : null;
+    renderList(); renderInspector();
+    if (p.settings || (p.open && sel) || pinned) openInspector();
+    else { $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
+    $("#rows").scrollTop = p.scroll || 0; syncActive(); updateNav();
+  }
+  function back() { if (hist.i > 0) { hist.i--; applyPlace(hist.stack[hist.i]); } }
+  function forward() { if (hist.i < hist.stack.length - 1) { hist.i++; applyPlace(hist.stack[hist.i]); } }
+  function updateNav() {
+    const b = $("#back"), f = $("#fwd");
+    if (b) b.disabled = hist.i <= 0;
+    if (f) f.disabled = hist.i >= hist.stack.length - 1;
+  }
+  window.sovBack = back;
+
+  // ---------- glance: the small box ----------
+  function renderGlance() {
+    const m = D.machine || {}, h = hub(), st = h.status || {}, cov = st.coverage || {}, a = arch();
+    const fleet = ((D.fleet || {}).hosts) || [];
+    const weeks = ((h.judge || {}).weeks) || [], rates = weeks.map(w => w.judged ? 100 * w.kept / w.judged : 0), last = weeks[weeks.length - 1];
+    const online = fleet.filter(x => (x.net || {}).online).length, offline = fleet.filter(x => (x.net || {}).online === false).length;
+    const unknown = fleet.length - online - offline;
+    const pending = h.pending ?? 0, needs = D.needs_you || [];
+    const hubTxt = h.reachable ? `${dot("live", "hub online")}hub ${esc(((h.via || "").startsWith("ssh ") ? h.via.slice(4) : (h.hub_host || "here")).toLowerCase())}`
+      : h.reachable === false ? `${dot("down", "hub offline")}hub silent` : `${dot("", "hub unchecked")}hub unchecked`;
+    const row = (pl, label, value, sub, cls) => `<button class="g-row ${cls || ""}" data-place="${esc(JSON.stringify(pl))}"><span class="l">${esc(label)}</span><b>${value}</b><span class="s">${sub || ""}</span><span class="chev">›</span></button>`;
+    const g = $("#glance"); g.hidden = false;
+    g.innerHTML = `
+      <div class="g-head"><svg class="crown" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 18h18v2H3v-2zm0-2 1.5-9 4.5 4 3-6 3 6 4.5-4L21 16H3z"/></svg>
+        <b>${esc(m.vault_name || "Sovereign")}</b><span class="hubpill">${hubTxt}</span><span class="sp"></span>
+        <button class="quiet" id="g-refresh" title="Refresh" aria-label="Refresh">↻</button><button class="quiet" id="g-gear" title="Settings" aria-label="Settings">⚙</button></div>
+      <div class="g-rows">
+        ${row({ view: "archive", section: "gate" }, "at the gate", num(pending), pending ? "waiting for you" : "nothing waiting", pending ? "hot" : "")}
+        ${row({ view: "archive", section: "judge" }, "judge kept", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)}` : "?", (last ? "wk " + pct(last.kept, last.judged) : "") + sparkline(rates))}
+        ${row({ view: "archive", section: "judge" }, "unjudged", num(st.deferred ?? cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
+        ${row({ view: "archive", section: "composition" }, "cards", num(a.total), a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : "")}
+        ${row({ view: "hosts" }, "fleet", `${online} of ${fleet.length} up`, offline ? offline + " offline" : unknown ? unknown + " not probed" : "all reachable", offline ? "hot" : "")}
+        ${needs.map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.harness ? { view: "tools", sel: { kind: "tool", id: n.harness } } : n.kind === "gate" ? { view: "archive", section: "gate" } : { view: "jobs" }))}"><span class="l">${esc(n.kind)}</span><span class="s wrap">${esc(n.text)}</span><span class="chev">›</span></button>`).join("")}
+      </div>
+      <div class="g-foot"><span class="meta">${esc(m.host || "")} · ${clock(D.generated_at)}</span><span class="sp"></span><button class="brass" id="g-console">Open console</button></div>`;
+  }
+
+  function render(d) {
+    D = d;
+    if (GLANCE) return renderGlance();
+    renderTop(); renderList(); renderInspector();
+    if (hist.i < 0) commit();
+  }
+  function sectionOf(id) {
+    let cur = null;
+    for (const r of archiveRows("all")) { if (r.kind === "head") cur = r.section; else if (r.id === id) return cur; }
+    return null;
+  }
+  // a row by id in the current view, looking past folded sections in Archive
+  function findRow(id) {
+    return items().find(i => i.id === id) || (view === "archive" ? archiveRows("all").find(i => i.id === id) : null);
+  }
   function select(kind, id, open) {
+    if (view === "archive" && !items().some(i => i.id === id)) {
+      const sec = sectionOf(id);
+      if (sec && secOpen[sec] === false) { secOpen[sec] = true; try { localStorage.setItem("sov.sections", JSON.stringify(secOpen)); } catch (e) {} renderList(); }
+    }
     sel = { view, kind, id };
     document.querySelectorAll(".row[role=option]").forEach(r => r.setAttribute("aria-selected", String(r.dataset.id === id)));
     syncActive();
+    settingsOpen = false;
     renderInspector();
-    if (open) openInspector();
+    if (open) { openInspector(); commit(); }
   }
   function setView(v, opts) {
-    view = v; sel = null; renderList(); renderInspector();
-    if (opts && opts.section) { const h = document.querySelector('.row.head[data-section="' + opts.section + '"]'); if (h) h.scrollIntoView({ block: "start" }); }
-    if (opts && opts.open) { const first = items().find(selectable); if (first) select(first.kind, first.id, true); }
+    view = v; sel = null; settingsOpen = false; renderList(); renderInspector();
+    if (opts && opts.section) {
+      if (secOpen[opts.section] === false) { secOpen[opts.section] = true; try { localStorage.setItem("sov.sections", JSON.stringify(secOpen)); } catch (e) {} renderList(); }
+      const h = document.querySelector('.row.head[data-section="' + opts.section + '"]'); if (h) h.scrollIntoView({ block: "start" });
+    }
+    if (opts && opts.open) { const first = items().find(selectable); if (first) return select(first.kind, first.id, true); }
+    if (!(opts && opts.silent)) commit();
   }
-  window.sovView = (v) => {   // design QA: "archive", "archive+open", "archive+open:orphans"
-    const [name, rest] = String(v).split("+"); const [mode, id] = (rest || "").split(/:(.*)/);
-    setView(name, { open: mode === "open" && !id });
-    if (id) { const it = items().find(i => i.id === id); if (it) select(it.kind, it.id, true); }
+  window.sovView = (v) => {   // design QA: "archive", "archive+open", "archive+open:orphans", "settings", "...+back"
+    const parts = String(v).split("+"), name = parts[0];
+    if (name === "settings") return openSettings();
+    const mode = parts.find(p => p.startsWith("open")) || "", id = mode.includes(":") ? mode.slice(mode.indexOf(":") + 1) : "";
+    setView(name, { open: mode === "open" && !id, silent: !!id });
+    if (id) { const it = findRow(id); if (it) select(it.kind, it.id, true); }
+    if (parts.includes("back")) setTimeout(back, 120);
   };
 
   function openDrawer(title, showApply) {
@@ -710,12 +896,22 @@
       else if (n && n.kind === "job") setView("jobs");
       return; }
     const chip = e.target.closest("[data-goto]");
-    if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s"); select(p[0], p[1], true); return; }
+    if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s", { silent: true }); const it = findRow(p[1]); select(it ? it.kind : p[0], p[1], true); return; }
+    const grow = e.target.closest(".g-row[data-place]");
+    if (grow) { let pl = null; try { pl = JSON.parse(grow.dataset.place); } catch (x) {} return bridge({ cmd: "showConsole", place: pl }); }
+    const hd = e.target.closest(".row.head[data-section]");
+    if (hd) return toggleSection(hd.dataset.section);
     const b = e.target.closest("button");
     if (b) {
-      if (b.id === "refresh") return refresh();
+      if (b.id === "refresh" || b.id === "g-refresh") return refresh();
+      if (b.id === "back") return back();
+      if (b.id === "fwd") return forward();
+      if (b.id === "gear") return openSettings();
+      if (b.id === "g-gear") return bridge({ cmd: "showConsole", place: { settings: true } });
+      if (b.id === "g-console") return bridge({ cmd: "showConsole", place: { view: S.defaultView || "archive" } });
+      if (b.id === "s-save") return saveSettings();
       if (b.id === "pin") return setPinned(!pinned);
-      if (b.id === "insp-close") { pinned ? setPinned(false) : closeInspector(); return; }
+      if (b.id === "insp-close") { pinned ? setPinned(false) : closeInspector(); commit(); return; }
       if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
       if (b.id === "drawer-apply") { if (pendingConnect) connect(pendingConnect.harness, true); return; }
       const act = b.dataset.act;
@@ -741,6 +937,8 @@
   });
 
   $("#rows").addEventListener("keydown", (e) => {
+    const hd = document.activeElement && document.activeElement.closest && document.activeElement.closest(".row.head[data-section]");
+    if (hd && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); return toggleSection(hd.dataset.section); }
     const list = items().filter(selectable); if (!list.length) return;
     let i = list.findIndex(x => sel && x.id === sel.id);
     if (e.key === "ArrowDown") { e.preventDefault(); i = Math.min(list.length - 1, i + 1); }
@@ -756,7 +954,10 @@
   document.addEventListener("keydown", (e) => {
     const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
     if ((e.metaKey || e.ctrlKey) && e.key === "r") { e.preventDefault(); refresh(); }
-    if (e.key === "Escape") { $("#drawer").classList.remove("open"); closeInspector(); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "[") { e.preventDefault(); back(); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "]") { e.preventDefault(); forward(); }
+    if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); openSettings(); }
+    if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !pinned) { closeInspector(); commit(); } }
     if (typing || e.metaKey || e.ctrlKey) return;
     if (/^[1-5]$/.test(e.key)) setView(["archive", "hosts", "lanes", "tools", "jobs"][+e.key - 1]);
     if (e.key === "p") setPinned(!pinned);
@@ -766,7 +967,9 @@
   window.sovRefresh = refresh;
   window.sovDeliver = function (kind, payload) {
     if (kind === "status") {
-      if (payload.error) { $("#insp").innerHTML = `<div class="empty">${esc(payload.error)}</div>`; openInspector(); $("#meta").textContent = "status unavailable"; return; }
+      if (payload.error) {
+        if (GLANCE) { const g = $("#glance"); g.hidden = false; g.innerHTML = `<div class="empty">${esc(payload.error)}</div>`; return; }
+        $("#insp").innerHTML = `<div class="empty">${esc(payload.error)}</div>`; openInspector(); $("#meta").textContent = "status unavailable"; return; }
       if (payload.machine && !payload.machine.connected) return renderSetup(payload);
       render(payload);
     } else if (kind === "log") {
@@ -781,8 +984,20 @@
       $("#drawer-log").textContent += (payload.exit === 0 ? "started " + payload.label : "exit " + payload.exit + "\n" + payload.out) + "\n";
       $("#drawer-state").textContent = payload.exit === 0 ? "started" : "failed";
       setTimeout(refresh, 4000);
+    } else if (kind === "settings") {
+      S = Object.assign({}, S, payload);
+      const first = !gotSettings; gotSettings = true;
+      if (first && !GLANCE && !D && S.defaultView) view = S.defaultView;
+      resetTimer();
+      if (settingsOpen) { renderInspector(); const st = $("#s-state"); if (st && saving) st.textContent = payload.error ? "" : "Saved"; }
+      saving = false;
+    } else if (kind === "goto") {
+      if (payload.settings) return openSettings();
+      if (payload.view) setView(payload.view, { section: payload.section, silent: !!payload.sel });
+      if (payload.sel) { const it = findRow(payload.sel.id); select(it ? it.kind : payload.sel.kind, payload.sel.id, true); }
     }
   };
+  function resetTimer() { clearInterval(timer); timer = setInterval(refresh, Math.max(15, S.refresh || 60) * 1000); }
 
   function renderSetup(d) {
     D = d;
@@ -807,8 +1022,9 @@
     };
   }
 
-  refresh();
-  setInterval(refresh, 60000);
+  bridge({ cmd: "settings" });
+  setTimeout(refresh, 40);
+  resetTimer();
 })();
 </script>
 </body>
