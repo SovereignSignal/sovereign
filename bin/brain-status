@@ -24,7 +24,7 @@ Usage: brain-status [--json] [--no-hub]
 """
 import os, sys, json, glob, time, subprocess, socket, re, plistlib, datetime, shlex, shutil
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))   # brain-bin symlinks here; the catalog lives beside the real file
 TEMPLATE_ROOT = os.path.abspath(os.path.join(HERE, ".."))
 NOW = time.time()
 # launchd/systemd labels the status watches. The connector prefix is built in; an
