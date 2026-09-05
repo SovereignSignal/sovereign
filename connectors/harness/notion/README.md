@@ -18,6 +18,7 @@ Options: `--at HH:MM` (default 03:45), `--lane raw/tools/Notion`, `--no-launchd`
     brain-mirror-notion --check              # roots the token can see, against roots.json
     brain-mirror-notion --full --dry-run     # what the first run would write, move, delete; oracle match rate on an existing lane
     nohup brain-mirror-notion --full > ~/.notion-mirror/first-full.log 2>&1 &   # the first run, hours on a large workspace
+    brain-mirror-notion --coverage ~/Downloads/Export-xxxx   # what is in Notion that the backup cannot see, grouped by top folder; share those pages with the integration to close the gap
 
 `roots.json` is written on install with every reachable root required under `Private & Shared`; edit it to map a teamspace root to its folder. A run that would delete more than the shrink floor allows refuses, which is what a disconnected root looks like.
 
