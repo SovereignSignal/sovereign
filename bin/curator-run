@@ -1635,9 +1635,12 @@ _CARD_TERMS = _brief.card_terms(K)
 def brief_for(txt):
     """The judge's brief for ONE source: the shared rules, taste and exemplars, plus only
     the existing slugs and rejected topics whose words appear in this text."""
+    # Constant parts first (rules, taste, exemplars, this run's pending list), the
+    # per-source clauses after: the local runner reuses the KV cache for a shared prompt
+    # prefix, so the ~18k chars that never change are prefilled once per run, not per source.
     return (_SYS_HEAD
-            + _brief.index_clause(_brief.targeted_index(txt, _CARD_TERMS, 30))
             + _PENDING_CLAUSE
+            + _brief.index_clause(_brief.targeted_index(txt, _CARD_TERMS, 30))
             + _brief.rejected_clause(_brief.targeted_rejected(txt, rejected_topics, 15))
             + _SYS_TAIL)
 
