@@ -41,6 +41,12 @@ class Names(unittest.TestCase):
         self.assertEqual(stem("..", hid(1)), "Untitled %s" % short_id(hid(1)))
         self.assertEqual(stem("  ..  ", hid(2)), "Untitled %s" % short_id(hid(2)))
         self.assertEqual(folder_name(item(3, "page", "..", "workspace", "")), "Untitled %s" % short_id(hid(3)))
+        self.assertEqual(stem("...", hid(1)), "Untitled %s" % short_id(hid(1)))
+
+    def test_sanitize_turns_dot_into_space(self):
+        self.assertEqual(sanitize("ston.fi"), "ston fi")
+        self.assertEqual(sanitize("Inc. Something"), "Inc Something")
+        self.assertEqual(sanitize("v2.1.0"), "v2 1 0")
 
     def test_file_and_folder_names(self):
         page = item(1, "page", "Home", "workspace", "")
