@@ -34,6 +34,13 @@ OVERLAP_MINUTES = 10
 CHILDREN_ERROR_MAX = 120
 
 
+def _vanished(exc: NotionError) -> bool:
+    """A 404 (object_not_found) between the walk and the render means the item disappeared
+    mid-run, not that the mirror is broken. Match on the string: the fake and real clients
+    both fold the status into the message rather than exposing a typed code."""
+    return "HTTP 404" in str(exc)
+
+
 def _short_error(exc: NotionError) -> str:
     """A marker embedded in a rendered page must never be able to close the comment early or
     churn the file on every run over a volatile detail (a request id, say) in the body. Keep
@@ -65,6 +72,7 @@ class Report:
     orphans: int = 0
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    vanished: int = 0
     refused: Optional[str] = None
     oracle_total: int = 0
     oracle_matched: int = 0
@@ -78,6 +86,8 @@ class Report:
         text = "%s%s: wrote %d, unchanged %d, moved %d, deleted %d, attachments %d, orphans %d, errors %d, warnings %d" % (
             self.mode, " (dry run)" if self.dry_run else "", self.written, self.unchanged, self.moved, self.deleted,
             self.attachments, self.orphans, len(self.errors), len(self.warnings))
+        if self.vanished:
+            text += ", vanished %d" % self.vanished
         if self.oracle_total:
             text += "; oracle %d/%d" % (self.oracle_matched, self.oracle_total)
         if self.unclaimed:
@@ -400,10 +410,25 @@ class Mirror:
                 os.replace(str(old_folder), str(new_folder))
                 self._folder_renames.append((folder_for(old_path), folder_for(new_path)))
 
+    def _mark_vanished(self, it: dict, paths: Dict[str, str], rep: Report) -> None:
+        """The item was there for the walk and gone by the time we tried to render it: a
+        normal event on a churning workspace, not a run failure. Warn, drop it from the
+        manifest so it is not retried daily, and clean up any file a prior run left behind."""
+        path = paths.get(it["id"], "")
+        rep.vanished += 1
+        rep.warnings.append("vanished during the run: %s %s (%s)" % (it["kind"], it["id"], path))
+        self.manifest.items.pop(it["id"], None)
+        if path:
+            target = self.cfg.lane_dir / path
+            if not self._refused(target, rep) and target.exists():
+                target.unlink()
+                rep.deleted += 1
+
     def _render_and_write(self, items: Dict[str, dict], changed: List[str], paths: Dict[str, str], rep: Report) -> None:
         titles = {i: it.get("title", "") for i, it in items.items()}
         links = Links(paths, titles)
         dirty: Set[str] = set()
+        vanished: Set[str] = set()
         for i in changed:
             it = items[i]
             try:
@@ -414,16 +439,23 @@ class Mirror:
                     if it["kind"] == "row" and it.get("db_id"):
                         dirty.add(it["db_id"])
             except NotionError as exc:
-                rep.errors.append("%s %s: %s" % (it["kind"], i, exc))
-                entry = self.manifest.items.get(i)
-                if entry is not None:
-                    entry["last_edited"] = ""  # retry next run
-        for db_id in sorted(dirty - self._requeried):
+                if _vanished(exc):
+                    self._mark_vanished(it, paths, rep)
+                    vanished.add(i)
+                else:
+                    rep.errors.append("%s %s: %s" % (it["kind"], i, exc))
+                    entry = self.manifest.items.get(i)
+                    if entry is not None:
+                        entry["last_edited"] = ""  # retry next run
+        for db_id in sorted(dirty - self._requeried - vanished):
             if db_id in items:
                 try:
                     self._rebuild_csv(items[db_id], paths, links, rep)
                 except NotionError as exc:
-                    rep.errors.append("database %s: %s" % (db_id, exc))
+                    if _vanished(exc):
+                        self._mark_vanished(items[db_id], paths, rep)
+                    else:
+                        rep.errors.append("database %s: %s" % (db_id, exc))
 
     def _fetch_blocks(self, block_id: str, rep: Optional[Report] = None) -> List[dict]:
         """The page's own block list is fatal: without it there is no page. One nested block
