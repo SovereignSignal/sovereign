@@ -1032,6 +1032,12 @@ window.onerror = function (msg, src, line, col) {
     if (nearest && eb.top >= rb.top && eb.bottom <= rb.bottom) return;
     r.scrollTop += eb.top - rb.top - (nearest ? Math.max(0, rb.height - eb.height) / 2 : 0);
   }
+  // The gate: land on the first proposal so the drawer shows it, not on an empty inspector.
+  function gotoGate() {
+    setView("archive", { section: "gate", silent: true });
+    const first = items().find(i => i.kind === "prop");
+    if (first) select(first.kind, first.id, true); else commit();
+  }
   function setView(v, opts) {
     view = v; sel = null; settingsOpen = false; renderList(); renderInspector();
     if (opts && opts.section) { const h = document.querySelector('[data-dash="' + opts.section + '"], .row.head[data-section="' + opts.section + '"]'); if (h) scrollRowsTo(h); }
@@ -1095,11 +1101,11 @@ window.onerror = function (msg, src, line, col) {
 
   document.addEventListener("click", (e) => {
     const seg = e.target.closest(".seg button"); if (seg) return setView(seg.dataset.view);
-    const tile = e.target.closest("#pulse .tile[data-goto-section]"); if (tile) return setView("archive", { section: tile.dataset.gotoSection });
+    const tile = e.target.closest("#pulse .tile[data-goto-section]"); if (tile) return tile.dataset.gotoSection === "gate" ? gotoGate() : setView("archive", { section: tile.dataset.gotoSection });
     const need = e.target.closest("[data-need]");
     if (need) { const n = (D.needs_you || [])[+need.dataset.need];
       if (n && n.harness) { setView("tools"); select("tool", n.harness, true); }
-      else if (n && n.kind === "gate") setView("archive", { section: "gate" });
+      else if (n && n.kind === "gate") gotoGate();
       else if (n && n.kind === "job") setView("jobs");
       return; }
     const chip = e.target.closest("[data-goto]");
