@@ -238,6 +238,14 @@ for p, t in texts.items():
     me = os.path.basename(p)[:-3]
     for tgt in set(WIKI.findall(t)):
         tgt = tgt.strip()
+        if "/" in tgt:
+            # a path-form link (folder/slug), the form Obsidian needs when two cards share a slug
+            if os.path.exists(os.path.join(VAULT, tgt + ".md")) or os.path.exists(os.path.join(VAULT, tgt)):
+                tgt = os.path.basename(tgt)
+                if tgt in slugs and tgt != me:
+                    inbound[tgt] += 1
+                    outbound[me] = outbound.get(me, 0) + 1
+                continue
         if tgt in slugs:
             if tgt != me:
                 inbound[tgt] += 1
