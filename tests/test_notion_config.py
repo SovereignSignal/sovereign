@@ -52,6 +52,14 @@ class LoadConfig(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_config(Path(tmp), env={})
 
+    def test_lane_cannot_escape_the_vault(self):
+        for bad in ("/abs/path", "../../etc/foo", "raw/../../x"):
+            with tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / "mirror.env").write_text(
+                    "NOTION_API_KEY=k\nBRAIN_ROOT=%s\nNOTION_LANE=%s\n" % (tmp, bad))
+                with self.assertRaises(ConfigError, msg=bad):
+                    load_config(Path(tmp), env={})
+
     def test_norm_id(self):
         self.assertEqual(norm_id("1B00000C-0D59-0802-5871-FD52D5773E2A"), "1b00000c0d5908025871fd52d5773e2a")
         self.assertEqual(norm_id(None), "")

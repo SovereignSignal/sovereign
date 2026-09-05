@@ -80,7 +80,11 @@ def load_config(state_dir=None, env=None) -> Config:
     except ValueError:
         raise ConfigError("NOTION_SHRINK_FLOOR must be an integer percent")
     allow_shrink = get("NOTION_ALLOW_SHRINK", "0") == "1"
-    lane = get("NOTION_LANE", DEFAULT_LANE).strip("/")
+    lane = get("NOTION_LANE", DEFAULT_LANE)
+    # same rule the installer applies to --lane: the lane is a relative path inside the vault
+    if lane.startswith("/") or ".." in lane.split("/"):
+        raise ConfigError("NOTION_LANE must be a relative path inside the vault with no .. segments, not %r" % lane)
+    lane = lane.strip("/")
 
     default_root = DEFAULT_ROOT_FOLDER
     required: Dict[str, str] = {}

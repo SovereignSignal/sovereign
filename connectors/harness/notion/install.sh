@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sovereign connector installer: Notion, the official API pull.
 #
-#   sov connect notion --vault "~/My Brain" --host hub                       # dry run
+#   sov connect notion --vault "~/My Brain" --host <short-name>              # dry run
 #   sov connect notion ... --secret ntn_xxx --apply                          # install
 #   options: --secret TOKEN   the integration token (else $NOTION_API_KEY, else ~/.notion-mirror/mirror.env)
 #            --at HH:MM       daily run time, default 03:45
@@ -74,9 +74,11 @@ say "[bins] ~/brain-bin/brain-mirror-notion"
 # instance env: merge, never clobber; the token line is rewritten, everything else kept
 mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR"
 umask 077
-/usr/bin/python3 - "$STATE_DIR/mirror.env" "$SECRET" "$ROOT" "$NOTION_LANE" <<'EOF'
+# the token goes through the environment, never argv, so ps never shows it
+NOTION_API_KEY_VALUE="$SECRET" /usr/bin/python3 - "$STATE_DIR/mirror.env" "$ROOT" "$NOTION_LANE" <<'EOF'
 import os, sys
-path, token, root, lane = sys.argv[1:5]
+path, root, lane = sys.argv[1:4]
+token = os.environ["NOTION_API_KEY_VALUE"]
 keep = []
 have = set()
 if os.path.exists(path):
@@ -92,6 +94,7 @@ with open(tmp, "w", encoding="utf-8") as fh:
 os.chmod(tmp, 0o600)
 os.replace(tmp, path)
 EOF
+umask 022  # mirror.env is written 600 by the writer itself; everything after it is ordinary
 say "[env] $STATE_DIR/mirror.env written (mode 600)"
 
 # ask Notion what the token can see; a test can stub this

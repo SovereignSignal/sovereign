@@ -8,8 +8,8 @@ Tools, Notion, Connect. The dry run shows what will happen; Install asks for the
 
 ## From the command line
 
-    sov connect notion --vault "~/My Brain" --host hub                     # dry run
-    sov connect notion --vault "~/My Brain" --host hub --secret ntn_xxx --apply
+    sov connect notion --vault "~/My Brain" --host <short-name>                     # dry run
+    sov connect notion --vault "~/My Brain" --host <short-name> --secret ntn_xxx --apply
 
 Options: `--at HH:MM` (default 03:45), `--lane raw/tools/Notion`, `--no-launchd` (write the plist, load it yourself later, for machines reached over SSH where launchd has no GUI session). The token can also come from `NOTION_API_KEY` in the environment or an existing `~/.notion-mirror/mirror.env`.
 
@@ -20,6 +20,10 @@ Options: `--at HH:MM` (default 03:45), `--lane raw/tools/Notion`, `--no-launchd`
     nohup brain-mirror-notion --full > ~/.notion-mirror/first-full.log 2>&1 &   # the first run, hours on a large workspace
 
 `roots.json` is written on install with every reachable root required under `Private & Shared`; edit it to map a teamspace root to its folder. A run that would delete more than the shrink floor allows refuses, which is what a disconnected root looks like.
+
+A page you connect to the integration later appears on the next full walk, not in a delta: a delta only asks for pages edited since the cursor, and connecting one does not edit it. Run `brain-mirror-notion --full` to pick it up the same day.
+
+When a run errors, re-run it with `brain-mirror-notion --full`: the errored items had their stamps cleared, so the walk retries only what failed. A `crashed:` status leaves the previous manifest in place and nothing on disk was touched. To start over from nothing, `rm -r ~/.notion-mirror/state/` and then `--full`, which rebuilds the manifest, the cursor and the last-full stamp from one complete walk.
 
 ## How it runs
 
