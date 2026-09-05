@@ -611,7 +611,7 @@ window.onerror = function (msg, src, line, col) {
   function assess() {
     const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
     const ago = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
-    const need = [], fresh = [], stale = [];
+    const need = [], fresh = [], stale = []; let cad;
     const late = (name, detail, ageH, cad, jump, cause) => {   // one thing against its cadence
       if (ageH == null || cad == null) return;
       if (ageH > 2 * cad) need.push({ state: "down", name, detail: `${detail} ${age(ageH)} ago, expected every ${age(cad)}`, age_h: ageH, jump, cause, order: 0 });
@@ -629,8 +629,14 @@ window.onerror = function (msg, src, line, col) {
       if (late(x.name || x.id, "mirror last ran", ah, cad, { view: "tools", id: x.id }, "mirror-late") === true && ah != null && ah <= cad) fresh.push({ state: "live", name: x.name || x.id, detail: `pulled ${age(ah)} ago on ${m.host}`, age_h: ah, jump: { view: "tools", id: x.id } }); });
     // a remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
     // observable cadence is about an hour, not its own 15 minutes
-    hosts.filter(x => x.host !== m.host).forEach(x => (x.harnesses || []).forEach(t => { const ah = t.run_age_h, cad = 1;
-      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host } }); }));
+    // The hub sees its own lanes and the producers' merges first; this copy sees them through the
+    // sync. Take the fresher of the two views, and name the lag itself when this copy falls behind.
+    const hubLanes = h.lanes || {}; let lag = 0, lagLane = null;
+    hosts.filter(x => x.host !== m.host).forEach(x => (x.harnesses || []).forEach(t => {
+      const here = t.run_age_h, there = (hubLanes[t.lane] || {}).age_h, ah = [here, there].filter(v => v != null).length ? Math.min(...[here, there].filter(v => v != null)) : null;
+      if (here != null && there != null && here - there > lag) { lag = here - there; lagLane = t.lane; }
+      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = 1, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host } }); }));
+    if (lag > 1) stale.push({ state: "warn", name: "this copy", detail: `${age(lag)} behind the hub (${(D.obsidian || {}).sync || "sync"}); ${lagLane} is the widest gap`, age_h: lag, jump: { view: "backups", id: "bk:obsidian" } });
     (bk.lanes || []).forEach(l => { const ah = ago(l.pushed); if (late(`lane ${l.lane}`, "last pushed", ah, 24, { view: "backups", id: "bk:lane:" + l.lane }, "lane-late") === true && ah <= 24) fresh.push({ state: "live", name: `lane ${l.lane}`, detail: `pushed ${age(ah)} ago`, age_h: ah, jump: { view: "backups", id: "bk:lane:" + l.lane } }); });
     Object.entries(h.jobs || {}).forEach(([k, j]) => { const cad = HUB_CADENCE_H[k]; if (!cad || j.exit) return; late(k, "last ran", ago(j.ts), cad, { view: "jobs", id: "hub:job:" + k }, "hub-job-late"); });
     if (bk.snapshots) late("daily snapshot", "last taken", bk.snapshots.newest_age_h, 24, { view: "backups", id: "bk:snapshots" }, "snapshot-late");
