@@ -81,8 +81,9 @@ class NotionClient:
                     except ValueError:
                         raise NotionError("%s %s: unreadable body: %s" % (method, path, raw[:300]))
             except urllib.error.HTTPError as exc:
-                text = exc.read().decode("utf-8", errors="replace")[:300]
-                challenge = exc.code == 403 and not _is_notion_error_body(text)
+                full_text = exc.read().decode("utf-8", errors="replace")
+                text = full_text[:300]
+                challenge = exc.code == 403 and not _is_notion_error_body(full_text)
                 if challenge:
                     last_error = "HTTP 403 (challenge page): %s" % text
                 else:
