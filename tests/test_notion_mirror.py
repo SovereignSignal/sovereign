@@ -122,6 +122,30 @@ class FullRun(unittest.TestCase):
             self.assertFalse((lane / "Private & Shared/Root/Music").exists())
             self.assertGreaterEqual(rep.moved, 1)
 
+    def test_a_rename_and_a_delete_in_one_walk_leave_no_stray(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp, shrink_floor=50)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.retitle(2, "Tunes", LATER)
+            client.pages[hid(6)]["in_trash"] = True
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(rep.deleted, 1)
+            self.assertEqual([p for p in paths_of(lane) if "Lyrics" in p], [])
+
+    def test_a_rename_and_a_reparent_in_one_walk_leave_one_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.retitle(2, "Tunes", LATER)
+            client.add_page(7, "Elsewhere", client.under(1), edited=LATER)
+            client.pages[hid(6)]["parent"] = client.under(7)
+            client.pages[hid(6)]["last_edited_time"] = LATER
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual([p for p in paths_of(lane) if "Lyrics" in p],
+                             ["Private & Shared/Root/Elsewhere/Lyrics %s.md" % hid(6)])
+
     def test_trashed_row_is_deleted_and_csv_shrinks(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg, client, lane = workspace(tmp, shrink_floor=50)

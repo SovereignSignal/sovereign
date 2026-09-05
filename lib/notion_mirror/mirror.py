@@ -88,6 +88,7 @@ class Mirror:
         self._schemas: Dict[str, dict] = {}
         self._block_parents: Dict[str, str] = {}
         self._requeried: Set[str] = set()
+        self._folder_renames: List[Tuple[str, str]] = []
 
     # -- discovery ------------------------------------------------------------------
 
@@ -287,14 +288,26 @@ class Mirror:
 
     # -- shared apply steps -----------------------------------------------------------
 
+    def _relocate(self, rel_path: str) -> str:
+        """A folder rename this run already performed carried its children with it. Rewrite a
+        path recorded before the rename to where the file actually sits now."""
+        for old_folder, new_folder in sorted(self._folder_renames, key=lambda r: -len(r[0])):
+            if rel_path == old_folder or rel_path.startswith(old_folder + "/"):
+                return new_folder + rel_path[len(old_folder):]
+        return rel_path
+
     def _apply_moves(self, moves: List[Tuple[str, str]], rep: Report) -> None:
         lane = self.cfg.lane_dir
+        self._folder_renames = []
         for old_path, new_path in sorted(moves, key=lambda m: m[0].count("/")):
+            old_path = self._relocate(old_path)
+            if old_path == new_path:
+                continue  # already carried along by a parent folder rename
             src, dst = lane / old_path, lane / new_path
             if self._refused(src, rep) or self._refused(dst, rep):
                 continue
             if not src.exists():
-                continue  # already carried along by a parent folder rename
+                continue
             if dst.exists():
                 rep.warnings.append("move skipped, target exists: %s -> %s" % (old_path, new_path))
                 continue
@@ -307,6 +320,7 @@ class Mirror:
                     continue
                 new_folder.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(str(old_folder), str(new_folder))
+                self._folder_renames.append((folder_for(old_path), folder_for(new_path)))
 
     def _render_and_write(self, items: Dict[str, dict], changed: List[str], paths: Dict[str, str], rep: Report) -> None:
         titles = {i: it.get("title", "") for i, it in items.items()}
@@ -416,6 +430,7 @@ class Mirror:
             path = old[i].get("path")
             if not path:
                 continue
+            path = self._relocate(path)
             target = lane / path
             if self._refused(target, rep):
                 continue
