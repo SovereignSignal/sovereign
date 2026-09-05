@@ -11,6 +11,7 @@ floor allows refuses before touching anything.
 """
 import os
 import posixpath
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -28,6 +29,19 @@ CHILD_KINDS = ("child_page", "child_database")
 ITEM_FIELDS = ("id", "kind", "title", "parent_kind", "parent_id", "last_edited", "ds_id", "db_id", "inline")
 HEX = set("0123456789abcdef")
 OVERLAP_MINUTES = 10
+
+
+CHILDREN_ERROR_MAX = 120
+
+
+def _short_error(exc: NotionError) -> str:
+    """A marker embedded in a rendered page must never be able to close the comment early or
+    churn the file on every run over a volatile detail (a request id, say) in the body. Keep
+    only the first line, capped short, with any run of dashes collapsed to one so `-->` cannot
+    appear inside it. The full text still goes in the warning."""
+    line = str(exc).splitlines()[0] if str(exc) else ""
+    line = re.sub(r"-{2,}", "-", line)
+    return line[:CHILDREN_ERROR_MAX]
 
 
 def _minus_minutes(stamp: str, minutes: int) -> str:
@@ -208,8 +222,12 @@ class Mirror:
             elif len(rep.mismatches) < 200:
                 rep.mismatches.append((i, p, disk.get(i, "")))
         # files carrying an id the walk never produced: a legacy export, or a page the token
-        # can no longer see. The operator decides; the mirror only names them.
-        rep.unclaimed = sorted(path for i, path in disk.items() if i not in items)
+        # can no longer see. The operator decides; the mirror only names them. A live run's
+        # own delete step removes exactly these paths a few lines down, so this is only
+        # informative on a dry run; computing it on a live run would report files the run
+        # itself just cleaned up as if they were left behind.
+        if dry_run:
+            rep.unclaimed = sorted(path for i, path in disk.items() if i not in items)
 
         changed = [i for i, it in items.items()
                    if it["kind"] == "database" or i not in old or old[i].get("last_edited") != it["last_edited"]
@@ -303,10 +321,18 @@ class Mirror:
 
     def _relocate(self, rel_path: str) -> str:
         """A folder rename this run already performed carried its children with it. Rewrite a
-        path recorded before the rename to where the file actually sits now."""
-        for old_folder, new_folder in sorted(self._folder_renames, key=lambda r: -len(r[0])):
-            if rel_path == old_folder or rel_path.startswith(old_folder + "/"):
-                return new_folder + rel_path[len(old_folder):]
+        path recorded before the rename to where the file actually sits now. Two renames
+        nested in the same walk (a folder, and beneath it a child folder) each shift the path
+        by one prefix, so repeat the longest-prefix rewrite to a fixed point, capped at one
+        pass per recorded rename so a swap cannot ping-pong forever."""
+        renames = sorted(self._folder_renames, key=lambda r: -len(r[0]))
+        for _ in range(len(self._folder_renames)):
+            for old_folder, new_folder in renames:
+                if rel_path == old_folder or rel_path.startswith(old_folder + "/"):
+                    rel_path = new_folder + rel_path[len(old_folder):]
+                    break
+            else:
+                break
         return rel_path
 
     def _apply_moves(self, moves: List[Tuple[str, str]], rep: Report) -> None:
@@ -372,7 +398,7 @@ class Mirror:
                     block["children"] = self._fetch_blocks(child_id, rep)
                 except NotionError as exc:
                     block["children"] = []
-                    block["children_error"] = str(exc)
+                    block["children_error"] = _short_error(exc)
                     if rep is not None:
                         rep.warnings.append("children of %s %s: %s" % (block.get("type", ""), child_id, exc))
         return blocks

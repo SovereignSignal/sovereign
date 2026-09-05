@@ -54,6 +54,7 @@ class FakeClient:
         self.requests = 0
         self.queries = 0
         self.fail_children_for = set()
+        self.fail_message = None
 
     # builders --------------------------------------------------------------
     @staticmethod
@@ -138,7 +139,7 @@ class FakeClient:
     def children(self, block_id):
         self.requests += 1
         if norm_id(block_id) in self.fail_children_for:
-            raise NotionError("GET /blocks/%s/children: HTTP 500: boom" % block_id)
+            raise NotionError(self.fail_message or ("GET /blocks/%s/children: HTTP 500: boom" % block_id))
         return [dict(b) for b in self.blocks.get(norm_id(block_id), [])]
 
     def download(self, url):

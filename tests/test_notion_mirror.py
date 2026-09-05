@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from tests.notion_fake import EDIT, FakeClient, hid, image, para, toggle  # noqa: E402
+from tests.notion_fake import EDIT, FakeClient, hid, image, para, rt, toggle  # noqa: E402
 from notion_mirror.config import Config  # noqa: E402
 from notion_mirror.mirror import Mirror  # noqa: E402
 from notion_mirror.state import State  # noqa: E402
@@ -156,6 +156,20 @@ class FullRun(unittest.TestCase):
             self.assertEqual(rep.deleted, 1)
             self.assertEqual([p for p in paths_of(lane) if "Lyrics" in p], [])
 
+    def test_two_nested_renames_in_one_walk_relocate_a_delete_beneath_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp, shrink_floor=50)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.retitle(2, "Tunes", LATER)
+            client.data_sources[hid(30)]["title"] = [rt("Hits")]
+            client.data_sources[hid(30)]["last_edited_time"] = LATER
+            client.pages[hid(6)]["in_trash"] = True
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(rep.deleted, 1)
+            self.assertEqual([p for p in paths_of(lane) if "Lyrics" in p], [])
+            self.assertIn("Private & Shared/Root/Tunes/Hits/Alive %s.md" % hid(4), paths_of(lane))
+
     def test_a_rename_and_a_reparent_in_one_walk_leave_one_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg, client, lane = workspace(tmp)
@@ -178,6 +192,8 @@ class FullRun(unittest.TestCase):
             self.assertEqual(rep.deleted, 1)
             self.assertFalse((lane / P5).exists())
             self.assertEqual((lane / P3).read_text(), "\ufeffName,Status\nAlive,IP\n")
+            self.assertEqual(rep.unclaimed, [])
+            self.assertNotIn("unclaimed", rep.summary())
 
     def test_shrink_guard_refuses_then_allow_shrink_proceeds(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -217,6 +233,23 @@ class FullRun(unittest.TestCase):
             self.assertIn("children of toggle %s" % hid(22), rep.warnings[0])
             self.assertIn("children unavailable", (lane / P2).read_text())
             self.assertTrue((cfg.state_dir / "last-status").read_text().startswith("OK "))
+
+    def test_children_error_marker_cannot_close_the_comment_early(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            client.fail_children_for.add(hid(22))
+            client.fail_message = "boom --> escaped the comment\n" + ("x" * 300)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(len(rep.warnings), 1)
+            self.assertIn("boom --> escaped the comment", rep.warnings[0])
+            text = (lane / P2).read_text()
+            self.assertEqual(text.count("<!--"), 1)
+            self.assertEqual(text.count("-->"), 1)
+            start = text.index("<!--")
+            end = text.index("-->") + len("-->")
+            marker = text[start:end]
+            self.assertNotIn("boom --> escaped", marker)
 
 
 class Containment(unittest.TestCase):

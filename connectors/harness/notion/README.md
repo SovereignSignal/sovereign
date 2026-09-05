@@ -23,7 +23,7 @@ Options: `--at HH:MM` (default 03:45), `--lane raw/tools/Notion`, `--no-launchd`
 
 A page you connect to the integration later appears on the next full walk, not in a delta: a delta only asks for pages edited since the cursor, and connecting one does not edit it. Run `brain-mirror-notion --full` to pick it up the same day.
 
-When a run errors, re-run it with `brain-mirror-notion --full`: the errored items had their stamps cleared, so the walk retries only what failed. A `crashed:` status leaves the previous manifest in place and nothing on disk was touched. To start over from nothing, `rm -r ~/.notion-mirror/state/` and then `--full`, which rebuilds the manifest, the cursor and the last-full stamp from one complete walk.
+When a run errors, re-run it with `brain-mirror-notion --full`: the errored items had their stamps cleared, so the walk retries only what failed. A `crashed:` status leaves the previous manifest in place; files written or moved before the crash stay on disk and the next `--full` reconciles them. To start over from nothing, `rm -r ~/.notion-mirror/state/` and then `--full`, which rebuilds the manifest, the cursor and the last-full stamp from one complete walk.
 
 ## How it runs
 
