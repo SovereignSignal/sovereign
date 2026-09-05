@@ -305,8 +305,13 @@
   .gcol .gh .n { margin-left: auto; color: var(--ink-2); letter-spacing: 0; font-variant-numeric: tabular-nums; }
   .gcol .gb { flex: 1; min-height: 0; overflow: auto; }
   .gcol .empty { padding: var(--s3); font: var(--t-body)/var(--lh-body) var(--sans); color: var(--muted); }
-  .gcol .row { padding: 0 var(--s2) 0 var(--s3); gap: var(--s2); }
-  .gcol .row .name { width: auto; max-width: 44%; overflow: hidden; text-overflow: ellipsis; }
+  .gcol.bare { box-shadow: none; }
+  .gcol .row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 12px; grid-template-areas: "dot name age chev" ". desc desc desc";
+    column-gap: var(--s2); row-gap: 1px; height: auto; min-height: 44px; padding: 6px var(--s2) 6px var(--s3); align-items: center; }
+  .gcol .row .dot { grid-area: dot; } .gcol .row .name { grid-area: name; width: auto; overflow: hidden; text-overflow: ellipsis; }
+  .gcol .row .num { grid-area: age; } .gcol .row .chev { grid-area: chev; }
+  .gcol .row .desc { grid-area: desc; white-space: normal; font: var(--t-caption)/var(--lh-caption) var(--sans); color: var(--ink-2);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   @media (max-width: 760px) { .glance-home { grid-template-columns: 1fr; } }
 
   #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
@@ -597,34 +602,79 @@ window.onerror = function (msg, src, line, col) {
     if (view === "backups") return backupItems();
     return hubItems();
   }
+  // ---------- one assessment: what needs you, what is fresh, what is stale ----------
+  // Cadence per kind; a thing past its cadence is stale, past twice it needs you (down).
+  const HUB_CADENCE_H = { "archivist-nightly": 24, "archivist-weekly": 168, "archivist-weekly-landed": 168, "daily-health-check": 24,
+    "vault-autocommit": 24, "fleet-watch": 1, "fleet-watch-drill": 168, "proxmox-monitor": 24, "pi-cluster-monitor": 24 };
+  const shortLabel = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
+  let lastAssess = null;
+  function assess() {
+    const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
+    const ago = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
+    const need = [], fresh = [], stale = [];
+    const late = (name, detail, ageH, cad, jump, cause) => {   // one thing against its cadence
+      if (ageH == null || cad == null) return;
+      if (ageH > 2 * cad) need.push({ state: "down", name, detail: `${detail} ${age(ageH)} ago, expected every ${age(cad)}`, age_h: ageH, jump, cause, order: 0 });
+      else if (ageH > cad) stale.push({ state: "warn", name, detail: `${detail} ${age(ageH)} ago, expected every ${age(cad)}`, age_h: ageH, jump });
+      else return true;
+    };
+    // needs: failures, unreachable, the gate, unprotected machines
+    (D.needs_you || []).forEach((n, i) => need.push({ state: "warn", name: n.kind, detail: n.text, age_h: null, need: i, order: 1, cause: "need:" + n.kind }));
+    (D.jobs || []).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
+    Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k, j]) => need.push({ state: "down", name: k, detail: `exited ${j.exit} on the hub`, age_h: ago(j.ts), jump: { view: "jobs", id: "hub:job:" + k }, order: 0, cause: "job-failed" }));
+    hosts.filter(x => x.net && x.net.online === false).forEach(x => need.push({ state: "down", name: x.host, detail: "unreachable", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
+    (bk.hosts || []).filter(x => x.reachable && x.last_dump_age_h == null).forEach(x => need.push({ state: "warn", name: x.host, detail: `no backup job on ${x.node}`, age_h: null, jump: { view: "backups", id: "bk:host:" + x.host }, order: 2, cause: "no-backup", causeLabel: "have no backup job" }));
+    // cadence: mirrors here, mirrors on every host, producer pushes, hub jobs, the snapshot
+    (D.harnesses || []).forEach(x => { if (x.state !== "connected" || x.runs_on) return; const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run), cad = intervalOf(x) / 3600;
+      if (late(x.name || x.id, "mirror last ran", ah, cad, { view: "tools", id: x.id }, "mirror-late") === true && ah != null && ah <= cad) fresh.push({ state: "live", name: x.name || x.id, detail: `pulled ${age(ah)} ago on ${m.host}`, age_h: ah, jump: { view: "tools", id: x.id } }); });
+    // a remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
+    // observable cadence is about an hour, not its own 15 minutes
+    hosts.filter(x => x.host !== m.host).forEach(x => (x.harnesses || []).forEach(t => { const ah = t.run_age_h, cad = 1;
+      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host } }); }));
+    (bk.lanes || []).forEach(l => { const ah = ago(l.pushed); if (late(`lane ${l.lane}`, "last pushed", ah, 24, { view: "backups", id: "bk:lane:" + l.lane }, "lane-late") === true && ah <= 24) fresh.push({ state: "live", name: `lane ${l.lane}`, detail: `pushed ${age(ah)} ago`, age_h: ah, jump: { view: "backups", id: "bk:lane:" + l.lane } }); });
+    Object.entries(h.jobs || {}).forEach(([k, j]) => { const cad = HUB_CADENCE_H[k]; if (!cad || j.exit) return; late(k, "last ran", ago(j.ts), cad, { view: "jobs", id: "hub:job:" + k }, "hub-job-late"); });
+    if (bk.snapshots) late("daily snapshot", "last taken", bk.snapshots.newest_age_h, 24, { view: "backups", id: "bk:snapshots" }, "snapshot-late");
+    // fresh: events, not states
+    const today = new Date().toISOString().slice(0, 10), a = arch(), landed = (a.cards || []).filter(c => c.created === today).length;
+    if (landed) fresh.unshift({ state: "live", name: "archive", detail: `${landed} card${landed === 1 ? "" : "s"} landed today`, age_h: null, jump: { view: "archive", id: "week:" + isoWeekKey(new Date()) } });
+    if (st.judged != null) fresh.unshift({ state: "live", name: "judge", detail: `kept ${num(st.new_proposals)} of ${num(st.judged)} last run`, age_h: h.status_age_h, jump: { view: "jobs", id: "hub:judge" } });
+    let prev = {}; try { prev = JSON.parse(localStorage.getItem("sov.online") || "{}"); } catch (e) {}
+    const now = {}; hosts.forEach(x => { if (x.net && x.net.online != null) now[x.host] = x.net.online; if (x.net && x.net.online && prev[x.host] === false) fresh.push({ state: "live", name: x.host, detail: "came back", age_h: null, jump: { view: "hosts", id: x.host } }); });
+    try { localStorage.setItem("sov.online", JSON.stringify(now)); } catch (e) {}
+    fresh.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
+    need.sort((p, q) => p.order - q.order || (q.age_h || 0) - (p.age_h || 0));
+    stale.sort((p, q) => (q.age_h || 0) - (p.age_h || 0));
+    // one row per repeated cause; the drawer lists the members
+    const grouped = [], byCause = {};
+    need.forEach(r => { if (!r.cause || r.need != null) { grouped.push(r); return; } (byCause[r.cause] = byCause[r.cause] || []).push(r); });
+    Object.entries(byCause).forEach(([cause, rows]) => {
+      if (rows.length < 2) { grouped.push(rows[0]); return; }
+      const label = rows[0].causeLabel || (cause === "job-failed" ? "failed their last run" : cause === "unreachable" ? "are unreachable" : cause === "mirror-late" ? "are past twice their mirror cadence" : "need a look");
+      grouped.push({ state: rows.some(r => r.state === "down") ? "down" : "warn", name: `${rows.length} ${cause === "job-failed" || cause === "hub-job-late" ? "jobs" : "machines"}`,
+        detail: `${label}: ${rows.slice(0, 2).map(r => r.name).join(", ")}${rows.length > 2 ? " and " + (rows.length - 2) + " more" : ""}`, age_h: null, group: cause, members: rows, order: rows[0].order });
+    });
+    grouped.sort((p, q) => p.order - q.order);
+    lastAssess = { need: grouped, fresh, stale };
+    return lastAssess;
+  }
   // ---------- the verdict: one sentence, the worst state on screen ----------
   function renderVerdict() {
     const v = $("#verdict"); if (!v || !D) return;
-    const hosts = ((D.fleet || {}).hosts || []), jobs = D.jobs || [], lanes = D.lanes || [], needs = D.needs_you || [];
-    const h = hub(), st = h.status || {}, bk = D.backups || {};
-    const short = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
-    const down = [], stale = [];
-    jobs.filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => down.push(`${short(j.label)} failed its last run`));
-    Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k, j]) => down.push(`${k} on the hub exited ${j.exit}`));
-    hosts.filter(x => x.net && x.net.online === false).forEach(x => down.push(`${x.host} is unreachable`));
-    (bk.lanes || []).forEach(l => { const a = l.pushed ? (Date.now() - new Date(l.pushed).getTime()) / 36e5 : null; if (a == null) return;
-      if (a > 48) down.push(`lane ${l.lane} has not pushed for ${age(a)}`); else if (a > 24) stale.push(`lane ${l.lane} last pushed ${age(a)} ago`); });
-    (D.harnesses || []).forEach(x => { const a = x.run_age_h != null ? x.run_age_h : runAge(x.last_run); const cad = ((x.plist || {}).interval_s || 900) / 3600;
-      if (a == null || x.state !== "connected" || x.read === "none" && !x.job_loaded) return;
-      if (a > 2 * cad * 4) down.push(`${x.name || x.id} mirror last ran ${age(a)} ago`); else if (a > cad * 4) stale.push(`${x.name || x.id} mirror last ran ${age(a)} ago`); });
-    if (bk.snapshots && bk.snapshots.newest_age_h != null && bk.snapshots.newest_age_h > 30) stale.push(`the daily snapshot is ${age(bk.snapshots.newest_age_h)} old`);
+    const A = assess(), h = hub(), st = h.status || {}, hosts = ((D.fleet || {}).hosts || []);
+    const down = A.need.filter(r => r.state === "down"), warn = A.need.filter(r => r.state !== "down");
     let state, text;
-    if (down.length) { state = "down"; text = `Attention: ${down[0]}${down.length > 1 ? ` and ${down.length - 1} more` : ""}.`; }
-    else if (needs.length) { state = "warn"; const first = needs[0]; text = `${needs.length} thing${needs.length === 1 ? "" : "s"} need${needs.length === 1 ? "s" : ""} you: ${first.t || first.text || first.title || first.kind || ""}.`; }
-    else if (stale.length) { state = "warn"; text = `Stale: ${stale[0]}.`; }
+    if (down.length) { state = "down"; const f = down[0]; text = `Attention: ${f.group ? f.name + " " + f.detail : f.name + " " + f.detail}${down.length > 1 ? ` and ${down.length - 1} more` : ""}.`; }
+    else if (A.need.length) { state = "warn"; const f = A.need[0]; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${f.group ? f.name + " " + f.detail : f.need != null ? f.detail : f.name + " " + f.detail}.`; }
+    else if (A.stale.length) { state = "warn"; text = `Stale: ${A.stale[0].name} ${A.stale[0].detail}.`; }
     else {
       state = "live";
       const a = arch(), today = new Date().toISOString().slice(0, 10), landed = (a.cards || []).filter(c => c.created === today).length;
       const fact = landed ? `${landed} card${landed === 1 ? "" : "s"} landed today` : st.judged != null ? `the judge kept ${num(st.new_proposals)} of ${num(st.judged)} last run` : `${hosts.filter(x => x.net && x.net.online).length} hosts up`;
       text = `All good. ${fact}.`;
     }
-    v.className = state; $("#vtext").textContent = text;
+    v.className = state; $("#vtext").textContent = text.replace(/\.\.$/, ".");
     $("#vmeta").textContent = "refreshed " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    bridge({ cmd: "verdict", state, text });
   }
   // ---------- hosts by role: the hub, this machine, producers, the rest ----------
   function hostItems() {
@@ -797,34 +847,17 @@ window.onerror = function (msg, src, line, col) {
       <span class="tag ${j.stderr_lines ? "mid" : ""}">${j.stderr_lines == null ? "no log" : j.stderr_lines + " err"}</span>
       <span class="chev">›</span>`;
   }
-  const shortLabel = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
   function glanceHome() {
-    const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
-    const ago = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
-    const need = [], fresh = [], stale = [];
-    (D.needs_you || []).forEach((n, i) => need.push({ state: "warn", name: n.kind, detail: n.text, age_h: null, need: i, order: 1 }));
-    (D.jobs || []).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0 }));
-    Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k, j]) => need.push({ state: "down", name: k, detail: `exited ${j.exit} on the hub`, age_h: ago(j.ts), jump: { view: "jobs", id: "hub:job:" + k }, order: 0 }));
-    hosts.filter(x => x.net && x.net.online === false).forEach(x => need.push({ state: "down", name: x.host, detail: "unreachable", age_h: null, jump: { view: "hosts", id: x.host }, order: 0 }));
-    (bk.hosts || []).filter(x => x.reachable && x.last_dump_age_h == null).forEach(x => need.push({ state: "warn", name: x.host, detail: "no backup job on " + x.node, age_h: null, jump: { view: "backups", id: "bk:host:" + x.host }, order: 2 }));
-    need.sort((a, b) => a.order - b.order || (b.age_h || 0) - (a.age_h || 0));
-    const today = new Date().toISOString().slice(0, 10), a = arch(), landed = (a.cards || []).filter(c => c.created === today).length;
-    if (landed) fresh.push({ state: "live", name: "archive", detail: `${landed} card${landed === 1 ? "" : "s"} landed today`, age_h: null, jump: { view: "archive", id: "week:" + isoWeekKey(new Date()) } });
-    if (st.judged != null) fresh.push({ state: "live", name: "judge", detail: `kept ${num(st.new_proposals)} of ${num(st.judged)} last run`, age_h: h.status_age_h, jump: { view: "jobs", id: "hub:judge" } });
-    (D.lanes || []).filter(l => l.newest_age_h != null && l.newest_age_h <= 24).sort((x, y) => x.newest_age_h - y.newest_age_h).slice(0, 8)
-      .forEach(l => fresh.push({ state: "live", name: l.lane, detail: l.producer || "", age_h: l.newest_age_h, jump: { view: "lanes", id: l.lane } }));
-    hosts.filter(x => x.net && x.net.online && x.host !== m.host).slice(0, 4).forEach(x => fresh.push({ state: "live", name: x.host, detail: "online" + (x.net.via ? " via " + x.net.via : ""), age_h: null, jump: { view: "hosts", id: x.host } }));
-    (D.harnesses || []).forEach(x => { const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run), cad = ((x.plist || {}).interval_s || 900) / 3600;
-      if (ah != null && x.state === "connected" && ah > cad * 4) stale.push({ state: ah > cad * 8 ? "down" : "warn", name: x.name || x.id, detail: `mirror last ran ${age(ah)} ago, expected every ${age(cad)}`, age_h: ah, jump: { view: "tools", id: x.id } }); });
-    (bk.lanes || []).forEach(l => { const ah = ago(l.pushed); if (ah != null && ah > 24) stale.push({ state: ah > 48 ? "down" : "warn", name: "lane " + l.lane, detail: `last pushed ${age(ah)} ago`, age_h: ah, jump: { view: "backups", id: "bk:lane:" + l.lane } }); });
-    (D.lanes || []).filter(l => l.newest_age_h != null && l.newest_age_h > 168).forEach(l => stale.push({ state: "warn", name: l.lane, detail: `newest file ${age(l.newest_age_h)} old`, age_h: l.newest_age_h, jump: { view: "lanes", id: l.lane } }));
-    if (bk.snapshots && bk.snapshots.newest_age_h > 30) stale.push({ state: "warn", name: "snapshot", detail: `daily snapshot ${age(bk.snapshots.newest_age_h)} old`, age_h: bk.snapshots.newest_age_h, jump: { view: "backups", id: "bk:snapshots" } });
-    stale.sort((a, b) => (b.age_h || 0) - (a.age_h || 0));
-    if (window.__qaEmpty === "needs") need.length = 0;               // design QA: the empty state
-    const col = (title, rows, empty) => `<section class="gcol"><div class="gh">${title}<span class="n">${rows.length}</span></div><div class="gb">${rows.length
-      ? rows.map(r => `<div class="row" role="option" tabindex="0" ${r.need != null ? `data-need="${r.need}"` : `data-jump="${esc(JSON.stringify(r.jump))}"`}>${dot(r.state, r.state)}<span class="name">${esc(r.name)}</span><span class="desc">${esc(r.detail)}</span><span class="num">${r.age_h != null ? age(r.age_h) : ""}</span><span class="chev">›</span></div>`).join("")
-      : `<div class="empty">${empty}</div>`}</div></section>`;
-    return `<div class="glance-home">${col("Needs you", need, "nothing waiting")}${col("Fresh", fresh, "nothing new since your last look")}${col("Stale", stale, "nothing stale")}</div>`;
+    const A = assess();
+    if (window.__qaEmpty === "needs") A.need = [];                    // design QA: the empty state
+    const rowHTML = (r) => `<div class="row" role="option" tabindex="0" ${r.need != null ? `data-need="${r.need}"` : r.group ? `data-group="${esc(r.group)}"` : `data-jump="${esc(JSON.stringify(r.jump))}"`}>${dot(r.state, r.state)}<span class="name">${esc(r.name)}</span><span class="num">${r.age_h != null ? age(r.age_h) : ""}</span><span class="chev">›</span><span class="desc">${esc(r.detail)}</span></div>`;
+    const col = (title, rows, empty) => `<section class="gcol${rows.length ? "" : " bare"}"><div class="gh">${title}<span class="n">${rows.length}</span></div><div class="gb">${rows.length ? rows.map(rowHTML).join("") : `<div class="empty">${empty}</div>`}</div></section>`;
+    return `<div class="glance-home">${col("Needs you", A.need, "nothing waiting")}${col("Fresh", A.fresh, "nothing new since your last look")}${col("Stale", A.stale, "nothing stale")}</div>`;
+  }
+  function renderGroupDrawer(g) {
+    settingsOpen = false; sel = null;
+    $("#insp").innerHTML = head(esc(g.name + " " + g.detail.split(":")[0]), esc(`${g.members.length} items, worst first`)) + `
+      <div class="sect"><h2>Each one</h2>${g.members.map(r => `<div class="row" role="option" tabindex="0" data-jump="${esc(JSON.stringify(r.jump))}" style="padding-left:0">${dot(r.state, r.state)}<span class="name" style="width:auto">${esc(r.name)}</span><span class="desc">${esc(r.detail)}</span><span class="num">${r.age_h != null ? age(r.age_h) : ""}</span><span class="chev">›</span></div>`).join("")}</div>`;
   }
   function footerMeta(n) {
     const m = D.machine || {}, meName = m.host || "here";
@@ -1241,6 +1274,8 @@ window.onerror = function (msg, src, line, col) {
     if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s", { silent: true }); const it = findRow(p[1]); select(it ? it.kind : p[0], p[1], true); return; }
     const grow = e.target.closest(".g-row[data-place]");
     if (grow) { let pl = null; try { pl = JSON.parse(grow.dataset.place); } catch (x) {} return bridge({ cmd: "showConsole", place: pl }); }
+    const grp = e.target.closest("[data-group]");
+    if (grp && lastAssess) { const g = lastAssess.need.find(r => r.group === grp.dataset.group); if (g) { renderGroupDrawer(g); openInspector(); commit(); } return; }
     const jmp = e.target.closest("[data-jump]");
     if (jmp) { let p = {}; try { p = JSON.parse(jmp.dataset.jump); } catch (x) {} setView(p.view, { silent: true }); const it = findRow(p.id); if (it) select(it.kind, it.id, true); else commit(); return; }
     if (e.target.closest("#home")) return setView("glance");

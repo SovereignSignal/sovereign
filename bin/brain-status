@@ -975,7 +975,7 @@ def main():
     if hub.get("reachable") is False:
         needs.append({"kind": "hub", "text": "The hub did not answer (%s). Governance state is unknown until it does." % hub.get("via", "?")})
     if hub.get("pending"):
-        needs.append({"kind": "gate", "text": "%d proposal(s) waiting at the gate. Approve or reject them on Telegram or with curator-approve." % hub["pending"]})
+        needs.append({"kind": "gate", "text": "%d proposal%s waiting at the gate. Approve or reject them on Telegram or with curator-approve." % (hub["pending"], "" if hub["pending"] == 1 else "s")})
     for h in harnesses:
         if h.get("trusted") is False:
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: the hook is installed but not trusted. Run: sov connect %s --apply" % (h["name"], h["id"])})
