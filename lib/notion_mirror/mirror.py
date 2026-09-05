@@ -354,17 +354,27 @@ class Mirror:
                 except NotionError as exc:
                     rep.errors.append("database %s: %s" % (db_id, exc))
 
-    def _fetch_blocks(self, block_id: str) -> List[dict]:
+    def _fetch_blocks(self, block_id: str, rep: Optional[Report] = None) -> List[dict]:
+        """The page's own block list is fatal: without it there is no page. One nested block
+        that will not load is not, or a single bad toggle blocks the page every day and the
+        dry run cannot say why. Note it on the block, warn, and render the rest."""
         blocks = self.client.children(block_id)
         for block in blocks:
             if block.get("has_children") and block.get("type") not in CHILD_KINDS:
-                block["children"] = self._fetch_blocks(norm_id(block.get("id")))
+                child_id = norm_id(block.get("id"))
+                try:
+                    block["children"] = self._fetch_blocks(child_id, rep)
+                except NotionError as exc:
+                    block["children"] = []
+                    block["children_error"] = str(exc)
+                    if rep is not None:
+                        rep.warnings.append("children of %s %s: %s" % (block.get("type", ""), child_id, exc))
         return blocks
 
     def _write_page(self, it: dict, paths: Dict[str, str], links: Links, rep: Report) -> None:
         page_path = paths[it["id"]]
         obj = it.get("_obj") or self.client.page(it["id"])
-        blocks = self._fetch_blocks(it["id"])
+        blocks = self._fetch_blocks(it["id"], rep)
         schema = self._schema(it["ds_id"]) if it["kind"] == "row" and it.get("ds_id") else None
         attachments: List[Tuple[str, str]] = []
         text = render_page(it, obj, blocks, links, attachments, page_path, schema_props=schema)

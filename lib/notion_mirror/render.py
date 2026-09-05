@@ -185,6 +185,8 @@ def render_blocks(blocks: List[dict], links: Links, attachments: list, page_path
             continue
         else:
             add("<!-- unsupported: %s -->\n\n" % kind, None)
+        if block.get("children_error"):  # the fetcher could not read this block's children
+            add("<!-- children unavailable: %s %s: %s -->\n\n" % (kind, norm_id(block.get("id")), block["children_error"]), None)
     out = "".join(pieces)
     return out.rstrip("\n") + "\n" if out.strip() else ""
 

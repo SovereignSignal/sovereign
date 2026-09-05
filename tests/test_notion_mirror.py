@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from tests.notion_fake import EDIT, FakeClient, hid, image, para  # noqa: E402
+from tests.notion_fake import EDIT, FakeClient, hid, image, para, toggle  # noqa: E402
 from notion_mirror.config import Config  # noqa: E402
 from notion_mirror.mirror import Mirror  # noqa: E402
 from notion_mirror.state import State  # noqa: E402
@@ -18,7 +18,8 @@ SCHEMA = {"Name": {"type": "title"}, "Status": {"type": "select"}}
 
 def workspace(tmp, **over):
     """A vault with a lane and a state dir, plus a small connected tree:
-    1 Root > 2 Music (paragraph + image) > 3 LW Songs [db, ds 30] > rows 4 Alive, 5 Atlantic > 6 Lyrics under Alive."""
+    1 Root > 2 Music (paragraph + image + toggle 22 holding paragraph 23) > 3 LW Songs [db, ds 30]
+    > rows 4 Alive, 5 Atlantic > 6 Lyrics under Alive."""
     vault = Path(tmp) / "vault"
     lane = vault / "raw" / "tools" / "Notion"
     lane.mkdir(parents=True)
@@ -31,7 +32,8 @@ def workspace(tmp, **over):
     c = FakeClient()
     c.add_page(1, "Root", c.workspace())
     c.files["https://s3/shot.png?sig=1"] = b"PNG"
-    c.add_page(2, "Music", c.under(1), body=[para(20, "All the songs."), image(21, "https://s3/shot.png?sig=1")])
+    c.add_page(2, "Music", c.under(1), body=[para(20, "All the songs."), image(21, "https://s3/shot.png?sig=1"), toggle(22, "More")])
+    c.blocks[hid(22)] = [para(23, "hidden verse")]
     c.add_database(3, 30, "LW Songs", c.under(2), SCHEMA)
     c.add_row(4, 3, 30, "Alive", {"Status": {"type": "select", "select": {"name": "IP"}}}, body=[para(40, "verse")])
     c.add_row(5, 3, 30, "Atlantic", {"Status": {"type": "select", "select": None}})
@@ -192,6 +194,18 @@ class FullRun(unittest.TestCase):
             self.assertTrue((cfg.state_dir / "last-status").read_text().startswith("FAILED "))
             self.assertIsNone(State(cfg.state_dir).read_cursor())
             self.assertIsNone(State(cfg.state_dir).read_last_full())
+
+
+    def test_a_failing_nested_block_warns_and_the_page_still_lands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            client.fail_children_for.add(hid(22))
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(len(rep.warnings), 1)
+            self.assertIn("children of toggle %s" % hid(22), rep.warnings[0])
+            self.assertIn("children unavailable", (lane / P2).read_text())
+            self.assertTrue((cfg.state_dir / "last-status").read_text().startswith("OK "))
 
 
 class Containment(unittest.TestCase):

@@ -33,6 +33,11 @@ def image(n, url):
             "image": {"type": "file", "file": {"url": url}, "caption": []}}
 
 
+def toggle(n, text):
+    """A block with children of its own: the fetcher recurses into it."""
+    return {"object": "block", "id": dashed(hid(n)), "type": "toggle", "has_children": True, "toggle": {"rich_text": [rt(text)]}}
+
+
 def child_page_block(n):
     return {"object": "block", "id": dashed(hid(n)), "type": "child_page", "has_children": True, "child_page": {"title": ""}}
 
