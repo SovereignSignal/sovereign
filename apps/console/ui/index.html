@@ -327,7 +327,7 @@
         <button data-view="archive" aria-pressed="false">Archive</button>
         <button data-view="lanes" aria-pressed="false">Lanes</button>
         <button data-view="tools" aria-pressed="false">Tools</button>
-        <button data-view="jobs" aria-pressed="false">Jobs</button>
+        <button data-view="jobs" aria-pressed="false">Hub</button>
         <button data-view="backups" aria-pressed="false">Backups</button>
       </div>
       <span class="count" id="listcount"></span>
@@ -571,11 +571,55 @@ window.onerror = function (msg, src, line, col) {
   }
   function items() {
     if (view === "archive") return archiveItems();
-    if (view === "hosts") return ((D.fleet || {}).hosts || []).map(h => ({ kind: "host", id: h.host, o: h }));
+    if (view === "hosts") return hostItems();
     if (view === "lanes") return (D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }));
     if (view === "tools") return (D.tools_found || []).filter(t => t.detected || t.connector).map(t => ({ kind: "tool", id: t.id, o: t }));
     if (view === "backups") return backupItems();
-    return (D.jobs || []).map(j => ({ kind: "job", id: j.label, o: j }));
+    return hubItems();
+  }
+  // ---------- hosts by role: the hub, this machine, producers, the rest ----------
+  function hostItems() {
+    const hosts = ((D.fleet || {}).hosts || []), m = D.machine || {}, me = m.host, hubName = (m.hub_pointer || "").split(":")[0] || (hub().hub_host || "");
+    const isProducer = (h) => (h.lanes || []).some(l => (l.write || "").startsWith("git")) || (h.harnesses || []).length > 0;
+    const groups = [["The hub", "hub", h => h.host === hubName], ["This machine", "me", h => h.host === me && h.host !== hubName],
+                    ["Producers", "producers", h => isProducer(h)], ["Other machines", "others", () => true]];
+    const seen = new Set(), out = [];
+    groups.forEach(([label, sec, test]) => {
+      const rows = hosts.filter(h => !seen.has(h.host) && test(h)); rows.forEach(h => seen.add(h.host));
+      if (!rows.length) return;
+      out.push({ kind: "head", id: "h-" + sec, section: sec, label, n: rows.length === 1 ? rows[0].host : rows.length + " machines" });
+      rows.forEach(h => out.push({ kind: "host", id: h.host, o: h }));
+    });
+    return out;
+  }
+  // ---------- the hub: its health and its work, then what is scheduled here ----------
+  function hubItems() {
+    const h = hub(), st = h.status || {}, cov = st.coverage || {}, m = D.machine || {}, hubName = (m.hub_pointer || "").split(":")[0] || h.hub_host || "hub";
+    const bk = D.backups || {}, out = [], ago = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
+    const row = (id, o) => out.push({ kind: "hub", id, o });
+    out.push({ kind: "head", id: "h-hubwork", section: "hubwork", label: "The hub · " + hubName, n: h.reachable ? "via " + (h.via || "ssh") : "unreachable" });
+    if (!h.reachable) out.push({ kind: "quiet", id: "hub-off", text: "The hub did not answer: " + (h.error || "no route") });
+    else {
+      const bd = h.burndown || {};
+      row("hub:judge", { label: "judge", desc: `last run kept ${num(st.new_proposals)} of ${num(st.judged)} · ${num(st.deferred ?? cov.unjudged_in_window)} unjudged in scope`, state: st.judged != null ? "live" : "", stateText: bd.stopped ? "burn-down stopped" : "judging", age_h: h.status_age_h, goto: "judge",
+        detail: [["last run", `${num(st.new_proposals)} kept of ${num(st.judged)} judged`], ["digest", h.digest_at], ["unjudged in scope", `${num(st.deferred ?? cov.unjudged_in_window)} of ${num(cov.processable)}`], ["stranded behind the watermark", num(cov.stranded_pre_watermark)], ["judged ever", num((h.judge || {}).total_judged)], ["burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "running, 10-minute tick, stops itself under 2% kept"]],
+        note: "The judge runs on the hub's own inference. Nothing it keeps lands without the gate." });
+      row("hub:gate", { label: "gate", desc: h.pending ? `${num(h.pending)} waiting for you` : "nothing waiting", state: h.pending ? "warn" : "live", stateText: h.pending ? "needs you" : "clear", age_h: null, gate: true,
+        detail: [["waiting", num(h.pending)], ["audit items", num(st.audit_pending)]], note: "Approve or reject from the digest buttons, the Archive view, or curator-approve on the hub." });
+      (bk.remotes || []).forEach(r => { const ex = ((bk.exchange || {})[r.name] || (bk.exchange || {})[r.host] || {}), local = r.host === "localhost" || r.host === "127.0.0.1";
+        const failing = ex.fail && (!ex.ok || ex.fail > ex.ok);
+        row("hub:remote:" + r.name, { label: local ? "canonical git" : "mirror · " + r.host, desc: r.ahead === 0 ? "every commit is there" : `${r.ahead} commit${r.ahead === 1 ? "" : "s"} not there yet`, state: failing ? "down" : r.ahead === 0 ? "live" : "warn", stateText: failing ? "push failing" : r.ahead === 0 ? "current" : "behind", age_h: ago(r.remote_head), goto: "backups",
+          detail: [["last push ok", ex.ok || "unknown"], ["last push failed", ex.fail || "never"], ["commits ahead", r.ahead]], note: "The exchange job pushes every commit and fetches the producers' lanes every 30 minutes." }); });
+      (h.cloud_harnesses || []).forEach(c => row("hub:cloud:" + c.id, { label: "cloud pull · " + c.name, desc: c.installed ? (c.job_loaded ? "installed, job loaded" : "installed, job not loaded (your gate)") : "not installed on the hub", state: c.job_loaded ? "live" : c.installed ? "warn" : "", stateText: c.state, age_h: ago(c.last_success),
+        detail: [["lane", c.lane], ["job", c.label], ["last success", c.last_success || "never"], ["last status", c.last_status || "none yet"]], note: "A cloud pull runs on the hub; every console shows this same record." }));
+      row("hub:audit", { label: "audit", desc: h.audit_latest ? "latest: " + h.audit_latest : "no audit yet", state: "", stateText: "weekly", age_h: null, detail: [["latest report", h.audit_latest || "none"]], note: "The Friday audit and the packets in between: findings become boxes you tick, the hub applies." });
+      const hj = h.jobs || {};
+      Object.keys(hj).sort().forEach(k => { const j = hj[k]; row("hub:job:" + k, { label: k, desc: `last run ${j.ts || "?"}${j.dur_s != null ? " · " + j.dur_s + "s" : ""}`, state: j.exit === 0 ? "live" : j.exit == null ? "" : "down", stateText: j.exit === 0 ? "ok" : "exit " + j.exit, age_h: ago(j.ts),
+        detail: [["last run", j.ts], ["exit", j.exit], ["duration", j.dur_s != null ? j.dur_s + "s" : "?"]], note: "Scheduled on the hub through its cron wrapper, which alerts on failure." }); });
+    }
+    out.push({ kind: "head", id: "h-mine", section: "mine", label: "Scheduled on this machine · " + (m.host || "here"), n: (D.jobs || []).length + " jobs" });
+    (D.jobs || []).forEach(j => out.push({ kind: "job", id: j.label, o: j }));
+    return out;
   }
   // ---------- backups: where copies are and how old, read-only ----------
   function backupItems() {
@@ -666,7 +710,7 @@ window.onerror = function (msg, src, line, col) {
         <span class="num" style="width:40px">${age(newest)}</span>
         <span class="chev">›</span>`;
     }
-    if (it.kind === "backup") {
+    if (it.kind === "backup" || it.kind === "hub") {
       return `${dot(o.state, o.stateText)}
         <span class="name" style="width:230px">${esc(o.label)}</span>
         <span class="desc">${esc(o.desc)}</span>
@@ -707,13 +751,14 @@ window.onerror = function (msg, src, line, col) {
   function renderList() {
     const list = items();
     if (view === "hosts") {
-      contribMax = Math.max(1, ...list.map(i => (i.o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0)));
-      const ids = {}; list.forEach(i => { const id = (i.o.meta || {}).identity; if (id) ids[id] = (ids[id] || 0) + 1; });
+      contribMax = Math.max(1, ...list.filter(selectable).map(i => (i.o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0)));
+      const ids = {}; list.filter(selectable).forEach(i => { const id = (i.o.meta || {}).identity; if (id) ids[id] = (ids[id] || 0) + 1; });
       domIdentity = Object.keys(ids).sort((x, y) => ids[y] - ids[x])[0] || null;
     }
     else if (view === "lanes") contribMax = Math.max(1, ...list.map(i => i.o.cards || 0));
     const n = list.filter(selectable).length;
-    $("#listcount").textContent = view === "archive" ? "" : n + " " + view;
+    const meName = (D.machine || {}).host || "here";
+    $("#listcount").textContent = view === "archive" ? "" : view === "tools" ? `${n} tools on ${meName}` : view === "jobs" ? "" : n + " " + view;
     document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
     if (sel && (sel.view !== view || !list.some(i => i.id === sel.id))) sel = null;
     const shown = view === "archive" ? list.filter(i => i.kind === "head" || i.kind === "quiet" || i.kind === "prop") : list;
@@ -792,7 +837,7 @@ window.onerror = function (msg, src, line, col) {
         <label class="check"><input type="checkbox" id="s-login" ${S.loginItem ? "checked" : ""}> Open at login</label>
         <div class="prose" style="color:var(--muted)">${esc(login)}</div></div>
       <div class="sect"><h2>Refresh every</h2><select id="s-refresh">${[30, 60, 300, 900].map(v => `<option value="${v}" ${S.refresh === v ? "selected" : ""}>${v < 60 ? v + " seconds" : (v / 60) + " minute" + (v > 60 ? "s" : "")}</option>`).join("")}</select></div>
-      <div class="sect"><h2>Open on</h2><select id="s-view">${["archive", "hosts", "lanes", "tools", "jobs"].map(v => `<option value="${v}" ${S.defaultView === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select></div>
+      <div class="sect"><h2>Open on</h2><select id="s-view">${["hosts", "archive", "lanes", "tools", "jobs", "backups"].map(v => `<option value="${v}" ${S.defaultView === v ? "selected" : ""}>${v === "jobs" ? "Hub" : v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select></div>
       <div class="sect"><h2>Detail panel</h2><label class="check"><input type="checkbox" id="s-pin" ${pinned ? "checked" : ""}> Keep it open beside the list</label></div>
       ${S.error ? `<div class="note">${esc(S.error)}</div>` : ""}
       <div class="acts"><button class="brass" id="s-save">Save settings</button><span class="pulls" id="s-state" aria-live="polite"></span></div>`;
@@ -862,10 +907,11 @@ window.onerror = function (msg, src, line, col) {
         ${m.identity ? `<div class="sect"><h2>Identity</h2><div class="prose">Sessions here default to <span class="mono">${esc(m.identity)}</span>.</div></div>` : ""}`;
       return;
     }
-    if (it.kind === "backup") {
+    if (it.kind === "backup" || it.kind === "hub") {
       box.innerHTML = head(esc(o.label), esc(o.desc), o.tag) + `
         <div class="sect"><h2>Where it stands</h2>${kv(o.detail.map(([k, v]) => [k, v == null ? "–" : String(v)]))}</div>
-        <div class="sect"><h2>What it means</h2><div class="prose">${esc(o.note)}</div></div>`;
+        <div class="sect"><h2>What it means</h2><div class="prose">${esc(o.note)}</div></div>
+        ${o.gate || o.goto ? `<div class="acts">${o.gate ? `<button class="brass" data-act="gotogate">Open the gate</button>` : ""}${o.goto ? `<button data-goto-view="${o.goto === "backups" ? "backups" : "archive"}" data-goto-sec="${esc(o.goto)}">${o.goto === "backups" ? "Backups view" : "Archive view"}</button>` : ""}</div>` : ""}`;
       return;
     }
     if (it.kind === "lane") {
@@ -1128,6 +1174,8 @@ window.onerror = function (msg, src, line, col) {
       if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
       if (b.id === "drawer-apply") { if (pendingHost) return hostAdd(pendingHost.host, true); if (pendingConnect) connect(pendingConnect.harness, true); return; }
       if (act === "hostadd") return hostAdd(b.dataset.host, false);
+      if (act === "gotogate") return gotoGate();
+      if (b.dataset.gotoView) return setView(b.dataset.gotoView, b.dataset.gotoView === "archive" ? { section: b.dataset.gotoSec } : undefined);
       if (act === "vmstart") { b.disabled = true; b.textContent = "starting…"; return bridge({ cmd: "vmstart", name: b.dataset.vm }); }
       if (act === "copy") { try { navigator.clipboard.writeText(b.dataset.text); b.textContent = "copied"; } catch (e) { b.textContent = "select it"; } return; }
       const act = b.dataset.act;

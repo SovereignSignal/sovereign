@@ -918,7 +918,7 @@ def main():
             c = hub_cloud.get(h["id"])
             if c is None or h.get("detected") is not None:
                 continue
-            h.update({"runs_on": (out.get("hub") or {}).get("hub_host"), "state": c["state"], "job_loaded": c["job_loaded"], "lane": c["lane"],
+            h.update({"runs_on": pointer("~/.brain-hub").split(":")[0] or (out.get("hub") or {}).get("hub_host"), "state": c["state"], "job_loaded": c["job_loaded"], "lane": c["lane"],
                       "label": c["label"], "last_status": c.get("last_status"), "hub_installed": c["installed"],
                       "last_run": ("Last run: %s" % c["last_success"]) if c.get("last_success") else None, "hook_registered": None})
     out["harnesses"] = harnesses

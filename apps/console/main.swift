@@ -129,7 +129,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             var loginChanged = false
             if let l = d["loginItem"] as? Bool, l != Settings.loginItem { Settings.loginItem = l; loginChanged = true }
             if let r = d["refresh"] as? Int, r >= 15, r <= 3600 { Settings.refresh = r }
-            if let v = d["defaultView"] as? String, ["archive", "hosts", "lanes", "tools", "jobs"].contains(v) { Settings.defaultView = v }
+            if let v = d["defaultView"] as? String, ["archive", "hosts", "lanes", "tools", "jobs", "backups"].contains(v) { Settings.defaultView = v }
             DispatchQueue.main.async { App.shared.applySettings(loginChanged: loginChanged); App.shared.broadcastSettings() }
         case "showConsole":
             DispatchQueue.main.async { App.shared.showConsole(place: d["place"] as? [String: Any]) }
