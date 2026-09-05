@@ -55,6 +55,7 @@ class FakeClient:
         self.queries = 0
         self.fail_children_for = set()
         self.fail_message = None
+        self.vanish_after_search = set()
 
     # builders --------------------------------------------------------------
     @staticmethod
@@ -113,6 +114,8 @@ class FakeClient:
 
     def _get(self, table, key, what):
         self.requests += 1
+        if norm_id(key) in self.vanish_after_search:
+            raise NotionError("GET %s %s: HTTP 404: object_not_found" % (what, key))
         try:
             return table[norm_id(key)]
         except KeyError:
@@ -133,11 +136,15 @@ class FakeClient:
     def query_rows(self, ds_id):
         self.requests += 1
         self.queries += 1
+        if norm_id(ds_id) in self.vanish_after_search:
+            raise NotionError("GET data_source %s query: HTTP 404: object_not_found" % ds_id)
         return iter([p for p in self.pages.values()
                      if norm_id(p["parent"].get("data_source_id", "")) == norm_id(ds_id) and not p.get("in_trash")])
 
     def children(self, block_id):
         self.requests += 1
+        if norm_id(block_id) in self.vanish_after_search:
+            raise NotionError("GET block %s children: HTTP 404: object_not_found" % block_id)
         if norm_id(block_id) in self.fail_children_for:
             raise NotionError(self.fail_message or ("GET /blocks/%s/children: HTTP 500: boom" % block_id))
         return [dict(b) for b in self.blocks.get(norm_id(block_id), [])]

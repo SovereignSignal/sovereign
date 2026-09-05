@@ -223,6 +223,30 @@ class FullRun(unittest.TestCase):
             self.assertIsNone(State(cfg.state_dir).read_last_full())
 
 
+    def test_a_vanished_subtree_warns_instead_of_failing(self):
+        """The database's data source is what page 6's sibling rows need too (their own
+        Status column comes from its schema), so losing access to it takes the whole
+        subtree with it: the database, both rows, and the page nested under one of them.
+        None of that may turn into a run failure."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            client.vanish_after_search.add(hid(6))
+            client.vanish_after_search.add(hid(30))
+            m = Mirror(client, cfg, State(cfg.state_dir))
+            rep = m.full()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(rep.vanished, 4)
+            self.assertEqual(len(rep.warnings), 4)
+            for kind, n in (("page", 6), ("database", 3), ("row", 4), ("row", 5)):
+                self.assertTrue(any("vanished during the run: %s %s" % (kind, hid(n)) in w for w in rep.warnings), rep.warnings)
+            self.assertEqual(paths_of(lane), sorted(["LANE.md", P1, P2, IMG]))
+            for n in (3, 4, 5, 6):
+                self.assertNotIn(hid(n), m.manifest.items)
+            self.assertTrue((cfg.state_dir / "last-status").read_text().startswith("OK "))
+            self.assertEqual(State(cfg.state_dir).read_cursor(), EDIT)
+            self.assertIsNotNone(State(cfg.state_dir).read_last_full())
+            self.assertIn(", vanished 4", rep.summary())
+
     def test_a_failing_nested_block_warns_and_the_page_still_lands(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg, client, lane = workspace(tmp)
@@ -413,6 +437,20 @@ class DeltaRun(unittest.TestCase):
             rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
             self.assertEqual(rep.mode, "full")
             self.assertEqual(rep.written, 6)
+
+    def test_delta_vanished_page_deletes_the_file_and_advances_the_cursor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertTrue((lane / P6).exists())
+            client.pages[hid(6)]["last_edited_time"] = LATER
+            client.vanish_after_search.add(hid(6))
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(rep.deleted, 1)
+            self.assertEqual(rep.vanished, 1)
+            self.assertFalse((lane / P6).exists())
+            self.assertEqual(State(cfg.state_dir).read_cursor(), LATER)
 
     def test_delta_dry_run_reports_and_writes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
