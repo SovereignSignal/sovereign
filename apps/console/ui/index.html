@@ -13,7 +13,9 @@
      leaves when dismissed, so the resting state stays small. The wire strip is the
      signature: one dual-segment mark per tool, read on the left, write on the right. */
   /* palette, type, space: apps/console/design/tokens.css (copied beside this file at build) */
-  :root { --series-4: var(--faint); }
+  :root { --series-4: var(--faint); --tag-rule: var(--rule); --col-shadow: var(--shadow); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --tag-rule: var(--rule-soft); --col-shadow: none; } }
+  :root[data-theme="dark"] { --tag-rule: var(--rule-soft); --col-shadow: none; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--ground); color: var(--ink);
     font: 13px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
@@ -35,18 +37,19 @@
   .num, .val, .n, .tile b { font-variant-numeric: tabular-nums; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-  header { flex: none; display: flex; align-items: center; gap: var(--s2); height: calc(var(--h-header) + 22px);
-    padding: 22px var(--s3) 0; border-bottom: 1px solid var(--rule-soft); }
+  header { flex: none; display: flex; align-items: center; gap: var(--s2); height: 44px;
+    padding: 0 var(--s3) 0 80px; border-bottom: 1px solid var(--rule-soft); }
+  header .crown { cursor: pointer; }
   .crown { width: 16px; height: 16px; color: var(--ink); flex: none; }
   header h1 { margin: 0 var(--s1) 0 0; font: 600 var(--t-title)/var(--lh-title) var(--sans); letter-spacing: 0; white-space: nowrap; }
   #verdict { flex: none; display: flex; align-items: center; gap: var(--s2); height: var(--h-verdict); padding: 0 var(--s3);
     background: var(--panel); border-bottom: 1px solid var(--rule-soft); }
   #verdict.down { box-shadow: inset 3px 0 0 var(--down); }
   #verdict .vdot { width: 10px; height: 10px; border-radius: 50%; background: var(--idle); flex: none;
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--idle) 30%, transparent); }
-  #verdict.live .vdot { background: var(--live); box-shadow: 0 0 0 1px color-mix(in srgb, var(--live) 30%, transparent); }
-  #verdict.warn .vdot { background: var(--warn); box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 30%, transparent); }
-  #verdict.down .vdot { background: var(--down); box-shadow: 0 0 0 1px color-mix(in srgb, var(--down) 30%, transparent); }
+    box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--idle) 30%, transparent); }
+  #verdict.live .vdot { background: var(--live); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--live) 30%, transparent); }
+  #verdict.warn .vdot { background: var(--warn); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--warn) 30%, transparent); }
+  #verdict.down .vdot { background: var(--down); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--down) 30%, transparent); }
   #verdict .vtext { flex: 1; min-width: 0; font: 500 var(--t-verdict)/var(--lh-verdict) var(--sans); color: var(--ink);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #verdict .vmeta { font: 10.5px var(--mono); color: var(--faint); white-space: nowrap; }
@@ -103,7 +106,8 @@
   .seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
   .bar .count { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-left: auto; white-space: nowrap; }
 
-  #rows { overflow: auto; flex: 1; }
+  #rows { overflow: auto; flex: 1; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
+  #rows.home { overflow: hidden; -webkit-mask-image: none; }
   #rows:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--brass); }
   .row { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 12px 0 16px;
     border-bottom: 1px solid var(--rule-soft); cursor: pointer; position: relative; }
@@ -113,7 +117,9 @@
   .row.head { height: 26px; cursor: default; background: var(--ground); position: sticky; top: 0; z-index: 1;
     border-bottom: 1px solid var(--rule); }
   .row.head:hover { background: var(--ground); }
-  .row.head .name { color: var(--muted); font-weight: 500; font-size: 11px; width: auto; }
+  .row.head { height: 28px; }
+  .row.head .name { color: var(--muted); font: 500 var(--t-caption)/var(--lh-caption) var(--mono); text-transform: uppercase; letter-spacing: .04em; width: auto; }
+  .row.head .num { color: var(--ink-2); }
   .row.head .num { color: var(--faint); }
   .row.quiet { cursor: default; color: var(--muted); font-size: 12px; }
   .row.quiet:hover { background: transparent; }
@@ -122,7 +128,7 @@
   .row .desc { flex: 1; min-width: 0; font: var(--t-body)/var(--lh-body) var(--sans); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .num { font: var(--t-caption)/var(--lh-caption) var(--mono); color: var(--faint); text-align: right; white-space: nowrap; flex: none; }
   .row .chev { color: var(--faint); font-size: 11px; width: 8px; flex: none; }
-  .row .tag { font-family: var(--mono); font-size: var(--t-caption); line-height: 14px; height: 16px; color: var(--faint); border: 1px solid var(--rule); border-radius: var(--radius-tag);
+  .row .tag { font-family: var(--mono); font-size: var(--t-caption); line-height: 14px; height: 16px; color: var(--faint); border: 1px solid var(--tag-rule); border-radius: var(--radius-tag);
     border-radius: 4px; padding: 0 5px; line-height: 15px; white-space: nowrap; flex: none; }
   .row .tag.on { color: var(--live); border-color: color-mix(in srgb, var(--live) 40%, transparent); }
   .row .tag.mid { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
@@ -155,7 +161,8 @@
     transform: translateX(102%); transition: transform .16s ease; z-index: 20; }
   #inspector.open { transform: none; }
   body.pinned #inspector { position: static; transform: none; box-shadow: none; width: auto; }
-  #inspector .pad { padding: 12px 16px 28px; }
+  #inspector .pad { padding: 12px 16px 12px; }
+  #inspector .acts { position: sticky; bottom: -12px; background: var(--panel); padding: 8px 0 12px; border-top: 1px solid var(--rule-soft); }
   .insp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
   .insp-head .sp { flex: 1; }
   .insp-title { font: 600 14px var(--mono); letter-spacing: -0.02em; overflow-wrap: anywhere; }
@@ -290,6 +297,18 @@
   .code-line { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sunk); }
   .code-line code { flex: 1; font: 12px var(--mono); color: var(--ink); user-select: all; -webkit-user-select: all; }
 
+  /* the glance: three columns, the frame never scrolls, each column does */
+  .glance-home { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); padding: var(--s3); height: 100%; min-height: 0; }
+  .gcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--col-shadow); overflow: hidden; }
+  .gcol .gh { flex: none; display: flex; align-items: center; height: 28px; padding: 0 var(--s3); font: 500 var(--t-caption)/var(--lh-caption) var(--mono);
+    text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--rule-soft); }
+  .gcol .gh .n { margin-left: auto; color: var(--ink-2); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+  .gcol .gb { flex: 1; min-height: 0; overflow: auto; }
+  .gcol .empty { padding: var(--s3); font: var(--t-body)/var(--lh-body) var(--sans); color: var(--muted); }
+  .gcol .row { padding: 0 var(--s2) 0 var(--s3); gap: var(--s2); }
+  .gcol .row .name { width: auto; max-width: 44%; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 760px) { .glance-home { grid-template-columns: 1fr; } }
+
   #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
     transition: transform .16s ease; background: var(--panel); border-top: 1px solid var(--rule); box-shadow: var(--shadow); z-index: 30; }
   #drawer.open { transform: none; }
@@ -304,7 +323,7 @@
 </head>
 <body>
 <header>
-  <svg class="crown" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>
+  <svg class="crown" id="home" viewBox="0 0 16 16" fill="currentColor" role="button" aria-label="Glance" tabindex="0"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>
   <h1 id="vault">Sovereign</h1>
   <div class="meta grow" id="meta">reading status…</div>
   <span class="hubpill" id="hubpill"><span class="dot"></span>hub</span>
@@ -354,7 +373,7 @@ window.onerror = function (msg, src, line, col) {
 (function () {
   const $ = (s, r) => (r || document).querySelector(s);
   const bridge = (m) => { try { window.webkit.messageHandlers.sov.postMessage(m); } catch (e) { console.warn("no bridge", e); } };
-  let D = null, view = "hosts", sel = null, pendingConnect = null, pinned = false, armed = null;
+  let D = null, view = "glance", sel = null, pendingConnect = null, pinned = false, armed = null;
   const GLANCE = location.hash.startsWith("#glance");
   document.body.classList.toggle("glance", GLANCE);
   if (location.hash === "#glance-qa") document.body.classList.add("qa");
@@ -410,7 +429,7 @@ window.onerror = function (msg, src, line, col) {
   function renderTop() {
     const m = D.machine || {}, h = hub(), obs = D.obsidian || {};
     $("#vault").textContent = m.vault_name || "Sovereign";
-    $("#meta").textContent = `${m.host} · ${m.template_rev || "?"}${obs.sync ? " · obsidian " + obs.sync : ""} · ${clock(D.generated_at)}`;
+    $("#meta").textContent = `${m.host}${obs.sync ? " · obsidian " + obs.sync : ""}`;
     const hp = $("#hubpill"), j = h.jobs || {}, nightly = j["archivist-nightly"];
     if (h.reachable) hp.innerHTML = `${dot("live", "hub online")}hub ${esc(((h.via || "").startsWith("ssh ") ? h.via.slice(4) : (h.hub_host || "here")).toLowerCase())}${nightly ? " · nightly " + clock(nightly.ts) : ""}`;
     else if (h.reachable === false) hp.innerHTML = `${dot("down", "hub offline")}hub silent`;
@@ -571,6 +590,7 @@ window.onerror = function (msg, src, line, col) {
   }
   function items() {
     if (view === "archive") return archiveItems();
+    if (view === "glance") return [];
     if (view === "hosts") return hostItems();
     if (view === "lanes") return (D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }));
     if (view === "tools") return (D.tools_found || []).filter(t => t.detected || t.connector).map(t => ({ kind: "tool", id: t.id, o: t }));
@@ -777,7 +797,42 @@ window.onerror = function (msg, src, line, col) {
       <span class="tag ${j.stderr_lines ? "mid" : ""}">${j.stderr_lines == null ? "no log" : j.stderr_lines + " err"}</span>
       <span class="chev">›</span>`;
   }
+  const shortLabel = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
+  function glanceHome() {
+    const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
+    const ago = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
+    const need = [], fresh = [], stale = [];
+    (D.needs_you || []).forEach((n, i) => need.push({ state: "warn", name: n.kind, detail: n.text, age_h: null, need: i, order: 1 }));
+    (D.jobs || []).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0 }));
+    Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k, j]) => need.push({ state: "down", name: k, detail: `exited ${j.exit} on the hub`, age_h: ago(j.ts), jump: { view: "jobs", id: "hub:job:" + k }, order: 0 }));
+    hosts.filter(x => x.net && x.net.online === false).forEach(x => need.push({ state: "down", name: x.host, detail: "unreachable", age_h: null, jump: { view: "hosts", id: x.host }, order: 0 }));
+    (bk.hosts || []).filter(x => x.reachable && x.last_dump_age_h == null).forEach(x => need.push({ state: "warn", name: x.host, detail: "no backup job on " + x.node, age_h: null, jump: { view: "backups", id: "bk:host:" + x.host }, order: 2 }));
+    need.sort((a, b) => a.order - b.order || (b.age_h || 0) - (a.age_h || 0));
+    const today = new Date().toISOString().slice(0, 10), a = arch(), landed = (a.cards || []).filter(c => c.created === today).length;
+    if (landed) fresh.push({ state: "live", name: "archive", detail: `${landed} card${landed === 1 ? "" : "s"} landed today`, age_h: null, jump: { view: "archive", id: "week:" + isoWeekKey(new Date()) } });
+    if (st.judged != null) fresh.push({ state: "live", name: "judge", detail: `kept ${num(st.new_proposals)} of ${num(st.judged)} last run`, age_h: h.status_age_h, jump: { view: "jobs", id: "hub:judge" } });
+    (D.lanes || []).filter(l => l.newest_age_h != null && l.newest_age_h <= 24).sort((x, y) => x.newest_age_h - y.newest_age_h).slice(0, 8)
+      .forEach(l => fresh.push({ state: "live", name: l.lane, detail: l.producer || "", age_h: l.newest_age_h, jump: { view: "lanes", id: l.lane } }));
+    hosts.filter(x => x.net && x.net.online && x.host !== m.host).slice(0, 4).forEach(x => fresh.push({ state: "live", name: x.host, detail: "online" + (x.net.via ? " via " + x.net.via : ""), age_h: null, jump: { view: "hosts", id: x.host } }));
+    (D.harnesses || []).forEach(x => { const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run), cad = ((x.plist || {}).interval_s || 900) / 3600;
+      if (ah != null && x.state === "connected" && ah > cad * 4) stale.push({ state: ah > cad * 8 ? "down" : "warn", name: x.name || x.id, detail: `mirror last ran ${age(ah)} ago, expected every ${age(cad)}`, age_h: ah, jump: { view: "tools", id: x.id } }); });
+    (bk.lanes || []).forEach(l => { const ah = ago(l.pushed); if (ah != null && ah > 24) stale.push({ state: ah > 48 ? "down" : "warn", name: "lane " + l.lane, detail: `last pushed ${age(ah)} ago`, age_h: ah, jump: { view: "backups", id: "bk:lane:" + l.lane } }); });
+    (D.lanes || []).filter(l => l.newest_age_h != null && l.newest_age_h > 168).forEach(l => stale.push({ state: "warn", name: l.lane, detail: `newest file ${age(l.newest_age_h)} old`, age_h: l.newest_age_h, jump: { view: "lanes", id: l.lane } }));
+    if (bk.snapshots && bk.snapshots.newest_age_h > 30) stale.push({ state: "warn", name: "snapshot", detail: `daily snapshot ${age(bk.snapshots.newest_age_h)} old`, age_h: bk.snapshots.newest_age_h, jump: { view: "backups", id: "bk:snapshots" } });
+    stale.sort((a, b) => (b.age_h || 0) - (a.age_h || 0));
+    if (window.__qaEmpty === "needs") need.length = 0;               // design QA: the empty state
+    const col = (title, rows, empty) => `<section class="gcol"><div class="gh">${title}<span class="n">${rows.length}</span></div><div class="gb">${rows.length
+      ? rows.map(r => `<div class="row" role="option" tabindex="0" ${r.need != null ? `data-need="${r.need}"` : `data-jump="${esc(JSON.stringify(r.jump))}"`}>${dot(r.state, r.state)}<span class="name">${esc(r.name)}</span><span class="desc">${esc(r.detail)}</span><span class="num">${r.age_h != null ? age(r.age_h) : ""}</span><span class="chev">›</span></div>`).join("")
+      : `<div class="empty">${empty}</div>`}</div></section>`;
+    return `<div class="glance-home">${col("Needs you", need, "nothing waiting")}${col("Fresh", fresh, "nothing new since your last look")}${col("Stale", stale, "nothing stale")}</div>`;
+  }
+  function footerMeta(n) {
+    const m = D.machine || {}, meName = m.host || "here";
+    $("#listcount").textContent = view === "hosts" ? `${n} hosts` : view === "tools" ? `${n} tools on ${meName}` : (m.template_rev || "");
+  }
   function renderList() {
+    if (view === "glance") { $("#rows").className = "home"; $("#rows").innerHTML = D ? glanceHome() : ""; document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", "false")); footerMeta(0); syncActive(); return; }
+    $("#rows").className = "";
     const list = items();
     if (view === "hosts") {
       contribMax = Math.max(1, ...list.filter(selectable).map(i => (i.o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0)));
@@ -786,8 +841,7 @@ window.onerror = function (msg, src, line, col) {
     }
     else if (view === "lanes") contribMax = Math.max(1, ...list.map(i => i.o.cards || 0));
     const n = list.filter(selectable).length;
-    const meName = (D.machine || {}).host || "here";
-    $("#listcount").textContent = view === "archive" ? "" : view === "tools" ? `${n} tools on ${meName}` : view === "jobs" ? "" : n + " " + view;
+    footerMeta(n);
     document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
     if (sel && (sel.view !== view || !list.some(i => i.id === sel.id))) sel = null;
     const shown = view === "archive" ? list.filter(i => i.kind === "head" || i.kind === "quiet" || i.kind === "prop") : list;
@@ -866,7 +920,7 @@ window.onerror = function (msg, src, line, col) {
         <label class="check"><input type="checkbox" id="s-login" ${S.loginItem ? "checked" : ""}> Open at login</label>
         <div class="prose" style="color:var(--muted)">${esc(login)}</div></div>
       <div class="sect"><h2>Refresh every</h2><select id="s-refresh">${[30, 60, 300, 900].map(v => `<option value="${v}" ${S.refresh === v ? "selected" : ""}>${v < 60 ? v + " seconds" : (v / 60) + " minute" + (v > 60 ? "s" : "")}</option>`).join("")}</select></div>
-      <div class="sect"><h2>Open on</h2><select id="s-view">${["hosts", "archive", "lanes", "tools", "jobs", "backups"].map(v => `<option value="${v}" ${S.defaultView === v ? "selected" : ""}>${v === "jobs" ? "Hub" : v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select></div>
+      <div class="sect"><h2>Open on</h2><select id="s-view">${["glance", "hosts", "archive", "lanes", "tools", "jobs", "backups"].map(v => `<option value="${v}" ${S.defaultView === v ? "selected" : ""}>${v === "jobs" ? "Hub" : v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select></div>
       <div class="sect"><h2>Detail panel</h2><label class="check"><input type="checkbox" id="s-pin" ${pinned ? "checked" : ""}> Keep it open beside the list</label></div>
       ${S.error ? `<div class="note">${esc(S.error)}</div>` : ""}
       <div class="acts"><button class="brass" id="s-save">Save settings</button><span class="pulls" id="s-state" aria-live="polite"></span></div>`;
@@ -1187,6 +1241,9 @@ window.onerror = function (msg, src, line, col) {
     if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s", { silent: true }); const it = findRow(p[1]); select(it ? it.kind : p[0], p[1], true); return; }
     const grow = e.target.closest(".g-row[data-place]");
     if (grow) { let pl = null; try { pl = JSON.parse(grow.dataset.place); } catch (x) {} return bridge({ cmd: "showConsole", place: pl }); }
+    const jmp = e.target.closest("[data-jump]");
+    if (jmp) { let p = {}; try { p = JSON.parse(jmp.dataset.jump); } catch (x) {} setView(p.view, { silent: true }); const it = findRow(p.id); if (it) select(it.kind, it.id, true); else commit(); return; }
+    if (e.target.closest("#home")) return setView("glance");
     const opn = e.target.closest("[data-open]");
     if (opn) { const it = findRow(opn.dataset.open); if (it) select(it.kind, it.id, true); return; }
     const b = e.target.closest("button");
@@ -1256,6 +1313,7 @@ window.onerror = function (msg, src, line, col) {
     if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !pinned) { closeInspector(); commit(); } }
     if (typing || e.metaKey || e.ctrlKey) return;
     if (/^[1-6]$/.test(e.key)) setView(["hosts", "archive", "lanes", "tools", "jobs", "backups"][+e.key - 1]);
+    if (e.key === "0") setView("glance");
     if (e.key === "p") setPinned(!pinned);
   });
 

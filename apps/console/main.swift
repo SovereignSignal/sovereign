@@ -20,7 +20,7 @@ enum Settings {
     static var location: String { get { d.string(forKey: "sov.where") ?? "dock" } set { d.set(newValue, forKey: "sov.where") } }
     static var loginItem: Bool { get { d.bool(forKey: "sov.loginItem") } set { d.set(newValue, forKey: "sov.loginItem") } }
     static var refresh: Int { get { let v = d.integer(forKey: "sov.refresh"); return v > 0 ? v : 60 } set { d.set(newValue, forKey: "sov.refresh") } }
-    static var defaultView: String { get { d.string(forKey: "sov.defaultView") ?? "hosts" } set { d.set(newValue, forKey: "sov.defaultView") } }
+    static var defaultView: String { get { d.string(forKey: "sov.defaultView") ?? "glance" } set { d.set(newValue, forKey: "sov.defaultView") } }
     static var lastError: String? = nil
 
     static func dict(probe: Bool = false) -> [String: Any] {
@@ -129,7 +129,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             var loginChanged = false
             if let l = d["loginItem"] as? Bool, l != Settings.loginItem { Settings.loginItem = l; loginChanged = true }
             if let r = d["refresh"] as? Int, r >= 15, r <= 3600 { Settings.refresh = r }
-            if let v = d["defaultView"] as? String, ["archive", "hosts", "lanes", "tools", "jobs", "backups"].contains(v) { Settings.defaultView = v }
+            if let v = d["defaultView"] as? String, ["glance", "archive", "hosts", "lanes", "tools", "jobs", "backups"].contains(v) { Settings.defaultView = v }
             DispatchQueue.main.async { App.shared.applySettings(loginChanged: loginChanged); App.shared.broadcastSettings() }
         case "showConsole":
             DispatchQueue.main.async { App.shared.showConsole(place: d["place"] as? [String: Any]) }
@@ -274,10 +274,12 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
         let frame = qaGlance ? NSRect(x: 120, y: 120, width: glanceSize.width, height: glanceSize.height)
                              : NSRect(x: 120, y: 120, width: 900, height: 600)
-        window = NSWindow(contentRect: qaFrame(frame), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: qaFrame(frame), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Sovereign"
         window.minSize = qaGlance ? glanceSize : NSSize(width: 720, height: 460)
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
         window.contentView = web
         window.isReleasedWhenClosed = false
         if !qaGlance && ProcessInfo.processInfo.environment["SOV_WINDOW"] == nil { window.setFrameAutosaveName("SovereignConsole") }
