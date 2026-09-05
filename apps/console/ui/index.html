@@ -425,7 +425,7 @@ window.onerror = function (msg, src, line, col) {
     const m = D.machine || {}, h = hub(), obs = D.obsidian || {};
     $("#vault").textContent = m.vault_name || "Sovereign";
     $("#meta").textContent = `${m.host}${obs.sync ? " · obsidian " + obs.sync : ""}`;
-    const hp = $("#hubpill"), j = h.jobs || {}, nightly = j["archivist-nightly"];
+    const hp = $("#hubpill"), j = h.jobs || {}, nightly = j["archivist-nightly"]; hp.style.opacity = "";
     if (h.reachable) hp.innerHTML = `${dot("live", "hub online")}hub ${esc(((h.via || "").startsWith("ssh ") ? h.via.slice(4) : (h.hub_host || "here")).toLowerCase())}${nightly ? " · nightly " + clock(nightly.ts) : ""}`;
     else if (h.reachable === false) hp.innerHTML = `${dot("down", "hub offline")}hub silent`;
     else hp.innerHTML = `${dot("", "hub unchecked")}hub unchecked`;
@@ -1190,9 +1190,10 @@ window.onerror = function (msg, src, line, col) {
     const parts = String(v).split("+"), name = parts[0];
     if (name === "settings") return openSettings();
     const mode = parts.find(p => p.startsWith("open")) || "", id = mode.includes(":") ? mode.slice(mode.indexOf(":") + 1) : "";
-    const at = parts.find(p => p.startsWith("at:"));
+    const at = parts.find(p => p.startsWith("at:")), conn = parts.find(p => p.startsWith("connect:"));
     setView(name, { open: mode === "open" && !id, silent: !!id, section: at ? at.slice(3) : undefined });
     if (id) { const it = findRow(id); if (it) select(it.kind, it.id, true); }
+    if (conn) connect(conn.slice(8), false, {});          // "tools+connect:<harness>": the dry-run drawer
     if (parts.includes("back")) setTimeout(back, 120);
   };
 
@@ -1339,7 +1340,8 @@ window.onerror = function (msg, src, line, col) {
         if (GLANCE) { const g = $("#glance"); g.hidden = false; g.innerHTML = `<div class="g-row verdict down"><span class="vdot"></span><span class="vt">${esc(payload.error)}</span></div><div class="g-foot"><span class="sp"></span><button class="brass" id="g-refresh">Try again</button></div>`; return; }
         $("#verdict").className = "down"; $("#vtext").textContent = payload.error; $("#vmeta").textContent = "";
         $("#meta").textContent = "status unavailable"; $("#rows").className = "home";
-        $("#rows").innerHTML = `<div class="glance-home"><section class="gcol bare" style="grid-column:1 / -1"><div class="empty">The app could not read the brain's status, so nothing below is known. Fix the cause named above, then try again.</div><div class="acts" style="padding:0 16px 16px;margin:0"><button class="brass" id="err-refresh">Try again</button></div></section></div>`;
+        $("#hubpill").innerHTML = `${dot("", "hub unknown")}hub unknown`; $("#hubpill").style.opacity = ".5";
+        $("#rows").innerHTML = `<div class="glance-home"><section class="gcol bare" style="grid-column:1 / -1"><div class="empty" style="text-align:center">The app could not read the brain's status, so nothing below is known. Fix the cause named above, then try again.</div><div class="acts" style="padding:0 16px 16px;margin:0;justify-content:center"><button class="brass" id="err-refresh">Try again</button></div></section></div>`;
         return; }
       if (payload.machine && !payload.machine.connected) return renderSetup(payload);
       render(payload);
