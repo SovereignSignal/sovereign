@@ -1,0 +1,13 @@
+{
+ "name": "Orca",
+ "lane_prefix": "orca",
+ "read": "none",
+ "hook_file": null,
+ "write": "sqlite export",
+ "manual_step": null,
+ "description": "Orca orchestrates other coding agents; those agents carry their own read wires, so Orca has none. Its runs, tasks, decision gates, questions and messages are exported from orchestration.db to markdown, one file per run.",
+ "detect": [
+  "/Applications/Orca.app",
+  "~/.orca"
+ ]
+}

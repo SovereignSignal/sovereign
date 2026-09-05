@@ -1,0 +1,27 @@
+---
+lane: orca-{{HOST}}
+producer: Orca (agent orchestrator) on {{HOST}}
+host: {{HOST}}
+mission: >
+  Orca's orchestration record from this machine: each run's objective, the tasks it
+  dispatched to coding agents, the decision gates it raised, the questions workers
+  asked and their answers, and the coordinator messages. One capture per run.
+write: sqlite export{{WRITE_VIA}}
+read: {{READ}}
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect orca` on {{DATE}}.
+
+Write wire: `connectors/harness/orca/mirror.sh` every {{INTERVAL}}s via a scheduled job
+(`{{LABEL}}`). It copies `orchestration.db` with its WAL, renders one markdown file per run
+into `runs/`, and rewrites a file only when the run changed. `MANIFEST.md` is the heartbeat.
+
+Read wire: none of its own. Orca drives Claude Code, Codex, Cursor and others, and each of
+those carries its own Sovereign read wire, so a worker dispatched by Orca already loads
+the brain at session start.
+
+What never comes through: Orca's auth and account files, terminal archives, blob storage,
+caches, and any field that looks like a credential (withheld at export).

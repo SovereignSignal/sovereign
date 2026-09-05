@@ -145,6 +145,16 @@
    "name": "Notion",
    "connector": "notion",
    "detect": []
+  },
+  {
+   "id": "orca",
+   "name": "Orca",
+   "connector": "orca",
+   "detect": [
+    "/Applications/Orca.app",
+    "~/.orca"
+   ],
+   "note": "orchestrates other coding agents; its runs, tasks, decision gates and questions are exported from orchestration.db"
   }
  ]
 }
