@@ -65,7 +65,7 @@ def plain_text(rich) -> str:
             if mention.get("type") == "date":
                 out.append(date_mention_text(mention, text))
             else:
-                out.append(text if text.startswith("@") else "@" + text)
+                out.append(text if not text or text.startswith("@") else "@" + text)
         else:
             out.append(text)
     return "".join(out)

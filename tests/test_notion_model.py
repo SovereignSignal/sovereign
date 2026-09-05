@@ -64,6 +64,11 @@ class Model(unittest.TestCase):
         seg = {"type": "mention", "plain_text": "LW Songs", "mention": {"type": "database", "database": {"id": "d1"}}}
         self.assertEqual(plain_text([seg]), "@LW Songs")
 
+    def test_title_of_empty_mention_stays_empty(self):
+        title = [{"type": "mention", "plain_text": "", "mention": {"type": "page", "page": {"id": "x"}}}]
+        obj = {"object": "page", "properties": {"title": {"type": "title", "title": title}}}
+        self.assertEqual(title_of(obj), "")
+
     def test_title_of_renders_date_mention_in_title(self):
         title = [
             {"type": "text", "plain_text": "Owner + Nick - "},

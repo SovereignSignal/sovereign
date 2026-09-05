@@ -57,7 +57,7 @@ def render_rich_text(rich, links: Links, from_path: str = "") -> str:
             elif mention.get("type") == "date":
                 text = date_mention_text(mention, text)
             elif mention.get("type") == "user":
-                text = text if text.startswith("@") else "@" + text
+                text = text if not text or text.startswith("@") else "@" + text
         elif seg.get("type") == "equation":
             out.append("$%s$" % text)
             continue

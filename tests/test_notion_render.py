@@ -51,6 +51,10 @@ class RichText(unittest.TestCase):
         mention = {"type": "mention", "plain_text": "Anna", "mention": {"type": "user", "user": {"id": "u1"}}, "annotations": {}}
         self.assertEqual(render_rich_text([mention], LINKS), "@Anna")
 
+    def test_user_mention_with_empty_plain_text_stays_empty(self):
+        mention = {"type": "mention", "plain_text": "", "mention": {"type": "user", "user": {"id": "u1"}}, "annotations": {}}
+        self.assertEqual(render_rich_text([mention], LINKS), "")
+
     def test_page_mention_in_body_still_renders_as_link_with_no_at_sign(self):
         mention = {"type": "mention", "plain_text": "Child: v2", "mention": {"type": "page", "page": {"id": "00000000-0000-0000-0000-000000000002"}}, "annotations": {}}
         out = render_rich_text([mention], LINKS, from_path=PAGE)
