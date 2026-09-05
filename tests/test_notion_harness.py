@@ -117,6 +117,15 @@ class Harness(unittest.TestCase):
             self.assertIn("owner: hand written", (vault / "raw" / "tools" / "Notion" / "LANE.md").read_text())
             self.assertIn("LANE.md kept", r.stdout)
 
+    def test_lane_cannot_escape_the_vault(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, vault = brain(tmp)
+            for bad in ("../../etc/foo", "raw/../../x", "/abs/path"):
+                r = run(["--lane", bad], home, vault)
+                self.assertEqual(r.returncode, 64, bad)
+                self.assertIn("--lane", r.stderr)
+                self.assertFalse((home / ".notion-mirror").exists())
+
     def test_scripts_parse(self):
         for name in ("install.sh", "mirror.sh", "watchdog.sh"):
             r = subprocess.run(["bash", "-n", str(ROOT / "connectors" / "harness" / "notion" / name)], capture_output=True, text=True)

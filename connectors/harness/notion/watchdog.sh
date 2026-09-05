@@ -14,7 +14,7 @@ if [ ! -f "$SUCCESS" ]; then
   exit 1
 fi
 now=$(date +%s)
-mtime=$(stat -f %m "$SUCCESS" 2>/dev/null || stat -c %Y "$SUCCESS")
+mtime=$(stat -c %Y "$SUCCESS" 2>/dev/null || stat -f %m "$SUCCESS")
 age_h=$(( (now - mtime) / 3600 ))
 if [ "$age_h" -gt "$MAX_AGE_H" ]; then
   echo "WATCHDOG ALERT: last success ${age_h}h ago (limit ${MAX_AGE_H}h). status=$last_status" >&2

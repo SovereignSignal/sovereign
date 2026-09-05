@@ -22,16 +22,25 @@ AT="${NOTION_AT:-03:45}"
 NOTION_LANE="${NOTION_LANE:-raw/tools/Notion}"
 STATE_DIR="${NOTION_STATE_DIR:-$HOME/.notion-mirror}"
 NO_LAUNCHD=0
+LANE_ARG=""
 rest=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --secret) SECRET="$2"; shift 2;;
     --at) AT="$2"; shift 2;;
-    --lane) NOTION_LANE="${2#/}"; shift 2;;
+    --lane) LANE_ARG="$2"; NOTION_LANE="${2#/}"; shift 2;;
     --no-launchd) NO_LAUNCHD=1; shift;;
     *) rest+=("$1"); shift;;
   esac
 done
+# --lane must stay a relative path inside the vault: reject an absolute path (before the
+# leading-slash strip below normalizes it away) and reject any .. path segment.
+case "$LANE_ARG" in
+  /*) echo "--lane must be a relative path inside the vault with no .. segments" >&2; exit 64;;
+esac
+case "/$NOTION_LANE/" in
+  */../*) echo "--lane must be a relative path inside the vault with no .. segments" >&2; exit 64;;
+esac
 sov_parse_args ${rest[@]+"${rest[@]}"}
 sov_resolve
 
