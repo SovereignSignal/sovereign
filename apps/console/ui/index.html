@@ -286,6 +286,12 @@
   .insp input.secret:focus { outline: 2px solid var(--brass); outline-offset: 1px; }
   .insp .secret-help { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
 
+  .ha { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+  .ha label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+  .ha input { font: 12px var(--mono); padding: 5px 7px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sunk); color: var(--ink); }
+  .code-line { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sunk); }
+  .code-line code { flex: 1; font: 12px var(--mono); color: var(--ink); user-select: all; -webkit-user-select: all; }
+
   #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
     transition: transform .16s ease; background: var(--panel); border-top: 1px solid var(--rule); box-shadow: var(--shadow); z-index: 30; }
   #drawer.open { transform: none; }
@@ -796,6 +802,7 @@ window.onerror = function (msg, src, line, col) {
           ["seen via", net.via], ["reach", m.reach]])}</div>
         <div class="sect"><h2>Reaches the brain</h2><div class="prose">${esc(m.transport || "no transport recorded")}
           ${m.notes ? `<div style="color:var(--muted);margin-top:4px">${esc(m.notes)}</div>` : ""}</div></div>
+        ${!isMe && !hs.length ? connectMachineSect(o) : ""}
         <div class="sect"><h2>Tools deployed · ${hs.length}</h2>
           ${hs.length ? hs.map(t => toolBlock(t, isMe ? localTool(t.id) : null)).join("") : `<div class="prose" style="color:var(--warn)">No tools deployed on this host.</div>`}</div>
         ${contribSect(o.lanes || [])}
@@ -987,6 +994,33 @@ window.onerror = function (msg, src, line, col) {
     $("#drawer-title").textContent = title; $("#drawer-log").textContent = ""; $("#drawer-state").textContent = "running…";
     $("#drawer-apply").hidden = !showApply; $("#drawer-apply").disabled = true; $("#drawer").classList.add("open");
   }
+  // A machine with nothing deployed: the drawer walks the owner through joining it. A local
+  // VM gets the one line to run inside it first; then the hub does the rest (sov host add).
+  let pendingHost = null;
+  function connectMachineSect(o) {
+    const vm = o.vm, net = o.net || {}, bs = ((D.fleet || {}).bootstrap) || {};
+    const addr = net.ip || (vm && vm.ip) || "";
+    const vmPart = vm ? `<div class="prose">${esc(vm.name)} · ${esc(vm.status || "?")}${vm.ip ? " · " + esc(vm.ip) : ""}
+        ${vm.status !== "running" ? ` <button data-act="vmstart" data-vm="${esc(vm.name)}">Start VM</button>` : ""}</div>
+      <div class="prose" style="margin-top:8px">Inside the VM, once:</div>
+      <div class="code-line"><code>${esc(bs.line || "bash /media/psf/Home/.sovereign/vm-bootstrap.sh")}</code><button data-act="copy" data-text="${esc(bs.line || "bash /media/psf/Home/.sovereign/vm-bootstrap.sh")}">Copy</button></div>
+      <div class="secret-help">${bs.hub_key ? "It opens ssh, authorizes the hub's key, joins the tailnet, and prints the address to use below." : "The hub's key is not on this machine yet (it is fetched from the hub on refresh); the line will work once it is."}</div>` : "";
+    return `<div class="sect"><h2>Connect this machine</h2>${vmPart}
+      <div class="ha"><label>user<input id="ha-user" placeholder="login name in the machine" value=""></label>
+        <label>address<input id="ha-addr" placeholder="tailnet or LAN IP, comma-separated for more" value="${esc(addr)}"></label>
+        <label>identity<input id="ha-identity" placeholder="optional, e.g. the desk's identity" value="${esc((o.meta || {}).identity || "")}"></label>
+        <label>workstreams<input id="ha-ws" placeholder="desks this machine works for, comma-separated"></label></div>
+      <div class="acts"><button class="brass" data-act="hostadd" data-host="${esc(o.host)}">Dry run</button></div>
+      <div class="secret-help">Dry run probes and prints the plan; Install then does it: fenced key on the keep, lane branch, LANE.md on the hub, scoped clone, both wires. Nothing is written before Install.</div></div>`;
+  }
+  function hostAdd(host, apply) {
+    const f = (id) => ($("#" + id) || {}).value || "";
+    const extra = apply && pendingHost ? pendingHost.extra : { user: f("ha-user").trim(), addr: f("ha-addr").trim(), identity: f("ha-identity").trim(), workstreams: f("ha-ws").trim() };
+    if (!extra.user || !extra.addr) { openDrawer("Connect " + host, false); $("#drawer-log").textContent = "user and address are needed first"; $("#drawer-state").textContent = ""; return; }
+    pendingHost = { host, apply, extra }; pendingConnect = null;
+    openDrawer((apply ? "Connecting " : "Dry run: ") + host, !apply);
+    bridge(Object.assign({ cmd: "hostadd", name: host, apply: !!apply }, extra));
+  }
   function connect(harness, apply, extra) {
     extra = extra || (pendingConnect && pendingConnect.extra) || {};
     pendingConnect = { harness, apply, extra };
@@ -1028,7 +1062,10 @@ window.onerror = function (msg, src, line, col) {
       if (b.id === "pin") return setPinned(!pinned);
       if (b.id === "insp-close") { pinned ? setPinned(false) : closeInspector(); commit(); return; }
       if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
-      if (b.id === "drawer-apply") { if (pendingConnect) connect(pendingConnect.harness, true); return; }
+      if (b.id === "drawer-apply") { if (pendingHost) return hostAdd(pendingHost.host, true); if (pendingConnect) connect(pendingConnect.harness, true); return; }
+      if (act === "hostadd") return hostAdd(b.dataset.host, false);
+      if (act === "vmstart") { b.disabled = true; b.textContent = "starting…"; return bridge({ cmd: "vmstart", name: b.dataset.vm }); }
+      if (act === "copy") { try { navigator.clipboard.writeText(b.dataset.text); b.textContent = "copied"; } catch (e) { b.textContent = "select it"; } return; }
       const act = b.dataset.act;
       if (act === "connect") {   // a secret travels in memory to the bridge, which puts it in the child's environment only
         const f = document.getElementById("secret-" + b.dataset.harness), extra = {};
@@ -1090,11 +1127,15 @@ window.onerror = function (msg, src, line, col) {
         $("#insp").innerHTML = `<div class="empty">${esc(payload.error)}</div>`; openInspector(); $("#meta").textContent = "status unavailable"; return; }
       if (payload.machine && !payload.machine.connected) return renderSetup(payload);
       render(payload);
+    } else if (kind === "vmstart") {
+      setTimeout(refresh, 3000);
     } else if (kind === "log") {
       const log = $("#drawer-log"); log.textContent += payload.line + "\n"; log.scrollTop = log.scrollHeight;
       if (payload.state === "end") {
         $("#drawer-state").textContent = payload.exit === 0 ? "done" : "exit " + payload.exit;
         if (pendingConnect && !pendingConnect.apply && payload.exit === 0) $("#drawer-apply").disabled = false;
+        if (pendingHost && !pendingHost.apply && payload.exit === 0) { $("#drawer-apply").disabled = false; $("#drawer-apply").textContent = "Install"; }
+        if (pendingHost && pendingHost.apply && payload.state === "end") { pendingHost = null; setTimeout(refresh, 800); }
         if (pendingConnect && pendingConnect.apply) { pendingConnect = null; setTimeout(refresh, 800); }
         if (payload.id === "gate") setTimeout(refresh, 1200);
       }

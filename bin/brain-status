@@ -495,8 +495,74 @@ def fleet_view(root, contrib=None):
             rec["net"] = {"online": port_open(alias), "ip": None, "via": "port 22 probe"}
         else:
             rec["net"] = {"online": None, "ip": None, "via": None}
+    # local VMs on this machine (Parallels today): the console offers to connect them
+    for vm in local_vms():
+        key = vm["name"].split()[0].lower()
+        rec = next((r for r in hosts.values() if r["host"].split("-")[0].lower() == key), None)
+        if rec is None:
+            rec = hosts.setdefault(key + "-vm", {"host": key + "-vm", "lanes": [], "harnesses": [],
+                                                 "meta": {"kind": "local VM", "where": "Parallels on " + (me or "this machine")},
+                                                 "net": {"online": None, "ip": None, "via": None}})
+        rec["vm"] = vm
+        if vm.get("ip") and not rec["net"].get("ip"):
+            rec["net"] = {"online": port_open(vm["ip"]), "ip": vm["ip"], "via": "parallels"}
     hosts_sorted = sorted(hosts.values(), key=lambda r: (0 if r["host"] == me else 1, -len(r["harnesses"]), r["host"]))
-    return {"hosts": hosts_sorted, "registry": registry_path, "tailscale": bool(peers)}
+    return {"hosts": hosts_sorted, "registry": registry_path, "tailscale": bool(peers),
+            "bootstrap": bootstrap_handoff() if any(r.get("vm") for r in hosts.values()) else None}
+
+
+def local_vms():
+    """VMs a hypervisor on this machine knows about. Parallels: prlctl list. Others: none yet."""
+    prl = shutil.which("prlctl") or "/usr/local/bin/prlctl"
+    if not os.path.exists(prl):
+        return []
+    try:
+        rows = json.loads(subprocess.run([prl, "list", "-a", "-j", "-o", "name,status,ip_configured,uuid,ostemplate"],
+                                         capture_output=True, text=True, timeout=8).stdout or "[]")
+    except (ValueError, subprocess.SubprocessError, OSError):
+        return []
+    out = []
+    for r in rows:
+        os_t = (r.get("ostemplate") or "").lower()
+        if os_t.startswith(("win", "macos", "darwin")):
+            continue                                   # the bootstrap is for Linux guests; others are not offered
+        ip = (r.get("ip_configured") or "").strip()
+        out.append({"tool": "parallels", "name": r.get("name"), "status": r.get("status"), "ip": ip if ip and ip != "-" else None,
+                    "uuid": r.get("uuid"), "os": os_t or None})
+    return out
+
+
+def bootstrap_handoff():
+    """What a fresh local VM needs from this machine: the hub's fleet key and the bootstrap
+    script, placed under ~/.sovereign so the guest sees them through the shared home."""
+    d = os.path.expanduser("~/.sovereign")
+    os.makedirs(d, exist_ok=True)
+    src = os.path.join(TEMPLATE_ROOT, "connectors", "harness", "_lib", "vm-bootstrap.sh")
+    dst = os.path.join(d, "vm-bootstrap.sh")
+    try:
+        if os.path.exists(src) and (not os.path.exists(dst) or os.path.getmtime(src) > os.path.getmtime(dst)):
+            shutil.copyfile(src, dst); os.chmod(dst, 0o755)
+    except OSError:
+        pass
+    hub_pub = os.path.join(d, "hub.pub")
+    hub = pointer("~/.brain-hub").split(":")[0]
+    if not os.path.exists(hub_pub) and hub:
+        try:
+            pub = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", hub, "cat ~/.ssh/sovereign_hub_ed25519.pub"],
+                                 capture_output=True, text=True, timeout=12).stdout.strip()
+            if pub.startswith("ssh-"):
+                open(hub_pub, "w", encoding="utf-8").write(pub + "\n")
+        except (subprocess.SubprocessError, OSError):
+            pass
+    mac_pub = os.path.join(d, "mac.pub")
+    for cand in ("~/.ssh/id_ed25519.pub", "~/.ssh/id_rsa.pub"):
+        cand = os.path.expanduser(cand)
+        if not os.path.exists(mac_pub) and os.path.exists(cand):
+            try: shutil.copyfile(cand, mac_pub)
+            except OSError: pass
+            break
+    return {"script": dst if os.path.exists(dst) else None, "hub_key": os.path.exists(hub_pub),
+            "line": "bash /media/psf/Home/.sovereign/vm-bootstrap.sh"}
 
 
 def archive_shape(root):

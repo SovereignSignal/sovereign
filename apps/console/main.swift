@@ -74,6 +74,21 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             if let v = d["secret"] as? String, let k = d["secretEnv"] as? String, !v.isEmpty,
                k.range(of: "^[A-Z_][A-Z0-9_]*$", options: .regularExpression) != nil { secretEnv[k] = v }
             stream(args, id: "connect", env: secretEnv)
+        case "hostadd":
+            // the hub does the work (sov routes there); the drawer streams it
+            guard let sov = sov, let name = d["name"] as? String,
+                  name.range(of: "^[a-z0-9][a-z0-9-]{1,40}$", options: .regularExpression) != nil else { return }
+            var args = [sov, "host", "add", name]
+            for (flag, key) in [("--user", "user"), ("--addr", "addr"), ("--identity", "identity"), ("--workstreams", "workstreams")] {
+                if let v = d[key] as? String, !v.isEmpty { args += [flag, v] }
+            }
+            if (d["apply"] as? Bool) == true { args.append("--apply") }
+            stream(args, id: "hostadd")
+        case "vmstart":
+            guard let name = d["name"] as? String, !name.isEmpty else { return }
+            run(["/usr/local/bin/prlctl", "start", name]) { out, err, code in
+                self.deliver("vmstart", ["name": name, "exit": code, "out": out + err])
+            }
         case "kickstart":
             guard let label = d["label"] as? String else { return }
             run(["/bin/launchctl", "kickstart", "-k", "gui/\(getuid())/\(label)"]) { out, err, code in
