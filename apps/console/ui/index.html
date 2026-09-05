@@ -137,6 +137,7 @@
   .wm i:first-child { border-radius: 2px 1px 1px 2px; }
   .wm i:last-child { border-radius: 1px 2px 2px 1px; }
   .wm i.live { background: var(--live); } .wm i.warn { background: var(--warn); } .wm i.down { background: var(--down); }
+  .wm i.none { background: transparent; border: 1px solid var(--rule); box-sizing: border-box; }
   .strip .none { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 
   /* a share of something, as a thin bar: brass by default, a series color when the row is a series */
@@ -177,6 +178,7 @@
   .wire .track { flex: 1; height: 3px; border-radius: 2px; background: var(--rule); position: relative; }
   .wire .track i { position: absolute; inset: 0; border-radius: 2px; background: var(--idle); }
   .wire .track i.live { background: var(--live); } .wire .track i.warn { background: var(--warn); } .wire .track i.down { background: var(--down); }
+  .wire .track i.none { background: transparent; }
   .wire .v { width: 96px; text-align: right; color: var(--ink-2); flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pulls { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 5px; }
   .chips { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -381,9 +383,10 @@ window.onerror = function (msg, src, line, col) {
            : (h.md_files != null ? h.md_files + " files" : null) };
   }
   function wireMark(t, local) {
-    const r = local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
+    const r = local && local.read === "none" ? "none" : local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
     const w = runDot(t.run, intervalOf(local));
-    return `<span class="wm" title="${esc(t.id)} · ${t.reads} read${t.reads === 1 ? "" : "s"} this week · mirror ${age(t.run)} ago"><i class="${r}"></i><i class="${w}"></i></span>`;
+    const rt = r === "none" ? "no read wire (pull only)" : `${t.reads} read${t.reads === 1 ? "" : "s"} this week`;
+    return `<span class="wm" title="${esc(t.id)} · ${rt} · mirror ${age(t.run)} ago"><i class="${r}"></i><i class="${w}"></i></span>`;
   }
   function meter(share, cls) {
     const w = Math.round(Math.min(1, Math.max(0, share || 0)) * 100);
@@ -673,10 +676,12 @@ window.onerror = function (msg, src, line, col) {
     return `<dl class="kv">${pairs.filter(p => p[1] != null && p[1] !== "").map(p => `<dt>${esc(p[0])}</dt><dd>${p[2] === "raw" ? p[1] : esc(p[1])}</dd>`).join("")}</dl>`;
   }
   function toolBlock(t, local, title) {
-    const rd = local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
+    const pullOnly = !!(local && local.read === "none");
+    const rd = pullOnly ? "none" : local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
     const wd = runDot(t.run, intervalOf(local));
-    const readLabel = local && local.read === "instruction" ? "by instruction" : local && local.trusted === false ? "not trusted"
+    const readLabel = pullOnly ? "pull only" : local && local.read === "instruction" ? "by instruction" : local && local.trusted === false ? "not trusted"
       : local && local.hook_registered === false ? "hook missing" : t.reads + " this week";
+    if (pullOnly && title === "both wires") title = "write wire only";
     return `<div class="tool">
       <div class="top"><b>${esc(title || t.name || t.id)}</b><span class="sp"></span>
         ${local && local.state ? `<span class="tag ${local.state === "connected" ? "on" : "mid"}" style="font-family:var(--mono);font-size:10px;border:1px solid var(--rule);border-radius:4px;padding:0 5px">${esc(local.state)}</span>` : ""}</div>
