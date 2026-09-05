@@ -1,0 +1,7 @@
+{
+  "default": "Private & Shared",
+  "required": {
+    "00000000000000000000000000000000": "Private & Shared",
+    "11111111111111111111111111111111": "My Teamspace"
+  }
+}

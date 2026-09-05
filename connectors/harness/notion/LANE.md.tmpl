@@ -1,0 +1,18 @@
+---
+lane: {{LANE}}
+producer: Notion official API mirror (brain-mirror-notion)
+host: {{HOST}}
+mission: >
+  A read-only mirror of every Notion page and database connected to the integration,
+  Markdown plus CSV, in the layout Notion's own export uses. Daily delta, weekly full walk.
+  Provenance, never edited.
+write: pull{{WRITE_VIA}}
+read: none
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect notion` on {{DATE}}. Job `{{LABEL}}` runs daily at {{AT}}.
+State and status live in `~/.notion-mirror/` on this machine (`last-status`, `last-success`).
+Coverage is whatever is connected to the integration in Notion; `brain-mirror-notion --check` lists it.
