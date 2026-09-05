@@ -29,16 +29,19 @@ def setup(tmp, roots=None):
 
 def run(argv, client):
     out, err = io.StringIO(), io.StringIO()
-    # Clear environment variables to test config loading from files
-    saved_env = os.environ.copy()
-    for key in ("NOTION_API_KEY", "BRAIN_ROOT", "NOTION_STATE_DIR"):
-        os.environ.pop(key, None)
+    # Snapshot all NOTION_* and BRAIN_ROOT vars, then remove them to test config loading from files
+    saved_env = {}
+    for key in list(os.environ.keys()):
+        if key.startswith("NOTION_") or key == "BRAIN_ROOT":
+            saved_env[key] = os.environ.pop(key)
     try:
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(argv, client_factory=lambda cfg: client)
         return code, out.getvalue(), err.getvalue()
     finally:
-        os.environ.clear()
+        for key in list(os.environ.keys()):
+            if key.startswith("NOTION_") or key == "BRAIN_ROOT":
+                os.environ.pop(key, None)
         os.environ.update(saved_env)
 
 
