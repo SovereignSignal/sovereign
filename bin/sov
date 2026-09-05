@@ -36,6 +36,14 @@ case "$cmd" in
     [ -n "$hook" ] || { echo "no session-start hook for $h"; exit 66; }
     printf '{"cwd":"%s","session_id":"manual","source":"startup"}' "$PWD" | /usr/bin/python3 "$hook";;
   status)   exec /usr/bin/python3 "$BIN/brain-status" "$@";;
+  host)     # sov host add NAME ... : runs on the hub; from any other machine it is routed there
+    sub="${1:-}"; shift || true
+    [ "$sub" = "add" ] || { echo "sov host add NAME --user U --addr IP[,IP] [--identity I] [--workstreams a,b] [--apply]"; exit 64; }
+    hub="$(cat "$HOME/.brain-hub" 2>/dev/null)"; hub_alias="${hub%%:*}"
+    if [ -n "$hub_alias" ] && [ "$hub_alias" != "$(hostname -s)" ] && [ ! -f "$HOME/.brain-root" -o "$(cat "$HOME/.brain-host" 2>/dev/null)" != "$hub_alias" ]; then
+      exec ssh -o BatchMode=yes "$hub_alias" "~/brain-bin/sov host add $(printf '%q ' "$@")"
+    fi
+    exec /usr/bin/python3 "$BIN/brain-host-add" "$@";;
   gate)
     # The owner's gate from a console or a shell: sov gate approve|reject <slug> [reason].
     # Runs the same deterministic scripts the Telegram poller and the gears use, as a

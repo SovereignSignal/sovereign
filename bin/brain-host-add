@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""brain-host-add — bring a machine into the brain as a producer, from the hub.
+
+One command does what used to be a hand recipe: a fenced key on the keep (the git
+exchange), a lane branch, the owner-written LANE.md on the hub, a scoped clone and the
+pointer files on the machine, then `sov connect all` there. Every step is idempotent and
+prints what it did; without --apply nothing is written anywhere.
+
+Runs ON the hub (sov routes it there). The machine must already answer ssh for the hub's
+key; for a fresh VM that is what the bootstrap script does.
+
+Usage:
+  brain-host-add NAME --user USER --addr IP[,IP...] [--identity NAME] [--workstreams a,b]
+                 [--producer NAME] [--mission TEXT] [--kind TEXT] [--where TEXT]
+                 [--keep ALIAS] [--apply]
+"""
+import argparse
+import datetime
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+# the hub's fleet key (authorized on a machine by the bootstrap script) rides along with the defaults
+SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"] + (
+    ["-i", os.path.join(HOME, ".ssh", "sovereign_hub_ed25519")] if os.path.exists(os.path.join(HOME, ".ssh", "sovereign_hub_ed25519")) else [])
+
+
+def pointer(name):
+    try:
+        return open(os.path.join(HOME, name), encoding="utf-8").read().strip()
+    except OSError:
+        return ""
+
+
+def sh(cmd, check=True, capture=True, quiet=False):
+    r = subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=capture, text=True)
+    if check and r.returncode != 0:
+        msg = (r.stderr or r.stdout or "").strip()
+        raise SystemExit("FAILED (%d): %s\n%s" % (r.returncode, cmd if isinstance(cmd, str) else " ".join(cmd), msg[-600:]))
+    return (r.stdout or "").strip() if capture else ""
+
+
+def ssh(target, script, check=True, quiet=False):
+    """Run a bash script on a host through ssh, stdin-fed so quoting never bites."""
+    r = subprocess.run(["ssh"] + SSH_OPTS + [target, "bash", "-s"], input=script, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise SystemExit("FAILED on %s (%d):\n%s" % (target, r.returncode, (r.stderr or r.stdout)[-800:]))
+    return (r.stdout or "").strip()
+
+
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument("name", help="lane and host name (kebab-case)")
+ap.add_argument("--user", required=True)
+ap.add_argument("--addr", required=True, help="addresses the machine answers on, comma-separated; the first is used to reach it, all fence its key")
+ap.add_argument("--identity", default="", help="identity label for the lane (the front-door convention); empty means the default")
+ap.add_argument("--workstreams", default="", help="desks this lane's work belongs to, comma-separated")
+ap.add_argument("--producer", default="", help="what produces here (default: '<name> agent')")
+ap.add_argument("--mission", default="", help="one or two sentences; the owner edits LANE.md later")
+ap.add_argument("--kind", default="VM", help="hosts registry: kind")
+ap.add_argument("--where", default="", help="hosts registry: where it runs")
+ap.add_argument("--keep", default="", help="ssh alias of the git exchange (default: ~/.brain-keep, else 'node-12' if the vault has that remote)")
+ap.add_argument("--apply", action="store_true", help="write; without it, print the plan and probe only")
+a = ap.parse_args()
+
+if not re.match(r"^[a-z0-9][a-z0-9-]{1,40}$", a.name):
+    raise SystemExit("name must be kebab-case: " + a.name)
+VAULT = os.environ.get("SOVS_VAULT") or pointer(".brain-root")
+if not VAULT or not os.path.isdir(os.path.join(VAULT, "knowledge")):
+    raise SystemExit("no vault: set SOVS_VAULT or ~/.brain-root on the hub")
+CORE = pointer(".brain-core")
+HUBHOST = pointer(".brain-host") or sh("hostname -s")
+KEEP = a.keep or pointer(".brain-keep")
+remotes = dict(l.split()[:2] for l in sh(["git", "-C", VAULT, "remote", "-v"]).splitlines() if l.endswith("(fetch)"))
+if not KEEP:
+    KEEP = next((n for n, u in remotes.items() if n != "origin" and ":" in u and not u.startswith("http")), "")
+if KEEP not in remotes:
+    raise SystemExit("keep remote not found in the vault (%s); pass --keep ALIAS" % ", ".join(remotes))
+KEEP_URL = remotes[KEEP]                                   # alias:git/brain.git
+keep_alias, keep_path = KEEP_URL.split(":", 1)
+tmpl_path = os.path.join(os.path.dirname(keep_path), os.path.basename(os.path.dirname(os.path.abspath(sys.argv[0]))) + ".git")
+if not tmpl_path.endswith("template.git"):
+    tmpl_path = os.path.join(os.path.dirname(keep_path), "sovs-brain-template.git")
+keep_host = sh("ssh -G %s | awk '/^hostname /{print $2}'" % shlex.quote(keep_alias))
+keep_user = sh("ssh -G %s | awk '/^user /{print $2}'" % shlex.quote(keep_alias))
+addrs = [x.strip() for x in a.addr.split(",") if x.strip()]
+target = "%s@%s" % (a.user, addrs[0])
+# a machine the hub already knows by alias (its own ssh config) is reached that way
+if sh("ssh -G %s | awk '/^hostname /{print $2}'" % shlex.quote(a.name), check=False) not in ("", a.name):
+    target = a.name
+lane_dir = os.path.join(VAULT, "raw", "workspaces", a.name)
+today = datetime.date.today().isoformat()
+producer = a.producer or ("%s agent" % a.name)
+mission = a.mission or ("Captures from the %s box. The owner writes the real mission here." % a.name)
+ws = [w.strip() for w in a.workstreams.split(",") if w.strip()]
+for w in ws:
+    if not os.path.isdir(os.path.join(VAULT, "workstreams", w)):
+        raise SystemExit("no such workstream: " + w)
+
+print("host add: %s  (%s, fence %s)" % (a.name, target, ", ".join(addrs)))
+print("  vault %s  keep %s (%s@%s)  template %s" % (VAULT, KEEP_URL, keep_user, keep_host, tmpl_path))
+
+# ---- 1. can the hub reach it? ----
+try:
+    who = ssh(target, "echo $(hostname) $(whoami); command -v git >/dev/null && echo git-ok || echo git-missing")
+except SystemExit as e:
+    raise SystemExit("cannot reach %s with the hub's key. On the machine, authorize the hub's key first (the bootstrap script does that), then retry.\n%s" % (target, e))
+print("  reach: %s" % who)
+if "git-missing" in who:
+    raise SystemExit("git is not installed on %s; install it (apt-get install -y git) and retry" % a.name)
+
+# ---- 2. the machine's key for the keep ----
+key_comment = "%s-lane@%s-%s" % (a.name, a.name, today.replace("-", ""))
+pub = ssh(target, """
+set -e; mkdir -p ~/.ssh; chmod 700 ~/.ssh
+if [ ! -f ~/.ssh/keep_ed25519 ]; then %s ssh-keygen -q -t ed25519 -N "" -C %s -f ~/.ssh/keep_ed25519; fi
+cat ~/.ssh/keep_ed25519.pub
+""" % ("" if a.apply else "echo DRY: would run:", shlex.quote(key_comment)))
+if not pub.startswith("ssh-"):
+    print("  key: would generate ~/.ssh/keep_ed25519 on %s (dry run)" % a.name)
+    pub = ""
+else:
+    print("  key: %s" % pub.split()[-1])
+
+# ---- 3. fence the key on the keep ----
+if pub:
+    fence = 'from="%s" %s' % (",".join(addrs), pub)
+    present = ssh("%s@%s" % (keep_user, keep_host), "grep -qF %s ~/.ssh/authorized_keys && echo yes || echo no" % shlex.quote(pub.split()[1]))
+    if present == "yes":
+        print("  keep: key already authorized")
+    elif a.apply:
+        ssh("%s@%s" % (keep_user, keep_host), "printf '%%s\\n' %s >> ~/.ssh/authorized_keys" % shlex.quote(fence))
+        print("  keep: authorized, fenced to %s" % ", ".join(addrs))
+    else:
+        print("  keep: would authorize the key fenced to %s" % ", ".join(addrs))
+
+# ---- 4. the lane on the hub: LANE.md, branch, hosts registry ----
+lane_md = """---
+# ---- identity (required) ----
+lane: {name}
+producer: {producer}
+host: {name}
+mission: >
+  {mission}
+
+# ---- the wires (required) ----
+write: git-branch
+read: git
+read_scope:                    # the contract default: law, trusted layer, own lane
+  - CLAUDE.md
+  - knowledge/
+  - raw/workspaces/{name}/
+gear: ask-first
+
+# ---- transport details (required for git transports) ----
+branch: lane/{name}
+remote: {keep_url}
+auth: deploy-key {key_comment}
+
+# ---- lifecycle (required) ----
+status: onboarded
+onboarded: {today}
+{ws_line}{identity_line}---
+
+{name} joined the brain on {today} through `sov host add`. This lane carries captures from
+that machine; the owner edits this contract (mission, boundary, what never comes through).
+
+## The standing rules
+
+1. **Read first.** Load the brain slice with `brain-load <topic>` before working on its subject.
+2. **Write this lane only.** Captures go to `raw/workspaces/{name}/` via `brain-capture`,
+   committed on `lane/{name}` and pushed; the hub fences and merges. No secrets, no binaries.
+3. **Never promote.** `raw/` to `knowledge/` is the curator plus the owner's gate, nothing else.
+""".format(name=a.name, producer=producer, mission=mission, keep_url=KEEP_URL, key_comment=key_comment, today=today,
+           ws_line=("workstreams: [%s]   # desks this lane's work belongs to\n" % ", ".join(ws)) if ws else "",
+           identity_line=("identity: %s\n" % a.identity) if a.identity else "")
+if os.path.exists(os.path.join(lane_dir, "LANE.md")):
+    print("  hub: lane exists (%s), left as is" % os.path.relpath(lane_dir, VAULT))
+elif a.apply:
+    os.makedirs(lane_dir, exist_ok=True)
+    open(os.path.join(lane_dir, "LANE.md"), "w", encoding="utf-8").write(lane_md)
+    sh(["git", "-C", VAULT, "add", "--", os.path.join(lane_dir, "LANE.md")])
+    sh(["git", "-C", VAULT, "commit", "-q", "-m", "lane: %s joins through sov host add" % a.name])
+    print("  hub: LANE.md written and committed")
+else:
+    print("  hub: would write raw/workspaces/%s/LANE.md and commit" % a.name)
+branch_exists = sh(["git", "-C", VAULT, "ls-remote", "--heads", KEEP, "lane/" + a.name]) != ""
+if branch_exists:
+    print("  keep: branch lane/%s exists" % a.name)
+elif a.apply:
+    sh(["git", "-C", VAULT, "push", "-q", KEEP, "main:refs/heads/lane/%s" % a.name])
+    sh(["git", "-C", VAULT, "push", "-q", KEEP, "main"])
+    print("  keep: branch lane/%s created from main" % a.name)
+else:
+    print("  keep: would create branch lane/%s from main" % a.name)
+hosts_md = next((p for p in [os.path.join(VAULT, "raw", "workspaces", d, "hosts.md") for d in sorted(os.listdir(os.path.join(VAULT, "raw", "workspaces")))]
+                 if os.path.exists(p)), None)
+if hosts_md:
+    text = open(hosts_md, encoding="utf-8").read()
+    if re.search(r"^\|\s*%s\s*\|" % re.escape(a.name), text, re.M):
+        print("  hosts: registry row exists; the owner updates it")
+    else:
+        row = "| %s | %s | %s | %s | %s | git lane through %s | %s | joined %s via sov host add |\n" % (
+            a.name, a.kind, a.where or "", addrs[0], target, keep_alias, a.identity or "", today)
+        if a.apply:
+            open(hosts_md, "a", encoding="utf-8").write(row if text.endswith("\n") else "\n" + row)
+            sh(["git", "-C", VAULT, "add", "--", hosts_md]); sh(["git", "-C", VAULT, "commit", "-q", "-m", "hosts: %s" % a.name])
+            print("  hosts: row appended to %s" % os.path.relpath(hosts_md, VAULT))
+        else:
+            print("  hosts: would append a row to %s" % os.path.relpath(hosts_md, VAULT))
+
+# ---- 5. on the machine: keep alias, clones, pointers, scope, connect ----
+remote_script = """
+set -e
+touch ~/.ssh/config; chmod 600 ~/.ssh/config
+grep -q '^Host {alias}$' ~/.ssh/config || printf 'Host {alias}\\n  HostName {keep_host}\\n  User {keep_user}\\n  IdentityFile ~/.ssh/keep_ed25519\\n  IdentitiesOnly yes\\n  StrictHostKeyChecking accept-new\\n' >> ~/.ssh/config
+[ -d ~/sovs-brain-template/.git ] || git clone -q {alias}:{tmpl_path} ~/sovs-brain-template
+git -C ~/sovs-brain-template pull -q --ff-only || true
+if [ ! -d ~/brain/.git ]; then
+  git clone -q --branch lane/{name} --no-checkout {keep_url} ~/brain
+  git -C ~/brain sparse-checkout init --cone
+  git -C ~/brain sparse-checkout set CLAUDE.md knowledge raw/workspaces/{name}
+  git -C ~/brain checkout -q lane/{name}
+fi
+git -C ~/brain config user.name '{name} lane'; git -C ~/brain config user.email '{name}-lane@{name}'
+printf '%s' "$HOME/brain" > ~/.brain-root; printf '{name}' > ~/.brain-lane; printf '{name}' > ~/.brain-host; printf '{core}' > ~/.brain-core
+mkdir -p ~/brain-bin; for b in brain-load brain-capture brain-lane-scope sov; do ln -sf ~/sovs-brain-template/bin/$b ~/brain-bin/$b; done
+~/sovs-brain-template/bin/brain-lane-scope >/dev/null 2>&1 || true
+echo "clone ok: $(git -C ~/brain branch --show-current), scope: $(git -C ~/brain sparse-checkout list | tr '\\n' ' ')"
+""".format(alias=keep_alias, keep_host=keep_host, keep_user=keep_user, tmpl_path=tmpl_path, name=a.name, keep_url=KEEP_URL, core=CORE)
+if a.apply:
+    print("  machine: " + ssh(target, remote_script))
+    print("  machine: sov connect all --apply")
+    r = subprocess.run(["ssh"] + SSH_OPTS + [target, "~/sovs-brain-template/bin/sov connect all --host %s --apply" % shlex.quote(a.name)], text=True)
+    print("  connect exit %d" % r.returncode)
+else:
+    print("  machine: would set the keep alias, clone the template and a scoped lane clone, write pointer files, run sov connect all --apply")
+print("done" if a.apply else "dry run: nothing written; add --apply")
