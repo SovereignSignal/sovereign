@@ -150,6 +150,17 @@ class Mirror:
                     index[candidate] = os.path.relpath(os.path.join(root, name), lane)
         return index
 
+    def _inside_lane(self, target: Path) -> bool:
+        """Every path the mirror writes or removes is computed from titles, so prove it
+        lands under the lane before touching it."""
+        return os.path.realpath(str(target)).startswith(os.path.realpath(str(self.cfg.lane_dir)) + os.sep)
+
+    def _refused(self, target: Path, rep: Report) -> bool:
+        if self._inside_lane(target):
+            return False
+        rep.errors.append("refused, outside the lane: %s" % target)
+        return True
+
     # -- check ----------------------------------------------------------------------
 
     def check(self) -> dict:
@@ -280,6 +291,8 @@ class Mirror:
         lane = self.cfg.lane_dir
         for old_path, new_path in sorted(moves, key=lambda m: m[0].count("/")):
             src, dst = lane / old_path, lane / new_path
+            if self._refused(src, rep) or self._refused(dst, rep):
+                continue
             if not src.exists():
                 continue  # already carried along by a parent folder rename
             if dst.exists():
@@ -290,6 +303,8 @@ class Mirror:
             rep.moved += 1
             old_folder, new_folder = lane / folder_for(old_path), lane / folder_for(new_path)
             if old_folder.is_dir() and not new_folder.exists():
+                if self._refused(old_folder, rep) or self._refused(new_folder, rep):
+                    continue
                 new_folder.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(str(old_folder), str(new_folder))
 
@@ -332,6 +347,8 @@ class Mirror:
         schema = self._schema(it["ds_id"]) if it["kind"] == "row" and it.get("ds_id") else None
         attachments: List[Tuple[str, str]] = []
         text = render_page(it, obj, blocks, links, attachments, page_path, schema_props=schema)
+        if self._refused(self.cfg.lane_dir / page_path, rep):
+            return
         if write_if_changed(self.cfg.lane_dir / page_path, text.encode("utf-8")):
             rep.written += 1
         else:
@@ -345,6 +362,8 @@ class Mirror:
         schema = self._schema(it["ds_id"])
         rows = sorted(self.client.query_rows(it["ds_id"]), key=lambda r: (title_of(r).lower(), norm_id(r.get("id"))))
         text = render_csv(schema, rows, links)
+        if self._refused(self.cfg.lane_dir / paths[it["id"]], rep):
+            return
         if write_if_changed(self.cfg.lane_dir / paths[it["id"]], text.encode("utf-8")):
             rep.written += 1
         else:
@@ -368,6 +387,8 @@ class Mirror:
             self._write_database(it, paths, links, rep)
             return
         text = csv_from_cells(header, [r["cells"] for r in rows])
+        if self._refused(self.cfg.lane_dir / paths[it["id"]], rep):
+            return
         if write_if_changed(self.cfg.lane_dir / paths[it["id"]], text.encode("utf-8")):
             rep.written += 1
         else:
@@ -378,6 +399,8 @@ class Mirror:
             return
         for url, dest in attachments:
             target = self.cfg.lane_dir / dest
+            if self._refused(target, rep):
+                continue
             if target.exists():
                 continue
             try:
@@ -394,12 +417,16 @@ class Mirror:
             if not path:
                 continue
             target = lane / path
+            if self._refused(target, rep):
+                continue
             if target.exists():
                 target.unlink()
                 rep.deleted += 1
             folder_rel = folder_for(path)
             folder = lane / folder_rel
             if folder.is_dir() and not any(p.startswith(folder_rel + "/") for p in kept):
+                if self._refused(folder, rep):
+                    continue
                 shutil.rmtree(str(folder))
 
     def _prune_empty_dirs(self) -> None:

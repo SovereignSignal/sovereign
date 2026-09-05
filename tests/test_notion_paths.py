@@ -36,6 +36,12 @@ class Names(unittest.TestCase):
         self.assertEqual(len(stem(long, hid(1))), MAX_STEM)
         self.assertEqual(stem("x" * 49 + " y", hid(1)), "x" * 49)
 
+    def test_dot_only_titles_are_untitled(self):
+        self.assertEqual(stem(".", hid(1)), "Untitled %s" % short_id(hid(1)))
+        self.assertEqual(stem("..", hid(1)), "Untitled %s" % short_id(hid(1)))
+        self.assertEqual(stem("  ..  ", hid(2)), "Untitled %s" % short_id(hid(2)))
+        self.assertEqual(folder_name(item(3, "page", "..", "workspace", "")), "Untitled %s" % short_id(hid(3)))
+
     def test_file_and_folder_names(self):
         page = item(1, "page", "Home", "workspace", "")
         db = item(2, "database", "LW Songs", "page", hid(1))
@@ -82,6 +88,18 @@ class Resolve(unittest.TestCase):
         paths, orphans = resolve_paths(items, "Private & Shared", {}, resolve_block=lambda b: hid(2))
         self.assertEqual(orphans, [])
         self.assertEqual(paths[hid(8)], "Private & Shared/Root/Music/In a column %s.md" % hid(8))
+
+    def test_dot_titles_never_reach_a_path_component(self):
+        items = self.tree()
+        for n in (1, 2, 5):
+            items[hid(n)]["title"] = ".."
+        items[hid(6)]["title"] = "."
+        paths, _orphans = resolve_paths(items, "Private & Shared", {hid(6): "Teamspace"})
+        self.assertEqual(len(paths), len(items))
+        for item_id, path in paths.items():
+            parts = path.split("/")
+            self.assertNotIn("..", parts, item_id)
+            self.assertNotIn(".", parts, item_id)
 
     def test_cycle_is_an_orphan_not_a_crash(self):
         items = {hid(1): item(1, "page", "A", "page", hid(2)), hid(2): item(2, "page", "B", "page", hid(1))}

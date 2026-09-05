@@ -160,6 +160,72 @@ class FullRun(unittest.TestCase):
             self.assertIsNone(State(cfg.state_dir).read_last_full())
 
 
+class Containment(unittest.TestCase):
+    """Nothing a title can say may move a write or a delete outside the lane."""
+
+    def dotted(self, client):
+        """Pages whose titles are dot-only, plus a chain of them deep enough to climb out."""
+        client.add_page(10, "..", client.under(1))
+        client.add_page(11, ".", client.under(1))
+        client.add_page(12, "..", client.under(1))
+        client.add_page(13, "..", client.under(12))
+        client.add_page(14, "..", client.under(13))
+        client.add_page(15, "..", client.under(14))
+        return [hid(n) for n in (10, 11, 12, 13, 14, 15)]
+
+    def test_dot_titles_never_write_outside_the_lane(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            other = lane.parent / "OtherLane"
+            other.mkdir(parents=True)
+            (other / "keep.md").write_text("keep\n")
+            self.dotted(client)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            outside = [str(p.relative_to(cfg.brain_root)) for p in cfg.brain_root.rglob("*")
+                       if p.is_file() and lane not in p.parents]
+            self.assertEqual(outside, ["raw/tools/OtherLane/keep.md"])
+            self.assertTrue((other / "keep.md").exists())
+            self.assertEqual((lane / "LANE.md").read_text(), "---\nlane: Notion\n---\n")
+            for path in paths_of(lane):
+                self.assertNotIn("..", path.split("/"))
+
+    def test_trashing_a_dot_title_deletes_only_its_own_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            other = lane.parent / "OtherLane"
+            other.mkdir(parents=True)
+            (other / "keep.md").write_text("keep\n")
+            dotted = self.dotted(client)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            for i in dotted:
+                client.pages[i]["in_trash"] = True
+            cfg.allow_shrink = True
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertTrue(lane.is_dir())
+            self.assertTrue((other / "keep.md").exists())
+            self.assertEqual((lane / "LANE.md").read_text(), "---\nlane: Notion\n---\n")
+            self.assertEqual(paths_of(lane), sorted(["LANE.md", P1, P2, P3, P4, P5, P6, IMG]))
+
+    def test_a_manifest_path_outside_the_lane_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            other = lane.parent / "OtherLane"
+            other.mkdir(parents=True)
+            (other / "keep.md").write_text("keep\n")
+            m = Mirror(client, cfg, State(cfg.state_dir))
+            m.full()
+            m.manifest.items[hid(90)] = {"id": hid(90), "kind": "page", "last_edited": EDIT,
+                                         "path": "../OtherLane/keep.md"}
+            m.manifest.save()
+            cfg.allow_shrink = True
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertTrue((other / "keep.md").exists())
+            self.assertEqual(rep.deleted, 0)
+            self.assertTrue(any("refused, outside the lane" in e for e in rep.errors), rep.errors)
+
+
 class Check(unittest.TestCase):
     def test_check_lists_roots_and_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

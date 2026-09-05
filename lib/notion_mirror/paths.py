@@ -4,7 +4,7 @@ Rules, as observed on a real export (2026-09-04) and pinned by the oracle run:
   page file      <stem> <32hex>.md
   database file  <stem> <32hex>_all.csv
   child folder   <stem>            (no id; the export never puts ids on folders)
-  untitled       Untitled <first4>-<last4>
+  untitled       Untitled <first4>-<last4>   (also a title that sanitizes to nothing, . or ..)
   stem           sanitized title cut at 50 characters, right-stripped
   top level      the folder roots.json maps the root to, else the default root
 
@@ -28,7 +28,9 @@ def short_id(id32: str) -> str:
 
 
 def stem(title: str, id32: str) -> str:
-    s = sanitize(title) or "Untitled %s" % short_id(id32)
+    s = sanitize(title)
+    if s in ("", ".", ".."):  # a dot-only name is a path component, never a title
+        s = "Untitled %s" % short_id(id32)
     return s[:MAX_STEM].rstrip()
 
 
@@ -84,5 +86,10 @@ def resolve_paths(items: Dict[str, dict], default_root: str, required_roots: Dic
         if d is None:
             orphans.append(item_id)
             d = default_root
-        paths[item_id] = posixpath.join(d, file_name(it))
-    return paths, sorted(orphans)
+        path = posixpath.join(d, file_name(it))
+        if posixpath.normpath(path) != path or ".." in path.split("/"):
+            # a path that walks anywhere but down is not a location, it is an escape
+            orphans.append(item_id)
+            path = posixpath.join(default_root, file_name(it))
+        paths[item_id] = path
+    return paths, sorted(set(orphans))
