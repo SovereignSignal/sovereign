@@ -53,7 +53,6 @@
   #verdict .vtext { flex: 1; min-width: 0; font: 500 var(--t-verdict)/var(--lh-verdict) var(--sans); color: var(--ink);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #verdict .vmeta { font: 10.5px var(--mono); color: var(--faint); white-space: nowrap; }
-  #needs, #pulse { display: none !important; }
   footer#switch { flex: none; display: flex; align-items: center; gap: var(--s3); height: var(--h-footer); padding: 0 var(--s3);
     border-top: 1px solid var(--rule-soft); background: var(--ground); }
   footer#switch .nav { display: inline-flex; gap: 2px; }
@@ -74,26 +73,6 @@
   .dot.live { background: var(--live); } .dot.warn { background: var(--warn); }
   .dot.down { background: var(--down); }
 
-  #needs { flex: none; border-bottom: 1px solid var(--rule); background: var(--brass-wash); }
-  #needs .item { display: flex; gap: 10px; align-items: baseline; padding: 6px 16px;
-    cursor: pointer; border-left: 3px solid var(--brass); }
-  #needs .item + .item { border-top: 1px solid rgba(168,124,18,.2); }
-  #needs .k { font-family: var(--mono); font-size: 10px; color: var(--brass); min-width: 54px; }
-  #needs .t { color: var(--brass-ink); font-size: 12px; }
-
-  /* the pulse: the four numbers that move, each a door into the Archive view */
-  #pulse { flex: none; display: flex; align-items: stretch; border-bottom: 1px solid var(--rule); background: var(--panel); }
-  #pulse .tile { flex: 1; display: flex; align-items: center; gap: 9px; min-width: 0; height: 40px; padding: 0 14px;
-    border: 0; border-left: 1px solid var(--rule-soft); border-radius: 0; background: transparent; text-align: left;
-    font-family: var(--mono); color: var(--ink-2); }
-  #pulse .tile:first-child { border-left: 0; }
-  #pulse .tile:hover { background: var(--sunk); color: var(--ink); }
-  #pulse .tile .l { font-size: 10.5px; color: var(--faint); white-space: nowrap; }
-  #pulse .tile b { font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap; }
-  #pulse .tile .s { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  #pulse .tile svg { margin-left: auto; }
-  #pulse .tile.bad b { color: var(--down); }
-  #pulse svg { flex: none; }
 
   main { flex: 1; display: grid; grid-template-columns: 1fr; min-height: 0; position: relative; }
   body.pinned main { grid-template-columns: 1fr var(--drawer); }
@@ -158,7 +137,7 @@
   /* the drawer: hidden at rest, over the list on demand, docked when pinned */
   #inspector { position: absolute; top: 0; right: 0; bottom: 0; width: min(var(--drawer), 92vw); overflow: auto;
     background: var(--panel); border-left: 1px solid var(--rule); box-shadow: var(--shadow);
-    transform: translateX(102%); transition: transform .16s ease; z-index: 20; }
+    transform: translateX(102%); transition: transform var(--dur) var(--ease); z-index: 20; }
   #inspector.open { transform: none; }
   body.pinned #inspector { position: static; transform: none; box-shadow: none; width: auto; }
   #inspector .pad { padding: 12px 16px 12px; }
@@ -215,7 +194,7 @@
 
   /* Glance: the small box. The same page, loaded with #glance, in a menu-bar popover. */
   #glance { display: none; }
-  body.glance header, body.glance #needs, body.glance #pulse, body.glance main, body.glance #drawer, body.glance #verdict, body.glance footer#switch { display: none; }
+  body.glance header, body.glance main, body.glance #drawer, body.glance #verdict, body.glance footer#switch { display: none; }
   body.glance #glance { display: flex; flex-direction: column; height: 100%; }
   body.glance.qa #glance { padding-top: 22px; }
   .g-head { display: flex; align-items: center; gap: var(--s2); height: 40px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--rule-soft); }
@@ -228,6 +207,7 @@
   .g-row.verdict.warn .vdot { background: var(--warn); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--warn) 30%, transparent); }
   .g-row.verdict.down .vdot { background: var(--down); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--down) 30%, transparent); }
   .g-row.verdict .vt { font: 500 var(--t-body)/var(--lh-body) var(--sans); color: var(--ink); white-space: normal; text-align: left; }
+  .g-row.verdict.down { box-shadow: inset 3px 0 0 var(--down); }
   .g-head .sp, .g-foot .sp { flex: 1; }
   .g-rows { flex: 1; overflow: auto; }
   .g-row { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 14px; border: 0;
@@ -325,15 +305,17 @@
   @media (max-width: 760px) { .glance-home { grid-template-columns: 1fr; } }
 
   #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
-    transition: transform .16s ease; background: var(--panel); border-top: 1px solid var(--rule); box-shadow: var(--shadow); z-index: 30; }
+    transition: transform var(--dur) var(--ease); background: var(--panel); border-top: 1px solid var(--rule); box-shadow: var(--shadow); z-index: 30; }
   #drawer.open { transform: none; }
   #drawer .bar { padding: 0 16px; }
   #drawer b { font: 600 12px var(--mono); }
   #drawer pre { margin: 0; padding: 10px 16px 14px; max-height: 220px; overflow: auto;
     font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; color: var(--ink-2); }
   #drawer .state { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
-  @media (prefers-reduced-motion: reduce) { #drawer, #inspector { transition: none; } }
-  body.qa #drawer, body.qa #inspector { transition: none; }   /* snapshot QA: an occluded web view gets no animation frames */
+  .meter i, .hbar .track i { transition: width var(--dur-slow) var(--ease); }
+  .row:focus-visible, #rows:focus-visible .row[aria-selected="true"] { outline: 2px solid color-mix(in srgb, var(--brass) 60%, transparent); outline-offset: -2px; }
+  @media (prefers-reduced-motion: reduce) { #drawer, #inspector, .meter i, .hbar .track i { transition: none; } }
+  body.qa #drawer, body.qa #inspector, body.qa .meter i, body.qa .hbar .track i { transition: none; }   /* snapshot QA: an occluded web view gets no animation frames */
 </style>
 </head>
 <body>
@@ -347,8 +329,6 @@
 </header>
 
 <div id="verdict" role="status"><span class="vdot"></span><span class="vtext" id="vtext">reading status…</span><span class="vmeta" id="vmeta"></span></div>
-<div id="needs" hidden></div>
-<div id="pulse" hidden></div>
 <div id="glance" hidden></div>
 
 <main>
@@ -451,32 +431,6 @@ window.onerror = function (msg, src, line, col) {
     else hp.innerHTML = `${dot("", "hub unchecked")}hub unchecked`;
 
     renderVerdict();
-    const needs = D.needs_you || [], nd = $("#needs");
-    nd.hidden = !needs.length;
-    nd.innerHTML = needs.map((n, i) => `<div class="item" data-need="${i}" role="button" tabindex="0"><span class="k">${esc(n.kind)}</span><span class="t">${esc(n.text)}</span></div>`).join("");
-
-    const pb = $("#pulse");
-    if (!h.reachable) {
-      pb.hidden = h.reachable == null;
-      if (!pb.hidden) pb.innerHTML = `<div class="tile bad" style="flex:1"><b>hub did not answer</b><span class="s">${esc(h.error || "")} · governance state is unknown until it does</span></div>`;
-      return;
-    }
-    pb.hidden = false;
-    const st = h.status || {}, cov = st.coverage || {}, a = arch(), weeks = ((h.judge || {}).weeks) || [];
-    const rates = weeks.map(w => w.judged ? 100 * w.kept / w.judged : 0);
-    const last = weeks[weeks.length - 1];
-    const awaiting = st.deferred ?? cov.unjudged_in_window;
-    const pending = h.pending ?? 0;
-    pb.innerHTML = `
-      <button class="tile ${pending ? "" : ""}" data-goto-section="gate" title="Open the gate">
-        <span class="l">at the gate</span><b>${num(pending)}</b><span class="s">${pending ? "waiting for you" : "nothing waiting"}</span></button>
-      <button class="tile" data-goto-section="judge" title="Open the judge">
-        <span class="l">judge kept</span><b>${st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)}` : "?"}</b>
-        <span class="s">${last ? "wk " + pct(last.kept, last.judged) : ""}</span>${sparkline(rates)}</button>
-      <button class="tile" data-goto-section="judge" title="Open the backlog">
-        <span class="l">unjudged</span><b>${num(awaiting)}</b><span class="s">of ${num(cov.processable)}${cov.stranded_pre_watermark ? " · " + num(cov.stranded_pre_watermark) + " stranded" : ""}${(h.burndown || {}).stopped ? " · burn-down stopped" : ""}</span></button>
-      <button class="tile" data-goto-section="composition" title="Open the archive">
-        <span class="l">cards</span><b>${num(a.total)}</b><span class="s">${a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : ""}</span></button>`;
   }
 
   // ---------- rows ----------
@@ -1195,6 +1149,7 @@ window.onerror = function (msg, src, line, col) {
         ${needs.filter(n => n.kind !== "gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.harness ? { view: "tools", sel: { kind: "tool", id: n.harness } } : n.kind === "gate" ? { view: "archive", section: "gate" } : { view: "jobs" }))}"><span class="l">${esc(n.kind)}</span><span class="s wrap">${esc(n.text)}</span><span class="chev">›</span></button>`).join("")}
       </div>
       <div class="g-foot"><span class="meta">${esc(m.host || "")} · ${clock(D.generated_at)}</span><span class="sp"></span><button class="brass" id="g-console">Open console</button></div>`;
+    requestAnimationFrame(() => bridge({ cmd: "glanceSize", h: Math.ceil(g.scrollHeight) }));
   }
 
   function render(d) {
@@ -1288,7 +1243,6 @@ window.onerror = function (msg, src, line, col) {
 
   document.addEventListener("click", (e) => {
     const seg = e.target.closest(".seg button"); if (seg) return setView(seg.dataset.view);
-    const tile = e.target.closest("#pulse .tile[data-goto-section]"); if (tile) return tile.dataset.gotoSection === "gate" ? gotoGate() : setView("archive", { section: tile.dataset.gotoSection });
     const need = e.target.closest("[data-need]");
     if (need) { const n = (D.needs_you || [])[+need.dataset.need];
       if (n && n.harness) { setView("tools"); select("tool", n.harness, true); }
@@ -1308,7 +1262,7 @@ window.onerror = function (msg, src, line, col) {
     if (opn) { const it = findRow(opn.dataset.open); if (it) select(it.kind, it.id, true); return; }
     const b = e.target.closest("button");
     if (b) {
-      if (b.id === "refresh" || b.id === "g-refresh") return refresh();
+      if (b.id === "refresh" || b.id === "g-refresh" || b.id === "err-refresh") return refresh();
       if (b.id === "back") return back();
       if (b.id === "fwd") return forward();
       if (b.id === "gear") return openSettings();
@@ -1382,8 +1336,11 @@ window.onerror = function (msg, src, line, col) {
   window.sovDeliver = function (kind, payload) {
     if (kind === "status") {
       if (payload.error) {
-        if (GLANCE) { const g = $("#glance"); g.hidden = false; g.innerHTML = `<div class="empty">${esc(payload.error)}</div>`; return; }
-        $("#insp").innerHTML = `<div class="empty">${esc(payload.error)}</div>`; openInspector(); $("#meta").textContent = "status unavailable"; return; }
+        if (GLANCE) { const g = $("#glance"); g.hidden = false; g.innerHTML = `<div class="g-row verdict down"><span class="vdot"></span><span class="vt">${esc(payload.error)}</span></div><div class="g-foot"><span class="sp"></span><button class="brass" id="g-refresh">Try again</button></div>`; return; }
+        $("#verdict").className = "down"; $("#vtext").textContent = payload.error; $("#vmeta").textContent = "";
+        $("#meta").textContent = "status unavailable"; $("#rows").className = "home";
+        $("#rows").innerHTML = `<div class="glance-home"><section class="gcol bare" style="grid-column:1 / -1"><div class="empty">The app could not read the brain's status, so nothing below is known. Fix the cause named above, then try again.</div><div class="acts" style="padding:0 16px 16px;margin:0"><button class="brass" id="err-refresh">Try again</button></div></section></div>`;
+        return; }
       if (payload.machine && !payload.machine.connected) return renderSetup(payload);
       render(payload);
     } else if (kind === "vmstart") {

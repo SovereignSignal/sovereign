@@ -23,9 +23,7 @@ if [ -f "$PNG" ] && { [ ! -f "$BUILD/AppIcon.icns" ] || [ "$PNG" -nt "$BUILD/App
   done
   iconutil -c icns "$BUILD/icon.iconset" -o "$BUILD/AppIcon.icns"
 elif [ ! -f "$BUILD/AppIcon.icns" ]; then
-  rm -rf "$BUILD/icon.iconset"
-  xcrun swift "$HERE/icon.swift" "$BUILD/icon.iconset" >/dev/null
-  iconutil -c icns "$BUILD/icon.iconset" -o "$BUILD/AppIcon.icns"
+  echo "    no design/icon/AppIcon-1024.png and no cached icon; add the PNG" >&2; exit 1
 fi
 
 echo "[3] bundle"

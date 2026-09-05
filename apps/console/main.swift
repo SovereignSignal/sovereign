@@ -135,6 +135,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.async { App.shared.showConsole(place: d["place"] as? [String: Any]) }
         case "closeGlance":
             DispatchQueue.main.async { App.shared.popover?.performClose(nil) }
+        case "glanceSize":
+            if let h = d["h"] as? Double { DispatchQueue.main.async { (NSApp.delegate as? App)?.setGlanceHeight(h) } }
         case "verdict":
             if let st = d["state"] as? String { DispatchQueue.main.async { (NSApp.delegate as? App)?.setVerdictState(st) } }
             if let dir = ProcessInfo.processInfo.environment["SOV_STATUS_SNAPSHOT"], !dir.isEmpty {
@@ -232,7 +234,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var glanceWeb: WKWebView?
     var glanceBridge: Bridge?
     var sovPath: String?
-    let glanceSize = NSSize(width: 420, height: 468)
+    var glanceSize = NSSize(width: 420, height: 468)
     var qaGlance: Bool { ProcessInfo.processInfo.environment["SOV_GLANCE"] == "1" }
 
     static func main() {
@@ -380,17 +382,30 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var verdictState = "idle"
     static let stateColors: [String: NSColor] = ["live": NSColor(red: 0.18, green: 0.545, blue: 0.341, alpha: 1), "warn": NSColor(red: 0.71, green: 0.506, blue: 0.055, alpha: 1),
                                                  "down": NSColor(red: 0.761, green: 0.231, blue: 0.192, alpha: 1), "idle": NSColor(white: 0.62, alpha: 1)]
+    /// The dot wears a 1 px ring in the bar's own colour so it never fuses with the crown's right point.
+    private func barColor(for view: NSView?) -> NSColor {
+        let dark = view?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 0.93, alpha: 1)
+    }
     func attachStateDot(to item: NSStatusItem) {
         guard let button = item.button else { return }
-        let dot = NSView(frame: NSRect(x: button.bounds.width - 8, y: 3, width: 6, height: 6))
-        dot.wantsLayer = true; dot.layer?.cornerRadius = 3; dot.autoresizingMask = [.minXMargin]
+        let dot = NSView(frame: NSRect(x: button.bounds.width - 9, y: 2, width: 8, height: 8))
+        dot.wantsLayer = true; dot.layer?.cornerRadius = 4; dot.autoresizingMask = [.minXMargin]
+        dot.layer?.borderWidth = 1; dot.layer?.borderColor = barColor(for: button).cgColor
         dot.layer?.backgroundColor = App.stateColors[verdictState]?.cgColor
         button.addSubview(dot); stateDot = dot
     }
     func setVerdictState(_ state: String) {
         verdictState = state
         stateDot?.layer?.backgroundColor = App.stateColors[state]?.cgColor
+        stateDot?.layer?.borderColor = barColor(for: statusItem?.button).cgColor
         statusItem?.button?.toolTip = "Sovereign: \(state)"
+    }
+    func setGlanceHeight(_ h: Double) {
+        let hh = max(284, min(h, 640))
+        glanceSize.height = hh
+        popover?.contentSize = NSSize(width: 420, height: hh)
+        if qaGlance { window.setContentSize(NSSize(width: 420, height: hh)) }
     }
     /// QA: SOV_STATUS_SNAPSHOT=<dir> writes the status item at 1x and 2x on light and dark bars.
     func snapshotStatusItem(_ dir: String) {
@@ -409,6 +424,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 let tinted = glyph.copy() as! NSImage; tinted.isTemplate = false
                 tinted.lockFocus(); ink.set(); NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop); tinted.unlockFocus()
                 tinted.draw(in: NSRect(x: 2, y: 2, width: 18, height: 18))
+                bg.setFill(); NSBezierPath(ovalIn: NSRect(x: 13, y: 2, width: 8, height: 8)).fill()
                 (App.stateColors[verdictState] ?? .gray).setFill(); NSBezierPath(ovalIn: NSRect(x: 14, y: 3, width: 6, height: 6)).fill()
                 NSGraphicsContext.restoreGraphicsState()
                 if let png = rep.representation(using: .png, properties: [:]) { try? png.write(to: URL(fileURLWithPath: "\(dir)/status-\(bar)-\(verdictState)@\(scale)x.png")) }
