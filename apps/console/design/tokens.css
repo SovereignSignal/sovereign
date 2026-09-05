@@ -1,0 +1,48 @@
+/* Sovereign console design tokens. The full light palette lives on :root; dark redefines only the
+   tokens that change, twice: under the system preference guarded against an explicit light choice,
+   and again under an explicit dark choice, so a toggle wins in both directions. Token names match
+   what ui/index.html uses today; new tokens are added, none removed. */
+:root {
+  --ground: #FAFAF7; --panel: #FFFFFF; --sunk: #F2F2EE; --rule: #E4E4DE; --rule-soft: #EFEFEA;
+  --ink: #15181C; --ink-2: #3D444E; --muted: #6A7280; --faint: #98A0AC;
+  --brass: #A87C12; --brass-ink: #6E5008; --brass-wash: #FBF3DE;
+  --live: #2E8B57; --warn: #B5810E; --down: #C23B31; --idle: #B9BEC6;
+  --sel: #EDF1F6;
+  --series-1: #A87C12; --series-2: #2F6FBF; --series-3: #2E8B57;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --shadow: 0 1px 2px rgba(20,24,30,.05), 0 8px 24px rgba(20,24,30,.08);
+  --s1: 4px; --s2: 8px; --s3: 16px; --s4: 24px;
+  --t-caption: 11px; --lh-caption: 14px;
+  --t-body: 12.5px; --lh-body: 18px;
+  --t-name: 12px; --lh-name: 16px;
+  --t-title: 14px; --lh-title: 20px;
+  --t-verdict: 18px; --lh-verdict: 24px;
+  --t-figure: 28px; --lh-figure: 32px;
+  --h-header: 36px; --h-verdict: 44px; --h-row: 30px; --h-footer: 32px;
+  --drawer: 400px; --radius: 6px; --radius-tag: 4px;
+  --ease: cubic-bezier(.2,.7,.2,1); --dur: 120ms; --dur-slow: 240ms;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #17181B; --panel: #1E2024; --sunk: #222428; --rule: #2C2F35; --rule-soft: #26292E;
+    --ink: #ECEBE6; --ink-2: #BDBCB5; --muted: #8E9096; --faint: #6F7278;
+    --brass: #D4A73A; --brass-ink: #EFD9A4; --brass-wash: #2A2416;
+    --live: #3FA96B; --warn: #D19A26; --down: #E0564C; --idle: #4E5259;
+    --sel: #262A31;
+    --series-1: #B58620; --series-2: #4F89D2; --series-3: #39A064;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #17181B; --panel: #1E2024; --sunk: #222428; --rule: #2C2F35; --rule-soft: #26292E;
+  --ink: #ECEBE6; --ink-2: #BDBCB5; --muted: #8E9096; --faint: #6F7278;
+  --brass: #D4A73A; --brass-ink: #EFD9A4; --brass-wash: #2A2416;
+  --live: #3FA96B; --warn: #D19A26; --down: #E0564C; --idle: #4E5259;
+  --sel: #262A31;
+  --series-1: #B58620; --series-2: #4F89D2; --series-3: #39A064;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
+  color-scheme: dark;
+}
