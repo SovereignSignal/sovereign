@@ -890,6 +890,7 @@ window.onerror = function (msg, src, line, col) {
       const t = h ? hz(h) : null;
       box.innerHTML = head(esc(o.name), esc(o.note || (h ? "lane " + h.lane : "no connector for this tool yet"))) + `
         ${t ? `<div class="sect"><h2>Wires</h2>${toolBlock(t, h, "both wires")}</div>` : ""}
+        ${h && h.runs_on ? `<div class="sect"><h2>Runs on the hub</h2><div class="prose">${esc(h.name)} pulls from the cloud, so it lives on the hub (${esc(h.runs_on)}), not on this machine. ${h.hub_installed ? "Installed there" : "Not installed there yet"}${h.job_loaded ? ", job loaded." : ", job not loaded yet (the owner's gate)."}${h.last_status ? ` Last status: ${esc(h.last_status)}` : ""}</div></div>` : ""}
         ${h ? `<div class="sect"><h2>Read wire</h2>${kv([
             ["kind", h.read],
             ["declared in", h.hook_file ? `<span class="mono">${esc(shortPath(h.hook_file))}</span>` : "n/a", "raw"],

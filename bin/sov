@@ -29,6 +29,20 @@ case "$cmd" in
     [ -n "$h" ] || { echo "sov connect <harness>|all; available: $(ls "$HARNESS_DIR" | grep -v '^_' | tr '\n' ' ')"; exit 64; }
     [ "$h" = "all" ] && exec /usr/bin/python3 "$HARNESS_DIR/_lib/connect-all.py" "$@"
     [ -x "$HARNESS_DIR/$h/install.sh" ] || chmod +x "$HARNESS_DIR/$h/install.sh" 2>/dev/null || true
+    # a cloud pull (no detect paths) runs on the hub: route there from any other machine.
+    # A declared secret travels on stdin, never on the remote command line.
+    if [ -f "$HARNESS_DIR/$h/harness.json" ]; then
+      cloud="$(/usr/bin/python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("cloud" if not m.get("detect") else "local"); print((m.get("secret") or {}).get("env") or "")' "$HARNESS_DIR/$h/harness.json" 2>/dev/null)"
+      hub="$(cat "$HOME/.brain-hub" 2>/dev/null || true)"; hub_alias="${hub%%:*}"
+      if [ "${cloud%%$'\n'*}" = "cloud" ] && [ -n "$hub_alias" ] && [ "$(cat "$HOME/.brain-host" 2>/dev/null)" != "$hub_alias" ]; then
+        senv="${cloud#*$'\n'}"
+        echo "routing to the hub ($hub_alias): $h is a cloud pull and runs there"
+        if [ -n "$senv" ] && [ -n "${!senv:-}" ]; then
+          exec sh -c 'printf "%s" "$1" | ssh -o BatchMode=yes "$2" "$3=\$(cat) ~/brain-bin/sov connect $4 $5"' _ "${!senv}" "$hub_alias" "$senv" "$h" "$(printf '%q ' "$@")"
+        fi
+        exec ssh -o BatchMode=yes "$hub_alias" "~/brain-bin/sov connect $h $(printf '%q ' "$@")"
+      fi
+    fi
     exec /bin/bash "$HARNESS_DIR/$h/install.sh" "$@";;
   hook)
     h="${1:-}"; [ -n "$h" ] || { echo "sov hook <harness>"; exit 64; }

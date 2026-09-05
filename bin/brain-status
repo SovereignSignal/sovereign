@@ -359,6 +359,27 @@ try:
                 if m: bk["exchange"].setdefault(m.group(2), {})["fail"] = m.group(1)
         except OSError: pass
     out["backups"] = bk
+    # ---- cloud harnesses run here on the hub; report their state for every console ----
+    ch = []
+    tmpl = os.path.dirname(os.path.dirname(os.path.realpath(os.path.expanduser("~/brain-bin/sov"))))
+    for hj in sorted(glob.glob(os.path.join(tmpl, "connectors", "harness", "*", "harness.json"))):
+        try: meta = json.load(open(hj))
+        except Exception: continue
+        if meta.get("detect"): continue
+        hid = os.path.basename(os.path.dirname(hj))
+        lane = meta.get("lane") or ("%s-%s" % (meta.get("lane_prefix", hid), out["hub_host"]))
+        label = "com.sovereign.connector.%s" % hid if sys.platform == "darwin" else "sovereign-connector-%s" % hid
+        loaded = subprocess.run(["launchctl", "print", "gui/%d/%s" % (os.getuid(), label)], capture_output=True, text=True).returncode == 0 if sys.platform == "darwin" \
+                 else subprocess.run(["systemctl", "--user", "is-active", "--quiet", label + ".timer"]).returncode == 0
+        def one(k):
+            p = meta.get(k)
+            try: return open(os.path.expanduser(p), encoding="utf-8").readline().strip() if p else None
+            except OSError: return None
+        installed = os.path.exists(os.path.join(root, "raw", "tools", lane, "LANE.md"))
+        ch.append({"id": hid, "name": meta.get("name", hid), "lane": lane, "label": label, "job_loaded": loaded, "installed": installed,
+                   "last_success": one("last_success_file"), "last_status": one("last_status_file"),
+                   "state": "connected" if loaded else ("partial" if installed else "not connected")})
+    out["cloud_harnesses"] = ch
 except Exception:
     pass
 for base in ("tools", "workspaces"):
@@ -890,6 +911,16 @@ def main():
                           "manual_step": meta.get("manual_step"), "secret": meta.get("secret"), "state": state,
                           "has_mirror": os.path.exists(os.path.join(hd, "mirror.sh")),
                           "instruction": os.path.join(hd, "INSTRUCTION.md") if os.path.exists(os.path.join(hd, "INSTRUCTION.md")) else None})
+    # a cloud pull belongs on the hub: when this machine is not the hub, show the hub's record for it
+    hub_cloud = {c["id"]: c for c in ((out.get("hub") or {}).get("cloud_harnesses") or [])}
+    if hub_cloud and pointer("~/.brain-hub"):
+        for h in harnesses:
+            c = hub_cloud.get(h["id"])
+            if c is None or h.get("detected") is not None:
+                continue
+            h.update({"runs_on": (out.get("hub") or {}).get("hub_host"), "state": c["state"], "job_loaded": c["job_loaded"], "lane": c["lane"],
+                      "label": c["label"], "last_status": c.get("last_status"), "hub_installed": c["installed"],
+                      "last_run": ("Last run: %s" % c["last_success"]) if c.get("last_success") else None, "hook_registered": None})
     out["harnesses"] = harnesses
 
     # every tool the catalog can recognize on this machine, connector or not
