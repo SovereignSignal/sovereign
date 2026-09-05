@@ -5,38 +5,15 @@
 <title>Sovereign</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="tokens.css">
 <style>
   /* Instrument panel: graphite and brass. Structure and data are monospaced; prose is
      the only proportional type. At rest the app is a pulse line and a list, nothing
      else. Every record is one line; detail lives in a drawer that opens on click and
      leaves when dismissed, so the resting state stays small. The wire strip is the
      signature: one dual-segment mark per tool, read on the left, write on the right. */
-  :root {
-    color-scheme: light;
-    --ground: #FAFAF7; --panel: #FFFFFF; --sunk: #F2F2EE; --rule: #E4E4DE; --rule-soft: #EFEFEA;
-    --ink: #15181C; --ink-2: #3D444E; --muted: #6A7280; --faint: #98A0AC;
-    --brass: #A87C12; --brass-ink: #6E5008; --brass-wash: #FBF3DE;
-    --live: #2E8B57; --warn: #B5810E; --down: #C23B31; --idle: #B9BEC6;
-    --sel: #EDF1F6;
-    /* categorical series for the archive's composition, validated against this surface */
-    --s1: #A87C12; --s2: #2F6FBF; --s3: #2E8B57; --s4: #98A0AC;
-    --mono: ui-monospace, "SF Mono", Menlo, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-    --shadow: 0 1px 2px rgba(20,24,30,.05), 0 8px 24px rgba(20,24,30,.08);
-    --drawer: 400px;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      color-scheme: dark;
-      --ground: #14181D; --panel: #1B2027; --sunk: #1F252D; --rule: #2A313B; --rule-soft: #232A33;
-      --ink: #E9ECEF; --ink-2: #B7C0CB; --muted: #8B95A3; --faint: #707A88;
-      --brass: #D4A73A; --brass-ink: #EFD9A4; --brass-wash: #262114;
-      --live: #3FA96B; --warn: #D19A26; --down: #E0564C; --idle: #4E5763;
-      --sel: #222B36;
-      --s1: #B58620; --s2: #4F89D2; --s3: #39A064; --s4: #707A88;
-      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
-    }
-  }
+  /* palette, type, space: apps/console/design/tokens.css (copied beside this file at build) */
+  :root { --series-4: var(--faint); }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--ground); color: var(--ink);
     font: 13px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
@@ -58,10 +35,31 @@
   .num, .val, .n, .tile b { font-variant-numeric: tabular-nums; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-  header { flex: none; display: flex; align-items: center; gap: 10px; height: 52px;
-    padding: 24px 16px 0; border-bottom: 1px solid var(--rule); }
-  .crown { width: 15px; height: 15px; color: var(--brass); flex: none; }
-  header h1 { margin: 0; font: 600 13px var(--sans); letter-spacing: -0.01em; white-space: nowrap; }
+  header { flex: none; display: flex; align-items: center; gap: var(--s2); height: calc(var(--h-header) + 22px);
+    padding: 22px var(--s3) 0; border-bottom: 1px solid var(--rule-soft); }
+  .crown { width: 16px; height: 16px; color: var(--ink); flex: none; }
+  header h1 { margin: 0 var(--s1) 0 0; font: 600 var(--t-title)/var(--lh-title) var(--sans); letter-spacing: 0; white-space: nowrap; }
+  #verdict { flex: none; display: flex; align-items: center; gap: var(--s2); height: var(--h-verdict); padding: 0 var(--s3);
+    background: var(--panel); border-bottom: 1px solid var(--rule-soft); }
+  #verdict.down { box-shadow: inset 3px 0 0 var(--down); }
+  #verdict .vdot { width: 10px; height: 10px; border-radius: 50%; background: var(--idle); flex: none;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--idle) 30%, transparent); }
+  #verdict.live .vdot { background: var(--live); box-shadow: 0 0 0 1px color-mix(in srgb, var(--live) 30%, transparent); }
+  #verdict.warn .vdot { background: var(--warn); box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 30%, transparent); }
+  #verdict.down .vdot { background: var(--down); box-shadow: 0 0 0 1px color-mix(in srgb, var(--down) 30%, transparent); }
+  #verdict .vtext { flex: 1; min-width: 0; font: 500 var(--t-verdict)/var(--lh-verdict) var(--sans); color: var(--ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #verdict .vmeta { font: 10.5px var(--mono); color: var(--faint); white-space: nowrap; }
+  #needs, #pulse { display: none !important; }
+  footer#switch { flex: none; display: flex; align-items: center; gap: var(--s3); height: var(--h-footer); padding: 0 var(--s3);
+    border-top: 1px solid var(--rule-soft); background: var(--ground); }
+  footer#switch .nav { display: inline-flex; gap: 2px; }
+  footer#switch .nav button { color: var(--faint); font-size: 11px; padding: 0 4px; }
+  footer#switch .seg { display: inline-flex; gap: var(--s3); background: transparent; border: 0; border-radius: 0; padding: 0; height: 100%; }
+  footer#switch .seg button { border: 0; background: transparent; padding: 0 var(--s2); border-radius: 0; height: 100%;
+    font: 500 11.5px var(--mono); letter-spacing: -0.01em; color: var(--muted); box-shadow: none; position: relative; }
+  footer#switch .seg button[aria-pressed="true"] { color: var(--ink); background: transparent; box-shadow: inset 0 -2px 0 var(--brass); }
+  footer#switch .count { font: var(--t-caption)/var(--lh-caption) var(--mono); color: var(--faint); margin-left: auto; white-space: nowrap; }
   header .meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   header .grow { flex: 1; min-width: 0; }
@@ -96,7 +94,7 @@
 
   main { flex: 1; display: grid; grid-template-columns: 1fr; min-height: 0; position: relative; }
   body.pinned main { grid-template-columns: 1fr var(--drawer); }
-  #listpane { display: flex; flex-direction: column; min-width: 0; }
+  #listpane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .bar { flex: none; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px 0 16px;
     border-bottom: 1px solid var(--rule-soft); }
   .seg { display: inline-flex; background: var(--sunk); border: 1px solid var(--rule); border-radius: 7px; padding: 2px; gap: 2px; }
@@ -121,10 +119,10 @@
   .row.quiet:hover { background: transparent; }
   .row .name { font-family: var(--mono); font-size: 12px; font-weight: 500; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; flex: none; }
-  .row .desc { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row .num { font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: right; white-space: nowrap; flex: none; }
+  .row .desc { flex: 1; min-width: 0; font: var(--t-body)/var(--lh-body) var(--sans); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .num { font: var(--t-caption)/var(--lh-caption) var(--mono); color: var(--faint); text-align: right; white-space: nowrap; flex: none; }
   .row .chev { color: var(--faint); font-size: 11px; width: 8px; flex: none; }
-  .row .tag { font-family: var(--mono); font-size: 10px; color: var(--faint); border: 1px solid var(--rule);
+  .row .tag { font-family: var(--mono); font-size: var(--t-caption); line-height: 14px; height: 16px; color: var(--faint); border: 1px solid var(--rule); border-radius: var(--radius-tag);
     border-radius: 4px; padding: 0 5px; line-height: 15px; white-space: nowrap; flex: none; }
   .row .tag.on { color: var(--live); border-color: color-mix(in srgb, var(--live) 40%, transparent); }
   .row .tag.mid { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
@@ -143,7 +141,7 @@
   /* a share of something, as a thin bar: brass by default, a series color when the row is a series */
   .meter { width: 72px; height: 4px; border-radius: 2px; background: var(--rule); overflow: hidden; flex: none; }
   .meter i { display: block; height: 100%; background: var(--brass); border-radius: 2px; }
-  .meter i.s1 { background: var(--s1); } .meter i.s2 { background: var(--s2); } .meter i.s3 { background: var(--s3); } .meter i.s4 { background: var(--s4); }
+  .meter i.s1 { background: var(--series-1); } .meter i.s2 { background: var(--series-2); } .meter i.s3 { background: var(--series-3); } .meter i.s4 { background: var(--series-4); }
   .meter i.live { background: var(--live); } .meter i.warn { background: var(--warn); } .meter i.down { background: var(--down); }
   .contrib { display: inline-flex; align-items: center; gap: 6px; flex: none; width: 82px; justify-content: flex-end; }
   .contrib .meter { width: 40px; }
@@ -194,10 +192,10 @@
     border: 1px solid var(--rule); border-radius: 8px; padding: 9px 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .stack { display: flex; height: 8px; border-radius: 3px; overflow: hidden; gap: 2px; margin: 6px 0 4px; }
   .stack i { display: block; height: 100%; min-width: 2px; }
-  .stack i.s1 { background: var(--s1); } .stack i.s2 { background: var(--s2); } .stack i.s3 { background: var(--s3); } .stack i.s4 { background: var(--s4); }
+  .stack i.s1 { background: var(--series-1); } .stack i.s2 { background: var(--series-2); } .stack i.s3 { background: var(--series-3); } .stack i.s4 { background: var(--series-4); }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
   .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-  .legend i.s1 { background: var(--s1); } .legend i.s2 { background: var(--s2); } .legend i.s3 { background: var(--s3); } .legend i.s4 { background: var(--s4); }
+  .legend i.s1 { background: var(--series-1); } .legend i.s2 { background: var(--series-2); } .legend i.s3 { background: var(--series-3); } .legend i.s4 { background: var(--series-4); }
   table.t { border-collapse: collapse; width: 100%; font-size: 11.5px; }
   table.t th, table.t td { text-align: left; padding: 3px 6px 3px 0; border-bottom: 1px solid var(--rule-soft); }
   table.t th { font: 500 10.5px var(--mono); color: var(--faint); }
@@ -246,7 +244,7 @@
   .p-col { min-width: 0; } .p-col.grow { flex: 1; }
   .stack.big { height: 14px; gap: 2px; margin: 0 0 8px; border-radius: 4px; }
   .sg { border: 0; padding: 0; min-width: 3px; border-radius: 0; cursor: pointer; display: block; height: 100%; }
-  .sg.s1 { background: var(--s1); } .sg.s2 { background: var(--s2); } .sg.s3 { background: var(--s3); } .sg.s4 { background: var(--s4); }
+  .sg.s1 { background: var(--series-1); } .sg.s2 { background: var(--series-2); } .sg.s3 { background: var(--series-3); } .sg.s4 { background: var(--series-4); }
   .sg:hover { filter: brightness(1.15); }
   .legend .lg { border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer; }
   .legend .lg:hover { color: var(--ink); }
@@ -256,7 +254,7 @@
   .col .stk { display: flex; flex-direction: column-reverse; gap: 2px; height: 100px; }
   .col .stk i { display: block; border-radius: 0; }
   .col .stk i:last-child { border-radius: 3px 3px 0 0; }
-  .col .stk i.s1 { background: var(--s1); } .col .stk i.s2 { background: var(--s2); } .col .stk i.s3 { background: var(--s3); } .col .stk i.s4 { background: var(--s4); }
+  .col .stk i.s1 { background: var(--series-1); } .col .stk i.s2 { background: var(--series-2); } .col .stk i.s3 { background: var(--series-3); } .col .stk i.s4 { background: var(--series-4); }
   .col:hover .bar i { filter: brightness(1.15); }
   .col .lbl { display: block; font: 10px var(--mono); color: var(--faint); text-align: center; height: 14px; line-height: 14px; white-space: nowrap; }
   .chart { border: 0; background: transparent; padding: 0; cursor: pointer; display: block; border-radius: 6px; }
@@ -306,7 +304,7 @@
 </head>
 <body>
 <header>
-  <svg class="crown" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 18h18v2H3v-2zm0-2 1.5-9 4.5 4 3-6 3 6 4.5-4L21 16H3z"/></svg>
+  <svg class="crown" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>
   <h1 id="vault">Sovereign</h1>
   <div class="meta grow" id="meta">reading status…</div>
   <span class="hubpill" id="hubpill"><span class="dot"></span>hub</span>
@@ -314,28 +312,29 @@
   <button id="gear" class="quiet" title="Settings (⌘,)" aria-label="Settings">⚙</button>
 </header>
 
+<div id="verdict" role="status"><span class="vdot"></span><span class="vtext" id="vtext">reading status…</span><span class="vmeta" id="vmeta"></span></div>
 <div id="needs" hidden></div>
 <div id="pulse" hidden></div>
 <div id="glance" hidden></div>
 
 <main>
   <div id="listpane">
-    <div class="bar">
-      <span class="nav"><button id="back" class="quiet" aria-label="Back" title="Back (⌘[)" disabled>◀</button><button id="fwd" class="quiet" aria-label="Forward" title="Forward (⌘])" disabled>▶</button></span>
-      <div class="seg" role="group" aria-label="View">
-        <button data-view="hosts" aria-pressed="true">Hosts</button>
-        <button data-view="archive" aria-pressed="false">Archive</button>
-        <button data-view="lanes" aria-pressed="false">Lanes</button>
-        <button data-view="tools" aria-pressed="false">Tools</button>
-        <button data-view="jobs" aria-pressed="false">Hub</button>
-        <button data-view="backups" aria-pressed="false">Backups</button>
-      </div>
-      <span class="count" id="listcount"></span>
-    </div>
     <div id="rows" role="listbox" tabindex="0" aria-label="Records"></div>
   </div>
   <aside id="inspector" aria-label="Detail"><div class="pad" id="insp"></div></aside>
 </main>
+<footer id="switch">
+  <span class="nav"><button id="back" class="quiet" aria-label="Back" title="Back (⌘[)" disabled>◀</button><button id="fwd" class="quiet" aria-label="Forward" title="Forward (⌘])" disabled>▶</button></span>
+  <div class="seg" role="group" aria-label="View">
+    <button data-view="hosts" aria-pressed="true">Hosts</button>
+    <button data-view="archive" aria-pressed="false">Archive</button>
+    <button data-view="lanes" aria-pressed="false">Lanes</button>
+    <button data-view="tools" aria-pressed="false">Tools</button>
+    <button data-view="jobs" aria-pressed="false">Hub</button>
+    <button data-view="backups" aria-pressed="false">Backups</button>
+  </div>
+  <span class="count" id="listcount"></span>
+</footer>
 
 <div id="drawer">
   <div class="bar"><b id="drawer-title">Output</b><span class="state" id="drawer-state"></span>
@@ -417,6 +416,7 @@ window.onerror = function (msg, src, line, col) {
     else if (h.reachable === false) hp.innerHTML = `${dot("down", "hub offline")}hub silent`;
     else hp.innerHTML = `${dot("", "hub unchecked")}hub unchecked`;
 
+    renderVerdict();
     const needs = D.needs_you || [], nd = $("#needs");
     nd.hidden = !needs.length;
     nd.innerHTML = needs.map((n, i) => `<div class="item" data-need="${i}" role="button" tabindex="0"><span class="k">${esc(n.kind)}</span><span class="t">${esc(n.text)}</span></div>`).join("");
@@ -576,6 +576,35 @@ window.onerror = function (msg, src, line, col) {
     if (view === "tools") return (D.tools_found || []).filter(t => t.detected || t.connector).map(t => ({ kind: "tool", id: t.id, o: t }));
     if (view === "backups") return backupItems();
     return hubItems();
+  }
+  // ---------- the verdict: one sentence, the worst state on screen ----------
+  function renderVerdict() {
+    const v = $("#verdict"); if (!v || !D) return;
+    const hosts = ((D.fleet || {}).hosts || []), jobs = D.jobs || [], lanes = D.lanes || [], needs = D.needs_you || [];
+    const h = hub(), st = h.status || {}, bk = D.backups || {};
+    const short = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
+    const down = [], stale = [];
+    jobs.filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => down.push(`${short(j.label)} failed its last run`));
+    Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k, j]) => down.push(`${k} on the hub exited ${j.exit}`));
+    hosts.filter(x => x.net && x.net.online === false).forEach(x => down.push(`${x.host} is unreachable`));
+    (bk.lanes || []).forEach(l => { const a = l.pushed ? (Date.now() - new Date(l.pushed).getTime()) / 36e5 : null; if (a == null) return;
+      if (a > 48) down.push(`lane ${l.lane} has not pushed for ${age(a)}`); else if (a > 24) stale.push(`lane ${l.lane} last pushed ${age(a)} ago`); });
+    (D.harnesses || []).forEach(x => { const a = x.run_age_h != null ? x.run_age_h : runAge(x.last_run); const cad = ((x.plist || {}).interval_s || 900) / 3600;
+      if (a == null || x.state !== "connected" || x.read === "none" && !x.job_loaded) return;
+      if (a > 2 * cad * 4) down.push(`${x.name || x.id} mirror last ran ${age(a)} ago`); else if (a > cad * 4) stale.push(`${x.name || x.id} mirror last ran ${age(a)} ago`); });
+    if (bk.snapshots && bk.snapshots.newest_age_h != null && bk.snapshots.newest_age_h > 30) stale.push(`the daily snapshot is ${age(bk.snapshots.newest_age_h)} old`);
+    let state, text;
+    if (down.length) { state = "down"; text = `Attention: ${down[0]}${down.length > 1 ? ` and ${down.length - 1} more` : ""}.`; }
+    else if (needs.length) { state = "warn"; const first = needs[0]; text = `${needs.length} thing${needs.length === 1 ? "" : "s"} need${needs.length === 1 ? "s" : ""} you: ${first.t || first.text || first.title || first.kind || ""}.`; }
+    else if (stale.length) { state = "warn"; text = `Stale: ${stale[0]}.`; }
+    else {
+      state = "live";
+      const a = arch(), today = new Date().toISOString().slice(0, 10), landed = (a.cards || []).filter(c => c.created === today).length;
+      const fact = landed ? `${landed} card${landed === 1 ? "" : "s"} landed today` : st.judged != null ? `the judge kept ${num(st.new_proposals)} of ${num(st.judged)} last run` : `${hosts.filter(x => x.net && x.net.online).length} hosts up`;
+      text = `All good. ${fact}.`;
+    }
+    v.className = state; $("#vtext").textContent = text;
+    $("#vmeta").textContent = "refreshed " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
   // ---------- hosts by role: the hub, this machine, producers, the rest ----------
   function hostItems() {

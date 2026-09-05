@@ -14,7 +14,15 @@ echo "[1] compiling"
 xcrun swiftc -O -parse-as-library -framework Cocoa -framework WebKit -o "$BUILD/Sovereign" "$HERE/main.swift"
 
 echo "[2] icon"
-if [ ! -f "$BUILD/AppIcon.icns" ]; then
+PNG="$HERE/design/icon/AppIcon-1024.png"
+if [ -f "$PNG" ] && { [ ! -f "$BUILD/AppIcon.icns" ] || [ "$PNG" -nt "$BUILD/AppIcon.icns" ]; }; then
+  rm -rf "$BUILD/icon.iconset"; mkdir -p "$BUILD/icon.iconset"
+  for sz in 16 32 128 256 512; do
+    sips -z $sz $sz "$PNG" --out "$BUILD/icon.iconset/icon_${sz}x${sz}.png" >/dev/null
+    sips -z $((sz*2)) $((sz*2)) "$PNG" --out "$BUILD/icon.iconset/icon_${sz}x${sz}@2x.png" >/dev/null
+  done
+  iconutil -c icns "$BUILD/icon.iconset" -o "$BUILD/AppIcon.icns"
+elif [ ! -f "$BUILD/AppIcon.icns" ]; then
   rm -rf "$BUILD/icon.iconset"
   xcrun swift "$HERE/icon.swift" "$BUILD/icon.iconset" >/dev/null
   iconutil -c icns "$BUILD/icon.iconset" -o "$BUILD/AppIcon.icns"
@@ -27,6 +35,7 @@ cp "$BUILD/Sovereign" "$APP/Contents/MacOS/Sovereign"
 cp "$HERE/Info.plist" "$APP/Contents/Info.plist"
 cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$HERE"/ui/* "$APP/Contents/Resources/ui/"
+cp "$HERE/design/tokens.css" "$APP/Contents/Resources/ui/tokens.css"
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 echo "    $APP"
 

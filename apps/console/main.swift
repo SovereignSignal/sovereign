@@ -205,6 +205,13 @@ final class Bridge: NSObject, WKScriptMessageHandler {
 
 func log(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
 
+/// SOV_WINDOW=WxH sizes the window for a snapshot; QA only.
+func qaFrame(_ f: NSRect) -> NSRect {
+    guard let s = ProcessInfo.processInfo.environment["SOV_WINDOW"], let x = s.firstIndex(of: "x"),
+          let w = Double(s[..<x]), let h = Double(s[s.index(after: x)...]) else { return f }
+    return NSRect(x: f.origin.x, y: f.origin.y, width: w, height: h)
+}
+
 @main
 final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func webView(_ w: WKWebView, didFailProvisionalNavigation n: WKNavigation!, withError e: Error) { log("navigation failed: \(e)") }
@@ -267,13 +274,13 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
         let frame = qaGlance ? NSRect(x: 120, y: 120, width: glanceSize.width, height: glanceSize.height)
                              : NSRect(x: 120, y: 120, width: 900, height: 600)
-        window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: qaFrame(frame), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Sovereign"
         window.minSize = qaGlance ? glanceSize : NSSize(width: 720, height: 460)
         window.titlebarAppearsTransparent = true
         window.contentView = web
         window.isReleasedWhenClosed = false
-        if !qaGlance { window.setFrameAutosaveName("SovereignConsole") }
+        if !qaGlance && ProcessInfo.processInfo.environment["SOV_WINDOW"] == nil { window.setFrameAutosaveName("SovereignConsole") }
 
         applySettings()
         // Menu-bar-only installs start quiet: the panel appears when the crown is clicked.
