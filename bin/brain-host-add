@@ -104,7 +104,7 @@ print("  vault %s  keep %s (%s@%s)  template %s" % (VAULT, KEEP_URL, keep_user, 
 
 # ---- 1. can the hub reach it? ----
 try:
-    who = ssh(target, "echo $(hostname) $(whoami); command -v git >/dev/null && echo git-ok || echo git-missing")
+    who = ssh(target, "printf '%s %s %s' $(hostname) $(whoami) $(command -v git >/dev/null && echo git-ok || echo git-missing)")
 except SystemExit as e:
     raise SystemExit("cannot reach %s with the hub's key. On the machine, authorize the hub's key first (the bootstrap script does that), then retry.\n%s" % (target, e))
 print("  reach: %s" % who)
@@ -115,11 +115,11 @@ if "git-missing" in who:
 key_comment = "%s-lane@%s-%s" % (a.name, a.name, today.replace("-", ""))
 pub = ssh(target, """
 set -e; mkdir -p ~/.ssh; chmod 700 ~/.ssh
-if [ ! -f ~/.ssh/keep_ed25519 ]; then %s ssh-keygen -q -t ed25519 -N "" -C %s -f ~/.ssh/keep_ed25519; fi
-cat ~/.ssh/keep_ed25519.pub
-""" % ("" if a.apply else "echo DRY: would run:", shlex.quote(key_comment)))
+if [ ! -f ~/.ssh/keep_ed25519 ] && [ "%s" = "apply" ]; then ssh-keygen -q -t ed25519 -N "" -C %s -f ~/.ssh/keep_ed25519; fi
+if [ -f ~/.ssh/keep_ed25519.pub ]; then cat ~/.ssh/keep_ed25519.pub; else echo NOKEY; fi
+""" % ("apply" if a.apply else "dry", shlex.quote(key_comment)))
 if not pub.startswith("ssh-"):
-    print("  key: would generate ~/.ssh/keep_ed25519 on %s (dry run)" % a.name)
+    print("  key: would generate ~/.ssh/keep_ed25519 on %s (%s)" % (a.name, key_comment))
     pub = ""
 else:
     print("  key: %s" % pub.split()[-1])
