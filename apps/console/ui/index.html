@@ -328,6 +328,7 @@
         <button data-view="lanes" aria-pressed="false">Lanes</button>
         <button data-view="tools" aria-pressed="false">Tools</button>
         <button data-view="jobs" aria-pressed="false">Jobs</button>
+        <button data-view="backups" aria-pressed="false">Backups</button>
       </div>
       <span class="count" id="listcount"></span>
     </div>
@@ -573,7 +574,49 @@ window.onerror = function (msg, src, line, col) {
     if (view === "hosts") return ((D.fleet || {}).hosts || []).map(h => ({ kind: "host", id: h.host, o: h }));
     if (view === "lanes") return (D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }));
     if (view === "tools") return (D.tools_found || []).filter(t => t.detected || t.connector).map(t => ({ kind: "tool", id: t.id, o: t }));
+    if (view === "backups") return backupItems();
     return (D.jobs || []).map(j => ({ kind: "job", id: j.label, o: j }));
+  }
+  // ---------- backups: where copies are and how old, read-only ----------
+  function backupItems() {
+    const b = D.backups || {}, out = [];
+    const ageOf = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
+    const row = (id, o) => out.push({ kind: "backup", id, o });
+    (b.remotes || []).forEach(r => {
+      const a = ageOf(r.remote_head), ex = ((b.exchange || {})[r.name] || (b.exchange || {})[r.host] || {});
+      const local = r.host === "localhost" || r.host === "127.0.0.1";
+      const state = ex.fail && (!ex.ok || ex.fail > ex.ok) ? "down" : (r.ahead === 0 || (a != null && a < 3)) ? "live" : "warn";
+      row("bk:remote:" + r.name, { label: "brain · " + (local ? "canonical git on the hub" : "mirror on " + r.host),
+        desc: r.ahead === 0 ? "every commit is there" : `${r.ahead} commit${r.ahead === 1 ? "" : "s"} not there yet`,
+        state, stateText: state === "down" ? "push failing" : state === "live" ? "current" : "behind", tag: local ? "same machine" : "off-machine", age_h: a,
+        detail: [["remote", r.name + " (" + r.host + ")"], ["last commit there", r.remote_head], ["commits ahead", r.ahead], ["last push ok", ex.ok || "unknown"], ["last push failed", ex.fail || "never"]],
+        note: local ? "A copy on the hub's own disk protects against a bad commit, not against losing the machine." : "The off-machine copy of the whole history. The exchange job pushes every commit; behind means its next run has not fired yet." });
+    });
+    if (b.snapshots) {
+      const sn = b.snapshots, state = sn.newest_age_h == null ? "down" : sn.newest_age_h < 30 ? "live" : "warn";
+      row("bk:snapshots", { label: "brain · daily snapshot", desc: sn.count + " days kept on the hub's disk", state, stateText: state === "live" ? "current" : state === "warn" ? "stale" : "none", tag: "same disk", age_h: sn.newest_age_h,
+        detail: [["folder", sn.dir], ["newest", sn.newest], ["days kept", sn.count], ["archive tarballs", b.archive ? b.archive.count + ", newest " + age(b.archive.newest_age_h) + " ago" : "none"]],
+        note: "Rsync snapshots with hard links, one per day, on the same disk as the vault: a fast restore of yesterday, no protection if the disk dies. A target on another machine is what track 8 adds." });
+    }
+    const ob = D.obsidian;
+    if (ob) row("bk:obsidian", { label: "brain · other devices", desc: "Obsidian Sync carries the notes to every signed-in device", state: ob.sync === "synced" ? "live" : ob.sync ? "warn" : "", stateText: ob.sync || "unknown", tag: "notes only", age_h: null,
+      detail: [["state", ob.sync], ["vault", ob.vault_name], ["carries", "markdown only: no git history, no lane state, no spreadsheets or code"]],
+      note: "A live copy of the notes, not of the brain: governance files and anything that is not markdown never cross it." });
+    (b.lanes || []).forEach(l => {
+      const p = ageOf(l.pushed), m = ageOf(l.merged), state = p == null ? "" : p < 48 ? "live" : "warn";
+      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: "on the keep as lane/" + l.lane + (m != null ? " · merged into main " + age(m) + " ago" : ""), state, stateText: p == null ? "never pushed" : "pushed " + age(p) + " ago", tag: "git", age_h: p,
+        detail: [["last push to the keep", l.pushed || "never"], ["last merge into main", l.merged || "never"], ["keep", l.keep]],
+        note: "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
+    });
+    (b.hosts || []).forEach(h => {
+      const state = !h.reachable ? "" : h.last_dump_age_h == null ? "down" : h.last_dump_age_h < 48 ? "live" : "warn";
+      row("bk:host:" + h.host, { label: h.host + " · VM " + h.vmid + " on " + h.node,
+        desc: !h.reachable ? "node not reachable from here" : h.last_dump_age_h == null ? (h.jobs ? "backup job exists, no dump yet" : "no backup job on the node") : "last dump " + age(h.last_dump_age_h) + " ago",
+        state, stateText: state === "down" ? "unprotected" : state === "live" ? "backed up" : state === "warn" ? "stale" : "unknown", tag: "vm image", age_h: h.last_dump_age_h,
+        detail: [["node", h.node], ["vmid", h.vmid], ["backup jobs on the node", h.jobs == null ? "unknown" : h.jobs], ["last dump", h.last_dump_age_h == null ? "none" : age(h.last_dump_age_h) + " ago"]],
+        note: "The lane is safe (it is git); the machine is not: a VM with no backup job is rebuilt from scratch if the node dies. Proxmox: Datacenter › Backup › Add, one job for every VM, target the NAS when it is up." });
+    });
+    return out;
   }
   const selectable = (it) => it.kind !== "head" && it.kind !== "quiet";
 
@@ -621,6 +664,14 @@ window.onerror = function (msg, src, line, col) {
         <span class="strip">${strip}</span>
         ${contribCell((o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0))}
         <span class="num" style="width:40px">${age(newest)}</span>
+        <span class="chev">›</span>`;
+    }
+    if (it.kind === "backup") {
+      return `${dot(o.state, o.stateText)}
+        <span class="name" style="width:230px">${esc(o.label)}</span>
+        <span class="desc">${esc(o.desc)}</span>
+        <span class="tag ${o.state === "live" ? "on" : o.state === "down" ? "off" : o.state === "warn" ? "mid" : ""}">${esc(o.stateText)}</span>
+        <span class="num" style="width:40px">${o.age_h == null ? "–" : age(o.age_h)}</span>
         <span class="chev">›</span>`;
     }
     if (it.kind === "lane") {
@@ -809,6 +860,12 @@ window.onerror = function (msg, src, line, col) {
         <div class="sect"><h2>Lanes · ${(o.lanes || []).length}</h2><div class="chips">
           ${(o.lanes || []).map(l => `<button class="chip" data-goto="lane:${esc(l.lane)}">${dot(freshDot(l.newest_age_h), "")}${esc(l.lane)} ${age(l.newest_age_h)}</button>`).join("") || `<span class="prose" style="color:var(--muted)">none</span>`}</div></div>
         ${m.identity ? `<div class="sect"><h2>Identity</h2><div class="prose">Sessions here default to <span class="mono">${esc(m.identity)}</span>.</div></div>` : ""}`;
+      return;
+    }
+    if (it.kind === "backup") {
+      box.innerHTML = head(esc(o.label), esc(o.desc), o.tag) + `
+        <div class="sect"><h2>Where it stands</h2>${kv(o.detail.map(([k, v]) => [k, v == null ? "–" : String(v)]))}</div>
+        <div class="sect"><h2>What it means</h2><div class="prose">${esc(o.note)}</div></div>`;
       return;
     }
     if (it.kind === "lane") {
@@ -1114,7 +1171,7 @@ window.onerror = function (msg, src, line, col) {
     if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); openSettings(); }
     if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !pinned) { closeInspector(); commit(); } }
     if (typing || e.metaKey || e.ctrlKey) return;
-    if (/^[1-5]$/.test(e.key)) setView(["hosts", "archive", "lanes", "tools", "jobs"][+e.key - 1]);
+    if (/^[1-6]$/.test(e.key)) setView(["hosts", "archive", "lanes", "tools", "jobs", "backups"][+e.key - 1]);
     if (e.key === "p") setPinned(!pinned);
   });
 

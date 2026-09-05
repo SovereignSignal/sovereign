@@ -313,6 +313,52 @@ for cand in glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json"
 out["knowledge"] = {sub: len(glob.glob(os.path.join(root, "knowledge", sub, "*.md"))) for sub in ("entities", "concepts", "syntheses")}
 try:
     out["hub_host"] = __import__("socket").gethostname().split(".")[0]
+    # ---- backups: where copies of the brain and the lanes are, and how old ----
+    import subprocess
+    def git(*args):
+        try: return subprocess.run(["git", "-C", root] + list(args), capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception: return ""
+    bk = {"remotes": [], "lanes": [], "snapshots": None, "archive": None, "exchange": {}}
+    for line in git("remote", "-v").splitlines():
+        if not line.endswith("(fetch)"): continue
+        name, url = line.split()[:2]
+        host = re.sub(r"^[a-z]+://", "", url).split("/")[0].split("@")[-1].split(":")[0]
+        head = git("log", "-1", "--format=%cI", name + "/main")
+        ahead = git("rev-list", "--count", name + "/main..main") or "?"
+        bk["remotes"].append({"name": name, "host": host, "remote_head": head or None, "ahead": int(ahead) if ahead.isdigit() else None})
+    keep = None
+    try: keep = open(os.path.expanduser("~/.brain-keep")).read().strip()
+    except OSError: pass
+    for lm in sorted(glob.glob(os.path.join(root, "raw", "workspaces", "*", "LANE.md"))):
+        lane = os.path.basename(os.path.dirname(lm))
+        try: txt = open(lm, errors="ignore").read()
+        except OSError: continue
+        if not re.search(r"^write:\s*git-branch", txt, re.M): continue
+        pushed = git("log", "-1", "--format=%cI", "refs/remotes/%s/lane/%s" % (keep or "", lane)) if keep else ""
+        merged = git("log", "-1", "--format=%cI", "main", "--", "raw/workspaces/" + lane)
+        bk["lanes"].append({"lane": lane, "pushed": pushed or None, "merged": merged or None, "keep": keep})
+    snap_root = None
+    try: snap_root = os.path.expanduser(open(os.path.expanduser("~/.brain-snapshots")).read().strip())
+    except OSError:
+        cand = os.path.expanduser("~/Backups/vault-snapshots"); snap_root = cand if os.path.isdir(cand) else None
+    if snap_root and os.path.isdir(snap_root):
+        done = sorted(d for d in os.listdir(snap_root) if re.match(r"^\d{4}-\d{2}-\d{2}$", d) and os.path.exists(os.path.join(snap_root, d, ".snapshot-complete")))
+        bk["snapshots"] = {"dir": snap_root, "count": len(done), "newest": done[-1] if done else None,
+                           "newest_age_h": round((now - os.path.getmtime(os.path.join(snap_root, done[-1], ".snapshot-complete"))) / 3600, 1) if done else None,
+                           "same_disk": True}
+    tars = sorted(glob.glob(os.path.join(root, "archive", "*.tar.gz")), key=os.path.getmtime)
+    if tars:
+        bk["archive"] = {"count": len(tars), "newest": os.path.basename(tars[-1]), "newest_age_h": round((now - os.path.getmtime(tars[-1])) / 3600, 1)}
+    logp = os.path.expanduser("~/Library/Logs/brain-exchange-sync.log")
+    if os.path.exists(logp):
+        try:
+            for line in open(logp, errors="ignore").read().splitlines()[-400:]:
+                m = re.match(r"(\S+)\s+out: vault -> (\S+) ok", line)
+                if m: bk["exchange"][m.group(2)] = {"ok": m.group(1)}
+                m = re.match(r"(\S+)\s+OUT FAIL: vault -> (\S+)", line)
+                if m: bk["exchange"].setdefault(m.group(2), {})["fail"] = m.group(1)
+        except OSError: pass
+    out["backups"] = bk
 except Exception:
     pass
 for base in ("tools", "workspaces"):
@@ -509,6 +555,56 @@ def fleet_view(root, contrib=None):
     hosts_sorted = sorted(hosts.values(), key=lambda r: (0 if r["host"] == me else 1, -len(r["harnesses"]), r["host"]))
     return {"hosts": hosts_sorted, "registry": registry_path, "tailscale": bool(peers),
             "bootstrap": bootstrap_handoff() if any(r.get("vm") for r in hosts.values()) else None}
+
+
+def backups_view(root, hub, fleet):
+    """Backup posture, read-only: the hub's copies of the brain (from the hub script), the
+    producers' lanes on the keep, and for hosts that live on a hypervisor node this machine
+    can reach, whether the node backs the VM up (Proxmox: vzdump jobs and dumps)."""
+    bk = dict((hub.get("backups") or {}))
+    hosts = []
+    cache_p = os.path.expanduser("~/.cache/sovereign/hypervisor-backups.json")
+    try: cache = json.load(open(cache_p))
+    except Exception: cache = {}
+    fresh = (time.time() - cache.get("_at", 0)) < 900
+    probed = {}
+    for h in fleet.get("hosts", []):
+        meta = h.get("meta") or {}
+        m = re.search(r"Proxmox node (\S+)", (meta.get("where") or "") + " " + (meta.get("kind") or ""))
+        vm = re.search(r"\bVM (\d+)\b", meta.get("kind") or "")
+        if not (m and vm):
+            continue
+        node, vmid = m.group(1).strip("()"), vm.group(1)
+        if node not in probed:
+            if fresh and node in cache:
+                probed[node] = cache[node]
+            else:
+                try:
+                    o = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node,
+                                        "grep -c '^vzdump' /etc/pve/jobs.cfg 2>/dev/null; ls -t --time-style=+%s -l /var/lib/vz/dump/ 2>/dev/null | awk '{print $6, $7}' | grep -E 'vma|tar' | head -50"],
+                                       capture_output=True, text=True, timeout=12).stdout.splitlines()
+                    jobs = int(o[0]) if o and o[0].strip().isdigit() else 0
+                    dumps = {}
+                    for line in o[1:]:
+                        parts = line.split()
+                        if len(parts) == 2:
+                            mm = re.search(r"vzdump-(?:qemu|lxc)-(\d+)-", parts[1])
+                            if mm: dumps.setdefault(mm.group(1), int(parts[0]))
+                    probed[node] = {"jobs": jobs, "dumps": dumps, "reachable": True}
+                except Exception:
+                    probed[node] = {"jobs": None, "dumps": {}, "reachable": False}
+                cache[node] = probed[node]
+        pn = probed[node]
+        last = pn["dumps"].get(vmid)
+        hosts.append({"host": h["host"], "node": node, "vmid": vmid, "reachable": pn["reachable"], "jobs": pn["jobs"],
+                      "last_dump_age_h": round((time.time() - last) / 3600, 1) if last else None})
+    if probed:
+        cache["_at"] = time.time()
+        try:
+            os.makedirs(os.path.dirname(cache_p), exist_ok=True); json.dump(cache, open(cache_p, "w"))
+        except OSError: pass
+    bk["hosts"] = hosts
+    return bk
 
 
 def local_vms():
@@ -825,6 +921,7 @@ def main():
     out["obsidian"] = obs
 
     out["fleet"] = fleet_view(root, hub_contrib)
+    out["backups"] = backups_view(root, out.get("hub") or {}, out["fleet"])
 
     # the archive itself, from the cards (no hub call; the trusted layer syncs everywhere)
     try:
