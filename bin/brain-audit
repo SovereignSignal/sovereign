@@ -426,6 +426,37 @@ else:
     add("gears", "- no gears.json in the lane — everything is implicitly ask-first")
 
 # ---------- 8: workstream front doors ----------
+# A desk is judged by everything that feeds it, not by its own log alone: files anywhere in
+# its folder, and lanes whose LANE.md declares `workstreams: [name]`. Owner's call
+# (2026-09-05): a desk whose work arrives through a producer lane is active, not dormant.
+def newest_mtime(root, skip=("LANE.md",)):
+    best = None
+    for dp, dn, fn in os.walk(root):
+        dn[:] = [x for x in dn if not x.startswith(".") and x != "node_modules"]
+        for f in fn:
+            if f.startswith(".") or f in skip:
+                continue
+            try:
+                t = os.path.getmtime(os.path.join(dp, f))
+            except OSError:
+                continue
+            if best is None or t > best:
+                best = t
+    return best
+
+ws_lanes = {}
+for lane_rel in lanes:
+    try:
+        lfm = frontmatter(open(os.path.join(VAULT, lane_rel, "LANE.md"), encoding="utf-8", errors="ignore").read()) or {}
+    except OSError:
+        continue
+    decl = (lfm.get("workstreams") or "").split("#")[0].strip().strip("[]")
+    for w in [x.strip().strip("'\"") for x in decl.split(",") if x.strip()]:
+        ws_lanes.setdefault(w, []).append(lane_rel)
+
+def days_ago(t):
+    return (TODAY - date.fromtimestamp(t)).days
+
 if os.path.isdir(WS):
     for w in sorted(os.listdir(WS)):
         d = os.path.join(WS, w)
@@ -436,9 +467,19 @@ if os.path.isdir(WS):
         if missing:
             add("workstreams", f"- `workstreams/{w}/` — missing {' + '.join(missing)} (the standard's front door)")
             continue
-        age = (TODAY - date.fromtimestamp(os.path.getmtime(lg))).days
-        if age > a.ws_stale:
-            add("workstreams", f"- `workstreams/{w}/` — log.md untouched for {age}d (dormant? archive or revive)")
+        age = days_ago(os.path.getmtime(lg))
+        if age <= a.ws_stale:
+            continue
+        fed = []
+        t = newest_mtime(d)
+        if t is not None and days_ago(t) <= a.ws_stale:
+            fed.append(f"files in the folder {days_ago(t)}d ago")
+        for lane_rel in ws_lanes.get(w, []):
+            t = newest_mtime(os.path.join(VAULT, lane_rel))
+            if t is not None and days_ago(t) <= a.ws_stale:
+                fed.append(f"{lane_rel.split('/')[-1]} lane {days_ago(t)}d ago")
+        if not fed:
+            add("workstreams", f"- `workstreams/{w}/` — log.md untouched for {age}d and nothing feeds the desk (dormant? archive or revive)")
 
 # ---------- local-inference passes ----------
 def ask(system, user):
