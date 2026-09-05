@@ -139,6 +139,12 @@
     "~/.config/obsidian"
    ],
    "note": "the vault's own reader; the console uses its CLI for sync state and Open in Obsidian, nothing to mirror"
+  },
+  {
+   "id": "notion",
+   "name": "Notion",
+   "connector": "notion",
+   "detect": []
   }
  ]
 }

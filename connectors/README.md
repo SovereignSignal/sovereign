@@ -28,6 +28,7 @@ A quick way to find a suspected store: pick one distinctive artifact you know th
 
 - `cowork-project-memory/` — mirrors every Claude Desktop project's memory store into a machine-scoped lane. This is the recipe that motivated the pattern: project memory files (`feedback_*.md`, `project_*.md`, `reference_*.md`) are pre-distilled knowledge your curator will love.
 - `generic-dir/` — mirror any directory into any lane; copy it and set two paths. The Claude/Codex documents-folder pipes are just this recipe with the paths filled in.
+- `harness/notion/`: the official-API Notion mirror as a connector. Connect it from the app's Tools view or with `sov connect notion`; one integration token, every connected page and database, daily, in the export's own folder layout. The script is `bin/brain-mirror-notion`.
 
 Each recipe is a ~15-line shell script plus a schedule file. No daemons, no dependencies beyond `rsync`.
 
