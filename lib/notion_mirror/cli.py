@@ -5,11 +5,13 @@
   (default)    delta since the cursor; promoted to full when the last full walk is older than six days
   --dry-run    with either run: print what would change and the oracle match rate; writes nothing
   --status     print the resolved configuration and the state files
+  --coverage DIR   compare a full Notion export folder with what the token can see; writes nothing
 
 Exit codes: 0 ok, 1 errors or a refused run, 2 check found missing roots, 64 configuration.
 """
 import argparse
 import sys
+from pathlib import Path
 
 from .api import NotionClient
 from .config import ConfigError, load_config
@@ -26,6 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--full", action="store_true", help="walk everything, reconcile moves and deletions")
     ap.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     ap.add_argument("--status", action="store_true", help="print configuration and state, run nothing")
+    ap.add_argument("--coverage", metavar="DIR", help="compare a full Notion export folder with what the token can see; writes nothing")
     return ap
 
 
@@ -52,6 +55,13 @@ def _print_check(result: dict) -> None:
         print("  %s  %s" % (root_id, title or "(untitled)"))
     missing = result["missing_roots"]
     print("missing roots: %s" % (", ".join(missing) if missing else "none"))
+
+
+def _print_coverage(result: dict) -> None:
+    print("coverage: export %d, reachable %d, unreachable %d, new since export %d" % (
+        result["export_total"], result["reachable"], result["unreachable"], result["new_since_export"]))
+    for folder, count, samples in result["groups"]:
+        print("  %5d  %s  e.g. %s" % (count, folder, "; ".join(samples)))
 
 
 def _print_list(label: str, rows) -> None:
@@ -91,6 +101,10 @@ def main(argv=None, client_factory=None) -> int:
 
 def _run(args, cfg, client, state) -> int:
     mirror = Mirror(client, cfg, state)
+
+    if args.coverage:
+        _print_coverage(mirror.coverage(Path(args.coverage)))
+        return 0
 
     if args.check:
         result = mirror.check()

@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from notion_mirror.model import item_from, parent_of, plain_text, title_of  # noqa: E402
+from notion_mirror.model import date_mention_text, item_from, parent_of, plain_text, title_of  # noqa: E402
 
 PAGE = {
     "object": "page", "id": "3ce000c0-d590-81b6-bd08-c412ab652353", "last_edited_time": "2026-09-01T16:00:00.000Z",
@@ -29,6 +29,34 @@ class Model(unittest.TestCase):
     def test_plain_text_joins_segments(self):
         self.assertEqual(plain_text([{"plain_text": "a"}, {"plain_text": "b"}]), "ab")
         self.assertEqual(plain_text(None), "")
+
+    def test_date_mention_text_date_only(self):
+        mention = {"type": "date", "date": {"start": "2026-06-18"}}
+        self.assertEqual(date_mention_text(mention, "2026-06-18"), "@June 18, 2026")
+
+    def test_date_mention_text_with_time(self):
+        mention = {"type": "date", "date": {"start": "2026-08-13T15:00:00.000-07:00"}}
+        self.assertEqual(date_mention_text(mention, "August 13, 2026 3:00 PM"), "@August 13, 2026 3:00 PM")
+
+    def test_date_mention_text_unparseable_falls_back_to_plain_text(self):
+        mention = {"type": "date", "date": {"start": "not-a-date"}}
+        self.assertEqual(date_mention_text(mention, "@Some Text"), "@Some Text")
+        self.assertEqual(date_mention_text(mention, "Some Text"), "@Some Text")
+
+    def test_plain_text_renders_date_mentions(self):
+        seg = {"type": "mention", "plain_text": "2026-06-18",
+               "mention": {"type": "date", "date": {"start": "2026-06-18"}}}
+        self.assertEqual(plain_text([seg]), "@June 18, 2026")
+
+    def test_title_of_renders_date_mention_in_title(self):
+        title = [
+            {"type": "text", "plain_text": "Owner + Nick - "},
+            {"type": "mention", "plain_text": "2026-06-18",
+             "mention": {"type": "date", "date": {"start": "2026-06-18"}}},
+            {"type": "text", "plain_text": " "},
+        ]
+        obj = {"object": "page", "properties": {"title": {"type": "title", "title": title}}}
+        self.assertEqual(title_of(obj), "Owner + Nick - @June 18, 2026 ")
 
     def test_title_of_page_and_data_source(self):
         self.assertEqual(title_of(PAGE), "Health Check")

@@ -93,6 +93,18 @@ class Cli(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("errors 1", out)
 
+    def test_coverage_prints_groups_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state, client, vault = setup(tmp)
+            export = Path(tmp) / "export"
+            (export / "Private & Shared" / "Gone").mkdir(parents=True)
+            (export / "Private & Shared" / "Gone" / ("Page %s.md" % hid(9))).write_text("x")
+            code, out, err = run(["--coverage", str(export), "--state-dir", str(state)], client)
+            self.assertEqual(code, 0, err)
+            self.assertIn("unreachable 1", out)
+            self.assertIn("Private & Shared/Gone", out)
+            self.assertEqual(list((vault / "raw" / "tools" / "Notion").rglob("*.md")), [])
+
     def test_corrupt_manifest_is_a_failed_status_not_a_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:
             state, client, vault = setup(tmp)

@@ -10,8 +10,8 @@ import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
 from .config import norm_id
-from .model import plain_text
-from .paths import folder_for, sanitize
+from .model import date_mention_text, plain_text
+from .paths import folder_for, sanitize_filename
 
 INDENT = "    "
 LINK_SAFE = "/()!*'~,-._"
@@ -54,6 +54,8 @@ def render_rich_text(rich, links: Links, from_path: str = "") -> str:
                 if href:
                     out.append("[%s](%s)" % (text, href))
                     continue
+            elif mention.get("type") == "date":
+                text = date_mention_text(mention, text)
         elif seg.get("type") == "equation":
             out.append("$%s$" % text)
             continue
@@ -82,7 +84,7 @@ def _file_target(block: dict, body: dict, page_path: str, attachments: list) -> 
     url = (body.get("file") or body.get("file_upload") or {}).get("url", "")
     raw_name = body.get("name") or posixpath.basename(urllib.parse.urlsplit(url).path) or block.get("id", "file")
     name = urllib.parse.unquote(raw_name)
-    name = sanitize(name)
+    name = sanitize_filename(name)
     if not name or name == "." or name == "..":
         name = block.get("id", "file")
     dest = posixpath.join(folder_for(page_path), name.replace(" ", "_"))

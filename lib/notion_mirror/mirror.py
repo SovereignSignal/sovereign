@@ -151,11 +151,11 @@ class Mirror:
             self._schemas[ds_id] = (self.client.data_source(ds_id) or {}).get("properties") or {}
         return self._schemas[ds_id]
 
-    def _disk_index(self) -> Dict[str, str]:
-        """id -> lane-relative path for every file on disk that carries a 32-hex id."""
+    def _index_dir(self, root: Path) -> Dict[str, str]:
+        """id -> path relative to root for every file under it that carries a 32-hex id."""
         index: Dict[str, str] = {}
-        lane = str(self.cfg.lane_dir)
-        for root, _dirs, files in os.walk(lane):
+        root_str = str(root)
+        for dirpath, _dirs, files in os.walk(root_str):
             for name in files:
                 if name.endswith("_all.csv"):
                     base = name[:-8]
@@ -165,8 +165,12 @@ class Mirror:
                     continue
                 candidate = base.rsplit(" ", 1)[-1]
                 if len(candidate) == 32 and set(candidate) <= HEX:
-                    index[candidate] = os.path.relpath(os.path.join(root, name), lane)
+                    index[candidate] = os.path.relpath(os.path.join(dirpath, name), root_str)
         return index
+
+    def _disk_index(self) -> Dict[str, str]:
+        """id -> lane-relative path for every file on disk that carries a 32-hex id."""
+        return self._index_dir(self.cfg.lane_dir)
 
     def _inside_lane(self, target: Path) -> bool:
         """Every path the mirror writes or removes is computed from titles, so prove it
@@ -195,6 +199,41 @@ class Mirror:
             "kinds": kinds,
             "roots": roots,
             "missing_roots": sorted(i for i in self.cfg.required_roots if i not in roots),
+        }
+
+    # -- coverage -------------------------------------------------------------------
+
+    def _fold(self, name: str) -> str:
+        """The stem of a file name with its trailing 32-hex id stripped, or the name
+        unchanged when it is a plain folder name (no id-bearing extension)."""
+        if name.endswith("_all.csv"):
+            name = name[:-8]
+        elif name.endswith(".md"):
+            name = name[:-3]
+        else:
+            return name
+        return name.rsplit(" ", 1)[0]
+
+    def coverage(self, export_dir: Path) -> dict:
+        """What a full export holds that the walk cannot see, grouped by top folder. Read-only."""
+        export = self._index_dir(Path(export_dir))
+        items = self._walk()
+        unreachable = {i: p for i, p in export.items() if i not in items}
+        groups: Dict[str, List[str]] = {}
+        for path in sorted(unreachable.values()):
+            parts = path.split("/")
+            # A file sitting directly under a top folder (no folder of its own between them)
+            # still belongs to that top folder's group: fold its own stem, id stripped, in as
+            # the second key component, the same as a real subfolder name would be.
+            key = self._fold(parts[0]) if len(parts) < 2 else "%s/%s" % (parts[0], self._fold(parts[1]))
+            groups.setdefault(key, []).append(self._fold(posixpath.basename(path)))
+        ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        return {
+            "export_total": len(export),
+            "reachable": len(export) - len(unreachable),
+            "unreachable": len(unreachable),
+            "groups": [(key, len(stems), sorted(stems)[:3]) for key, stems in ordered],
+            "new_since_export": sum(1 for i in items if i not in export),
         }
 
     # -- full -----------------------------------------------------------------------

@@ -126,6 +126,29 @@ class Harness(unittest.TestCase):
                 self.assertIn("--lane", r.stderr)
                 self.assertFalse((home / ".notion-mirror").exists())
 
+    def test_stale_status_from_previous_importer_is_parked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, vault = brain(tmp)
+            (home / ".notion-mirror").mkdir()
+            (home / ".notion-mirror" / "last-status").write_text("OK 2026-01-01 00:00:00 old importer")
+            r = run(["--apply", "--no-launchd", "--secret", "ntn_test_token"], home, vault)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertFalse((home / ".notion-mirror" / "last-status").exists())
+            self.assertEqual((home / ".notion-mirror" / "last-status.pre-api").read_text(), "OK 2026-01-01 00:00:00 old importer")
+            self.assertIn("parked", r.stdout)
+
+    def test_stale_status_left_alone_when_last_success_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, vault = brain(tmp)
+            (home / ".notion-mirror").mkdir()
+            (home / ".notion-mirror" / "last-status").write_text("OK 2026-01-01 00:00:00 old importer")
+            (home / ".notion-mirror" / "last-success").write_text("2026-01-01T00:00:00Z")
+            r = run(["--apply", "--no-launchd", "--secret", "ntn_test_token"], home, vault)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertTrue((home / ".notion-mirror" / "last-status").exists())
+            self.assertFalse((home / ".notion-mirror" / "last-status.pre-api").exists())
+            self.assertNotIn("parked", r.stdout)
+
     def test_scripts_parse(self):
         for name in ("install.sh", "mirror.sh", "watchdog.sh"):
             r = subprocess.run(["bash", "-n", str(ROOT / "connectors" / "harness" / "notion" / name)], capture_output=True, text=True)

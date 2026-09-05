@@ -15,12 +15,23 @@ import re
 from typing import Callable, Dict, List, Optional, Tuple
 
 MAX_STEM = 50
-_UNSAFE = str.maketrans({c: " " for c in ':/\\?*"<>|'})
+# Unsafe for a title-derived path stem: the path-reserved characters, plus a dot (the
+# export renders a dot in a title as a space, observed on ston.fi, Google.org, Inc.).
+_UNSAFE = str.maketrans({c: " " for c in ':/\\?*"<>|.'})
+# Unsafe for an attachment file name: the path-reserved characters only, no dot, so an
+# extension (or any other dot the file legitimately carries) survives sanitizing.
+_FILE_UNSAFE = str.maketrans({c: " " for c in ':/\\?*"<>|'})
 _SPACES = re.compile(r"\s+")
 
 
 def sanitize(title: str) -> str:
     return _SPACES.sub(" ", (title or "").translate(_UNSAFE)).strip()
+
+
+def sanitize_filename(name: str) -> str:
+    """Like sanitize(), for a file name rather than a title: keeps dots so an
+    attachment's extension (or any other dot it carries) is not lost."""
+    return _SPACES.sub(" ", (name or "").translate(_FILE_UNSAFE)).strip()
 
 
 def short_id(id32: str) -> str:

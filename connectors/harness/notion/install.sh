@@ -97,6 +97,13 @@ EOF
 umask 022  # mirror.env is written 600 by the writer itself; everything after it is ordinary
 say "[env] $STATE_DIR/mirror.env written (mode 600)"
 
+# a status line from the retired import script would otherwise show as this harness's
+# own status until its first run; park it once, only when this harness has never run
+if [ -f "$STATE_DIR/last-status" ] && [ ! -f "$STATE_DIR/last-success" ]; then
+  mv "$STATE_DIR/last-status" "$STATE_DIR/last-status.pre-api"
+  say "[state] previous importer status parked as last-status.pre-api"
+fi
+
 # ask Notion what the token can see; a test can stub this
 if [ -n "${SOV_TEST_CHECK_OUTPUT:-}" ]; then
   check_out="$SOV_TEST_CHECK_OUTPUT"; check_rc=0

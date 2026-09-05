@@ -424,5 +424,30 @@ class DeltaRun(unittest.TestCase):
             self.assertTrue((lane / P6).exists())
 
 
+class Coverage(unittest.TestCase):
+    def test_groups_unreachable_export_files_by_top_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            export = Path(tmp) / "export"
+            for rel in (P1, P2, P4,
+                        "Private & Shared/Old Tree %s.md" % hid(70),
+                        "Private & Shared/Old Tree/Deep one %s.md" % hid(71),
+                        "Private & Shared/Old Tree/Deep two %s.md" % hid(72),
+                        "Private & Shared/Old Tree/Deep two/Deeper %s.md" % hid(73),
+                        "Teamspace/Sub/Page %s.md" % hid(80),
+                        "Private & Shared/Old Tree/shot.png"):
+                (export / rel).parent.mkdir(parents=True, exist_ok=True)
+                (export / rel).write_text("x")
+            out = Mirror(client, cfg, State(cfg.state_dir)).coverage(export)
+            self.assertEqual(out["export_total"], 8)
+            self.assertEqual(out["reachable"], 3)
+            self.assertEqual(out["unreachable"], 5)
+            self.assertEqual([(g[0], g[1]) for g in out["groups"]],
+                             [("Private & Shared/Old Tree", 4), ("Teamspace/Sub", 1)])
+            self.assertEqual(out["groups"][0][2][:2], ["Deep one", "Deep two"])
+            self.assertEqual(out["new_since_export"], 3)  # P3 (database), P5, P6 exist in the walk, not in the export
+            self.assertEqual(paths_of(lane), ["LANE.md"])
+
+
 if __name__ == "__main__":
     unittest.main()
