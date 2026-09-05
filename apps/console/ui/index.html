@@ -960,9 +960,16 @@ window.onerror = function (msg, src, line, col) {
     renderInspector();
     if (open) { openInspector(); commit(); }
   }
+  // Scroll the list pane only. scrollIntoView also scrolls overflow:hidden ancestors in
+  // WebKit, which pushed the header and the switch out of the window (no way back).
+  function scrollRowsTo(el, nearest) {
+    const r = $("#rows"), rb = r.getBoundingClientRect(), eb = el.getBoundingClientRect();
+    if (nearest && eb.top >= rb.top && eb.bottom <= rb.bottom) return;
+    r.scrollTop += eb.top - rb.top - (nearest ? Math.max(0, rb.height - eb.height) / 2 : 0);
+  }
   function setView(v, opts) {
     view = v; sel = null; settingsOpen = false; renderList(); renderInspector();
-    if (opts && opts.section) { const h = document.querySelector('[data-dash="' + opts.section + '"], .row.head[data-section="' + opts.section + '"]'); if (h) h.scrollIntoView({ block: "start" }); }
+    if (opts && opts.section) { const h = document.querySelector('[data-dash="' + opts.section + '"], .row.head[data-section="' + opts.section + '"]'); if (h) scrollRowsTo(h); }
     if (opts && opts.open) { const first = items().find(selectable); if (first) return select(first.kind, first.id, true); }
     if (!(opts && opts.silent)) commit();
   }
@@ -1059,7 +1066,7 @@ window.onerror = function (msg, src, line, col) {
     const open = $("#inspector").classList.contains("open") || pinned;
     select(list[i].kind, list[i].id, open);
     const el = document.querySelector('.row[data-id="' + CSS.escape(list[i].id) + '"]');
-    if (el) el.scrollIntoView({ block: "nearest" });
+    if (el) scrollRowsTo(el, true);
   });
 
   document.addEventListener("keydown", (e) => {
