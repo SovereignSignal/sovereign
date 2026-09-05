@@ -112,6 +112,17 @@ class FullRun(unittest.TestCase):
             self.assertEqual(len(rep.would_write), 6)
             self.assertFalse((cfg.state_dir / "state" / "manifest.json").exists())
 
+    def test_dry_run_reports_disk_files_the_walk_did_not_claim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            stray = lane / ("Private & Shared/Old %s.md" % hid(77))
+            stray.parent.mkdir(parents=True, exist_ok=True)
+            stray.write_text("# Old\n")
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full(dry_run=True)
+            self.assertEqual(rep.unclaimed, ["Private & Shared/Old %s.md" % hid(77)])
+            self.assertEqual(rep.oracle_total, 6)
+            self.assertIn("unclaimed on disk 1", rep.summary())
+
     def test_skip_files_mode_downloads_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg, client, lane = workspace(tmp, files="skip")

@@ -58,6 +58,7 @@ class Report:
     would_write: List[str] = field(default_factory=list)
     would_move: List[Tuple[str, str]] = field(default_factory=list)
     would_delete: List[str] = field(default_factory=list)
+    unclaimed: List[str] = field(default_factory=list)
 
     def summary(self) -> str:
         text = "%s%s: wrote %d, unchanged %d, moved %d, deleted %d, attachments %d, orphans %d, errors %d, warnings %d" % (
@@ -65,6 +66,8 @@ class Report:
             self.attachments, self.orphans, len(self.errors), len(self.warnings))
         if self.oracle_total:
             text += "; oracle %d/%d" % (self.oracle_matched, self.oracle_total)
+        if self.unclaimed:
+            text += "; unclaimed on disk %d" % len(self.unclaimed)
         if self.refused:
             text += "; REFUSED: " + self.refused
         return text
@@ -204,6 +207,9 @@ class Mirror:
                 rep.oracle_matched += 1
             elif len(rep.mismatches) < 200:
                 rep.mismatches.append((i, p, disk.get(i, "")))
+        # files carrying an id the walk never produced: a legacy export, or a page the token
+        # can no longer see. The operator decides; the mirror only names them.
+        rep.unclaimed = sorted(path for i, path in disk.items() if i not in items)
 
         changed = [i for i, it in items.items()
                    if it["kind"] == "database" or i not in old or old[i].get("last_edited") != it["last_edited"]
