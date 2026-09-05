@@ -135,6 +135,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.async { App.shared.showConsole(place: d["place"] as? [String: Any]) }
         case "closeGlance":
             DispatchQueue.main.async { App.shared.popover?.performClose(nil) }
+        case "verdict":
+            if let st = d["state"] as? String { DispatchQueue.main.async { (NSApp.delegate as? App)?.setVerdictState(st) } }
+            if let dir = ProcessInfo.processInfo.environment["SOV_STATUS_SNAPSHOT"], !dir.isEmpty {
+                DispatchQueue.main.async { (NSApp.delegate as? App)?.snapshotStatusItem(dir); NSApp.terminate(nil) }
+            }
         case "quit":
             DispatchQueue.main.async { NSApp.terminate(nil) }
         default: break
@@ -352,6 +357,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             item.button?.target = self
             item.button?.action = #selector(toggleGlance(_:))
             statusItem = item
+            attachStateDot(to: item)
         }
         Settings.lastError = nil
         if loginChanged, #available(macOS 13, *) {
@@ -369,7 +375,49 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         glanceBridge?.deliver("settings", Settings.dict(probe: true))
     }
 
+    // ---- the state dot beside the crown: 6 px at the lower right, the verdict's colour ----
+    var stateDot: NSView?
+    var verdictState = "idle"
+    static let stateColors: [String: NSColor] = ["live": NSColor(red: 0.18, green: 0.545, blue: 0.341, alpha: 1), "warn": NSColor(red: 0.71, green: 0.506, blue: 0.055, alpha: 1),
+                                                 "down": NSColor(red: 0.761, green: 0.231, blue: 0.192, alpha: 1), "idle": NSColor(white: 0.62, alpha: 1)]
+    func attachStateDot(to item: NSStatusItem) {
+        guard let button = item.button else { return }
+        let dot = NSView(frame: NSRect(x: button.bounds.width - 8, y: 3, width: 6, height: 6))
+        dot.wantsLayer = true; dot.layer?.cornerRadius = 3; dot.autoresizingMask = [.minXMargin]
+        dot.layer?.backgroundColor = App.stateColors[verdictState]?.cgColor
+        button.addSubview(dot); stateDot = dot
+    }
+    func setVerdictState(_ state: String) {
+        verdictState = state
+        stateDot?.layer?.backgroundColor = App.stateColors[state]?.cgColor
+        statusItem?.button?.toolTip = "Sovereign: \(state)"
+    }
+    /// QA: SOV_STATUS_SNAPSHOT=<dir> writes the status item at 1x and 2x on light and dark bars.
+    func snapshotStatusItem(_ dir: String) {
+        let glyph = crownImage(), current = verdictState
+        defer { verdictState = current }
+        for st in ["live", "warn", "down"] { verdictState = st; snapshotStatusItemOnce(dir, glyph) }
+    }
+    private func snapshotStatusItemOnce(_ dir: String, _ glyph: NSImage) {
+        for (bar, bg, ink) in [("light", NSColor(white: 0.93, alpha: 1), NSColor.black), ("dark", NSColor(white: 0.17, alpha: 1), NSColor.white)] {
+            for scale in [1, 2] {
+                let w = 22, h = 22
+                let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w * scale, pixelsHigh: h * scale, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+                rep.size = NSSize(width: w, height: h)
+                NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+                bg.setFill(); NSRect(x: 0, y: 0, width: w, height: h).fill()
+                let tinted = glyph.copy() as! NSImage; tinted.isTemplate = false
+                tinted.lockFocus(); ink.set(); NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop); tinted.unlockFocus()
+                tinted.draw(in: NSRect(x: 2, y: 2, width: 18, height: 18))
+                (App.stateColors[verdictState] ?? .gray).setFill(); NSBezierPath(ovalIn: NSRect(x: 14, y: 3, width: 6, height: 6)).fill()
+                NSGraphicsContext.restoreGraphicsState()
+                if let png = rep.representation(using: .png, properties: [:]) { try? png.write(to: URL(fileURLWithPath: "\(dir)/status-\(bar)-\(verdictState)@\(scale)x.png")) }
+            }
+        }
+    }
     private func crownImage() -> NSImage {
+        // The design's template glyph when the bundle carries it; the drawn crown otherwise.
+        if let named = NSImage(named: "MenuBarTemplate") { named.isTemplate = true; return named }
         // The same crown as the UI, drawn as a template image so it follows the menu bar's ink.
         let img = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { _ in
             let p = NSBezierPath()

@@ -36,6 +36,7 @@ cp "$HERE/Info.plist" "$APP/Contents/Info.plist"
 cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$HERE"/ui/* "$APP/Contents/Resources/ui/"
 cp "$HERE/design/tokens.css" "$APP/Contents/Resources/ui/tokens.css"
+cp "$HERE/design/glyphs/MenuBarTemplate.png" "$HERE/design/glyphs/MenuBarTemplate@2x.png" "$APP/Contents/Resources/"
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 echo "    $APP"
 
