@@ -60,10 +60,14 @@ def plain_text(rich) -> str:
     out = []
     for seg in rich or []:
         mention = seg.get("mention") or {}
-        if seg.get("type") == "mention" and mention.get("type") == "date":
-            out.append(date_mention_text(mention, str(seg.get("plain_text", ""))))
+        text = str(seg.get("plain_text", ""))
+        if seg.get("type") == "mention":
+            if mention.get("type") == "date":
+                out.append(date_mention_text(mention, text))
+            else:
+                out.append(text if text.startswith("@") else "@" + text)
         else:
-            out.append(str(seg.get("plain_text", "")))
+            out.append(text)
     return "".join(out)
 
 

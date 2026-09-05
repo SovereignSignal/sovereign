@@ -126,18 +126,7 @@ class Harness(unittest.TestCase):
                 self.assertIn("--lane", r.stderr)
                 self.assertFalse((home / ".notion-mirror").exists())
 
-    def test_stale_status_from_previous_importer_is_parked(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            home, vault = brain(tmp)
-            (home / ".notion-mirror").mkdir()
-            (home / ".notion-mirror" / "last-status").write_text("OK 2026-01-01 00:00:00 old importer")
-            r = run(["--apply", "--no-launchd", "--secret", "ntn_test_token"], home, vault)
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertFalse((home / ".notion-mirror" / "last-status").exists())
-            self.assertEqual((home / ".notion-mirror" / "last-status.pre-api").read_text(), "OK 2026-01-01 00:00:00 old importer")
-            self.assertIn("parked", r.stdout)
-
-    def test_stale_status_left_alone_when_last_success_exists(self):
+    def test_stale_status_from_previous_importer_is_parked_when_never_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             home, vault = brain(tmp)
             (home / ".notion-mirror").mkdir()
@@ -145,8 +134,26 @@ class Harness(unittest.TestCase):
             (home / ".notion-mirror" / "last-success").write_text("2026-01-01T00:00:00Z")
             r = run(["--apply", "--no-launchd", "--secret", "ntn_test_token"], home, vault)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertFalse((home / ".notion-mirror" / "last-status").exists())
+            self.assertFalse((home / ".notion-mirror" / "last-success").exists())
+            self.assertEqual((home / ".notion-mirror" / "last-status.pre-api").read_text(), "OK 2026-01-01 00:00:00 old importer")
+            self.assertEqual((home / ".notion-mirror" / "last-success.pre-api").read_text(), "2026-01-01T00:00:00Z")
+            self.assertIn("parked", r.stdout)
+
+    def test_stale_status_left_alone_when_cursor_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, vault = brain(tmp)
+            (home / ".notion-mirror").mkdir()
+            (home / ".notion-mirror" / "last-status").write_text("OK 2026-01-01 00:00:00 old importer")
+            (home / ".notion-mirror" / "last-success").write_text("2026-01-01T00:00:00Z")
+            (home / ".notion-mirror" / "state").mkdir()
+            (home / ".notion-mirror" / "state" / "cursor").write_text("2026-01-01T00:00:00.000Z\n")
+            r = run(["--apply", "--no-launchd", "--secret", "ntn_test_token"], home, vault)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertTrue((home / ".notion-mirror" / "last-status").exists())
+            self.assertTrue((home / ".notion-mirror" / "last-success").exists())
             self.assertFalse((home / ".notion-mirror" / "last-status.pre-api").exists())
+            self.assertFalse((home / ".notion-mirror" / "last-success.pre-api").exists())
             self.assertNotIn("parked", r.stdout)
 
     def test_scripts_parse(self):

@@ -48,6 +48,22 @@ class Model(unittest.TestCase):
                "mention": {"type": "date", "date": {"start": "2026-06-18"}}}
         self.assertEqual(plain_text([seg]), "@June 18, 2026")
 
+    def test_plain_text_prefixes_a_page_mention_in_a_title(self):
+        title = [
+            {"type": "mention", "plain_text": "Example Archive",
+             "mention": {"type": "page", "page": {"id": "x"}}},
+            {"type": "text", "plain_text": " ongoing"},
+        ]
+        self.assertEqual(plain_text(title), "@Example Archive ongoing")
+
+    def test_plain_text_does_not_double_prefix_a_user_mention(self):
+        seg = {"type": "mention", "plain_text": "@Anna", "mention": {"type": "user", "user": {"id": "u1"}}}
+        self.assertEqual(plain_text([seg]), "@Anna")
+
+    def test_plain_text_prefixes_a_database_mention(self):
+        seg = {"type": "mention", "plain_text": "LW Songs", "mention": {"type": "database", "database": {"id": "d1"}}}
+        self.assertEqual(plain_text([seg]), "@LW Songs")
+
     def test_title_of_renders_date_mention_in_title(self):
         title = [
             {"type": "text", "plain_text": "Owner + Nick - "},

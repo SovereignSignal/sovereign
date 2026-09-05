@@ -47,6 +47,15 @@ class RichText(unittest.TestCase):
                    "mention": {"type": "date", "date": {"start": "2026-06-18"}}, "annotations": {}}
         self.assertEqual(render_rich_text([mention], LINKS), "@June 18, 2026")
 
+    def test_user_mention_in_body_gets_at_sign(self):
+        mention = {"type": "mention", "plain_text": "Anna", "mention": {"type": "user", "user": {"id": "u1"}}, "annotations": {}}
+        self.assertEqual(render_rich_text([mention], LINKS), "@Anna")
+
+    def test_page_mention_in_body_still_renders_as_link_with_no_at_sign(self):
+        mention = {"type": "mention", "plain_text": "Child: v2", "mention": {"type": "page", "page": {"id": "00000000-0000-0000-0000-000000000002"}}, "annotations": {}}
+        out = render_rich_text([mention], LINKS, from_path=PAGE)
+        self.assertEqual(out, "[Child: v2](Home/Child%20(v2)%2000000000000000000000000000000002.md)")
+
 
 class RelLink(unittest.TestCase):
     def test_relative_and_percent_encoded(self):

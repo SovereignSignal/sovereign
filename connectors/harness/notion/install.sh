@@ -98,10 +98,15 @@ umask 022  # mirror.env is written 600 by the writer itself; everything after it
 say "[env] $STATE_DIR/mirror.env written (mode 600)"
 
 # a status line from the retired import script would otherwise show as this harness's
-# own status until its first run; park it once, only when this harness has never run
-if [ -f "$STATE_DIR/last-status" ] && [ ! -f "$STATE_DIR/last-success" ]; then
-  mv "$STATE_DIR/last-status" "$STATE_DIR/last-status.pre-api"
-  say "[state] previous importer status parked as last-status.pre-api"
+# own status until its first run; park it once, only when this harness has never completed
+# a run (no state/cursor yet)
+if [ ! -f "$STATE_DIR/state/cursor" ]; then
+  for name in last-status last-success; do
+    if [ -f "$STATE_DIR/$name" ]; then
+      mv "$STATE_DIR/$name" "$STATE_DIR/$name.pre-api"
+      say "[state] previous importer status parked as $name.pre-api"
+    fi
+  done
 fi
 
 # ask Notion what the token can see; a test can stub this
