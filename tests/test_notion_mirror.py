@@ -88,6 +88,16 @@ class FullRun(unittest.TestCase):
             self.assertEqual(client.queries, 2)
             self.assertEqual(client.requests - before, 3)  # search, data_source schema, query_rows
 
+    def test_full_repairs_a_file_missing_on_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            (lane / P6).unlink()
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertTrue((lane / P6).exists())
+            self.assertEqual(rep.written, 1)
+
     def test_dry_run_writes_nothing_and_reports_the_oracle(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg, client, lane = workspace(tmp)
@@ -265,7 +275,7 @@ class Check(unittest.TestCase):
 
 
 class DeltaRun(unittest.TestCase):
-    def test_delta_rewrites_only_the_changed_page_and_advances_the_cursor(self):
+    def test_delta_rewrites_the_window_and_advances_the_cursor(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg, client, lane = workspace(tmp)
             Mirror(client, cfg, State(cfg.state_dir)).full()
@@ -280,6 +290,16 @@ class DeltaRun(unittest.TestCase):
                 self.assertEqual((lane / p).stat().st_mtime_ns, before, p)
             self.assertEqual(State(cfg.state_dir).read_cursor(), LATER)
             self.assertEqual(client.queries, 1)  # only the full run queried rows
+
+    def test_delta_picks_up_a_body_edited_inside_the_same_minute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.blocks[hid(6)] = [para(60, "Same minute, same stamp.")]
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(rep.written, 1)
+            self.assertIn("Same minute, same stamp.", (lane / P6).read_text())
 
     def test_delta_row_change_rebuilds_csv_from_cells_without_requery(self):
         with tempfile.TemporaryDirectory() as tmp:

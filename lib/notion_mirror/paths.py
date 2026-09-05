@@ -5,7 +5,7 @@ Rules, as observed on a real export (2026-09-04) and pinned by the oracle run:
   database file  <stem> <32hex>_all.csv
   child folder   <stem>            (no id; the export never puts ids on folders)
   untitled       Untitled <first4>-<last4>   (also a title that sanitizes to nothing, . or ..)
-  stem           sanitized title cut at 50 characters, right-stripped
+  stem           sanitized title cut at 50 characters, a trailing space at the cut kept
   top level      the folder roots.json maps the root to, else the default root
 
 Pure functions. No disk, no network.
@@ -31,7 +31,7 @@ def stem(title: str, id32: str) -> str:
     s = sanitize(title)
     if s in ("", ".", ".."):  # a dot-only name is a path component, never a title
         s = "Untitled %s" % short_id(id32)
-    return s[:MAX_STEM].rstrip()
+    return s[:MAX_STEM]
 
 
 def file_name(item: dict) -> str:

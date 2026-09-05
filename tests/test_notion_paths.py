@@ -34,7 +34,7 @@ class Names(unittest.TestCase):
         long = "Company Brain: Machine Sync Plan (Producer Read/Write Wire)"
         self.assertEqual(stem(long, hid(1)), "Company Brain Machine Sync Plan (Producer Read Wri")
         self.assertEqual(len(stem(long, hid(1))), MAX_STEM)
-        self.assertEqual(stem("x" * 49 + " y", hid(1)), "x" * 49)
+        self.assertEqual(stem("x" * 49 + " y", hid(1)), "x" * 49 + " ")  # the export keeps the cut space
 
     def test_dot_only_titles_are_untitled(self):
         self.assertEqual(stem(".", hid(1)), "Untitled %s" % short_id(hid(1)))

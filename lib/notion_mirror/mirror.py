@@ -206,7 +206,8 @@ class Mirror:
                 rep.mismatches.append((i, p, disk.get(i, "")))
 
         changed = [i for i, it in items.items()
-                   if it["kind"] == "database" or i not in old or old[i].get("last_edited") != it["last_edited"]]
+                   if it["kind"] == "database" or i not in old or old[i].get("last_edited") != it["last_edited"]
+                   or not (self.cfg.lane_dir / paths[i]).exists()]
         moves = [(old[i]["path"], paths[i]) for i in items if i in old and old[i].get("path") and old[i]["path"] != paths[i]]
         rep.would_write = [paths[i] for i in changed]
         rep.would_move = moves
@@ -262,7 +263,13 @@ class Mirror:
         old = self.manifest.items
         fresh = self._walk(since=_minus_minutes(cursor, OVERLAP_MINUTES))
         items: Dict[str, dict] = {i: dict(e) for i, e in old.items()}
-        changed = [i for i, it in fresh.items() if i not in old or old[i].get("last_edited") != it["last_edited"]]
+        # Notion rounds last_edited_time to the minute, so an edit inside the same minute as the
+        # cursor is invisible to a stamp compare. Re-render every page the window returned; the
+        # hash compare keeps that free of spurious writes. A database whose own stamp did not
+        # move is left out: its CSV is rebuilt from cached cells when a row changes, and the
+        # weekly full walk requeries every one, so a delta never pays for a requery per run.
+        changed = [i for i, it in fresh.items()
+                   if it["kind"] != "database" or i not in old or old[i].get("last_edited") != it["last_edited"]]
         items.update(fresh)
         self._ensure_parents(items, fresh, rep)
         paths, orphans = self._paths_for(items)
