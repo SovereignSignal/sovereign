@@ -60,6 +60,30 @@ class LoadConfig(unittest.TestCase):
                 with self.assertRaises(ConfigError, msg=bad):
                     load_config(Path(tmp), env={})
 
+    def test_min_interval_defaults_to_0_34(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "mirror.env").write_text("NOTION_API_KEY=k\nBRAIN_ROOT=%s\n" % tmp)
+            cfg = load_config(Path(tmp), env={})
+            self.assertEqual(cfg.min_interval, 0.34)
+
+    def test_min_interval_read_from_mirror_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "mirror.env").write_text("NOTION_API_KEY=k\nBRAIN_ROOT=%s\nNOTION_MIN_INTERVAL=1.5\n" % tmp)
+            cfg = load_config(Path(tmp), env={})
+            self.assertEqual(cfg.min_interval, 1.5)
+
+    def test_min_interval_non_number_is_a_config_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "mirror.env").write_text("NOTION_API_KEY=k\nBRAIN_ROOT=%s\nNOTION_MIN_INTERVAL=fast\n" % tmp)
+            with self.assertRaises(ConfigError):
+                load_config(Path(tmp), env={})
+
+    def test_min_interval_must_be_greater_than_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "mirror.env").write_text("NOTION_API_KEY=k\nBRAIN_ROOT=%s\nNOTION_MIN_INTERVAL=0\n" % tmp)
+            with self.assertRaises(ConfigError):
+                load_config(Path(tmp), env={})
+
     def test_norm_id(self):
         self.assertEqual(norm_id("1B00000C-0D59-0802-5871-FD52D5773E2A"), "1b00000c0d5908025871fd52d5773e2a")
         self.assertEqual(norm_id(None), "")

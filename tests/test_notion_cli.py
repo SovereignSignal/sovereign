@@ -81,6 +81,8 @@ class Cli(unittest.TestCase):
             code, out, err = run(["--status", "--state-dir", str(state)], client)
             self.assertEqual(code, 0)
             self.assertIn("lane:", out)
+            self.assertIn("pace:", out)
+            self.assertIn("0.34", out)
             code, out, err = run(["--status", "--state-dir", str(Path(tmp) / "nowhere")], client)
             self.assertEqual(code, 64)
             self.assertIn("NOTION_API_KEY", err)

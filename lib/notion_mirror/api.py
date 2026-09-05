@@ -3,6 +3,13 @@
 Rate limit: Notion averages about three requests a second per integration. A fixed
 minimum interval between requests keeps a full walk under that without bursts;
 429 and 5xx retry with Retry-After (or exponential backoff), other 4xx fail at once.
+
+A 403 is special: Notion itself returns a JSON body with an "object": "error" key
+for a real permission refusal, but heavy traffic can draw a Cloudflare (or other
+CDN) challenge page instead, an HTML 403 that has nothing to do with permissions
+and clears up after it cools down. A 403 with a non-JSON, non-Notion body is
+treated as a challenge and retried with a long backoff; a 403 with a genuine
+Notion error body still fails at once.
 """
 import json
 import time
@@ -20,15 +27,25 @@ class NotionError(RuntimeError):
     """A request that failed after retries, or a hard 4xx. The message names the call."""
 
 
+def _is_notion_error_body(text: str) -> bool:
+    """True only for a real Notion API error: JSON with an "object": "error" key."""
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return False
+    return isinstance(parsed, dict) and parsed.get("object") == "error"
+
+
 class NotionClient:
     def __init__(self, token: str, version: str = DEFAULT_VERSION, min_interval: float = 0.34,
-                 opener=None, sleep=time.sleep, retries: int = 5):
+                 opener=None, sleep=time.sleep, retries: int = 5, challenge_backoff: float = 30.0):
         self._token = token
         self._version = version
         self._min = min_interval
         self._open = opener or urllib.request.urlopen
         self._sleep = sleep
         self._retries = retries
+        self._challenge_backoff = challenge_backoff
         self._last = 0.0
         self.requests = 0
 
@@ -58,14 +75,28 @@ class NotionClient:
             try:
                 with self._open(req, timeout=60) as resp:
                     self.requests += 1
-                    return json.loads(resp.read().decode("utf-8"))
+                    raw = resp.read().decode("utf-8")
+                    try:
+                        return json.loads(raw)
+                    except ValueError:
+                        raise NotionError("%s %s: unreadable body: %s" % (method, path, raw[:300]))
             except urllib.error.HTTPError as exc:
                 text = exc.read().decode("utf-8", errors="replace")[:300]
-                last_error = "HTTP %s: %s" % (exc.code, text)
-                if exc.code == 429 or exc.code >= 500:
+                challenge = exc.code == 403 and not _is_notion_error_body(text)
+                if challenge:
+                    last_error = "HTTP 403 (challenge page): %s" % text
+                else:
+                    last_error = "HTTP %s: %s" % (exc.code, text)
+                if exc.code == 429 or exc.code >= 500 or challenge:
                     if attempt < self._retries:
                         retry_after = exc.headers.get("Retry-After") if exc.headers else None
-                        self._sleep(float(retry_after) if retry_after else float(2 ** attempt))
+                        if retry_after:
+                            wait = float(retry_after)
+                        elif challenge:
+                            wait = self._challenge_backoff * (attempt + 1)
+                        else:
+                            wait = float(2 ** attempt)
+                        self._sleep(wait)
                         continue
                 raise NotionError("%s %s: %s" % (method, path, last_error))
             except (urllib.error.URLError, OSError) as exc:
