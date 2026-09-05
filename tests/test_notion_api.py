@@ -23,6 +23,37 @@ def http_error(code, headers=None):
     return urllib.error.HTTPError("https://api.notion.com/v1/x", code, "err", headers or {}, io.BytesIO(b'{"message":"rate limited"}'))
 
 
+def http_error_html(code, headers=None):
+    """A Cloudflare (or any other) challenge page: not JSON, so not a Notion error body."""
+    body = b"<html><head><title>Attention Required! | Cloudflare</title></head><body>Attention Required!</body></html>"
+    return urllib.error.HTTPError("https://api.notion.com/v1/x", code, "err", headers or {}, io.BytesIO(body))
+
+
+def http_error_notion(code, headers=None):
+    """A real Notion API error body: JSON with an "object": "error" key."""
+    body = json.dumps({"object": "error", "status": code, "code": "restricted_resource", "message": "no access"}).encode("utf-8")
+    return urllib.error.HTTPError("https://api.notion.com/v1/x", code, "err", headers or {}, io.BytesIO(body))
+
+
+def http_error_notion_long(code, headers=None):
+    """A real Notion API error body shaped like the ones that carry additional_data: past 300 characters."""
+    body = json.dumps({
+        "object": "error",
+        "status": code,
+        "code": "restricted_resource",
+        "message": "The integration does not have access to this resource. " * 3,
+        "additional_data": {"pad": "x" * 400},
+    }).encode("utf-8")
+    return urllib.error.HTTPError("https://api.notion.com/v1/x", code, "err", headers or {}, io.BytesIO(body))
+
+
+def http_error_html_long(code, headers=None):
+    """A challenge page padded well past 300 characters, like a real Cloudflare interstitial."""
+    body = ("<html><head><title>Attention Required! | Cloudflare</title></head><body>"
+            + ("Attention Required! " * 30) + "</body></html>").encode("utf-8")
+    return urllib.error.HTTPError("https://api.notion.com/v1/x", code, "err", headers or {}, io.BytesIO(body))
+
+
 class FakeOpener:
     """Scripted responses: each entry is a dict (200 JSON) or an HTTPError."""
 
@@ -70,6 +101,54 @@ class Client(unittest.TestCase):
             c.request("GET", "/pages/x")
         self.assertIn("404", str(ctx.exception))
         self.assertEqual(len(opener.script), 0)
+
+    def test_403_challenge_page_retries_with_challenge_backoff(self):
+        slept = []
+        opener = FakeOpener([http_error_html(403), {"ok": True}])
+        c = NotionClient("tok", opener=opener, sleep=slept.append, min_interval=0, challenge_backoff=30.0)
+        self.assertEqual(c.request("GET", "/pages/x"), {"ok": True})
+        self.assertIn(30.0, slept)
+
+    def test_403_notion_error_body_is_immediate(self):
+        slept = []
+        opener = FakeOpener([http_error_notion(403)])
+        c = NotionClient("tok", opener=opener, sleep=slept.append, min_interval=0)
+        with self.assertRaises(NotionError):
+            c.request("GET", "/pages/x")
+        self.assertEqual(slept, [])
+        self.assertEqual(len(opener.script), 0)
+
+    def test_403_notion_error_body_longer_than_300_chars_is_still_immediate(self):
+        slept = []
+        opener = FakeOpener([http_error_notion_long(403)])
+        c = NotionClient("tok", opener=opener, sleep=slept.append, min_interval=0)
+        with self.assertRaises(NotionError):
+            c.request("GET", "/pages/x")
+        self.assertEqual(slept, [])
+        self.assertEqual(len(opener.script), 0)
+
+    def test_403_html_challenge_longer_than_300_chars_still_retries(self):
+        slept = []
+        opener = FakeOpener([http_error_html_long(403), {"ok": True}])
+        c = NotionClient("tok", opener=opener, sleep=slept.append, min_interval=0, challenge_backoff=30.0)
+        self.assertEqual(c.request("GET", "/pages/x"), {"ok": True})
+        self.assertIn(30.0, slept)
+
+    def test_five_challenge_pages_in_a_row_gives_up_naming_the_challenge(self):
+        opener = FakeOpener([http_error_html(403)] * 5)
+        c = NotionClient("tok", opener=opener, sleep=lambda s: None, retries=4, min_interval=0, challenge_backoff=0.01)
+        with self.assertRaises(NotionError) as ctx:
+            c.request("GET", "/pages/x")
+        self.assertIn("challenge page", str(ctx.exception))
+
+    def test_200_with_unparseable_body_is_a_notion_error(self):
+        def open_raw(req, timeout=0):
+            return Resp(b"not json")
+
+        c = NotionClient("tok", opener=open_raw, sleep=lambda s: None, min_interval=0)
+        with self.assertRaises(NotionError) as ctx:
+            c.request("GET", "/pages/x")
+        self.assertIn("unreadable body", str(ctx.exception))
 
     def test_paginate_follows_cursor_in_body_for_post(self):
         opener = FakeOpener([

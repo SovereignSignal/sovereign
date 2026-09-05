@@ -37,6 +37,7 @@ def _print_status(cfg) -> None:
     print("lane:       %s" % cfg.lane_dir)
     print("state:      %s" % cfg.state_dir)
     print("version:    %s" % cfg.version)
+    print("pace:       %ss between requests" % cfg.min_interval)
     print("files:      %s" % cfg.files)
     print("floor:      %d%%" % cfg.shrink_floor)
     print("roots:      %d required, default folder %r" % (len(cfg.required_roots), cfg.default_root))
@@ -86,7 +87,7 @@ def main(argv=None, client_factory=None) -> int:
         _print_status(cfg)
         return 0
 
-    client = client_factory(cfg) if client_factory else NotionClient(cfg.token, cfg.version)
+    client = client_factory(cfg) if client_factory else NotionClient(cfg.token, cfg.version, min_interval=cfg.min_interval)
     state = State(cfg.state_dir)
     try:
         return _run(args, cfg, client, state)

@@ -13,6 +13,7 @@ DEFAULT_VERSION = "2026-03-11"
 DEFAULT_LANE = "raw/tools/Notion"
 DEFAULT_ROOT_FOLDER = "Private & Shared"
 DEFAULT_SHRINK_FLOOR = 90
+DEFAULT_MIN_INTERVAL = 0.34
 
 
 class ConfigError(RuntimeError):
@@ -56,6 +57,7 @@ class Config:
     allow_shrink: bool
     default_root: str
     required_roots: Dict[str, str]
+    min_interval: float = DEFAULT_MIN_INTERVAL
 
 
 def load_config(state_dir=None, env=None) -> Config:
@@ -80,6 +82,12 @@ def load_config(state_dir=None, env=None) -> Config:
     except ValueError:
         raise ConfigError("NOTION_SHRINK_FLOOR must be an integer percent")
     allow_shrink = get("NOTION_ALLOW_SHRINK", "0") == "1"
+    try:
+        min_interval = float(get("NOTION_MIN_INTERVAL", str(DEFAULT_MIN_INTERVAL)))
+    except ValueError:
+        raise ConfigError("NOTION_MIN_INTERVAL must be a number greater than 0")
+    if min_interval <= 0:
+        raise ConfigError("NOTION_MIN_INTERVAL must be a number greater than 0")
     lane = get("NOTION_LANE", DEFAULT_LANE)
     # same rule the installer applies to --lane: the lane is a relative path inside the vault
     if lane.startswith("/") or ".." in lane.split("/"):
@@ -110,4 +118,5 @@ def load_config(state_dir=None, env=None) -> Config:
         allow_shrink=allow_shrink,
         default_root=default_root,
         required_roots=required,
+        min_interval=min_interval,
     )
