@@ -18,6 +18,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+from brain_redact import redact_text
+
 from .api import NotionError
 from .config import Config, norm_id
 from .exclude import apply_excludes, marker_text
@@ -79,6 +81,8 @@ class Report:
     excluded_paths: List[str] = field(default_factory=list)
     written_paths: List[str] = field(default_factory=list)
     secrets: List[str] = field(default_factory=list)
+    redacted: int = 0
+    redacted_paths: List[str] = field(default_factory=list)
     refused: Optional[str] = None
     oracle_total: int = 0
     oracle_matched: int = 0
@@ -96,6 +100,8 @@ class Report:
             text += ", vanished %d" % self.vanished
         if self.excluded:
             text += ", excluded %d" % self.excluded
+        if self.redacted:
+            text += ", redacted %d value(s) in %d file(s)" % (self.redacted, len(self.redacted_paths))
         if self.secrets:
             text += "; SECRETS flagged in %d file(s), first: %s" % (len(self.secrets), self.secrets[0])
         if self.oracle_total:
@@ -558,6 +564,21 @@ class Mirror:
                         rep.warnings.append("children of %s %s: %s" % (block.get("type", ""), child_id, exc))
         return blocks
 
+    def _put_text(self, rel_path: str, text: str, rep: Report) -> None:
+        """Every rendered text goes through here: credential-shaped values are redacted before
+        the bytes exist in the vault (brain_redact, the same rules as every lane), then the
+        hash-compared write."""
+        text, hits = redact_text(text)
+        if hits:
+            rep.redacted += len(hits)
+            rep.redacted_paths.append(rel_path)
+            rep.warnings.append("redacted %d value(s) in %s (%s)" % (len(hits), rel_path, ", ".join(sorted(set(hits)))))
+        self._put(rel_path, text.encode("utf-8"), rep)
+
+    def _cells(self, schema: dict, obj: dict, links: Links) -> List[str]:
+        """Row cells cached in the manifest for CSV rebuilds: redacted before they are kept."""
+        return [redact_text(cell)[0] for cell in row_cells(schema, obj, links)]
+
     def _put(self, rel_path: str, data: bytes, rep: Report) -> None:
         """Every content write goes through here: hash-compared, counted, and remembered for the scan."""
         if write_if_changed(self.cfg.lane_dir / rel_path, data):
@@ -583,10 +604,10 @@ class Mirror:
         text = render_page(it, obj, blocks, links, attachments, page_path, schema_props=schema)
         if self._refused(self.cfg.lane_dir / page_path, rep):
             return
-        self._put(page_path, text.encode("utf-8"), rep)
+        self._put_text(page_path, text, rep)
         entry = self.manifest.items.setdefault(it["id"], {})
         if schema is not None:
-            entry["cells"] = row_cells(schema, obj, links)
+            entry["cells"] = self._cells(schema, obj, links)
         self._fetch_attachments(attachments, rep)
 
     def _write_database(self, it: dict, paths: Dict[str, str], links: Links, rep: Report) -> None:
@@ -598,13 +619,13 @@ class Mirror:
         text = render_csv(schema, rows, links)
         if self._refused(self.cfg.lane_dir / paths[it["id"]], rep):
             return
-        self._put(paths[it["id"]], text.encode("utf-8"), rep)
+        self._put_text(paths[it["id"]], text, rep)
         entry = self.manifest.items.setdefault(it["id"], {})
         entry["header"] = property_order(schema)
         for row in rows:
             row_entry = self.manifest.items.get(norm_id(row.get("id")))
             if row_entry is not None:
-                row_entry["cells"] = row_cells(schema, row, links)
+                row_entry["cells"] = self._cells(schema, row, links)
         self._requeried.add(it["id"])
 
     def _rebuild_csv(self, it: dict, paths: Dict[str, str], links: Links, rep: Report) -> None:
@@ -620,7 +641,7 @@ class Mirror:
         text = csv_from_cells(header, [r["cells"] for r in rows])
         if self._refused(self.cfg.lane_dir / paths[it["id"]], rep):
             return
-        self._put(paths[it["id"]], text.encode("utf-8"), rep)
+        self._put_text(paths[it["id"]], text, rep)
 
     def _fetch_attachments(self, attachments: List[Tuple[str, str]], rep: Report) -> None:
         if self.cfg.files != "fetch":

@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from notion_mirror.exclude import DEFAULT_EXCLUDE_TITLES, apply_excludes, marker_text, title_rule  # noqa: E402
+from notion_mirror.exclude import DEFAULT_EXCLUDE_TITLES, SUGGESTED_EXCLUDE_TITLES, apply_excludes, marker_text, title_rule  # noqa: E402
 
 
 def item(i, title, parent_kind="page", parent_id=""):
@@ -13,22 +13,26 @@ def item(i, title, parent_kind="page", parent_id=""):
 
 
 class TitleRule(unittest.TestCase):
-    def test_default_phrases_catch_the_usual_credential_pages(self):
-        for title in ("Credentials Vault", "Keys and Creds", "Creds", "Key Management", "Secrets", "API Keys", "seed   PHRASE backup"):
-            self.assertIsNotNone(title_rule(title, DEFAULT_EXCLUDE_TITLES), title)
+    def test_nothing_is_excluded_by_name_unless_the_owner_says_so(self):
+        self.assertEqual(DEFAULT_EXCLUDE_TITLES, [])
+        self.assertIsNone(title_rule("Credentials Vault", DEFAULT_EXCLUDE_TITLES))
+
+    def test_suggested_phrases_catch_the_usual_credential_pages(self):
+        for title in ("Credentials Vault", "Keys and Creds", "Creds", "Key Management", "Secrets", "API Keys", "seed   PHRASES backup"):
+            self.assertIsNotNone(title_rule(title, SUGGESTED_EXCLUDE_TITLES), title)
 
     def test_whole_words_only(self):
-        self.assertIsNone(title_rule("Credscore model", DEFAULT_EXCLUDE_TITLES))
-        self.assertIsNone(title_rule("Passwordless login design", DEFAULT_EXCLUDE_TITLES))
-        self.assertIsNone(title_rule("Secretariat notes", DEFAULT_EXCLUDE_TITLES))
-        self.assertEqual(title_rule("Team secrets", DEFAULT_EXCLUDE_TITLES), "secrets")
+        self.assertIsNone(title_rule("Credscore model", SUGGESTED_EXCLUDE_TITLES))
+        self.assertIsNone(title_rule("Passwordless login design", SUGGESTED_EXCLUDE_TITLES))
+        self.assertIsNone(title_rule("Secretariat notes", SUGGESTED_EXCLUDE_TITLES))
+        self.assertEqual(title_rule("Team secrets", SUGGESTED_EXCLUDE_TITLES), "secrets")
 
-    def test_singular_secret_and_credential_are_not_rules(self):
+    def test_suggested_list_leaves_real_pages_alone(self):
         for title in ("Secret Network", "Team Secret sponsorship", "The Book of Secret Knowledge", "OneCLI Credential Gateway"):
-            self.assertIsNone(title_rule(title, DEFAULT_EXCLUDE_TITLES), title)
+            self.assertIsNone(title_rule(title, SUGGESTED_EXCLUDE_TITLES), title)
 
     def test_empty_title_and_empty_rules(self):
-        self.assertIsNone(title_rule("", DEFAULT_EXCLUDE_TITLES))
+        self.assertIsNone(title_rule("", SUGGESTED_EXCLUDE_TITLES))
         self.assertIsNone(title_rule("Creds", []))
 
     def test_returns_the_phrase_that_matched(self):
@@ -56,7 +60,7 @@ class ApplyExcludes(unittest.TestCase):
 
     def test_roots_marked_and_descendants_dropped(self):
         items = self.tree()
-        dropped = apply_excludes(items, DEFAULT_EXCLUDE_TITLES, set())
+        dropped = apply_excludes(items, SUGGESTED_EXCLUDE_TITLES, set())
         self.assertEqual(sorted(dropped), sorted(["c" * 32, "d" * 32, "g" * 32]))
         self.assertEqual(sorted(items), sorted(["a" * 32, "b" * 32, "e" * 32, "f" * 32]))
         self.assertEqual(items["b" * 32]["excluded"], 'title matched "creds"')
@@ -75,12 +79,12 @@ class ApplyExcludes(unittest.TestCase):
     def test_nested_excluded_root_is_dropped_not_marked(self):
         items = self.tree()
         items["c" * 32]["title"] = "Secrets"
-        dropped = apply_excludes(items, DEFAULT_EXCLUDE_TITLES, set())
+        dropped = apply_excludes(items, SUGGESTED_EXCLUDE_TITLES, set())
         self.assertIn("c" * 32, dropped)
 
     def test_recomputed_each_run(self):
         items = self.tree()
-        apply_excludes(items, DEFAULT_EXCLUDE_TITLES, set())
+        apply_excludes(items, SUGGESTED_EXCLUDE_TITLES, set())
         again = self.tree()
         again["b" * 32]["excluded"] = 'title matched "creds"'  # as a manifest entry would carry it
         apply_excludes(again, [], set())
@@ -90,7 +94,7 @@ class ApplyExcludes(unittest.TestCase):
     def test_block_parented_child_of_excluded_page_is_dropped(self):
         items = self.tree()
         items["h" * 32] = item("h" * 32, "Column child", "block", "1" * 32)
-        dropped = apply_excludes(items, DEFAULT_EXCLUDE_TITLES, set(), resolve_block=lambda b: "b" * 32)
+        dropped = apply_excludes(items, SUGGESTED_EXCLUDE_TITLES, set(), resolve_block=lambda b: "b" * 32)
         self.assertIn("h" * 32, dropped)
 
 

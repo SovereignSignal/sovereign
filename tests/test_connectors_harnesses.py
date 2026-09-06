@@ -182,3 +182,28 @@ class CodexTrust(unittest.TestCase):
             self.assertEqual(text, (home / "config.toml").read_text())
             r3 = subprocess.run([sys.executable, script, "--check"], capture_output=True, text=True, env=env)
             self.assertEqual(r3.returncode, 0)
+
+
+class Redaction(unittest.TestCase):
+    def test_every_write_wire_redacts_what_it_copied_and_leaves_the_source_alone(self):
+        token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            mem = home / ".codex" / "memories"; mem.mkdir(parents=True)
+            (mem / "MEMORY.md").write_text("# m\nthe deploy token is %s\n" % token)
+            env = dict(os.environ); env.update({"HOME": str(home), "BRAIN_HOST": "testbox", "BRAIN_STAGE": str(Path(tmp) / "stage")})
+            res = subprocess.run(["/bin/bash", str(H / "codex" / "mirror.sh")], capture_output=True, text=True, env=env)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            lane = Path(tmp) / "stage/raw/tools/codex-memory-testbox"
+            self.assertEqual((lane / "MEMORY.md").read_text(), "# m\nthe deploy token is [redacted github token]\n")
+            self.assertIn(token, (mem / "MEMORY.md").read_text())
+            self.assertIn("Redacted on this run: 1 in 1 file(s)", (lane / "MANIFEST.md").read_text())
+            self.assertIn("mirror: redacted 1 in 1 file(s)", res.stderr)
+            # the source still holds the value, so every tick copies and redacts it again, and says so
+            res = subprocess.run(["/bin/bash", str(H / "codex" / "mirror.sh")], capture_output=True, text=True, env=env)
+            self.assertIn("mirror: redacted 1 in 1 file(s)", res.stderr)
+            self.assertNotIn(token, (lane / "MEMORY.md").read_text())
+            self.assertEqual((lane / "MANIFEST.md").read_text().count("Redacted on this run"), 1)
+            (mem / "MEMORY.md").write_text("# m\nclean now\n")
+            res = subprocess.run(["/bin/bash", str(H / "codex" / "mirror.sh")], capture_output=True, text=True, env=env)
+            self.assertNotIn("redacted", res.stderr)  # a clean source makes a quiet tick

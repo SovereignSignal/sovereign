@@ -136,6 +136,7 @@ def _run(args, cfg, client, state) -> int:
         _print_list("excluded (marker in place)", rep.excluded_paths)
         _print_list("on disk, not in walk", rep.unclaimed)
         _print_list("oracle mismatches (id, expected, on disk)", [(i, p, d or "(absent)") for i, p, d in rep.mismatches])
+    _print_list("redacted (credential-shaped values replaced before writing)", rep.redacted_paths)
     _print_list("warnings", rep.warnings)
     _print_list("errors", rep.errors)
     _print_list("SECRETS flagged", rep.secrets)

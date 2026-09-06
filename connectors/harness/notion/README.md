@@ -33,15 +33,17 @@ When a run errors, re-run it with `brain-mirror-notion --full`: the errored item
 - The mirror never commits. Your vault's own autocommit picks up the lane.
 - `~/.notion-mirror/last-status` is one line: `OK <ts> <summary>` or `FAILED <ts> <reason>`. `last-success` holds the last clean run's timestamp. `watchdog.sh` alerts when that is older than 36 hours; schedule it the same way at a later hour if you want it.
 
-## What is never mirrored
+## Secrets never enter the lane
 
-A backup of a workspace is a copy of everything in it, and workspaces hold credential pages. The mirror refuses those at the source: a page or database whose title holds `key management`, `credentials`, `creds`, `secrets`, `password(s)`, `api key(s)`, `private key(s)` or `seed phrase(s)` as whole words is never fetched, and neither is anything under it (rows of such a database, children of such a page). One line stands in for it on disk, at the path the page would have had, so the layout stays honest and `--coverage` can account for it:
+A backup of a workspace would copy its credential pages too, and the vault is plain text under git, synced everywhere. So every rendered page and CSV passes through the brain's redactor (`lib/brain_redact.py`, the same rules every lane's write wire runs) before it is written: a credential-shaped value (vendor API keys, GitHub and cloud tokens, private key blocks, bot tokens, JWTs, the password inside a connection URL, or a value that follows `password:` / `api key =` and looks like one) becomes `[redacted <kind>]` in the page, in the CSV, and in the cells the mirror caches. The run stays `OK` and says `redacted N value(s) in M file(s)`; `--full` and the daily run list the files. Nothing is decided by a page's name.
+
+Then the vault's own scanner checks the result. `NOTION_SECRET_SCAN` is any executable that takes a file of vault-relative paths on `argv[1]`, runs with the vault as its cwd, and exits nonzero on a hit; the default is `cron-wrappers/vault-secret-scan.sh` beside the mirror's bin when the brain ships one. A delta scans what it wrote, a full walk scans the whole lane. A hit (something the redactor did not recognise) makes the status `FAILED ... SECRETS flagged in N file(s), first: <path>`, with the scanner's output in `~/.notion-mirror/secret-scan.log`; the mirror itself is complete (the cursor advances), but `last-success` is not touched, so the watchdog and the console keep saying so until the value is rotated or the page kept out. A scanner that cannot run is an error, not a pass.
+
+Keeping a subtree out entirely is the owner's call, opt-in: `NOTION_EXCLUDE_TITLES` (whole-word phrases, off by default; `key management, credentials, creds, secrets, passwords, api keys, private keys, seed phrases` is the list to start from when a workspace does keep credential pages by name) and `NOTION_EXCLUDE_IDS` name pages or databases that are never fetched, with a one-line marker at each one's path so the layout stays honest and `--coverage` can account for it:
 
     Excluded by the Notion mirror (title matched "creds"): this page and everything under it stay in Notion, unmirrored.
 
-The singulars `secret` and `credential` are not rules: on a real workspace they matched Secret Network, Team Secret and a Credential Gateway repo, and no credential page. `NOTION_EXCLUDE_TITLES` in `mirror.env` narrows or widens the phrases (`off` turns the rule off); `NOTION_EXCLUDE_IDS` names pages outright. A rule added later takes effect on the next run: the subtree's files are removed and the marker written. `--check` counts the excluded roots, `--full --dry-run` lists them.
-
-Names are a net, not a guarantee, so every run also ends with a scan. `NOTION_SECRET_SCAN` is any executable that takes a file of vault-relative paths on `argv[1]`, runs with the vault as its cwd, and exits nonzero on a hit; the default is `cron-wrappers/vault-secret-scan.sh` beside the mirror's bin when the brain ships one. A delta scans what it wrote, a full walk scans the whole lane. A hit makes the status `FAILED ... SECRETS flagged in N file(s), first: <path>`, with the scanner's output in `~/.notion-mirror/secret-scan.log`; the mirror itself is complete (the cursor advances), but `last-success` is not touched, so the watchdog and the console keep saying so until the page is excluded or the secret rotated. A scanner that cannot run is an error, not a pass.
+A rule added later takes effect on the next run (the subtree's files go, the marker appears); a rule removed restores the subtree. `--check` counts the excluded roots, `--full --dry-run` lists them.
 
 ## Layout on disk (matches Notion's export)
 
@@ -49,7 +51,7 @@ Names are a net, not a guarantee, so every run also ends with a scan. `NOTION_SE
     <root folder>/<Page>/                       its children
     <root folder>/<Page>/<DB> <32hex>_all.csv   a database, every row and property
     <root folder>/<Page>/<DB>/<Row> <32hex>.md  a row page
-    <root folder>/<Page>/<Creds> <32hex>.md      an excluded page or database: one line, nothing under it
+    <root folder>/<Page>/<Creds> <32hex>.md      an owner-excluded page or database: one line, nothing under it
     Untitled <4hex>-<4hex>                      an untitled page or database
 
 Attachments are downloaded beside the page (`NOTION_FILES=skip` in `mirror.env` leaves them in Notion and keeps the links). Comments and database views are not mirrored.

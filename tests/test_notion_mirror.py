@@ -502,6 +502,7 @@ def with_credentials(client):
     client.fail_children_for.update({hid(7), hid(8), hid(10)})
 
 
+TITLES = ["creds", "credentials", "api keys"]  # the owner's opt-in list for these tests
 M7 = "Private & Shared/Root/Keys and Creds %s.md" % hid(7)
 M9 = "Private & Shared/Root/Credentials Vault %s.md" % hid(9)
 P8 = "Private & Shared/Root/Keys and Creds/GitHub PAT %s.md" % hid(8)
@@ -512,7 +513,7 @@ P10 = "Private & Shared/Root/Credentials Vault/xAI key %s.md" % hid(10)
 class Excludes(unittest.TestCase):
     def test_full_writes_markers_and_never_fetches_under_them(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg, client, lane = workspace(tmp)
+            cfg, client, lane = workspace(tmp, exclude_titles=TITLES)
             with_credentials(client)
             queries_before = client.queries
             rep = Mirror(client, cfg, State(cfg.state_dir)).full()
@@ -534,7 +535,7 @@ class Excludes(unittest.TestCase):
 
     def test_dry_run_lists_the_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg, client, lane = workspace(tmp)
+            cfg, client, lane = workspace(tmp, exclude_titles=TITLES)
             with_credentials(client)
             rep = Mirror(client, cfg, State(cfg.state_dir)).full(dry_run=True)
             self.assertEqual(sorted(rep.excluded_paths), sorted([M7, M9]))
@@ -568,7 +569,7 @@ class Excludes(unittest.TestCase):
 
     def test_dropping_the_rule_restores_the_subtree(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg, client, lane = workspace(tmp)
+            cfg, client, lane = workspace(tmp, exclude_titles=TITLES)
             with_credentials(client)
             Mirror(client, cfg, State(cfg.state_dir)).full()
             cfg.exclude_titles = []
@@ -589,7 +590,7 @@ class Excludes(unittest.TestCase):
 
     def test_delta_marks_a_new_credentials_page_and_drops_its_children(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg, client, lane = workspace(tmp)
+            cfg, client, lane = workspace(tmp, exclude_titles=TITLES)
             Mirror(client, cfg, State(cfg.state_dir)).full()
             client.add_page(12, "Creds", client.under(2), edited=LATER, body=[para(120, "sk-secret")])
             client.add_page(13, "Token", client.under(12), edited=LATER, body=[para(130, "sk-secret")])
@@ -604,7 +605,7 @@ class Excludes(unittest.TestCase):
 
     def test_delta_removes_a_page_moved_under_an_excluded_one(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg, client, lane = workspace(tmp)
+            cfg, client, lane = workspace(tmp, exclude_titles=TITLES)
             with_credentials(client)
             Mirror(client, cfg, State(cfg.state_dir)).full()
             self.assertIn(P6, paths_of(lane))
@@ -618,7 +619,7 @@ class Excludes(unittest.TestCase):
 
     def test_check_and_coverage_count_excluded(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg, client, lane = workspace(tmp)
+            cfg, client, lane = workspace(tmp, exclude_titles=TITLES)
             with_credentials(client)
             mirror = Mirror(client, cfg, State(cfg.state_dir))
             self.assertEqual(mirror.check()["excluded"], 2)
@@ -714,7 +715,7 @@ class SecretScan(unittest.TestCase):
 class ExcludedRow(unittest.TestCase):
     def test_excluded_row_gets_a_marker_and_leaves_the_csv(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg, client, lane = workspace(tmp)
+            cfg, client, lane = workspace(tmp, exclude_titles=TITLES)
             Mirror(client, cfg, State(cfg.state_dir)).full()
             self.assertIn("Alive", (lane / P3).read_text())
             client.retitle(4, "API keys", LATER)
@@ -733,3 +734,46 @@ class ExcludedRow(unittest.TestCase):
             rep = Mirror(client, cfg, State(cfg.state_dir)).full()
             self.assertEqual(rep.errors, [])
             self.assertNotIn("API keys", (lane / P3).read_text())
+
+
+GH = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+
+
+class Redaction(unittest.TestCase):
+    def test_credential_shaped_values_never_reach_the_lane(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            client.blocks[hid(6)] = [para(60, ('deploy w' + 'ith %s a' + 'nd passw' + 'ord: P@s' + 'sw0rd!20' + '24') % GH)]
+            client.pages[hid(5)]["properties"]["Status"] = {"type": "rich_text", "rich_text": [rt("token " + GH)]}
+            client.data_sources[hid(30)]["properties"]["Status"] = {"type": "rich_text"}
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            lyrics = (lane / P6).read_text()
+            self.assertNotIn(GH, lyrics)
+            self.assertIn("[redacted github token]", lyrics)
+            self.assertIn("password: [redacted value]", lyrics)
+            csv = (lane / P3).read_text()
+            self.assertNotIn(GH, csv)
+            self.assertIn("[redacted github token]", csv)
+            atlantic = (lane / P5).read_text()
+            self.assertNotIn(GH, atlantic)
+            self.assertEqual(sorted(rep.redacted_paths), sorted([P3, P5, P6]))
+            self.assertEqual(rep.redacted, 4)
+            self.assertIn(", redacted 4 value(s) in 3 file(s)", rep.summary())
+            self.assertTrue(any("redacted 2 value(s) in %s" % P6 in w for w in rep.warnings))
+            status = (cfg.state_dir / "last-status").read_text()
+            self.assertTrue(status.startswith("OK "), status)
+            manifest = (cfg.state_dir / "state" / "manifest.json").read_text()
+            self.assertNotIn(GH, manifest)  # cached cells are redacted before they are kept
+
+    def test_csv_rebuilt_from_cached_cells_stays_redacted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            client.pages[hid(5)]["properties"]["Status"] = {"type": "rich_text", "rich_text": [rt(GH)]}
+            client.data_sources[hid(30)]["properties"]["Status"] = {"type": "rich_text"}
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.retitle(4, "Alive!", LATER)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            self.assertNotIn(GH, (lane / P3).read_text())
+            self.assertIn("[redacted github token]", (lane / P3).read_text())

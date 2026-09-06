@@ -1,25 +1,27 @@
-"""What the mirror must never write: credential pages, and anything the owner names.
+"""Subtrees the owner keeps out of the mirror by name: opt-in, off by default.
 
-A page or database whose title matches an exclude phrase, or whose id is listed, is an
-excluded root. Its content is never fetched; a one-line marker file takes its place on
-disk so the layout stays honest, and everything beneath it is dropped from the walk
-entirely (rows of an excluded database, children of an excluded page, and their children).
+Secrets are handled by content, not by title: every rendered page and CSV passes through
+brain_redact before it is written, so a credential-shaped value never lands whatever the
+page is called. This module is the owner's own fence on top of that, for a subtree that
+should not be backed up at all (a database of credentials, a private area): a page or
+database whose title matches a phrase in NOTION_EXCLUDE_TITLES, or whose id is in
+NOTION_EXCLUDE_IDS, is an excluded root. Its content is never fetched; a one-line marker
+file takes its place on disk so the layout stays honest, and everything beneath it is
+dropped from the walk entirely (rows of an excluded database, children of an excluded
+page, and their children).
 
 Matching is on whole words, case-insensitive: "creds" matches "Keys and Creds" and not
-"credscore". The default phrases cover the names credential pages usually carry. A false
-positive costs one page in the backup and says so in its marker; a miss puts a live secret
-in git history. The singulars "secret" and "credential" are left out on purpose: on a real
-workspace they matched Secret Network, Team Secret, The Book of Secret Knowledge and a
-Credential Gateway repo, and no credential page. NOTION_EXCLUDE_TITLES narrows or widens
-the list, NOTION_EXCLUDE_IDS names pages outright, and the scan after every run is the
-backstop for what a title does not say.
+"credscore". Nothing is excluded until the owner names it: on a real workspace a
+name-based default matched Secret Network, Team Secret and The Book of Secret Knowledge
+before it matched a credential page. SUGGESTED_EXCLUDE_TITLES is the list to start
+from when a workspace does keep credential pages by name.
 """
 import re
 from typing import Callable, Dict, List, Optional, Set
 
-DEFAULT_EXCLUDE_TITLES = [
-    "key management", "credentials", "creds", "secrets", "password", "passwords",
-    "api key", "api keys", "private key", "private keys", "seed phrase", "seed phrases",
+DEFAULT_EXCLUDE_TITLES: List[str] = []
+SUGGESTED_EXCLUDE_TITLES = [
+    "key management", "credentials", "creds", "secrets", "passwords", "api keys", "private keys", "seed phrases",
 ]
 
 _SPACES = re.compile(r"\s+")

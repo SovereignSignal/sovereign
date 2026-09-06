@@ -58,6 +58,24 @@ sov_git_lock() {
   return 0
 }
 
+# Credentials never enter the brain. Every write wire ends in sov_git_publish, so the
+# redaction pass sits at its top and covers every lane on every host without a per-lane
+# line: credential-shaped values in what the mirror just wrote become [redacted <kind>]
+# before the bytes are committed, relayed or synced anywhere. Same rules as
+# lib/brain_redact.py; the vault's commit-time scan is the check behind it.
+sov_redact() {
+  local dest="$1" bin="$HOME/brain-bin/brain-redact" out n
+  [ -x "$bin" ] || bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/bin/brain-redact"
+  [ -x "$bin" ] || { echo "mirror: brain-redact not found; lane $dest written unredacted" >&2; return 0; }
+  out="$("$bin" "$dest" 2>&1)" || { echo "mirror: brain-redact failed on $dest: $out" >&2; return 0; }
+  n="$(printf '%s\n' "$out" | sed -n 's/^redacted: \([0-9]*\) value(s) in \([0-9]*\) file(s)$/\1 in \2/p')"
+  case "$n" in ""|"0 in 0") return 0;; esac
+  echo "mirror: redacted $n file(s) under $dest" >&2
+  printf '%s\n' "$out" | grep -v '^redacted: ' | sed 's/^/mirror:   /' >&2
+  [ -f "$dest/MANIFEST.md" ] && printf '\nRedacted on this run: %s file(s); the values never entered the brain.\n' "$n" >> "$dest/MANIFEST.md"
+  return 0
+}
+
 # On a git lane: commit what the mirror wrote and push the lane branch. Best effort,
 # same rules as brain-capture: only the declared lane branch, never another ref.
 # Never silent: a connector that cannot commit leaves the working tree dirty, and a
@@ -65,6 +83,7 @@ sov_git_lock() {
 # has to reach the log or it costs days.
 sov_git_publish() {
   local dest="$1" what="$2" gl branch cur lock rc
+  sov_redact "$dest"
   gl="$(sov_git_lane_dir)" || return 0
   branch="$(grep -E "^branch:" "$gl/LANE.md" | sed -E "s/^branch:[[:space:]]*//" | tr -d " ")"
   branch="${branch:-lane/$BRAIN_LANE_RESOLVED}"

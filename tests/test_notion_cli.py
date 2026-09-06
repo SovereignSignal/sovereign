@@ -129,12 +129,14 @@ class ExcludesAndScan(unittest.TestCase):
             state, client, vault = setup(tmp)
             code, out, err = run(["--status", "--state-dir", str(state)], client)
             self.assertEqual(code, 0)
-            self.assertIn("exclude:    titles key management, credential", out)
+            self.assertIn("exclude:    titles (off); ids 0", out)
             self.assertIn("scan:       (none)", out)
 
     def test_check_counts_excluded_and_full_lists_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
             state, client, vault = setup(tmp)
+            with open(state / "mirror.env", "a") as fh:
+                fh.write("NOTION_EXCLUDE_TITLES=creds\n")
             client.add_page(3, "Creds", client.under(1))
             code, out, err = run(["--check", "--state-dir", str(state)], client)
             self.assertEqual(code, 0)

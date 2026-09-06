@@ -98,11 +98,10 @@ class Excludes(unittest.TestCase):
         (Path(tmp) / "mirror.env").write_text("NOTION_API_KEY=k\nBRAIN_ROOT=%s\n%s" % (tmp, extra))
         return Path(tmp)
 
-    def test_default_titles_and_no_ids(self):
+    def test_nothing_excluded_by_name_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = load_config(self.env(tmp), env={})
-            self.assertIn("creds", cfg.exclude_titles)
-            self.assertIn("key management", cfg.exclude_titles)
+            self.assertEqual(cfg.exclude_titles, [])
             self.assertEqual(cfg.exclude_ids, set())
 
     def test_titles_from_env_file_and_off(self):
