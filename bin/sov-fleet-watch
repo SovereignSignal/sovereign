@@ -48,6 +48,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import sys
 
 CONF_PATH = os.path.expanduser(
@@ -173,15 +174,20 @@ def read_cli():
     return seen or None
 
 
-def reachable(ip):
-    """One ping. Portable on purpose: ping's timeout flags mean different things
+def reachable(ip, tries=3):
+    """Up to three single pings, a second apart: one lost packet across an ocean is
+    not an outage. Portable on purpose: ping's timeout flags mean different things
     on macOS and Linux, so the subprocess timeout is the deadline."""
-    try:
-        r = subprocess.run(["ping", "-c", "1", ip],
-                           capture_output=True, timeout=4)
-        return r.returncode == 0
-    except Exception:
-        return False
+    for i in range(tries):
+        try:
+            r = subprocess.run(["ping", "-c", "1", ip], capture_output=True, timeout=4)
+            if r.returncode == 0:
+                return True
+        except Exception:
+            pass
+        if i + 1 < tries:
+            time.sleep(1)
+    return False
 
 
 def probe_roster(roster):
