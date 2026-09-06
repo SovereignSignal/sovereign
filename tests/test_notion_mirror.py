@@ -489,3 +489,247 @@ class Coverage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def with_credentials(client):
+    """Add a credential subtree to the fixture: 7 Keys and Creds (under Root) > 8 GitHub PAT,
+    and 9 Credentials Vault [db, ds 90] (under Root) > row 10 xAI key. Fetching the content
+    of 7, 8 or 10 raises, so any leak of a fetch into an excluded subtree shows up as an error."""
+    client.add_page(7, "Keys and Creds", client.under(1), body=[para(70, "ghp_secret")])
+    client.add_page(8, "GitHub PAT", client.under(7), body=[para(80, "ghp_secret")])
+    client.add_database(9, 90, "Credentials Vault", client.under(1), SCHEMA)
+    client.add_row(10, 9, 90, "xAI key", {"Status": {"type": "select", "select": None}}, body=[para(100, "xai-secret")])
+    client.fail_children_for.update({hid(7), hid(8), hid(10)})
+
+
+M7 = "Private & Shared/Root/Keys and Creds %s.md" % hid(7)
+M9 = "Private & Shared/Root/Credentials Vault %s.md" % hid(9)
+P8 = "Private & Shared/Root/Keys and Creds/GitHub PAT %s.md" % hid(8)
+C9 = "Private & Shared/Root/Credentials Vault %s_all.csv" % hid(9)
+P10 = "Private & Shared/Root/Credentials Vault/xAI key %s.md" % hid(10)
+
+
+class Excludes(unittest.TestCase):
+    def test_full_writes_markers_and_never_fetches_under_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            with_credentials(client)
+            queries_before = client.queries
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(rep.excluded, 2)
+            self.assertIn(M7, paths_of(lane))
+            self.assertIn(M9, paths_of(lane))
+            for gone in (P8, C9, P10):
+                self.assertNotIn(gone, paths_of(lane))
+            marker = (lane / M7).read_text()
+            self.assertEqual(marker.count("\n"), 1)
+            self.assertIn('title matched "creds"', marker)
+            self.assertIn("credentials", (lane / M9).read_text())
+            self.assertEqual(client.queries, queries_before + 1)  # LW Songs only
+            self.assertIn(", excluded 2", rep.summary())
+            self.assertEqual(sorted(rep.excluded_paths), sorted([M7, M9]))
+            status = (cfg.state_dir / "last-status").read_text()
+            self.assertTrue(status.startswith("OK "), status)
+
+    def test_dry_run_lists_the_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            with_credentials(client)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full(dry_run=True)
+            self.assertEqual(sorted(rep.excluded_paths), sorted([M7, M9]))
+            self.assertIn(M7, rep.would_write)
+            self.assertEqual(paths_of(lane), ["LANE.md"])
+
+    def test_previously_mirrored_subtree_is_replaced_by_the_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp, exclude_titles=[])
+            with_credentials(client)
+            client.fail_children_for.clear()
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            for present in (P8, C9, P10):
+                self.assertIn(present, paths_of(lane))
+            cfg.exclude_titles = ["creds", "credentials"]
+            client.fail_children_for.update({hid(7), hid(8), hid(10)})
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            for gone in (P8, C9, P10):
+                self.assertNotIn(gone, paths_of(lane))
+            self.assertFalse((lane / "Private & Shared/Root/Keys and Creds").exists())
+            self.assertFalse((lane / "Private & Shared/Root/Credentials Vault").exists())
+            self.assertIn(M7, paths_of(lane))
+            self.assertIn(M9, paths_of(lane))
+            self.assertEqual(rep.moved, 0)
+            self.assertGreaterEqual(rep.deleted, 3)
+            manifest = Mirror(client, cfg, State(cfg.state_dir)).manifest.items
+            self.assertNotIn(hid(8), manifest)
+            self.assertNotIn(hid(10), manifest)
+            self.assertEqual(manifest[hid(9)]["excluded"], 'title matched "credentials"')
+
+    def test_dropping_the_rule_restores_the_subtree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            with_credentials(client)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            cfg.exclude_titles = []
+            client.fail_children_for.clear()
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertNotIn(M9, paths_of(lane))
+            for present in (P8, C9, P10):
+                self.assertIn(present, paths_of(lane))
+
+    def test_id_exclusion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp, exclude_titles=[], exclude_ids={hid(2)})
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertIn("NOTION_EXCLUDE_IDS", (lane / P2).read_text())
+            self.assertEqual(paths_of(lane), ["LANE.md", P1, P2])
+
+    def test_delta_marks_a_new_credentials_page_and_drops_its_children(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            client.add_page(12, "Creds", client.under(2), edited=LATER, body=[para(120, "sk-secret")])
+            client.add_page(13, "Token", client.under(12), edited=LATER, body=[para(130, "sk-secret")])
+            client.fail_children_for.update({hid(12), hid(13)})
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            m12 = "Private & Shared/Root/Music/Creds %s.md" % hid(12)
+            self.assertIn(m12, paths_of(lane))
+            self.assertFalse(any("Token" in p for p in paths_of(lane)))
+            self.assertEqual(rep.excluded_paths, [m12])
+            self.assertEqual(State(cfg.state_dir).read_cursor(), LATER)
+
+    def test_delta_removes_a_page_moved_under_an_excluded_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            with_credentials(client)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertIn(P6, paths_of(lane))
+            client.pages[hid(6)]["parent"] = client.under(7)
+            client.pages[hid(6)]["last_edited_time"] = LATER
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            self.assertNotIn(P6, paths_of(lane))
+            self.assertFalse(any("Lyrics" in p for p in paths_of(lane)))
+            self.assertNotIn(hid(6), Mirror(client, cfg, State(cfg.state_dir)).manifest.items)
+
+    def test_check_and_coverage_count_excluded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            with_credentials(client)
+            mirror = Mirror(client, cfg, State(cfg.state_dir))
+            self.assertEqual(mirror.check()["excluded"], 2)
+            export = Path(tmp) / "export"
+            for rel in (P1, P8, C9, P10):
+                (export / rel).parent.mkdir(parents=True, exist_ok=True)
+                (export / rel).write_text("x")
+            cov = mirror.coverage(export)
+            self.assertEqual(cov["excluded"], 3)
+            self.assertEqual(cov["unreachable"], 0)
+
+
+SCANNER = """#!/bin/sh
+# flags every listed file whose content holds the word HUNTER2
+hits=0
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  if grep -q HUNTER2 -- "$f"; then echo "--- $f"; hits=$((hits+1)); fi
+done < "$1"
+echo "files with hits: $hits"
+[ "$hits" -eq 0 ]
+"""
+
+
+def scanner(tmp):
+    path = Path(tmp) / "scan.sh"
+    path.write_text(SCANNER)
+    path.chmod(0o755)
+    return str(path)
+
+
+class SecretScan(unittest.TestCase):
+    def test_clean_run_scans_and_stays_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp, secret_scan=scanner(tmp))
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(rep.secrets, [])
+            self.assertTrue((cfg.state_dir / "last-status").read_text().startswith("OK "))
+            self.assertTrue((cfg.state_dir / "secret-scan.log").exists())
+            listed = (cfg.state_dir / "secret-scan.list").read_text().splitlines()
+            self.assertIn("raw/tools/Notion/" + P2, listed)
+            self.assertIn("raw/tools/Notion/" + IMG, listed)
+
+    def test_a_secret_in_a_page_fails_the_status_but_advances_the_cursor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp, secret_scan=scanner(tmp))
+            client.blocks[hid(6)] = [para(60, "password is HUNTER2")]
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertEqual(rep.secrets, ["raw/tools/Notion/" + P6])
+            status = (cfg.state_dir / "last-status").read_text()
+            self.assertTrue(status.startswith("FAILED "), status)
+            self.assertIn("SECRETS flagged in 1 file(s)", status)
+            self.assertIn(P6, status)
+            self.assertFalse((cfg.state_dir / "last-success").exists())
+            self.assertEqual(State(cfg.state_dir).read_cursor(), EDIT)
+            self.assertIsNotNone(State(cfg.state_dir).read_last_full())
+            self.assertIn("SECRETS flagged", rep.summary())
+
+    def test_full_scans_the_whole_lane_delta_only_what_it_wrote(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp, secret_scan=scanner(tmp))
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            stray = lane / "Private & Shared" / "legacy note.md"
+            stray.write_text("HUNTER2 left behind by an old export\n")
+            client.retitle(2, "Music!", LATER)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.secrets, [])
+            listed = (cfg.state_dir / "secret-scan.list").read_text().splitlines()
+            self.assertNotIn("raw/tools/Notion/Private & Shared/legacy note.md", listed)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.secrets, ["raw/tools/Notion/Private & Shared/legacy note.md"])
+
+    def test_scanner_that_cannot_run_is_an_error_not_a_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp, secret_scan=str(Path(tmp) / "missing.sh"))
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(len(rep.errors), 1)
+            self.assertIn("secret scan could not run", rep.errors[0])
+            self.assertTrue((cfg.state_dir / "last-status").read_text().startswith("FAILED "))
+            self.assertIsNone(State(cfg.state_dir).read_cursor())
+
+    def test_no_scanner_configured_means_no_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp, secret_scan="")
+            client.blocks[hid(6)] = [para(60, "HUNTER2")]
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.secrets, [])
+            self.assertFalse((cfg.state_dir / "secret-scan.log").exists())
+
+
+class ExcludedRow(unittest.TestCase):
+    def test_excluded_row_gets_a_marker_and_leaves_the_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, client, lane = workspace(tmp)
+            Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertIn("Alive", (lane / P3).read_text())
+            client.retitle(4, "API keys", LATER)
+            client.blocks[hid(4)] = [para(40, "sk-secret")]
+            client.fail_children_for.add(hid(4))
+            rep = Mirror(client, cfg, State(cfg.state_dir)).delta()
+            self.assertEqual(rep.errors, [])
+            marker = "Private & Shared/Root/Music/LW Songs/API keys %s.md" % hid(4)
+            self.assertIn(marker, paths_of(lane))
+            self.assertNotIn(P4, paths_of(lane))
+            self.assertNotIn(P6, paths_of(lane))  # Lyrics sat under the row
+            csv = (lane / P3).read_text()
+            self.assertIn("Atlantic", csv)
+            self.assertNotIn("API keys", csv)
+            self.assertNotIn("Alive", csv)
+            rep = Mirror(client, cfg, State(cfg.state_dir)).full()
+            self.assertEqual(rep.errors, [])
+            self.assertNotIn("API keys", (lane / P3).read_text())

@@ -69,7 +69,7 @@ class Manifest:
         atomic_write(self.path, json.dumps({"items": self.items}, sort_keys=True, ensure_ascii=False).encode("utf-8"))
 
     def rows_of(self, db_id: str) -> List[dict]:
-        rows = [e for e in self.items.values() if e.get("kind") == "row" and e.get("db_id") == db_id]
+        rows = [e for e in self.items.values() if e.get("kind") == "row" and e.get("db_id") == db_id and not e.get("excluded")]
         return sorted(rows, key=lambda e: ((e.get("title") or "").lower(), e.get("id", "")))
 
 

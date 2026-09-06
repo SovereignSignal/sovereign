@@ -5,6 +5,7 @@ Rules, as observed on a real export (2026-09-04) and pinned by the oracle run:
   database file  <stem> <32hex>_all.csv
   child folder   <stem>            (no id; the export never puts ids on folders)
   untitled       Untitled <first4>-<last4>   (also a title that sanitizes to nothing, . or ..)
+  excluded       <stem> <32hex>.md for a database too: a one-line marker, never a CSV
   stem           sanitized title cut at 50 characters, a trailing space at the cut kept
   top level      the folder roots.json maps the root to, else the default root
 
@@ -47,7 +48,7 @@ def stem(title: str, id32: str) -> str:
 
 def file_name(item: dict) -> str:
     s = stem(item.get("title", ""), item["id"])
-    if item["kind"] == "database":
+    if item["kind"] == "database" and not item.get("excluded"):
         return "%s %s_all.csv" % (s, item["id"])
     return "%s %s.md" % (s, item["id"])
 

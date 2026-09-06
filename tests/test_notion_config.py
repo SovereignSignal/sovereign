@@ -91,3 +91,59 @@ class LoadConfig(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Excludes(unittest.TestCase):
+    def env(self, tmp, extra=""):
+        (Path(tmp) / "mirror.env").write_text("NOTION_API_KEY=k\nBRAIN_ROOT=%s\n%s" % (tmp, extra))
+        return Path(tmp)
+
+    def test_default_titles_and_no_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = load_config(self.env(tmp), env={})
+            self.assertIn("creds", cfg.exclude_titles)
+            self.assertIn("key management", cfg.exclude_titles)
+            self.assertEqual(cfg.exclude_ids, set())
+
+    def test_titles_from_env_file_and_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = load_config(self.env(tmp, "NOTION_EXCLUDE_TITLES= Vault , creds\n"), env={})
+            self.assertEqual(cfg.exclude_titles, ["Vault", "creds"])
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = load_config(self.env(tmp, "NOTION_EXCLUDE_TITLES=off\n"), env={})
+            self.assertEqual(cfg.exclude_titles, [])
+
+    def test_ids_normalized_and_validated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = load_config(self.env(tmp, "NOTION_EXCLUDE_IDS=1B0000C0-D590-8025-871F-D52D5773E2AE, 2b0000c0d5908025871fd52d5773e2ae\n"), env={})
+            self.assertEqual(cfg.exclude_ids, {"1b0000c0d5908025871fd52d5773e2ae", "2b0000c0d5908025871fd52d5773e2ae"})
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ConfigError):
+                load_config(self.env(tmp, "NOTION_EXCLUDE_IDS=not-an-id\n"), env={})
+
+
+class SecretScan(unittest.TestCase):
+    def env(self, tmp, extra=""):
+        (Path(tmp) / "mirror.env").write_text("NOTION_API_KEY=k\nBRAIN_ROOT=%s\n%s" % (tmp, extra))
+        return Path(tmp)
+
+    def test_default_is_the_scanner_beside_the_bin_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            (bin_dir / "cron-wrappers").mkdir(parents=True)
+            self.assertEqual(load_config(self.env(tmp), env={}, bin_dir=bin_dir).secret_scan, "")
+            scanner = bin_dir / "cron-wrappers" / "vault-secret-scan.sh"
+            scanner.write_text("#!/bin/sh\nexit 0\n")
+            scanner.chmod(0o755)
+            self.assertEqual(load_config(self.env(tmp), env={}, bin_dir=bin_dir).secret_scan, str(scanner))
+
+    def test_explicit_path_off_and_not_executable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scanner = Path(tmp) / "scan.sh"
+            scanner.write_text("#!/bin/sh\nexit 0\n")
+            scanner.chmod(0o755)
+            cfg = load_config(self.env(tmp, "NOTION_SECRET_SCAN=%s\n" % scanner), env={})
+            self.assertEqual(cfg.secret_scan, str(scanner))
+            self.assertEqual(load_config(self.env(tmp, "NOTION_SECRET_SCAN=off\n"), env={}).secret_scan, "")
+            with self.assertRaises(ConfigError):
+                load_config(self.env(tmp, "NOTION_SECRET_SCAN=%s\n" % (Path(tmp) / "nope.sh")), env={})

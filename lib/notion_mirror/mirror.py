@@ -20,13 +20,15 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from .api import NotionError
 from .config import Config, norm_id
+from .exclude import apply_excludes, marker_text
 from .model import item_from, title_of
 from .paths import folder_for, resolve_paths
 from .render import Links, csv_from_cells, property_order, render_csv, render_page, row_cells
+from .scan import ScanError, run_scan
 from .state import Manifest, State, atomic_write, write_if_changed
 
 CHILD_KINDS = ("child_page", "child_database")
-ITEM_FIELDS = ("id", "kind", "title", "parent_kind", "parent_id", "last_edited", "ds_id", "db_id", "inline")
+ITEM_FIELDS = ("id", "kind", "title", "parent_kind", "parent_id", "last_edited", "ds_id", "db_id", "inline", "excluded")
 HEX = set("0123456789abcdef")
 OVERLAP_MINUTES = 10
 
@@ -73,6 +75,10 @@ class Report:
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     vanished: int = 0
+    excluded: int = 0
+    excluded_paths: List[str] = field(default_factory=list)
+    written_paths: List[str] = field(default_factory=list)
+    secrets: List[str] = field(default_factory=list)
     refused: Optional[str] = None
     oracle_total: int = 0
     oracle_matched: int = 0
@@ -88,6 +94,10 @@ class Report:
             self.attachments, self.orphans, len(self.errors), len(self.warnings))
         if self.vanished:
             text += ", vanished %d" % self.vanished
+        if self.excluded:
+            text += ", excluded %d" % self.excluded
+        if self.secrets:
+            text += "; SECRETS flagged in %d file(s), first: %s" % (len(self.secrets), self.secrets[0])
         if self.oracle_total:
             text += "; oracle %d/%d" % (self.oracle_matched, self.oracle_total)
         if self.unclaimed:
@@ -156,6 +166,30 @@ class Mirror:
     def _paths_for(self, items: Dict[str, dict]) -> Tuple[Dict[str, str], List[str]]:
         return resolve_paths(items, self.cfg.default_root, self.cfg.required_roots, resolve_block=self._resolve_block)
 
+    def _exclude(self, items: Dict[str, dict], rep: Optional[Report] = None) -> Dict[str, dict]:
+        """Mark excluded roots and drop everything under them, before any path is computed
+        or any content fetched. Returns the dropped descendants."""
+        dropped = apply_excludes(items, self.cfg.exclude_titles, self.cfg.exclude_ids, resolve_block=self._resolve_block)
+        if rep is not None:
+            rep.excluded = sum(1 for it in items.values() if it.get("excluded"))
+        return dropped
+
+    def _moves(self, items: Dict[str, dict], old: Dict[str, dict], paths: Dict[str, str]) -> Tuple[List[Tuple[str, str]], List[str]]:
+        """Items whose recorded path differs from today's. A change in excluded state is not a
+        move (a CSV does not become a marker by renaming, nor a marker a page): the old file
+        is removed and the new one written. Returns (moves, stale paths to remove)."""
+        moves: List[Tuple[str, str]] = []
+        stale: List[str] = []
+        for i in items:
+            entry = old.get(i)
+            if not entry or not entry.get("path") or entry["path"] == paths[i]:
+                continue
+            if bool(entry.get("excluded")) != bool(items[i].get("excluded")):
+                stale.append(entry["path"])
+            else:
+                moves.append((entry["path"], paths[i]))
+        return moves, stale
+
     def _schema(self, ds_id: str) -> dict:
         if ds_id not in self._schemas:
             self._schemas[ds_id] = (self.client.data_source(ds_id) or {}).get("properties") or {}
@@ -198,6 +232,7 @@ class Mirror:
     def check(self) -> dict:
         me = self.client.request("GET", "/users/me")
         items = self._walk()
+        self._exclude(items)
         roots = {i: it["title"] for i, it in items.items() if it["parent_kind"] == "workspace"}
         kinds: Dict[str, int] = {}
         for it in items.values():
@@ -209,6 +244,7 @@ class Mirror:
             "kinds": kinds,
             "roots": roots,
             "missing_roots": sorted(i for i in self.cfg.required_roots if i not in roots),
+            "excluded": sum(1 for it in items.values() if it.get("excluded")),
         }
 
     # -- coverage -------------------------------------------------------------------
@@ -228,7 +264,9 @@ class Mirror:
         """What a full export holds that the walk cannot see, grouped by top folder. Read-only."""
         export = self._index_dir(Path(export_dir))
         items = self._walk()
-        unreachable = {i: p for i, p in export.items() if i not in items}
+        dropped = self._exclude(items)
+        excluded_ids = set(dropped) | {i for i, it in items.items() if it.get("excluded")}
+        unreachable = {i: p for i, p in export.items() if i not in items and i not in dropped}
         groups: Dict[str, List[str]] = {}
         for path in sorted(unreachable.values()):
             parts = path.split("/")
@@ -242,6 +280,7 @@ class Mirror:
             "export_total": len(export),
             "reachable": len(export) - len(unreachable),
             "unreachable": len(unreachable),
+            "excluded": sum(1 for i in export if i in excluded_ids),
             "groups": [(key, len(stems), sorted(stems)[:3]) for key, stems in ordered],
             "new_since_export": sum(1 for i in items if i not in export),
         }
@@ -252,14 +291,20 @@ class Mirror:
         rep = Report("full", dry_run)
         old = self.manifest.items
         items = self._walk()
+        dropped = self._exclude(items, rep)
         paths, orphans = self._paths_for(items)
         rep.orphans = len(orphans)
+        rep.excluded_paths = sorted(paths[i] for i, it in items.items() if it.get("excluded"))
 
+        # includes what an exclude dropped: a subtree mirrored before the rule came in goes now
         deleted = [i for i in old if i not in items]
+        # the floor guards against a walk that shrank for no known reason (a disconnected root);
+        # what an exclude rule dropped is explained, and does not count against it
+        unexplained = [i for i in deleted if i not in dropped]
         allowed = len(old) * (100 - self.cfg.shrink_floor) // 100
-        if old and len(deleted) > allowed and not self.cfg.allow_shrink:
+        if old and len(unexplained) > allowed and not self.cfg.allow_shrink:
             rep.refused = "would delete %d of %d tracked items, above the %d%% floor; set NOTION_ALLOW_SHRINK=1 if that is real" % (
-                len(deleted), len(old), 100 - self.cfg.shrink_floor)
+                len(unexplained), len(old), 100 - self.cfg.shrink_floor)
             self.state.fail(rep.refused)
             return rep
 
@@ -279,31 +324,64 @@ class Mirror:
             rep.unclaimed = sorted(path for i, path in disk.items() if i not in items)
 
         changed = [i for i, it in items.items()
-                   if it["kind"] == "database" or i not in old or old[i].get("last_edited") != it["last_edited"]
-                   or not (self.cfg.lane_dir / paths[i]).exists()]
-        moves = [(old[i]["path"], paths[i]) for i in items if i in old and old[i].get("path") and old[i]["path"] != paths[i]]
+                   if it.get("excluded") or it["kind"] == "database" or i not in old
+                   or old[i].get("last_edited") != it["last_edited"] or not (self.cfg.lane_dir / paths[i]).exists()]
+        moves, stale = self._moves(items, old, paths)
         rep.would_write = [paths[i] for i in changed]
         rep.would_move = moves
-        rep.would_delete = [old[i].get("path", "") for i in deleted]
+        rep.would_delete = [old[i].get("path", "") for i in deleted] + stale
         if dry_run:
             return rep
 
         self.manifest.items = {i: _entry_from(it, paths[i], old.get(i)) for i, it in items.items()}
         self._apply_moves(moves, rep)
+        self._unlink(stale, rep)
         self._render_and_write(items, changed, paths, rep)
         self._apply_deletes(deleted, old, rep)
         self._prune_empty_dirs()
         self.manifest.save()
-        if rep.errors:
-            # no last-full: tomorrow's run is a full walk again, so errored items outside the delta window are retried within a day instead of waiting for the weekly walk
-            self.state.fail("full: %d error(s), first: %s" % (len(rep.errors), rep.errors[0]))
-        else:
-            newest = max((it["last_edited"] for it in items.values()), default="")
-            if newest:
-                self.state.write_cursor(newest)
-            self.state.write_last_full()
-            self.state.ok(rep.summary())
+        if not rep.errors:
+            self._scan_secrets(rep, whole_lane=True)
+        # the cursor covers what the walk saw, dropped items included: an excluded page edited
+        # daily must not hold the window open
+        self._finish(rep, list(items.values()) + list(dropped.values()), cursor_floor="", full=True)
         return rep
+
+    def _finish(self, rep: Report, items, cursor_floor: str, full: bool) -> None:
+        """Write the status the run earned. Errors: FAILED, nothing advances, so the next
+        run retries. Secrets flagged: the mirror itself is complete, so the cursor (and the
+        full stamp) advance, but the status is FAILED and last-success is not touched, so
+        the watchdog and the console both say so until the page is excluded or cleaned."""
+        if rep.errors:
+            # no last-full on a full run: tomorrow walks again, so errored items outside the delta window are retried within a day
+            self.state.fail("%s: %d error(s), first: %s" % (rep.mode, len(rep.errors), rep.errors[0]))
+            return
+        newest = max([it["last_edited"] for it in items] + [cursor_floor])
+        if newest:
+            self.state.write_cursor(newest)
+        if full:
+            self.state.write_last_full()
+        if rep.secrets:
+            self.state.fail("%s: SECRETS flagged in %d file(s), first: %s; see secret-scan.log; exclude the page or rotate the secret" % (
+                rep.mode, len(rep.secrets), rep.secrets[0]))
+        else:
+            self.state.ok(rep.summary())
+
+    def _scan_secrets(self, rep: Report, whole_lane: bool) -> None:
+        """A delta scans what it wrote; a full walk scans every file in the lane, so a secret
+        that arrived before the scanner did is still found within the week."""
+        if not self.cfg.secret_scan:
+            return
+        lane_rel = os.path.relpath(str(self.cfg.lane_dir), str(self.cfg.brain_root)).replace(os.sep, "/")
+        if whole_lane:
+            rel = sorted(posixpath.join(lane_rel, os.path.relpath(os.path.join(d, f), str(self.cfg.lane_dir)).replace(os.sep, "/"))
+                         for d, _dirs, files in os.walk(str(self.cfg.lane_dir)) for f in files)
+        else:
+            rel = sorted(set(posixpath.join(lane_rel, p) for p in rep.written_paths))
+        try:
+            rep.secrets = run_scan(self.cfg.secret_scan, self.cfg.brain_root, rel, self.cfg.state_dir)
+        except ScanError as exc:
+            rep.errors.append(str(exc))
 
     # -- delta ----------------------------------------------------------------------
 
@@ -341,29 +419,33 @@ class Mirror:
         # hash compare keeps that free of spurious writes. A database whose own stamp did not
         # move is left out: its CSV is rebuilt from cached cells when a row changes, and the
         # weekly full walk requeries every one, so a delta never pays for a requery per run.
-        changed = [i for i, it in fresh.items()
-                   if it["kind"] != "database" or i not in old or old[i].get("last_edited") != it["last_edited"]]
         items.update(fresh)
         self._ensure_parents(items, fresh, rep)
+        dropped = self._exclude(items, rep)
+        changed = [i for i, it in fresh.items() if i in items and (
+            it.get("excluded") or it["kind"] != "database" or i not in old or old[i].get("last_edited") != it["last_edited"])]
         paths, orphans = self._paths_for(items)
         rep.orphans = len(orphans)
-        moves = [(old[i]["path"], paths[i]) for i in items if i in old and old[i].get("path") and old[i]["path"] != paths[i]]
+        rep.excluded_paths = sorted(paths[i] for i, it in fresh.items() if i in items and it.get("excluded"))
+        moves, stale = self._moves(items, old, paths)
+        # a page that moved under an excluded one, or a rule that now covers it: its file goes now, not at the weekly walk
+        stale += [old[i]["path"] for i in dropped if i in old and old[i].get("path")]
         rep.would_write = [paths[i] for i in changed]
         rep.would_move = moves
+        rep.would_delete = stale
         if dry_run:
             return rep
 
         self.manifest.items = {i: _entry_from(it, paths[i], old.get(i)) for i, it in items.items()}
         self._apply_moves(moves, rep)
+        self._unlink(stale, rep)
         new_parents = [i for i in items if i not in old and i not in fresh]
         self._render_and_write(items, changed + new_parents, paths, rep)
+        self._prune_empty_dirs()
         self.manifest.save()
-        if rep.errors:
-            self.state.fail("delta: %d error(s), first: %s" % (len(rep.errors), rep.errors[0]))
-        else:
-            newest = max([it["last_edited"] for it in fresh.values()] + [cursor])
-            self.state.write_cursor(newest)
-            self.state.ok(rep.summary())
+        if not rep.errors:
+            self._scan_secrets(rep, whole_lane=False)
+        self._finish(rep, fresh.values(), cursor_floor=cursor, full=False)
         return rep
 
     # -- shared apply steps -----------------------------------------------------------
@@ -432,7 +514,9 @@ class Mirror:
         for i in changed:
             it = items[i]
             try:
-                if it["kind"] == "database":
+                if it.get("excluded"):
+                    self._write_marker(it, paths, rep)
+                elif it["kind"] == "database":
                     self._write_database(it, paths, links, rep)
                 else:
                     self._write_page(it, paths, links, rep)
@@ -474,6 +558,22 @@ class Mirror:
                         rep.warnings.append("children of %s %s: %s" % (block.get("type", ""), child_id, exc))
         return blocks
 
+    def _put(self, rel_path: str, data: bytes, rep: Report) -> None:
+        """Every content write goes through here: hash-compared, counted, and remembered for the scan."""
+        if write_if_changed(self.cfg.lane_dir / rel_path, data):
+            rep.written += 1
+            rep.written_paths.append(rel_path)
+        else:
+            rep.unchanged += 1
+
+    def _write_marker(self, it: dict, paths: Dict[str, str], rep: Report) -> None:
+        """An excluded item: nothing is fetched, one line stands in for it on disk."""
+        path = paths[it["id"]]
+        if self._refused(self.cfg.lane_dir / path, rep):
+            return
+        self._put(path, marker_text(it["excluded"]).encode("utf-8"), rep)
+        self.manifest.items.setdefault(it["id"], {}).pop("cells", None)
+
     def _write_page(self, it: dict, paths: Dict[str, str], links: Links, rep: Report) -> None:
         page_path = paths[it["id"]]
         obj = it.get("_obj") or self.client.page(it["id"])
@@ -483,10 +583,7 @@ class Mirror:
         text = render_page(it, obj, blocks, links, attachments, page_path, schema_props=schema)
         if self._refused(self.cfg.lane_dir / page_path, rep):
             return
-        if write_if_changed(self.cfg.lane_dir / page_path, text.encode("utf-8")):
-            rep.written += 1
-        else:
-            rep.unchanged += 1
+        self._put(page_path, text.encode("utf-8"), rep)
         entry = self.manifest.items.setdefault(it["id"], {})
         if schema is not None:
             entry["cells"] = row_cells(schema, obj, links)
@@ -494,14 +591,14 @@ class Mirror:
 
     def _write_database(self, it: dict, paths: Dict[str, str], links: Links, rep: Report) -> None:
         schema = self._schema(it["ds_id"])
-        rows = sorted(self.client.query_rows(it["ds_id"]), key=lambda r: (title_of(r).lower(), norm_id(r.get("id"))))
+        # a row that is itself an excluded root has a marker for a page; its cells stay out of the CSV too
+        rows = sorted((r for r in self.client.query_rows(it["ds_id"])
+                       if not (self.manifest.items.get(norm_id(r.get("id"))) or {}).get("excluded")),
+                      key=lambda r: (title_of(r).lower(), norm_id(r.get("id"))))
         text = render_csv(schema, rows, links)
         if self._refused(self.cfg.lane_dir / paths[it["id"]], rep):
             return
-        if write_if_changed(self.cfg.lane_dir / paths[it["id"]], text.encode("utf-8")):
-            rep.written += 1
-        else:
-            rep.unchanged += 1
+        self._put(paths[it["id"]], text.encode("utf-8"), rep)
         entry = self.manifest.items.setdefault(it["id"], {})
         entry["header"] = property_order(schema)
         for row in rows:
@@ -523,10 +620,7 @@ class Mirror:
         text = csv_from_cells(header, [r["cells"] for r in rows])
         if self._refused(self.cfg.lane_dir / paths[it["id"]], rep):
             return
-        if write_if_changed(self.cfg.lane_dir / paths[it["id"]], text.encode("utf-8")):
-            rep.written += 1
-        else:
-            rep.unchanged += 1
+        self._put(paths[it["id"]], text.encode("utf-8"), rep)
 
     def _fetch_attachments(self, attachments: List[Tuple[str, str]], rep: Report) -> None:
         if self.cfg.files != "fetch":
@@ -540,8 +634,20 @@ class Mirror:
             try:
                 atomic_write(target, self.client.download(url))
                 rep.attachments += 1
+                rep.written_paths.append(dest)
             except NotionError as exc:
                 rep.warnings.append("attachment %s: %s" % (dest, exc))
+
+    def _unlink(self, rel_paths: List[str], rep: Report) -> None:
+        """Remove files a run no longer claims (a stale CSV under a marker, a page dropped
+        under an exclude). Folders are left to _apply_deletes and the empty-dir prune."""
+        for path in rel_paths:
+            target = self.cfg.lane_dir / self._relocate(path)
+            if self._refused(target, rep):
+                continue
+            if target.exists():
+                target.unlink()
+                rep.deleted += 1
 
     def _apply_deletes(self, deleted: List[str], old: Dict[str, dict], rep: Report) -> None:
         lane = self.cfg.lane_dir

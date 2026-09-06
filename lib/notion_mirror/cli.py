@@ -7,7 +7,7 @@
   --status     print the resolved configuration and the state files
   --coverage DIR   compare a full Notion export folder with what the token can see; writes nothing
 
-Exit codes: 0 ok, 1 errors or a refused run, 2 check found missing roots, 64 configuration.
+Exit codes: 0 ok, 1 errors, a refused run, or secrets flagged, 2 check found missing roots, 64 configuration.
 """
 import argparse
 import sys
@@ -41,6 +41,8 @@ def _print_status(cfg) -> None:
     print("files:      %s" % cfg.files)
     print("floor:      %d%%" % cfg.shrink_floor)
     print("roots:      %d required, default folder %r" % (len(cfg.required_roots), cfg.default_root))
+    print("exclude:    titles %s; ids %d" % (", ".join(cfg.exclude_titles) if cfg.exclude_titles else "(off)", len(cfg.exclude_ids)))
+    print("scan:       %s" % (cfg.secret_scan or "(none)"))
     for name in ("last-status", "last-success", "state/cursor", "state/last-full"):
         path = cfg.state_dir / name
         print("%-16s %s" % (name + ":", path.read_text(encoding="utf-8").strip() if path.exists() else "(none)"))
@@ -56,11 +58,12 @@ def _print_check(result: dict) -> None:
         print("  %s  %s" % (root_id, title or "(untitled)"))
     missing = result["missing_roots"]
     print("missing roots: %s" % (", ".join(missing) if missing else "none"))
+    print("excluded: %d (a marker file stands in for each; --full --dry-run lists them)" % result["excluded"])
 
 
 def _print_coverage(result: dict) -> None:
-    print("coverage: export %d, reachable %d, unreachable %d, new since export %d" % (
-        result["export_total"], result["reachable"], result["unreachable"], result["new_since_export"]))
+    print("coverage: export %d, reachable %d, excluded %d, unreachable %d, new since export %d" % (
+        result["export_total"], result["reachable"], result["excluded"], result["unreachable"], result["new_since_export"]))
     for folder, count, samples in result["groups"]:
         print("  %5d  %s  e.g. %s" % (count, folder, "; ".join(samples)))
 
@@ -79,7 +82,7 @@ def _print_list(label: str, rows) -> None:
 def main(argv=None, client_factory=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        cfg = load_config(args.state_dir)
+        cfg = load_config(args.state_dir, bin_dir=Path(sys.argv[0]).resolve().parent)
     except ConfigError as exc:
         print("brain-mirror-notion: %s" % exc, file=sys.stderr)
         return 64
@@ -119,8 +122,10 @@ def _run(args, cfg, client, state) -> int:
         _print_list("would write", rep.would_write)
         _print_list("would move", rep.would_move)
         _print_list("would delete", rep.would_delete)
+        _print_list("excluded (marker in place)", rep.excluded_paths)
         _print_list("on disk, not in walk", rep.unclaimed)
         _print_list("oracle mismatches (id, expected, on disk)", [(i, p, d or "(absent)") for i, p, d in rep.mismatches])
     _print_list("warnings", rep.warnings)
     _print_list("errors", rep.errors)
-    return 1 if (rep.errors or rep.refused) else 0
+    _print_list("SECRETS flagged", rep.secrets)
+    return 1 if (rep.errors or rep.refused or rep.secrets) else 0
