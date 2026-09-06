@@ -23,6 +23,10 @@ class TitleRule(unittest.TestCase):
         self.assertIsNone(title_rule("Secretariat notes", DEFAULT_EXCLUDE_TITLES))
         self.assertEqual(title_rule("Team secrets", DEFAULT_EXCLUDE_TITLES), "secrets")
 
+    def test_singular_secret_and_credential_are_not_rules(self):
+        for title in ("Secret Network", "Team Secret sponsorship", "The Book of Secret Knowledge", "OneCLI Credential Gateway"):
+            self.assertIsNone(title_rule(title, DEFAULT_EXCLUDE_TITLES), title)
+
     def test_empty_title_and_empty_rules(self):
         self.assertIsNone(title_rule("", DEFAULT_EXCLUDE_TITLES))
         self.assertIsNone(title_rule("Creds", []))

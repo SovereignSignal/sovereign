@@ -8,16 +8,18 @@ entirely (rows of an excluded database, children of an excluded page, and their 
 Matching is on whole words, case-insensitive: "creds" matches "Keys and Creds" and not
 "credscore". The default phrases cover the names credential pages usually carry. A false
 positive costs one page in the backup and says so in its marker; a miss puts a live secret
-in git history, so the defaults lean wide. NOTION_EXCLUDE_TITLES narrows or widens them,
-NOTION_EXCLUDE_IDS names pages outright.
+in git history. The singulars "secret" and "credential" are left out on purpose: on a real
+workspace they matched Secret Network, Team Secret, The Book of Secret Knowledge and a
+Credential Gateway repo, and no credential page. NOTION_EXCLUDE_TITLES narrows or widens
+the list, NOTION_EXCLUDE_IDS names pages outright, and the scan after every run is the
+backstop for what a title does not say.
 """
 import re
 from typing import Callable, Dict, List, Optional, Set
 
 DEFAULT_EXCLUDE_TITLES = [
-    "key management", "credential", "credentials", "creds", "secret", "secrets",
-    "password", "passwords", "api key", "api keys", "private key", "private keys",
-    "seed phrase", "seed phrases",
+    "key management", "credentials", "creds", "secrets", "password", "passwords",
+    "api key", "api keys", "private key", "private keys", "seed phrase", "seed phrases",
 ]
 
 _SPACES = re.compile(r"\s+")
