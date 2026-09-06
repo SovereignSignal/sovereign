@@ -60,6 +60,35 @@ class Shapes(unittest.TestCase):
             self.assertEqual(out, line, line)
             self.assertEqual(hits, [], line)
 
+    def test_code_after_a_label_is_not_a_secret(self):
+        keep = [
+            "apiKey: process.env.CURSOR_API_KEY,",
+            "const apiKey = ENV.forgeApiUrl;",
+            "secret: ENV.cookieSecret,",
+            "secretKey: this.sessionSecretKey,",
+            "refresh_token=creds.refresh_token",
+            "API key: ~/.config/notion/api-key",
+            "password = getPassword(user)",
+            "access_token: tokens[0].value",
+            "const API_KEY = import.meta.env.VITE_GOOGLE_KEY;",
+        ]
+        for line in keep:
+            out, hits = redact_text(line)
+            self.assertEqual(out, line, line)
+
+    def test_labeled_vendor_keys_without_a_known_shape_are_caught(self):
+        out, hits = redact_text(('Tavily A' + 'PI Key: ' + 'tvly-dev' + '-Ab3dEf6' + 'gH9jKl2M' + 'nOp5qRs8' + 'tUv1wXy4' + 'zAb7cDe0' + 'fGh'))
+        self.assertEqual(out, "Tavily API Key: [redacted value]")
+
+    def test_sk_hynix_slugs_are_not_api_keys(self):
+        for line in ("see sk-hynix-q2-memory-demand-outlook-2026-07-31 for the note",
+                     "https://example.com/sk-hynix-hbm4-capacity-expansion-plan-analysis",
+                     "sk-hynix-samsung-micron-hbm-pricing-comparison-2026"):
+            out, hits = redact_text(line)
+            self.assertEqual(out, line, line)
+        out, _ = redact_text(('key sk-a' + 'nt-api03' + '-Ab3dEf6' + 'gH9jKl2M' + 'nOp5qRs8' + 'tUv1wXy4' + 'z-Ab7cDe' + '0fGh_ij'))
+        self.assertEqual(out, "key [redacted api key]")
+
     def test_long_two_class_passphrase_after_a_label_is_caught(self):
         out, hits = redact_text(('password' + ': correc' + 't-horse-' + 'battery-' + 'staple-9'))
         self.assertEqual(out, "password: [redacted value]")

@@ -19,32 +19,43 @@ Each hit becomes `[redacted <kind>]`. Idempotent: redacted text has no shapes le
 import os
 import re
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 REDACTED = "[redacted %s]"
 
-# (kind, pattern). Fixed-alphabet runs, never "prefix plus anything", so ordinary prose
-# and identifiers do not trip them.
-SHAPES: List[Tuple[str, "re.Pattern[str]"]] = [
-    ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)),
-    ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[^\n]*(?:\n[A-Za-z0-9+/=]+)+")),
-    ("api key", re.compile(r"\bsk-(?:proj-|ant-|svcacct-|or-)?[A-Za-z0-9_-]{24,}")),
-    ("github token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}")),
-    ("github token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}")),
-    ("gitlab token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}")),
-    ("aws key", re.compile(r"\bA(?:KIA|SIA)[0-9A-Z]{16}\b")),
-    ("slack token", re.compile(r"\bxox[baprse]-[0-9A-Za-z]{8,}-[0-9A-Za-z-]{8,}")),
-    ("google key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}")),
-    ("oauth secret", re.compile(r"\bGOCSPX-[A-Za-z0-9_-]{20,}")),
-    ("notion token", re.compile(r"\b(?:ntn|secret)_[A-Za-z0-9]{40,}")),
-    ("stripe key", re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{20,}")),
-    ("sendgrid key", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}")),
-    ("xai key", re.compile(r"\bxai-[A-Za-z0-9]{40,}")),
-    ("perplexity key", re.compile(r"\bpplx-[A-Za-z0-9]{40,}")),
-    ("huggingface token", re.compile(r"\bhf_[A-Za-z0-9]{34,}")),
-    ("firecrawl key", re.compile(r"\bfc-[a-f0-9]{32}\b")),
-    ("telegram bot token", re.compile(r"\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b")),
-    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
+_ALNUM_RUN = re.compile(r"[A-Za-z0-9]{20,}")
+
+
+def _keylike(value: str) -> bool:
+    """A key has a long run without separators and mixes cases or digits. A slug does not:
+    "sk-hynix-q2-memory-demand-2026" is SK hynix in a macro brief, not a credential."""
+    if not _ALNUM_RUN.search(value):
+        return False
+    classes = sum(1 for test in (str.islower, str.isupper, str.isdigit) if any(test(c) for c in value))
+    return classes >= 2
+
+# (kind, pattern, check). Fixed-alphabet runs, never "prefix plus anything", so ordinary
+# prose and identifiers do not trip them; a check, when given, judges the match itself.
+SHAPES: List[Tuple[str, "re.Pattern[str]", Optional[Callable[[str], bool]]]] = [
+    ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), None),
+    ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[^\n]*(?:\n[A-Za-z0-9+/=]+)+"), None),
+    ("api key", re.compile(r"\bsk-(?:proj-|ant-(?:api\d\d-)?|svcacct-|or-)?[A-Za-z0-9_-]{24,}"), _keylike),
+    ("github token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"), None),
+    ("github token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}"), None),
+    ("gitlab token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"), None),
+    ("aws key", re.compile(r"\bA(?:KIA|SIA)[0-9A-Z]{16}\b"), None),
+    ("slack token", re.compile(r"\bxox[baprse]-[0-9A-Za-z]{8,}-[0-9A-Za-z-]{8,}"), None),
+    ("google key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}"), None),
+    ("oauth secret", re.compile(r"\bGOCSPX-[A-Za-z0-9_-]{20,}"), None),
+    ("notion token", re.compile(r"\b(?:ntn|secret)_[A-Za-z0-9]{40,}"), None),
+    ("stripe key", re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{20,}"), None),
+    ("sendgrid key", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"), None),
+    ("xai key", re.compile(r"\bxai-[A-Za-z0-9]{40,}"), None),
+    ("perplexity key", re.compile(r"\bpplx-[A-Za-z0-9]{40,}"), None),
+    ("huggingface token", re.compile(r"\bhf_[A-Za-z0-9]{34,}"), None),
+    ("firecrawl key", re.compile(r"\bfc-[a-f0-9]{32}\b"), None),
+    ("telegram bot token", re.compile(r"\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b"), None),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), None),
 ]
 
 # postgres://user:PASSWORD@host: only the password goes; user and host stay readable.
@@ -57,12 +68,14 @@ _LABELED = re.compile(
     r"(?i)\b(api[ _-]?key|secret[ _-]?key|client[ _-]?secret|access[ _-]?token|auth[ _-]?token|refresh[ _-]?token|bearer|"
     r"password|passwd|passphrase|private[ _-]?key|secret)\b\s*[:=]\s*[\"'`]?([^\s\"'`,;|]{12,})")
 
+# a value that is code, not a credential: a call, an index, a member access, a path
+_CODE = re.compile(r"[()\[\]{}]|\.[A-Za-z_]|^[~./]|^(?:this|self|process|os|env|ENV|config|settings|import)\b")
 _PLACEHOLDER = re.compile(r"^(?:<.*>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|x{6,}|X{6,}|\*{6,}|\.{3,}|your[-_].*|changeme|change-me|redacted.*|\[redacted.*)$", re.I)
 _HEX = re.compile(r"^(?:0x)?[0-9a-fA-F]+$")
 
 
 def _looks_secret(value: str) -> bool:
-    if _PLACEHOLDER.match(value) or _HEX.match(value):
+    if _PLACEHOLDER.match(value) or _HEX.match(value) or _CODE.search(value):
         return False
     if "://" in value or value.startswith("www."):
         return False
@@ -82,8 +95,11 @@ def redact_text(text: str) -> Tuple[str, List[str]]:
             return REDACTED % kind
         return sub
 
-    for kind, pattern in SHAPES:
-        text = pattern.sub(shape_sub(kind), text)
+    for kind, pattern, check in SHAPES:
+        if check is None:
+            text = pattern.sub(shape_sub(kind), text)
+        else:
+            text = pattern.sub(lambda m, k=kind: (hits.append(k) or REDACTED % k) if check(m.group(0)) else m.group(0), text)
 
     def url_sub(m):
         if _PLACEHOLDER.match(m.group(2)) or m.group(2).lower() in ("password", "passwd", "pass", "secret"):
