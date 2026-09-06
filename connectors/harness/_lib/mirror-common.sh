@@ -70,8 +70,11 @@ sov_redact() {
   out="$("$bin" "$dest" 2>&1)" || { echo "mirror: brain-redact failed on $dest: $out" >&2; return 0; }
   n="$(printf '%s\n' "$out" | sed -n 's/^redacted: \([0-9]*\) value(s) in \([0-9]*\) file(s)$/\1 in \2/p')"
   case "$n" in ""|"0 in 0") return 0;; esac
-  echo "mirror: redacted $n file(s) under $dest" >&2
-  printf '%s\n' "$out" | grep -v '^redacted: ' | sed 's/^/mirror:   /' >&2
+  # Routine reporting goes to stdout: the fence working is not a job failure, and a
+  # connector's stderr is read as trouble (the console counts lines there). Only the
+  # two failure paths above stay on stderr.
+  echo "mirror: redacted $n file(s) under $dest"
+  printf '%s\n' "$out" | grep -v '^redacted: ' | sed 's/^/mirror:   /' 
   [ -f "$dest/MANIFEST.md" ] && printf '\nRedacted on this run: %s file(s); the values never entered the brain.\n' "$n" >> "$dest/MANIFEST.md"
   return 0
 }
