@@ -155,3 +155,28 @@ class ExcludesAndScan(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("SECRETS flagged (2):", out)
             self.assertTrue((state / "last-status").read_text().startswith("FAILED "))
+
+
+class ScannerBesideTheLink(unittest.TestCase):
+    def test_default_scanner_found_beside_a_linked_bin(self):
+        """~/brain-bin is a folder of links into the template plus its own cron-wrappers; the
+        default must look beside the link, not only beside the template's real file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            state, client, vault = setup(tmp)
+            real = Path(tmp) / "template" / "bin"
+            real.mkdir(parents=True)
+            (real / "brain-mirror-notion").write_text("#!/usr/bin/env python3\n")
+            links = Path(tmp) / "brain-bin"
+            (links / "cron-wrappers").mkdir(parents=True)
+            (links / "brain-mirror-notion").symlink_to(real / "brain-mirror-notion")
+            scanner = links / "cron-wrappers" / "vault-secret-scan.sh"
+            scanner.write_text("#!/bin/sh\nexit 0\n")
+            scanner.chmod(0o755)
+            saved = sys.argv[0]
+            sys.argv[0] = str(links / "brain-mirror-notion")
+            try:
+                code, out, err = run(["--status", "--state-dir", str(state)], client)
+            finally:
+                sys.argv[0] = saved
+            self.assertEqual(code, 0)
+            self.assertIn("scan:       %s" % scanner, out)

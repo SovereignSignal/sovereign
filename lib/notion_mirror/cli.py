@@ -10,11 +10,12 @@
 Exit codes: 0 ok, 1 errors, a refused run, or secrets flagged, 2 check found missing roots, 64 configuration.
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from .api import NotionClient
-from .config import ConfigError, load_config
+from .config import SCANNER_REL, ConfigError, load_config
 from .mirror import Mirror
 from .state import State
 
@@ -30,6 +31,16 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--status", action="store_true", help="print configuration and state, run nothing")
     ap.add_argument("--coverage", metavar="DIR", help="compare a full Notion export folder with what the token can see; writes nothing")
     return ap
+
+
+def _bin_dir() -> Path:
+    """Where the mirror was invoked from, symlink kept: a brain's bin is often a folder of
+    links into the template with its own extras (the secret scanner) beside them, so the
+    unresolved parent is checked first and the template's own bin second."""
+    invoked = Path(sys.argv[0]).absolute().parent
+    if os.access(str(invoked / SCANNER_REL), os.X_OK):
+        return invoked
+    return Path(sys.argv[0]).resolve().parent
 
 
 def _print_status(cfg) -> None:
@@ -82,7 +93,7 @@ def _print_list(label: str, rows) -> None:
 def main(argv=None, client_factory=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        cfg = load_config(args.state_dir, bin_dir=Path(sys.argv[0]).resolve().parent)
+        cfg = load_config(args.state_dir, bin_dir=_bin_dir())
     except ConfigError as exc:
         print("brain-mirror-notion: %s" % exc, file=sys.stderr)
         return 64
