@@ -7,13 +7,16 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Set
+
+from .exclude import DEFAULT_EXCLUDE_TITLES
 
 DEFAULT_VERSION = "2026-03-11"
 DEFAULT_LANE = "raw/tools/Notion"
 DEFAULT_ROOT_FOLDER = "Private & Shared"
 DEFAULT_SHRINK_FLOOR = 90
 DEFAULT_MIN_INTERVAL = 0.34
+SCANNER_REL = "cron-wrappers/vault-secret-scan.sh"  # beside the mirror's own bin, when the brain ships one
 
 
 class ConfigError(RuntimeError):
@@ -58,9 +61,25 @@ class Config:
     default_root: str
     required_roots: Dict[str, str]
     min_interval: float = DEFAULT_MIN_INTERVAL
+    exclude_titles: List[str] = None  # type: ignore[assignment]
+    exclude_ids: Set[str] = None  # type: ignore[assignment]
+    secret_scan: str = ""
+
+    def __post_init__(self) -> None:
+        if self.exclude_titles is None:
+            self.exclude_titles = list(DEFAULT_EXCLUDE_TITLES)
+        if self.exclude_ids is None:
+            self.exclude_ids = set()
 
 
-def load_config(state_dir=None, env=None) -> Config:
+def _phrases(value: str) -> List[str]:
+    """NOTION_EXCLUDE_TITLES: comma-separated phrases; `off` turns the title rule off."""
+    if value.strip().lower() in ("off", "none"):
+        return []
+    return [p.strip() for p in value.split(",") if p.strip()]
+
+
+def load_config(state_dir=None, env=None, bin_dir=None) -> Config:
     env = dict(os.environ) if env is None else dict(env)
     state_dir = Path(state_dir or env.get("NOTION_STATE_DIR") or (Path.home() / ".notion-mirror"))
     file_env = read_env_file(state_dir / "mirror.env")
@@ -88,6 +107,19 @@ def load_config(state_dir=None, env=None) -> Config:
         raise ConfigError("NOTION_MIN_INTERVAL must be a number greater than 0")
     if min_interval <= 0:
         raise ConfigError("NOTION_MIN_INTERVAL must be a number greater than 0")
+    exclude_titles = _phrases(get("NOTION_EXCLUDE_TITLES", ",".join(DEFAULT_EXCLUDE_TITLES)))
+    exclude_ids = {norm_id(i) for i in get("NOTION_EXCLUDE_IDS", "").split(",") if norm_id(i)}
+    for bad in [i for i in exclude_ids if len(i) != 32]:
+        raise ConfigError("NOTION_EXCLUDE_IDS holds %r, not a Notion id" % bad)
+    scan = get("NOTION_SECRET_SCAN", "")
+    if scan.strip().lower() in ("off", "none"):
+        scan = ""
+    elif scan:
+        scan = str(Path(scan).expanduser())
+        if not os.access(scan, os.X_OK):
+            raise ConfigError("NOTION_SECRET_SCAN is not an executable: %s" % scan)
+    elif bin_dir and os.access(str(Path(bin_dir) / SCANNER_REL), os.X_OK):
+        scan = str(Path(bin_dir) / SCANNER_REL)
     lane = get("NOTION_LANE", DEFAULT_LANE)
     # same rule the installer applies to --lane: the lane is a relative path inside the vault
     if lane.startswith("/") or ".." in lane.split("/"):
@@ -119,4 +151,7 @@ def load_config(state_dir=None, env=None) -> Config:
         default_root=default_root,
         required_roots=required,
         min_interval=min_interval,
+        exclude_titles=exclude_titles,
+        exclude_ids=exclude_ids,
+        secret_scan=scan,
     )

@@ -121,3 +121,37 @@ class Cli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExcludesAndScan(unittest.TestCase):
+    def test_status_shows_exclude_rule_and_scanner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state, client, vault = setup(tmp)
+            code, out, err = run(["--status", "--state-dir", str(state)], client)
+            self.assertEqual(code, 0)
+            self.assertIn("exclude:    titles key management, credential", out)
+            self.assertIn("scan:       (none)", out)
+
+    def test_check_counts_excluded_and_full_lists_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state, client, vault = setup(tmp)
+            client.add_page(3, "Creds", client.under(1))
+            code, out, err = run(["--check", "--state-dir", str(state)], client)
+            self.assertEqual(code, 0)
+            self.assertIn("excluded: 1", out)
+            code, out, err = run(["--full", "--dry-run", "--state-dir", str(state)], client)
+            self.assertIn("excluded (marker in place) (1):", out)
+            self.assertIn("Creds %s.md" % hid(3), out)
+
+    def test_secrets_flagged_exit_1(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state, client, vault = setup(tmp)
+            scanner = Path(tmp) / "scan.sh"
+            scanner.write_text("#!/bin/sh\ncat \"$1\"\nexit 1\n")
+            scanner.chmod(0o755)
+            with open(state / "mirror.env", "a") as fh:
+                fh.write("NOTION_SECRET_SCAN=%s\n" % scanner)
+            code, out, err = run(["--full", "--state-dir", str(state)], client)
+            self.assertEqual(code, 1)
+            self.assertIn("SECRETS flagged (2):", out)
+            self.assertTrue((state / "last-status").read_text().startswith("FAILED "))

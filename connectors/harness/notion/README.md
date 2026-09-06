@@ -33,12 +33,23 @@ When a run errors, re-run it with `brain-mirror-notion --full`: the errored item
 - The mirror never commits. Your vault's own autocommit picks up the lane.
 - `~/.notion-mirror/last-status` is one line: `OK <ts> <summary>` or `FAILED <ts> <reason>`. `last-success` holds the last clean run's timestamp. `watchdog.sh` alerts when that is older than 36 hours; schedule it the same way at a later hour if you want it.
 
+## What is never mirrored
+
+A backup of a workspace is a copy of everything in it, and workspaces hold credential pages. The mirror refuses those at the source: a page or database whose title holds `key management`, `credential(s)`, `creds`, `secret(s)`, `password(s)`, `api key(s)`, `private key(s)` or `seed phrase(s)` as whole words is never fetched, and neither is anything under it (rows of such a database, children of such a page). One line stands in for it on disk, at the path the page would have had, so the layout stays honest and `--coverage` can account for it:
+
+    Excluded by the Notion mirror (title matched "creds"): this page and everything under it stay in Notion, unmirrored.
+
+`NOTION_EXCLUDE_TITLES` in `mirror.env` narrows or widens the phrases (`off` turns the rule off); `NOTION_EXCLUDE_IDS` names pages outright. A rule added later takes effect on the next run: the subtree's files are removed and the marker written. `--check` counts the excluded roots, `--full --dry-run` lists them.
+
+Names are a net, not a guarantee, so every run also ends with a scan. `NOTION_SECRET_SCAN` is any executable that takes a file of vault-relative paths on `argv[1]`, runs with the vault as its cwd, and exits nonzero on a hit; the default is `cron-wrappers/vault-secret-scan.sh` beside the mirror's bin when the brain ships one. A delta scans what it wrote, a full walk scans the whole lane. A hit makes the status `FAILED ... SECRETS flagged in N file(s), first: <path>`, with the scanner's output in `~/.notion-mirror/secret-scan.log`; the mirror itself is complete (the cursor advances), but `last-success` is not touched, so the watchdog and the console keep saying so until the page is excluded or the secret rotated. A scanner that cannot run is an error, not a pass.
+
 ## Layout on disk (matches Notion's export)
 
     <root folder>/<Page> <32hex>.md            a page
     <root folder>/<Page>/                       its children
     <root folder>/<Page>/<DB> <32hex>_all.csv   a database, every row and property
     <root folder>/<Page>/<DB>/<Row> <32hex>.md  a row page
+    <root folder>/<Page>/<Creds> <32hex>.md      an excluded page or database: one line, nothing under it
     Untitled <4hex>-<4hex>                      an untitled page or database
 
 Attachments are downloaded beside the page (`NOTION_FILES=skip` in `mirror.env` leaves them in Notion and keeps the links). Comments and database views are not mirrored.
