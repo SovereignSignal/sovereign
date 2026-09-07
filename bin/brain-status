@@ -671,7 +671,15 @@ def bootstrap_handoff():
     except OSError:
         pass
     hub_pub = os.path.join(d, "hub.pub")
-    hub = pointer("~/.brain-hub").split(":")[0]
+    # On the hub itself there is no ~/.brain-hub pointer, so read the key here rather
+    # than over ssh. Assuming the pointer exists crashed the whole status on the hub,
+    # which is where the console is most expected to work.
+    hub = (pointer("~/.brain-hub") or "").split(":")[0]
+    if not os.path.exists(hub_pub) and not hub:
+        local_pub = os.path.expanduser("~/.ssh/sovereign_hub_ed25519.pub")
+        if os.path.exists(local_pub):
+            try: shutil.copyfile(local_pub, hub_pub)
+            except OSError: pass
     if not os.path.exists(hub_pub) and hub:
         try:
             pub = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", hub, "cat ~/.ssh/sovereign_hub_ed25519.pub"],
