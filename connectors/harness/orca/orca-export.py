@@ -47,7 +47,11 @@ def jl(s):
         return [s] if s else []
 
 
-con = sqlite3.connect("file:%s?mode=ro" % DB, uri=True)
+# DB is a COPY in a temp dir (mirror.sh snapshots the db plus its -wal and -shm), so
+# opening it read-write is safe and is the only way SQLite replays a copied WAL. A
+# read-only open cannot: it has to build the -shm sidecar, so it fails outright on a
+# WAL database whose sidecars did not exist at copy time. That is what broke the lane.
+con = sqlite3.connect(DB)
 cur = con.cursor()
 runs = rows(cur, "SELECT id, objective, created_at, updated_at, legacy FROM runs ORDER BY created_at")
 os.makedirs(OUT, exist_ok=True)
