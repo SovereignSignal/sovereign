@@ -928,6 +928,9 @@ window.onerror = function (msg, src, line, col) {
       <div class="sect"><h2>Where the app lives</h2>
         ${opt("dock", "Dock")}${opt("menubar", "Menu bar only")}${opt("both", "Dock and menu bar")}
         <div class="prose" style="color:var(--muted);margin-top:4px">The menu bar puts a crown up top; click it for the glance panel. Menu bar only hides the Dock icon.</div></div>
+      <div class="sect"><h2>Closing the window</h2>
+        <label class="check"><input type="checkbox" id="s-closequits" ${S.closeQuits ? "checked" : ""}> Quit Sovereign when the window closes</label>
+        <div class="prose" style="color:var(--muted)">Off, the window closes and Sovereign keeps watching in the background; open it again from the Dock or the crown.</div></div>
       <div class="sect"><h2>Startup</h2>
         <label class="check"><input type="checkbox" id="s-login" ${S.loginItem ? "checked" : ""}> Open at login</label>
         <div class="prose" style="color:var(--muted)">${esc(login)}</div></div>
@@ -945,7 +948,7 @@ window.onerror = function (msg, src, line, col) {
     const wantPin = $("#s-pin").checked;
     if (wantPin !== pinned) setPinned(wantPin);
     $("#s-state").textContent = "Saving…";
-    bridge({ cmd: "setSettings", where, loginItem: $("#s-login").checked, refresh: +$("#s-refresh").value, defaultView: $("#s-view").value });
+    bridge({ cmd: "setSettings", where, loginItem: $("#s-login").checked, refresh: +$("#s-refresh").value, defaultView: $("#s-view").value, closeQuits: $("#s-closequits").checked });
   }
 
   function renderInspector() {
@@ -1242,7 +1245,19 @@ window.onerror = function (msg, src, line, col) {
     armed = { el: b, label, t: setTimeout(() => { b.classList.remove("confirm"); b.textContent = label; armed = null; }, 4000) };
   }
 
-  document.addEventListener("click", (e) => {
+  // Same reason as sovDeliver: a throw inside a handler the app or the QA harness
+  // dispatched is sanitised to "Script error." with no line, so name it here.
+  document.addEventListener("click", (e) => { try { onClick(e); } catch (err) { reportUI("click", err); } });
+  function reportUI(where, err) {
+    const msg = String((err && (err.stack || err.message)) || err);
+    const log = document.getElementById("drawer-log");
+    if (log) { log.textContent += "\nconsole error in " + where + ": " + msg + "\n"; }
+    const st = document.getElementById("drawer-state"); if (st) st.textContent = "console error";
+    const c = document.getElementById("listcount"); if (c) c.textContent = ("console error: " + msg).slice(0, 160);
+    try { console.error("sov " + where, err); } catch (_) {}
+    bridge({ cmd: "clientError", where: where, msg: msg });   // reaches the app's log, where a QA run can read it
+  }
+  function onClick(e) {
     const seg = e.target.closest(".seg button"); if (seg) return setView(seg.dataset.view);
     const need = e.target.closest("[data-need]");
     if (need) { const n = (D.needs_you || [])[+need.dataset.need];
@@ -1263,6 +1278,9 @@ window.onerror = function (msg, src, line, col) {
     if (opn) { const it = findRow(opn.dataset.open); if (it) select(it.kind, it.id, true); return; }
     const b = e.target.closest("button");
     if (b) {
+      const act = b.dataset.act;               // declared before its first use: a const read
+                                               // above its declaration is a ReferenceError,
+                                               // which killed every data-act button.
       if (b.id === "refresh" || b.id === "g-refresh" || b.id === "err-refresh") return refresh();
       if (b.id === "back") return back();
       if (b.id === "fwd") return forward();
@@ -1279,7 +1297,6 @@ window.onerror = function (msg, src, line, col) {
       if (b.dataset.gotoView) return setView(b.dataset.gotoView, b.dataset.gotoView === "archive" ? { section: b.dataset.gotoSec } : undefined);
       if (act === "vmstart") { b.disabled = true; b.textContent = "starting…"; return bridge({ cmd: "vmstart", name: b.dataset.vm }); }
       if (act === "copy") { try { navigator.clipboard.writeText(b.dataset.text); b.textContent = "copied"; } catch (e) { b.textContent = "select it"; } return; }
-      const act = b.dataset.act;
       if (act === "connect") {   // a secret travels in memory to the bridge, which puts it in the child's environment only
         const f = document.getElementById("secret-" + b.dataset.harness), extra = {};
         if (f && f.value) { extra.secret = f.value; extra.secretEnv = f.dataset.env; }
@@ -1299,7 +1316,7 @@ window.onerror = function (msg, src, line, col) {
     }
     const row = e.target.closest(".row[role=option]");
     if (row) { const it = items().find(i => i.id === row.dataset.id); if (it) select(it.kind, it.id, true); }
-  });
+  }
   document.addEventListener("keydown", (e) => {
     const need = e.target.closest && e.target.closest("[data-need]");
     if (need && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); need.click(); }
@@ -1334,7 +1351,22 @@ window.onerror = function (msg, src, line, col) {
 
   function refresh() { bridge({ cmd: "status" }); }
   window.sovRefresh = refresh;
+  // Anything thrown inside a call the app injects reaches window.onerror as a bare
+  // "Script error." at 0:0: WebKit sanitises it, because the injected frame has no
+  // script origin it will name. Catching it here is the only place the real message
+  // survives, so the drawer says what broke instead of the header saying nothing.
   window.sovDeliver = function (kind, payload) {
+    try { deliverInner(kind, payload); }
+    catch (e) {
+      const msg = String((e && (e.stack || e.message)) || e);
+      const log = document.getElementById("drawer-log");
+      if (log) { log.textContent += "\nconsole error in " + kind + ": " + msg + "\n"; log.scrollTop = log.scrollHeight; }
+      const st = document.getElementById("drawer-state"); if (st) st.textContent = "console error";
+      const c = document.getElementById("listcount"); if (c) c.textContent = ("console error: " + msg).slice(0, 140);
+      try { console.error("sovDeliver", kind, e); } catch (_) {}
+    }
+  };
+  function deliverInner(kind, payload) {
     if (kind === "status") {
       if (payload.error) {
         if (GLANCE) { const g = $("#glance"); g.hidden = false; g.innerHTML = `<div class="g-row verdict down"><span class="vdot"></span><span class="vt">${esc(payload.error)}</span></div><div class="g-foot"><span class="sp"></span><button class="brass" id="g-refresh">Try again</button></div>`; return; }

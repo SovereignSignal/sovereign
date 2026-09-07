@@ -21,6 +21,9 @@ enum Settings {
     static var loginItem: Bool { get { d.bool(forKey: "sov.loginItem") } set { d.set(newValue, forKey: "sov.loginItem") } }
     static var refresh: Int { get { let v = d.integer(forKey: "sov.refresh"); return v > 0 ? v : 60 } set { d.set(newValue, forKey: "sov.refresh") } }
     static var defaultView: String { get { d.string(forKey: "sov.defaultView") ?? "glance" } set { d.set(newValue, forKey: "sov.defaultView") } }
+    // Closing the window keeps Sovereign running by default: it is a monitor, and the
+    // owner closing a window is not the owner asking the watch to stop. Opt in to quit.
+    static var closeQuits: Bool { get { d.bool(forKey: "sov.closeQuits") } set { d.set(newValue, forKey: "sov.closeQuits") } }
     static var lastError: String? = nil
 
     static func dict(probe: Bool = false) -> [String: Any] {
@@ -35,7 +38,7 @@ enum Settings {
             }
         }
         var out: [String: Any] = ["where": location, "loginItem": loginItem, "loginState": login,
-                                  "refresh": refresh, "defaultView": defaultView,
+                                  "refresh": refresh, "defaultView": defaultView, "closeQuits": closeQuits,
                                   "bundle": Bundle.main.bundlePath]
         if let e = lastError { out["error"] = e }
         return out
@@ -103,6 +106,10 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             if let p = d["path"] as? String { NSWorkspace.shared.selectFile(p, inFileViewerRootedAtPath: "") }
         case "open":
             if let p = d["path"] as? String { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
+        case "clientError":
+            // The page cannot print; WebKit sanitises its own errors to "Script error."
+            // This is how a real message reaches the app log and a QA run.
+            log("client error in \((d["where"] as? String) ?? "?"): \((d["msg"] as? String) ?? "")")
         case "openurl":
             if let u = d["url"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
         case "gate":
@@ -130,6 +137,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             if let l = d["loginItem"] as? Bool, l != Settings.loginItem { Settings.loginItem = l; loginChanged = true }
             if let r = d["refresh"] as? Int, r >= 15, r <= 3600 { Settings.refresh = r }
             if let v = d["defaultView"] as? String, ["glance", "archive", "hosts", "lanes", "tools", "jobs", "backups"].contains(v) { Settings.defaultView = v }
+            if let q = d["closeQuits"] as? Bool { Settings.closeQuits = q }
             DispatchQueue.main.async { App.shared.applySettings(loginChanged: loginChanged); App.shared.broadcastSettings() }
         case "showConsole":
             DispatchQueue.main.async { App.shared.showConsole(place: d["place"] as? [String: Any]) }
@@ -301,6 +309,15 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         // Load after the window is on screen: a web view that loads while hidden may
         // stay suspended, and takeSnapshot on it never returns.
         load(web, glance: qaGlance)
+
+        // QA only: SOV_QA_JS runs one statement in the page a moment after load, so a
+        // harness can exercise a path a snapshot anchor cannot reach (the gate, a
+        // connect, any bridge command) and photograph what came back.
+        if let qajs = ProcessInfo.processInfo.environment["SOV_QA_JS"], !qajs.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                self?.web.evaluateJavaScript(qajs) { _, err in if let e = err { log("SOV_QA_JS: \(e)") } }
+            }
+        }
 
         // Design QA without screen-recording permission: SOV_SNAPSHOT=/path.png makes the
         // app photograph its own web view once status has rendered, then quit.
@@ -480,7 +497,11 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         if let place = place { bridge.deliver("goto", place) }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { Settings.location == "dock" }
+    // Only quit on close when the owner asked for it, and only when there is no menu bar
+    // crown left to run under. Reopen (Dock click, or the crown) brings the window back.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        Settings.location == "dock" && Settings.closeQuits
+    }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { window.makeKeyAndOrderFront(nil) }
