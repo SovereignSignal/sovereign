@@ -6,15 +6,15 @@
 # machine's lane. The working tree only, never the .git store, never session
 # transcripts (~/.codex/sessions/**/*.jsonl).
 #
-# Destination and config: see _lib/mirror-common.sh. Exit 0 always.
+# Destination and config: see _lib/mirror-common.sh. Failures return nonzero; prior captures are retained.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../_lib/mirror-common.sh"
 
 LANE="codex-memory-$BRAIN_HOST_RESOLVED"
-DEST="$(sov_dest "$LANE" "codex-memory")" || exit 0
+sov_prepare "$LANE" "codex-memory" || exit 1
 SRC="$HOME/.codex/memories"
-mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 0; }
+mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 1; }
 
 ok=0; failed=0; n=0
 if [ -d "$SRC" ] && [ -n "$(find "$SRC" -type f -print -quit 2>/dev/null)" ]; then
@@ -26,5 +26,5 @@ if [ -d "$SRC" ] && [ -n "$(find "$SRC" -type f -print -quit 2>/dev/null)" ]; th
 fi
 sov_manifest "$DEST" "$LANE" "Codex memory mirror manifest" "$ok" "$failed" \
   "Source: \`~/.codex/memories/\` (working tree). Markdown files in the lane: $n."
-sov_git_publish "$DEST" "Codex memory mirror"
-exit 0
+sov_finish "Codex memory mirror"
+exit $?

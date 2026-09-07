@@ -15,7 +15,7 @@
 
 set -uo pipefail
 VAULT="${1:-.}"
-TYPES="entity concept synthesis note log capture snapshot"
+TYPES="entity concept synthesis note log capture snapshot plan review"
 fail=0; warn=0; checked=0
 
 is_type(){ for t in $TYPES; do [ "$1" = "$t" ] && return 0; done; return 1; }

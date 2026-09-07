@@ -604,7 +604,14 @@ window.onerror = function (msg, src, line, col) {
       if (here != null && there != null && here - there > lag) { lag = here - there; lagLane = t.lane; }
       if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = 1, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host }, cause: "pull:" + x.host, host: x.host }); }));
     if (lag > 1) stale.push({ state: "warn", name: "this copy", detail: `${age(lag)} behind the hub (${(D.obsidian || {}).sync || "sync"}); ${lagLane} is the widest gap`, age_h: lag, jump: { view: "backups", id: "bk:obsidian" } });
-    (bk.lanes || []).forEach(l => { const ah = ago(l.pushed); if (late(`lane ${l.lane}`, "last pushed", ah, 24, { view: "backups", id: "bk:lane:" + l.lane }, "lane-late") === true && ah <= 24) fresh.push({ state: "live", name: `lane ${l.lane}`, detail: `pushed ${age(ah)} ago`, age_h: ah, jump: { view: "backups", id: "bk:lane:" + l.lane } }); });
+    (bk.lanes || []).forEach(l => {
+      const ah = ago(l.pushed), jump = { view: "backups", id: "bk:lane:" + l.lane };
+      if (l.delivery !== "accepted") {
+        need.push({ state: "warn", name: `lane ${l.lane}`, detail: l.delivery === "waiting" ? "pushed, awaiting hub acceptance" : "hub acceptance has not been verified", age_h: ah, jump, order: 1 });
+      } else if (late(`lane ${l.lane}`, "last source commit", ah, 24, jump, "lane-late") === true) {
+        fresh.push({ state: "live", name: `lane ${l.lane}`, detail: `source from ${age(ah)} ago is included on the hub`, age_h: ah, jump });
+      }
+    });
     Object.entries(h.jobs || {}).forEach(([k, j]) => { const cad = HUB_CADENCE_H[k]; if (!cad || j.exit) return; late(k, "last ran", ago(j.ts), cad, { view: "jobs", id: "hub:job:" + k }, "hub-job-late"); });
     if (bk.snapshots) late("daily snapshot", "last taken", bk.snapshots.newest_age_h, 24, { view: "backups", id: "bk:snapshots" }, "snapshot-late");
     // fresh: events, not states
@@ -737,9 +744,9 @@ window.onerror = function (msg, src, line, col) {
       detail: [["state", ob.sync], ["vault", ob.vault_name], ["carries", "markdown only: no git history, no lane state, no spreadsheets or code"]],
       note: "A live copy of the notes, not of the brain: governance files and anything that is not markdown never cross it." });
     (b.lanes || []).forEach(l => {
-      const p = ageOf(l.pushed), m = ageOf(l.merged), state = p == null ? "" : p < 48 ? "live" : "warn";
-      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: "on the keep as lane/" + l.lane + (m != null ? " · merged into main " + age(m) + " ago" : ""), state, stateText: p == null ? "never pushed" : "pushed " + age(p) + " ago", tag: "git", age_h: p,
-        detail: [["last push to the keep", l.pushed || "never"], ["last merge into main", l.merged || "never"], ["keep", l.keep]],
+      const p = ageOf(l.pushed), accepted = l.delivery === "accepted", state = accepted && p != null && p < 48 ? "live" : "warn";
+      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : "hub acceptance has not been verified", state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
+        detail: [["source commit time", l.pushed || "unknown"], ["last change on main", l.merged || "unknown"], ["source commit", l.source_head || "unknown"], ["observed at", l.observed_at || "unknown"], ["keep", l.keep]],
         note: "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
     });
     (b.hosts || []).forEach(h => {

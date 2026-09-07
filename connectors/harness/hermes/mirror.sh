@@ -6,15 +6,15 @@
 # SQLite store and are transcripts, so they never cross; SOUL.md is persona config,
 # not knowledge, and stays where it is.
 #
-# Destination and config: see _lib/mirror-common.sh. Exit 0 always.
+# Destination and config: see _lib/mirror-common.sh. Failures return nonzero; prior captures are retained.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../_lib/mirror-common.sh"
 
 LANE="hermes-$BRAIN_HOST_RESOLVED"
-DEST="$(sov_dest "$LANE" "hermes")" || exit 0
+sov_prepare "$LANE" "hermes" || exit 1
 SRC="${HERMES_HOME:-$HOME/.hermes}/memories"
-mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 0; }
+mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 1; }
 
 ok=0; failed=0; n=0
 if [ -d "$SRC" ] && [ -n "$(find "$SRC" -maxdepth 1 -name '*.md' -print -quit 2>/dev/null)" ]; then
@@ -26,5 +26,5 @@ if [ -d "$SRC" ] && [ -n "$(find "$SRC" -maxdepth 1 -name '*.md' -print -quit 2>
 fi
 sov_manifest "$DEST" "$LANE" "Hermes memory mirror manifest" "$ok" "$failed" \
   "Source: \`~/.hermes/memories/\` (MEMORY.md, USER.md). Markdown files in the lane: $n."
-sov_git_publish "$DEST" "Hermes memory mirror"
-exit 0
+sov_finish "Hermes memory mirror"
+exit $?

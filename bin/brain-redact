@@ -15,12 +15,13 @@ from pathlib import Path
 repository = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repository / "lib"))
 
-from brain_redact import redact_paths, redact_text, walk_files  # noqa: E402
+from brain_redact import redact_paths, redact_text, walk_files, TEXT_MAX  # noqa: E402
 
 
 def main(argv):
     check = "--check" in argv
-    args = [a for a in argv if a not in ("--check",)]
+    strict = "--strict" in argv
+    args = [a for a in argv if a not in ("--check", "--strict")]
     paths = []
     i = 0
     while i < len(args):
@@ -36,6 +37,23 @@ def main(argv):
         print(__doc__.strip(), file=sys.stderr)
         return 64
     total_values = total_files = 0
+    if strict:
+        candidates = []
+        # Validate every supplied byte before any rewrite. Never silently skip an
+        # unreadable, linked, binary or oversized member of a publish candidate.
+        try:
+            for p in paths:
+                for f in (p.rglob("*") if p.is_dir() else [p]):
+                    if f.is_symlink(): raise ValueError()
+                    if f.is_dir(): continue
+                    if not f.is_file() or f.stat().st_size > TEXT_MAX: raise ValueError()
+                    body = f.read_bytes().decode("utf-8")
+                    if "\x00" in body: raise ValueError()
+                    candidates.append(f)
+        except (OSError, ValueError):
+            print("strict scan refused: unreadable or unsupported content", file=sys.stderr)
+            return 1
+        paths = candidates
     if check:
         for p in paths:
             for f in (walk_files(p) if p.is_dir() else [p]):

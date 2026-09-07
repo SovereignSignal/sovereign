@@ -36,6 +36,42 @@ sov_dest() {
   else echo "mirror: no destination (set ~/.brain-root, or create ~/.vault-staging)" >&2; return 1; fi
 }
 
+# Collect outside every watched tree. A failed export or redaction leaves the last
+# published capture intact. The private directory is never a relay source.
+sov_prepare() {
+  SOV_FINAL="$(sov_dest "$1" "$2")" || return 1
+  local gl allowed
+  [ ! -L "$SOV_FINAL" ] || { echo "mirror: destination is a symbolic link; refused" >&2; return 1; }
+  if gl="$(sov_git_lane_dir)"; then
+    allowed="$(sed -n 's/^mirror_harnesses:[[:space:]]*\[\(.*\)\][[:space:]]*$/\1/p' "$gl/LANE.md" | tr ',' ' ')"
+    case " $allowed " in *" $2 "*) ;; *)
+      echo "mirror: owner contract must explicitly allow this harness in mirror_harnesses" >&2; return 1;; esac
+  fi
+  SOV_PRIVATE="$(mktemp -d "${TMPDIR:-/tmp}/sovereign-capture.XXXXXXXX")" || return 1
+  DEST="$SOV_PRIVATE/capture"
+  mkdir -p "$DEST" || return 1
+  trap 'sov_cleanup' EXIT
+  # Preserve retained provenance and hook receipts, without following links.
+  [ ! -d "$SOV_FINAL" ] || rsync -a "$SOV_FINAL/" "$DEST/" || return 1
+}
+
+sov_cleanup() {
+  [ -z "${SOV_PRIVATE:-}" ] || rm -rf -- "$SOV_PRIVATE"
+  [ -z "${TMP:-}" ] || rm -rf -- "$TMP"
+}
+
+sov_finish() {
+  [ "${failed:-0}" -eq 0 ] || { echo "mirror: collection failed; prior capture retained" >&2; return 1; }
+  # Links could evade inspection or redirect a later write outside the lane.
+  [ -z "$(find "$DEST" -type l -print -quit)" ] || { echo "mirror: capture contains a symbolic link; refused" >&2; return 1; }
+  sov_redact "$DEST" || return 1
+  mkdir -p "$SOV_FINAL" || return 1
+  # Rename completed files into place. No deletion; readers may see mixed clean
+  # generations during the transfer, but never the uninspected source bytes.
+  rsync -a --delay-updates "$DEST/" "$SOV_FINAL/" || return 1
+  sov_git_publish "$SOV_FINAL" "$1"
+}
+
 # Several connectors share one lane repo and their timers fire on the same tick, so
 # their git calls collide on .git/index.lock and one loses. git has no lock of its own
 # for add/commit, so take one here. mkdir is atomic on every POSIX filesystem and,
@@ -64,10 +100,10 @@ sov_git_lock() {
 # before the bytes are committed, relayed or synced anywhere. Same rules as
 # lib/brain_redact.py; the vault's commit-time scan is the check behind it.
 sov_redact() {
-  local dest="$1" bin="$HOME/brain-bin/brain-redact" out n
-  [ -x "$bin" ] || bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/bin/brain-redact"
-  [ -x "$bin" ] || { echo "mirror: brain-redact not found; lane $dest written unredacted" >&2; return 0; }
-  out="$("$bin" "$dest" 2>&1)" || { echo "mirror: brain-redact failed on $dest: $out" >&2; return 0; }
+  local dest="$1" bin out n
+  bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/bin/brain-redact"
+  [ -x "$bin" ] || { echo "mirror: brain-redact not found; publish refused" >&2; return 1; }
+  out="$("$bin" --strict "$dest" 2>&1)" || { echo "mirror: brain-redact failed; publish refused" >&2; return 1; }
   n="$(printf '%s\n' "$out" | sed -n 's/^redacted: \([0-9]*\) value(s) in \([0-9]*\) file(s)$/\1 in \2/p')"
   case "$n" in ""|"0 in 0") return 0;; esac
   # Routine reporting goes to stdout: the fence working is not a job failure, and a
@@ -86,14 +122,14 @@ sov_redact() {
 # has to reach the log or it costs days.
 sov_git_publish() {
   local dest="$1" what="$2" gl branch cur lock rc
-  sov_redact "$dest"
+  sov_redact "$dest" || return 1
   gl="$(sov_git_lane_dir)" || return 0
   branch="$(grep -E "^branch:" "$gl/LANE.md" | sed -E "s/^branch:[[:space:]]*//" | tr -d " ")"
   branch="${branch:-lane/$BRAIN_LANE_RESOLVED}"
   cur="$(git -C "$BRAIN_ROOT_RESOLVED" branch --show-current 2>/dev/null)"
-  if [ "$cur" != "$branch" ]; then echo "mirror: on '$cur', lane branch is '$branch'; not committing" >&2; return 0; fi
+  if [ "$cur" != "$branch" ]; then echo "mirror: checkout is not on the declared lane branch; not committing" >&2; return 1; fi
   lock="$BRAIN_ROOT_RESOLVED/.git/sov-publish.lock"
-  sov_git_lock "$lock" || return 0
+  sov_git_lock "$lock" || return 1
   sov_git_publish_locked "$dest" "$what" "$branch"; rc=$?
   rmdir "$lock" 2>/dev/null
   return $rc
@@ -102,14 +138,15 @@ sov_git_publish() {
 sov_git_publish_locked() {
   local dest="$1" what="$2" branch="$3" err
   if ! err="$(git -C "$BRAIN_ROOT_RESOLVED" add -A -- "$dest" 2>&1)"; then
-    echo "mirror: git add failed for $dest: $err" >&2; return 0
+    echo "mirror: git add failed" >&2; return 1
   fi
-  if git -C "$BRAIN_ROOT_RESOLVED" diff --cached --quiet -- "$dest"; then return 0; fi
-  if ! err="$(git -C "$BRAIN_ROOT_RESOLVED" commit -q -m "capture: $what $(date -u +%FT%TZ)" -- "$dest" 2>&1)"; then
-    echo "mirror: commit failed for $dest: $err" >&2; return 0
+  if ! git -C "$BRAIN_ROOT_RESOLVED" diff --cached --quiet -- "$dest"; then
+    if ! err="$(git -C "$BRAIN_ROOT_RESOLVED" commit -q -m "capture: $what $(date -u +%FT%TZ)" -- "$dest" 2>&1)"; then
+      echo "mirror: commit failed" >&2; return 1
+    fi
   fi
   if ! err="$(git -C "$BRAIN_ROOT_RESOLVED" push -q origin "$branch" 2>&1)"; then
-    echo "mirror: push of $branch failed (will retry next run): $err" >&2; return 0
+    echo "mirror: push failed (will retry next run)" >&2; return 1
   fi
   return 0
 }

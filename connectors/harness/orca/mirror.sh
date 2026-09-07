@@ -7,22 +7,22 @@
 # run into this machine's lane via orca-export.py beside this script. Read wire:
 # none of its own; the agents Orca drives carry theirs.
 #
-# Destination and config: see _lib/mirror-common.sh. Exit 0 always.
+# Destination and config: see _lib/mirror-common.sh. Failures return nonzero; prior captures are retained.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../_lib/mirror-common.sh"
 
 LANE="orca-$BRAIN_HOST_RESOLVED"
-DEST="$(sov_dest "$LANE" "orca")" || exit 0
+sov_prepare "$LANE" "orca" || exit 1
 SRC="$HOME/Library/Application Support/Orca"
 [ -f "$SRC/orchestration.db" ] || exit 0
-mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 0; }
+mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 1; }
 ok=0; failed=0; lines=()
 
 # Copy db + wal + shm together so SQLite replays the WAL and we read live data
 # without locking the running app's database.
-TMP=$(mktemp -d) || exit 0
-trap 'rm -rf "$TMP"' EXIT
+TMP=$(mktemp -d) || exit 1
+trap 'sov_cleanup' EXIT
 for ext in "" "-wal" "-shm"; do
   [ -f "$SRC/orchestration.db$ext" ] && cp "$SRC/orchestration.db$ext" "$TMP/orchestration.db$ext"
 done
@@ -34,5 +34,5 @@ else
 fi
 
 sov_manifest "$DEST" "$LANE" "Orca mirror manifest" "$ok" "$failed" ${lines[@]+"${lines[@]}"}
-sov_git_publish "$DEST" "Orca mirror"
-exit 0
+sov_finish "Orca mirror"
+exit $?

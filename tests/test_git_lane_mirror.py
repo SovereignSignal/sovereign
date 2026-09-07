@@ -29,7 +29,7 @@ class GitLaneMirror(unittest.TestCase):
             git("config", "user.email", "t@t", cwd=seed); git("config", "user.name", "t", cwd=seed)
             (seed / "knowledge").mkdir(); (seed / "knowledge" / "x.md").write_text("x\n")
             lane = seed / "raw" / "workspaces" / "testbox"; lane.mkdir(parents=True)
-            (lane / "LANE.md").write_text("---\nlane: testbox\nwrite: git-branch\nread: git\nstatus: onboarded\n---\n")
+            (lane / "LANE.md").write_text("---\nlane: testbox\nwrite: git-branch\nmirror_harnesses: [claude-code]\nread: git\nstatus: onboarded\n---\n")
             git("add", "-A", cwd=seed); git("commit", "-q", "-m", "seed", cwd=seed); git("push", "-q", "origin", "main", cwd=seed)
             brain = tmp / "brain"; subprocess.run(["git", "clone", "-q", str(bare), str(brain)], check=True)
             git("config", "user.email", "box@t", cwd=brain); git("config", "user.name", "box", cwd=brain)

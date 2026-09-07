@@ -7,15 +7,15 @@
 # (*.jsonl): cold-storage material, not brain material.
 #
 # Destination and config: see _lib/mirror-common.sh (pointer files, staging rule).
-# Exit 0 always; failures are counted in memory/MANIFEST.md and printed to stderr,
+# Failures return nonzero and preserve the previous published capture; diagnostics go to stderr,
 # which the launchd job routes to a log (StandardErrorPath is mandatory).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../_lib/mirror-common.sh"
 
 LANE="claude-code-$BRAIN_HOST_RESOLVED"
-DEST="$(sov_dest "$LANE" "claude-code")" || exit 0
-mkdir -p "$DEST/memory" || { echo "mirror: cannot create $DEST" >&2; exit 0; }
+sov_prepare "$LANE" "claude-code" || exit 1
+mkdir -p "$DEST/memory" || { echo "mirror: cannot create $DEST" >&2; exit 1; }
 
 ok=0; failed=0; lines=()
 for m in "$HOME"/.claude/projects/*/memory; do
@@ -35,5 +35,5 @@ sov_manifest "$DEST/memory" "$LANE" "Claude Code memory mirror manifest" "$ok" "
   "project's working directory as Claude Code encodes it (slashes become dashes)." "" ${lines[@]+"${lines[@]}"}
 # the lane-level heartbeat the health check and sov status read
 cp "$DEST/memory/MANIFEST.md" "$DEST/MANIFEST.md"
-sov_git_publish "$DEST" "Claude Code memory mirror"
-exit 0
+sov_finish "Claude Code memory mirror"
+exit $?

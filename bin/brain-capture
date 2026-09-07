@@ -20,7 +20,10 @@ Usage:
   brain-capture <slug> --note "text"        # short inline capture
   Options: --lane L  --type capture  --title T  --origin URL  --dry
 """
-import os, re, sys, argparse, subprocess
+import os, re, sys, argparse, subprocess, uuid
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from brain_redact import redact_text
 from datetime import datetime
 
 def _pointer(path):
@@ -58,7 +61,9 @@ a = ap.parse_args()
 VAULT = _resolve_vault()
 if not a.lane:
     sys.exit("brain-capture: no lane (--lane, $BRAIN_LANE, or ~/.brain-lane)")
-lane = a.lane.strip().strip("/")
+lane = a.lane.strip()
+if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,60}", lane):
+    sys.exit("brain-capture: invalid lane name")
 
 slug = a.slug.strip().lower()
 if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
@@ -111,12 +116,16 @@ if a.origin:
     fm.append(f"origin: {a.origin}")
 card = "---\n" + "\n".join(fm) + "\n---\n\n" + body + topic_line + "\n"
 
+card, redactions = redact_text(card)
 out = os.path.join(LANE_DIR, slug + ".md")
 if os.path.exists(out):
-    out = os.path.join(LANE_DIR, f"{slug}-{datetime.now().strftime('%Y%m%d%H%M')}.md")
+    out = os.path.join(LANE_DIR, f"{slug}-{uuid.uuid4().hex[:12]}.md")
 
 # ---- the fence: the resolved path MUST be inside the lane, and only the lane ----
 real_out, real_lane = os.path.realpath(out), os.path.realpath(LANE_DIR)
+expected = os.path.join(os.path.realpath(VAULT), os.path.relpath(LANE_DIR, VAULT))
+if real_lane != expected:
+    sys.exit("brain-capture: linked capture destinations are refused")
 if not real_out.startswith(real_lane + os.sep):
     sys.exit(f"brain-capture: refusing — resolved path escapes the lane: {real_out}")
 for fenced in ("knowledge", "workstreams"):
@@ -128,7 +137,11 @@ if a.dry:
     raise SystemExit(0)
 
 os.makedirs(LANE_DIR, exist_ok=True)
-open(out, "w", encoding="utf-8").write(card)
+try:
+    with open(out, "x", encoding="utf-8") as f:
+        f.write(card)
+except FileExistsError:
+    sys.exit("brain-capture: destination appeared during capture; retry without overwriting")
 rel = os.path.relpath(out, VAULT)
 print(f"captured: {rel}")
 

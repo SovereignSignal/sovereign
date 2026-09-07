@@ -118,13 +118,13 @@ class MirrorTests(unittest.TestCase):
             self.assertIn("Items mirrored: 2. Failed: 0.", manifest)
             self.assertIn("-Users-x-proj-a", manifest)
 
-    def test_no_destination_exits_zero(self):
+    def test_no_destination_reports_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env.update({"HOME": str(Path(tmp) / "nohome"), "BRAIN_HOST": "testbox"})
             env.pop("BRAIN_ROOT", None); env.pop("BRAIN_STAGE", None)
             res = subprocess.run(["/bin/bash", str(MIRROR)], capture_output=True, text=True, env=env)
-            self.assertEqual(res.returncode, 0)
+            self.assertNotEqual(res.returncode, 0)
             self.assertIn("no destination", res.stderr)
 
 

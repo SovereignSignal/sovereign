@@ -584,7 +584,16 @@ try:
         if not re.search(r"^write:\s*git-branch", txt, re.M): continue
         pushed = git("log", "-1", "--format=%cI", "refs/remotes/%s/lane/%s" % (keep or "", lane)) if keep else ""
         merged = git("log", "-1", "--format=%cI", "main", "--", "raw/workspaces/" + lane)
-        bk["lanes"].append({"lane": lane, "pushed": pushed or None, "merged": merged or None, "keep": keep})
+        ref = "refs/remotes/%s/lane/%s" % (keep or "", lane)
+        head = git("rev-parse", "--verify", ref) if keep else ""
+        delivery = "unknown"
+        if head:
+            result = subprocess.run(["git", "-C", root, "merge-base", "--is-ancestor", head, "main"],
+                                    capture_output=True, timeout=10)
+            delivery = "accepted" if result.returncode == 0 else "waiting" if result.returncode == 1 else "unknown"
+        bk["lanes"].append({"lane": lane, "pushed": pushed or None, "merged": merged or None, "keep": keep,
+                            "source_head": head or None, "delivery": delivery,
+                            "observed_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
     snap_root = None
     try: snap_root = os.path.expanduser(open(os.path.expanduser("~/.brain-snapshots")).read().strip())
     except OSError:

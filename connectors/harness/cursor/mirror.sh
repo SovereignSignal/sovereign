@@ -11,17 +11,17 @@
 #   2. CLI agent transcripts per project (~/.cursor/projects/*/agent-transcripts).
 #   3. Plans, skills, and the two config files.
 #
-# Destination and config: see _lib/mirror-common.sh. Exit 0 always.
+# Destination and config: see _lib/mirror-common.sh. Failures return nonzero; prior captures are retained.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../_lib/mirror-common.sh"
 
 LANE="cursor-$BRAIN_HOST_RESOLVED"
-DEST="$(sov_dest "$LANE" "cursor")" || exit 0
+sov_prepare "$LANE" "cursor" || exit 1
 SRC_CLI="$HOME/.cursor"
 SRC_APP="$HOME/Library/Application Support/Cursor"
 [ -d "$SRC_CLI" ] || exit 0
-mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 0; }
+mkdir -p "$DEST" || { echo "mirror: cannot create $DEST" >&2; exit 1; }
 EXCL=(--exclude=.DS_Store --exclude=.env --exclude=.secrets --exclude='.*.tmp' --exclude='*.tmp')
 ok=0; failed=0; lines=()
 
@@ -29,8 +29,8 @@ ok=0; failed=0; lines=()
 #    live data without locking the running app's database.
 GS="$SRC_APP/User/globalStorage"
 if [ -f "$GS/state.vscdb" ]; then
-  TMP=$(mktemp -d) || exit 0
-  trap 'rm -rf "$TMP"' EXIT
+  TMP=$(mktemp -d) || exit 1
+  trap 'sov_cleanup' EXIT
   for ext in "" "-wal" "-shm"; do
     [ -f "$GS/state.vscdb$ext" ] && cp "$GS/state.vscdb$ext" "$TMP/state.vscdb$ext"
   done
@@ -63,5 +63,5 @@ mkdir -p "$DEST/config"
 [ -f "$SRC_APP/User/settings.json" ] && rsync -a "$SRC_APP/User/settings.json" "$DEST/config/"
 
 sov_manifest "$DEST" "$LANE" "Cursor mirror manifest" "$ok" "$failed" ${lines[@]+"${lines[@]}"}
-sov_git_publish "$DEST" "Cursor mirror"
-exit 0
+sov_finish "Cursor mirror"
+exit $?
