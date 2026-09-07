@@ -14,7 +14,7 @@ The curator never judges `LANE.md` itself (config is not knowledge) — it is th
 # ---- identity (required) ----
 lane: wire-ops                 # slug; MUST equal this folder's name
 producer: wire-room-ops        # the tool/agent that writes here (its registry name)
-host: node-11              # where it runs: machine name, or provider:app for PaaS
+host: buildbox                 # where it runs: machine name, or provider:app for PaaS
 mission: >                     # one sentence: what this lane carries and why it exists
   Daily grant-intel captures distilled from the Wire Room pipeline.
 
@@ -34,7 +34,7 @@ capture_window: 30d            # optional: how long this lane may be quiet befor
 # ---- transport details (required for git transports) ----
 branch: lane/wire-ops          # the ONLY ref this producer may push
 remote: <the brain's reachable remote URL>
-auth: deploy-key wire-ops@node-11   # the credential's identity — never the credential itself
+auth: deploy-key wire-ops@buildbox      # the credential's identity — never the credential itself
                                # git producers also end every run with a heartbeat push to
                                # refs/heartbeats/<lane> — not a field, a fixed behavior;
                                # see "The heartbeat" under Field notes.

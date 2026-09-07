@@ -9,11 +9,13 @@ import os
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 H = ROOT / "connectors" / "harness"
+RUNNER = ROOT / "bin" / "sov-connectors-run"
 CARD = "---\ntype: {typ}\nsource: owner\ncreated: 2026-01-01\n---\n# {title}\n\n{body}\n"
 
 
@@ -77,56 +79,89 @@ class CursorHook(unittest.TestCase):
 
 
 class Mirrors(unittest.TestCase):
-    def run_mirror(self, harness, env):
-        return subprocess.run(["/bin/bash", str(H / harness / "mirror.sh")], capture_output=True, text=True, env=env)
+    """Every mirror, twice: called by hand, and through the shipped path.
+
+    `via="direct"` is how a human tests a wire. `via="runner"` is how it actually runs
+    on the machine, inside the one shared connector job. Only asserting the direct call
+    is how a lane sat broken for 17 days behind 1074 exit-0 runs, so both are asserted.
+    """
+
+    def run_mirror(self, harness, env, via="direct"):
+        if via == "direct":
+            return subprocess.run(["/bin/bash", str(H / harness / "mirror.sh")], capture_output=True, text=True, env=env)
+        self.assertTrue(RUNNER.exists(), "bin/sov-connectors-run is missing: the shared connector job has not landed")
+        state = Path(env["HOME"]).parent / ("state-" + harness)
+        (state / "lanes").mkdir(parents=True, exist_ok=True)
+        (state / "connectors.json").write_text(json.dumps({
+            "version": 1,
+            "runner": {"label": "com.sovereign.connector.runner", "interval_s": 900,
+                       "state_dir": str(state), "log_dir": str(state / "lanes")},
+            "harnesses": {harness: {"label": "com.sovereign.connector.%s" % harness,
+                                    "mirror": str(H / harness / "mirror.sh"),
+                                    "lane": harness, "lane_dir": str(state / "lane"),
+                                    "cadence_s": 900, "timeout_s": 300, "enabled": True,
+                                    "env": {}, "registered": "2026-01-01"}}}))
+        e = dict(env)
+        e.update({"SOV_STATE_DIR": str(state), "SOV_MANIFEST": str(state / "connectors.json")})
+        r = subprocess.run(["/usr/bin/python3", str(RUNNER), "--only", harness],
+                           capture_output=True, text=True, env=e, timeout=180)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        rec = json.loads((state / "runs.json").read_text())["lanes"][harness]
+        # the lane's own streams, so the same assertions read the same thing either way
+        return types.SimpleNamespace(returncode=rec["last_exit"],
+                                     stdout=(state / "lanes" / (harness + ".log")).read_text(),
+                                     stderr=(state / "lanes" / (harness + ".error.log")).read_text())
 
     def test_codex_mirrors_memories_working_tree_only(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp) / "home"
-            mem = home / ".codex" / "memories"; (mem / ".git").mkdir(parents=True)
-            (mem / "MEMORY.md").write_text("# m\n"); (mem / ".git" / "HEAD").write_text("ref\n")
-            env = dict(os.environ); env.update({"HOME": str(home), "BRAIN_HOST": "testbox", "BRAIN_STAGE": str(Path(tmp) / "stage")})
-            res = self.run_mirror("codex", env)
-            self.assertEqual(res.returncode, 0, res.stderr)
-            lane = Path(tmp) / "stage/raw/tools/codex-memory-testbox"
-            self.assertTrue((lane / "MEMORY.md").exists())
-            self.assertFalse((lane / ".git").exists())
-            self.assertIn("Items mirrored: 1. Failed: 0.", (lane / "MANIFEST.md").read_text())
+        for via in ("direct", "runner"):
+            with self.subTest(via=via), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp) / "home"
+                mem = home / ".codex" / "memories"; (mem / ".git").mkdir(parents=True)
+                (mem / "MEMORY.md").write_text("# m\n"); (mem / ".git" / "HEAD").write_text("ref\n")
+                env = dict(os.environ); env.update({"HOME": str(home), "BRAIN_HOST": "testbox", "BRAIN_STAGE": str(Path(tmp) / "stage")})
+                res = self.run_mirror("codex", env, via)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                lane = Path(tmp) / "stage/raw/tools/codex-memory-testbox"
+                self.assertTrue((lane / "MEMORY.md").exists())
+                self.assertFalse((lane / ".git").exists())
+                self.assertIn("Items mirrored: 1. Failed: 0.", (lane / "MANIFEST.md").read_text())
 
     def test_cowork_mirrors_each_nonempty_memory_dir(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            sessions = Path(tmp) / "sessions"
-            (sessions / "a" / "space1" / "memory").mkdir(parents=True)
-            (sessions / "a" / "space1" / "memory" / "MEMORY.md").write_text("x\n")
-            (sessions / "b" / ".hidden" / "memory").mkdir(parents=True)
-            (sessions / "b" / ".hidden" / "memory" / "MEMORY.md").write_text("y\n")
-            (sessions / "c" / "empty" / "memory").mkdir(parents=True)
-            env = dict(os.environ); env.update({"HOME": str(Path(tmp) / "home"), "BRAIN_HOST": "testbox",
-                                                "BRAIN_STAGE": str(Path(tmp) / "stage"), "COWORK_SESSIONS": str(sessions)})
-            (Path(tmp) / "home").mkdir()
-            res = self.run_mirror("cowork", env)
-            self.assertEqual(res.returncode, 0, res.stderr)
-            lane = Path(tmp) / "stage/raw/tools/cowork-testbox"
-            self.assertTrue((lane / "space1" / "MEMORY.md").exists())
-            self.assertTrue((lane / "hidden" / "MEMORY.md").exists())   # dot dropped
-            self.assertFalse((lane / "empty").exists())
-            self.assertIn("Items mirrored: 2.", (lane / "MANIFEST.md").read_text())
+        for via in ("direct", "runner"):
+            with self.subTest(via=via), tempfile.TemporaryDirectory() as tmp:
+                sessions = Path(tmp) / "sessions"
+                (sessions / "a" / "space1" / "memory").mkdir(parents=True)
+                (sessions / "a" / "space1" / "memory" / "MEMORY.md").write_text("x\n")
+                (sessions / "b" / ".hidden" / "memory").mkdir(parents=True)
+                (sessions / "b" / ".hidden" / "memory" / "MEMORY.md").write_text("y\n")
+                (sessions / "c" / "empty" / "memory").mkdir(parents=True)
+                env = dict(os.environ); env.update({"HOME": str(Path(tmp) / "home"), "BRAIN_HOST": "testbox",
+                                                    "BRAIN_STAGE": str(Path(tmp) / "stage"), "COWORK_SESSIONS": str(sessions)})
+                (Path(tmp) / "home").mkdir()
+                res = self.run_mirror("cowork", env, via)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                lane = Path(tmp) / "stage/raw/tools/cowork-testbox"
+                self.assertTrue((lane / "space1" / "MEMORY.md").exists())
+                self.assertTrue((lane / "hidden" / "MEMORY.md").exists())   # dot dropped
+                self.assertFalse((lane / "empty").exists())
+                self.assertIn("Items mirrored: 2.", (lane / "MANIFEST.md").read_text())
 
     def test_cursor_mirrors_plans_and_skills_without_a_database(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp) / "home"
-            (home / ".cursor" / "plans").mkdir(parents=True)
-            (home / ".cursor" / "plans" / "p1.md").write_text("plan\n")
-            (home / ".cursor" / "projects" / "proj" / "agent-transcripts").mkdir(parents=True)
-            (home / ".cursor" / "projects" / "proj" / "agent-transcripts" / "t.md").write_text("t\n")
-            env = dict(os.environ); env.update({"HOME": str(home), "BRAIN_HOST": "testbox", "BRAIN_STAGE": str(Path(tmp) / "stage")})
-            res = self.run_mirror("cursor", env)
-            self.assertEqual(res.returncode, 0, res.stderr)
-            lane = Path(tmp) / "stage/raw/tools/cursor-testbox"
-            self.assertTrue((lane / "plans" / "p1.md").exists())
-            self.assertTrue((lane / "projects" / "proj" / "agent-transcripts" / "t.md").exists())
-            self.assertFalse((lane / "chats").exists())
-            self.assertIn("Items mirrored: 2. Failed: 0.", (lane / "MANIFEST.md").read_text())
+        for via in ("direct", "runner"):
+            with self.subTest(via=via), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp) / "home"
+                (home / ".cursor" / "plans").mkdir(parents=True)
+                (home / ".cursor" / "plans" / "p1.md").write_text("plan\n")
+                (home / ".cursor" / "projects" / "proj" / "agent-transcripts").mkdir(parents=True)
+                (home / ".cursor" / "projects" / "proj" / "agent-transcripts" / "t.md").write_text("t\n")
+                env = dict(os.environ); env.update({"HOME": str(home), "BRAIN_HOST": "testbox", "BRAIN_STAGE": str(Path(tmp) / "stage")})
+                res = self.run_mirror("cursor", env, via)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                lane = Path(tmp) / "stage/raw/tools/cursor-testbox"
+                self.assertTrue((lane / "plans" / "p1.md").exists())
+                self.assertTrue((lane / "projects" / "proj" / "agent-transcripts" / "t.md").exists())
+                self.assertFalse((lane / "chats").exists())
+                self.assertIn("Items mirrored: 2. Failed: 0.", (lane / "MANIFEST.md").read_text())
 
 
 if __name__ == "__main__":
@@ -198,12 +233,16 @@ class Redaction(unittest.TestCase):
             self.assertEqual((lane / "MEMORY.md").read_text(), "# m\nthe deploy token is [redacted github token]\n")
             self.assertIn(token, (mem / "MEMORY.md").read_text())
             self.assertIn("Redacted on this run: 1 in 1 file(s)", (lane / "MANIFEST.md").read_text())
-            self.assertIn("mirror: redacted 1 in 1 file(s)", res.stderr)
+            # the fence working is routine, not a fault, so the line is on stdout: a connector's
+            # stderr is read as trouble and the console counts the lines there (mirror-common.sh).
+            self.assertIn("mirror: redacted 1 in 1 file(s)", res.stdout)
+            self.assertNotIn("redacted", res.stderr)
             # the source still holds the value, so every tick copies and redacts it again, and says so
             res = subprocess.run(["/bin/bash", str(H / "codex" / "mirror.sh")], capture_output=True, text=True, env=env)
-            self.assertIn("mirror: redacted 1 in 1 file(s)", res.stderr)
+            self.assertIn("mirror: redacted 1 in 1 file(s)", res.stdout)
             self.assertNotIn(token, (lane / "MEMORY.md").read_text())
             self.assertEqual((lane / "MANIFEST.md").read_text().count("Redacted on this run"), 1)
             (mem / "MEMORY.md").write_text("# m\nclean now\n")
             res = subprocess.run(["/bin/bash", str(H / "codex" / "mirror.sh")], capture_output=True, text=True, env=env)
             self.assertNotIn("redacted", res.stderr)  # a clean source makes a quiet tick
+            self.assertNotIn("redacted", res.stdout)

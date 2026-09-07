@@ -94,8 +94,23 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             }
         case "kickstart":
             guard let label = d["label"] as? String else { return }
-            run(["/bin/launchctl", "kickstart", "-k", "gui/\(getuid())/\(label)"]) { out, err, code in
-                self.deliver("kickstart", ["label": label, "exit": code, "out": out + err])
+            // A lane row asks for ITS lane, not the whole job. The shared runner takes --only, so
+            // run that directly: kickstarting the job would kill the tick in flight (-k) and then
+            // run every lane, which is not what the row said it would do. The runner sits beside
+            // the sov binary. Anything without a lane is still a whole-job kickstart.
+            let lane = (d["lane"] as? String).flatMap { l in
+                l.range(of: "^[a-z0-9][a-z0-9-]{0,60}$", options: .regularExpression) != nil ? l : nil
+            }
+            let runner = sov.map { URL(fileURLWithPath: $0).deletingLastPathComponent()
+                                       .appendingPathComponent("sov-connectors-run").path }
+            if let lane = lane, let runner = runner, FileManager.default.isExecutableFile(atPath: runner) {
+                run([runner, "--only", lane]) { out, err, code in
+                    self.deliver("kickstart", ["label": lane, "exit": code, "out": out + err])
+                }
+            } else {
+                run(["/bin/launchctl", "kickstart", "-k", "gui/\(getuid())/\(label)"]) { out, err, code in
+                    self.deliver("kickstart", ["label": label, "exit": code, "out": out + err])
+                }
             }
         case "clearlog":
             if let p = d["path"] as? String, p.hasSuffix(".log"), p.hasPrefix(NSHomeDirectory()) {

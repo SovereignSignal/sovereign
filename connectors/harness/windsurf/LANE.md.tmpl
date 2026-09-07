@@ -15,8 +15,8 @@ onboarded: {{DATE}}
 
 Installed by `sov connect windsurf` on {{DATE}}.
 
-Write wire: `connectors/harness/windsurf/mirror.sh` every {{INTERVAL}}s via `{{LABEL}}`,
-mirroring `~/.codeium/windsurf/memories/` (never the binary cascade state). `MANIFEST.md`
+Write wire: `connectors/harness/windsurf/mirror.sh` every {{INTERVAL}}s via {{SCHEDULER}}
+(`{{RUNNER}}`, lane id `{{LABEL}}`), mirroring `~/.codeium/windsurf/memories/` (never the binary cascade state). `MANIFEST.md`
 is the heartbeat.
 
 Read wire: the Sovereign block in `global_rules.md`, re-applied by every mirror run.

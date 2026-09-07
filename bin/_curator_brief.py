@@ -61,9 +61,9 @@ def _frontmatter_title(path):
 
 def card_terms(knowledge_dir):
     """{slug: term set} for every card under knowledge/. Terms are the slug's own words
-    plus the frontmatter title's words, so a card named `ens-meta-gov-working-group`
-    with title "ENS Meta-Governance Working Group, Term 7" matches a document that says
-    either. Built once per run; ~600 cards read 1.5KB each."""
+    plus the frontmatter title's words, so a card named `quarterly-budget-review` with
+    title "Quarterly Budget Review, Q3" matches a document that says either. Built once
+    per run; a few hundred cards read 1.5KB each."""
     terms = {}
     for p in glob.glob(os.path.join(knowledge_dir, "**", "*.md"), recursive=True):
         slug = os.path.basename(p)[:-3]
@@ -138,12 +138,17 @@ def rejected_clause(slugs):
 
 
 if __name__ == "__main__":  # tiny self-check, no vault needed
-    T = {"ens-meta-gov-working-group": {"ens", "meta", "gov", "working", "group"},
-         "cardano-foundation": {"cardano", "foundation"},
-         "polymarket-bot": {"polymarket", "bot"}}
-    doc = "Notes from the ENS meta-governance working group call on Term 7 budgets."
+    # The fixtures are deliberately nobody's subject matter. This file ships to every
+    # reader of the template, and an owner's own topics standing in it read as the shape a
+    # brain is supposed to have. Each one still exercises a branch of `rank`: the first is
+    # found by shared words alone, the second only by its slug written out literally, and
+    # the third is the neighbour that must not be dragged in with them.
+    T = {"quarterly-budget-review": {"quarterly", "budget", "review"},
+         "widget-factory-tour": {"widget", "factory", "tour"},
+         "team-offsite-agenda": {"team", "offsite", "agenda"}}
+    doc = "Notes from the quarterly budget review call on next year's numbers."
     got = targeted_index(doc, T)
-    assert got == ["ens-meta-gov-working-group"], got
+    assert got == ["quarterly-budget-review"], got
     assert targeted_index("unrelated text about weather", T) == []
-    assert "cardano-foundation" in targeted_index("see [[cardano-foundation]]", T)
+    assert "widget-factory-tour" in targeted_index("see [[widget-factory-tour]]", T)
     print("ok")

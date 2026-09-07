@@ -8,10 +8,12 @@ Tools, Notion, Connect. The dry run shows what will happen; Install asks for the
 
 ## From the command line
 
-    sov connect notion --vault "~/My Brain" --host <short-name>                     # dry run
-    sov connect notion --vault "~/My Brain" --host <short-name> --secret ntn_xxx --apply
+    sov connect notion --vault <path> --host <short-name>                           # dry run
+    sov connect notion --vault <path> --host <short-name> --secret ntn_xxx --apply
 
-Options: `--at HH:MM` (default 03:45), `--lane raw/tools/Notion`, `--no-launchd` (write the plist, load it yourself later, for machines reached over SSH where launchd has no GUI session). The token can also come from `NOTION_API_KEY` in the environment or an existing `~/.notion-mirror/mirror.env`.
+Options: `--at HH:MM` (default 03:45), `--lane raw/tools/Notion`, `--no-launchd` (write the schedule, load it yourself later, for machines reached over SSH where launchd has no GUI session). The token can also come from `NOTION_API_KEY` in the environment or an existing `~/.notion-mirror/mirror.env`.
+
+This is the one connector that keeps a scheduled job of its own. Every other tool's mirror runs inside the machine's single connector job on a 15-minute tick; a full Notion walk takes hours, and neither launchd nor systemd starts a second run while one is in flight, so a lane that can outlive a tick would starve every lane sharing it.
 
 ## After connecting
 
@@ -28,7 +30,7 @@ When a run errors, re-run it with `brain-mirror-notion --full`: the errored item
 
 ## How it runs
 
-- Daily: a delta. One search sorted by last edit, back to the cursor with a ten minute overlap, then only changed pages are re-rendered. Writes are atomic and only when bytes differ.
+- Daily: a delta, on its own wall-clock schedule (a launchd calendar job on macOS, a systemd user timer with `OnCalendar` on Linux). One search sorted by last edit, back to the cursor with a ten minute overlap, then only changed pages are re-rendered. Writes are atomic and only when bytes differ.
 - Weekly: a full walk. Renamed and moved pages move on disk, gone or trashed pages are deleted, every database CSV is regenerated.
 - The mirror never commits. Your vault's own autocommit picks up the lane.
 - `~/.notion-mirror/last-status` is one line: `OK <ts> <summary>` or `FAILED <ts> <reason>`. `last-success` holds the last clean run's timestamp. `watchdog.sh` alerts when that is older than 36 hours; schedule it the same way at a later hour if you want it.

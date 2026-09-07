@@ -1,14 +1,14 @@
 #!/bin/bash
 # Sovereign connector installer: Notion, the official API pull.
 #
-#   sov connect notion --vault "~/My Brain" --host <short-name>              # dry run
+#   sov connect notion --vault <path> --host <short-name>                    # dry run
 #   sov connect notion ... --secret ntn_xxx --apply                          # install
 #   options: --secret TOKEN   the integration token (else $NOTION_API_KEY, else ~/.notion-mirror/mirror.env)
 #            --at HH:MM       daily run time, default 03:45
 #            --lane PATH      lane under the vault, default raw/tools/Notion (one workspace, one lane, no host suffix)
 #            --no-launchd     write the plist, do not load it (tests; or load it later from a GUI Terminal)
 #
-# Write wire only: a daily launchd job runs bin/brain-mirror-notion (delta; a full walk when
+# Write wire only: a daily scheduled job runs bin/brain-mirror-notion (delta; a full walk when
 # the last one is older than six days). No read wire: Notion is a source, not an agent.
 # The token is written to ~/.notion-mirror/mirror.env (mode 600) and never to the vault or a log.
 set -euo pipefail
@@ -20,7 +20,7 @@ HARNESS=notion; LANE_PREFIX=notion
 SECRET="${NOTION_API_KEY:-}"
 AT="${NOTION_AT:-03:45}"
 NOTION_LANE="${NOTION_LANE:-raw/tools/Notion}"
-STATE_DIR="${NOTION_STATE_DIR:-$HOME/.notion-mirror}"
+NOTION_DIR="${NOTION_STATE_DIR:-$HOME/.notion-mirror}"
 NO_LAUNCHD=0
 LANE_ARG=""
 rest=()
@@ -48,18 +48,17 @@ sov_resolve
 case "$LANE_DIR" in "$HOME/.vault-staging"/*) ROOT="$HOME/.vault-staging";; *) ROOT="$VAULT";; esac
 LANE="$(basename "$NOTION_LANE")"
 LANE_DIR="$ROOT/$NOTION_LANE"
-if [ -z "$SECRET" ] && [ -f "$STATE_DIR/mirror.env" ]; then
-  SECRET="$(sed -n 's/^NOTION_API_KEY=//p' "$STATE_DIR/mirror.env" | head -1 | tr -d "\"'")"
+if [ -z "$SECRET" ] && [ -f "$NOTION_DIR/mirror.env" ]; then
+  SECRET="$(sed -n 's/^NOTION_API_KEY=//p' "$NOTION_DIR/mirror.env" | head -1 | tr -d "\"'")"
 fi
 case "$AT" in [0-9][0-9]:[0-9][0-9]) ;; *) echo "--at wants HH:MM, got $AT" >&2; exit 64;; esac
-HOUR=$((10#${AT%%:*})); MIN=$((10#${AT##*:}))
 
-token_line="MISSING: pass --secret TOKEN, or put NOTION_API_KEY in $STATE_DIR/mirror.env"
-[ -n "$SECRET" ] && token_line="provided (goes to $STATE_DIR/mirror.env, never to the vault)"
+token_line="MISSING: pass --secret TOKEN, or put NOTION_API_KEY in $NOTION_DIR/mirror.env"
+[ -n "$SECRET" ] && token_line="provided (goes to $NOTION_DIR/mirror.env, never to the vault)"
 sov_plan "write      bin/brain-mirror-notion daily at $AT as $LABEL (delta; full walk when the last one is older than six days)" \
          "read       none (Notion is a source, not an agent)" \
          "token      $token_line" \
-         "state      $STATE_DIR"
+         "state      $NOTION_DIR"
 
 if [ -z "$SECRET" ]; then
   /usr/bin/python3 -c 'import json,sys; print("no token. " + json.load(open(sys.argv[1]))["manual_step"])' "$HERE/harness.json"
@@ -72,10 +71,10 @@ ln -sfn "$TEMPLATE/bin/brain-mirror-notion" "$HOME/brain-bin/brain-mirror-notion
 say "[bins] ~/brain-bin/brain-mirror-notion"
 
 # instance env: merge, never clobber; the token line is rewritten, everything else kept
-mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR"
+mkdir -p "$NOTION_DIR"; chmod 700 "$NOTION_DIR"
 umask 077
 # the token goes through the environment, never argv, so ps never shows it
-NOTION_API_KEY_VALUE="$SECRET" /usr/bin/python3 - "$STATE_DIR/mirror.env" "$ROOT" "$NOTION_LANE" <<'EOF'
+NOTION_API_KEY_VALUE="$SECRET" /usr/bin/python3 - "$NOTION_DIR/mirror.env" "$ROOT" "$NOTION_LANE" <<'EOF'
 import os, sys
 path, root, lane = sys.argv[1:4]
 token = os.environ["NOTION_API_KEY_VALUE"]
@@ -95,15 +94,15 @@ os.chmod(tmp, 0o600)
 os.replace(tmp, path)
 EOF
 umask 022  # mirror.env is written 600 by the writer itself; everything after it is ordinary
-say "[env] $STATE_DIR/mirror.env written (mode 600)"
+say "[env] $NOTION_DIR/mirror.env written (mode 600)"
 
 # a status line from the retired import script would otherwise show as this harness's
 # own status until its first run; park it once, only when this harness has never completed
 # a run (no state/cursor yet)
-if [ ! -f "$STATE_DIR/state/cursor" ]; then
+if [ ! -f "$NOTION_DIR/state/cursor" ]; then
   for name in last-status last-success; do
-    if [ -f "$STATE_DIR/$name" ]; then
-      mv "$STATE_DIR/$name" "$STATE_DIR/$name.pre-api"
+    if [ -f "$NOTION_DIR/$name" ]; then
+      mv "$NOTION_DIR/$name" "$NOTION_DIR/$name.pre-api"
       say "[state] previous importer status parked as $name.pre-api"
     fi
   done
@@ -114,7 +113,7 @@ if [ -n "${SOV_TEST_CHECK_OUTPUT:-}" ]; then
   check_out="$SOV_TEST_CHECK_OUTPUT"; check_rc=0
 else
   check_rc=0
-  check_out="$("$HOME/brain-bin/brain-mirror-notion" --check --state-dir "$STATE_DIR" 2>&1)" || check_rc=$?
+  check_out="$("$HOME/brain-bin/brain-mirror-notion" --check --state-dir "$NOTION_DIR" 2>&1)" || check_rc=$?
 fi
 printf '%s\n' "$check_out" | sed 's/^/  /'
 if [ "$check_rc" -ne 0 ] && [ "$check_rc" -ne 2 ]; then
@@ -123,8 +122,8 @@ if [ "$check_rc" -ne 0 ] && [ "$check_rc" -ne 2 ]; then
 fi
 
 # roots.json: every root reachable today becomes required, so a later disconnect trips the guard
-if [ ! -f "$STATE_DIR/roots.json" ]; then
-  /usr/bin/python3 - "$STATE_DIR/roots.json" "$check_out" <<'EOF'
+if [ ! -f "$NOTION_DIR/roots.json" ]; then
+  /usr/bin/python3 - "$NOTION_DIR/roots.json" "$check_out" <<'EOF'
 import json, re, sys
 out, check_out = sys.argv[1], sys.argv[2]
 roots = {}
@@ -142,10 +141,24 @@ json.dump({"default": "Private & Shared", "required": roots}, open(out, "w", enc
 print("[roots] %s written with %d required root(s); edit it to map a teamspace root to its folder" % (out, len(roots)))
 EOF
 else
-  say "[roots] $STATE_DIR/roots.json kept"
+  say "[roots] $NOTION_DIR/roots.json kept"
 fi
 
-# lane contract: written once; an existing LANE.md is the owner's
+# The daily job: a calendar time, never RunAtLoad (a first full walk takes hours and is
+# the owner's call). This is the one harness that keeps a job of its own instead of
+# joining the shared connector runner: its run is measured in hours, and neither launchd
+# StartInterval nor a systemd oneshot starts a second run while one is in flight, so a
+# lane that can outlive a tick would starve every 15-minute lane behind it.
+sov_install_calendar_job "$HERE/mirror.sh" "$AT"
+
+# lane contract: written once; an existing LANE.md is the owner's. It comes AFTER the job,
+# never before: behind a staging hop $LANE_DIR is inside ~/.vault-staging, and making that
+# tree is what sends every mirror on this Mac into staging. Made here it would be made
+# before anything existed to carry it, so an install that then failed would leave the whole
+# machine mirroring into a tree nothing drains -- the tick path closes this by the same
+# ordering. sov_install_calendar_job makes the tree itself, under the rollback that takes
+# it back if the run dies, and brings up the mover that carries it.
+sov_assert_staging_carried
 mkdir -p "$LANE_DIR"
 if [ -f "$LANE_DIR/LANE.md" ]; then
   say "[lane] LANE.md kept (owner's contract) in $LANE_DIR"
@@ -155,57 +168,5 @@ else
   say "[lane] LANE.md written in $LANE_DIR"
 fi
 
-# the daily job: a calendar time, never RunAtLoad (a first full walk takes hours and is the owner's call)
-if [ "$PLATFORM" = "Darwin" ]; then
-  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
-  cat > "$PLIST" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>$LABEL</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/bin/bash</string>
-		<string>$HERE/mirror.sh</string>
-	</array>
-	<key>StartCalendarInterval</key>
-	<dict>
-		<key>Hour</key>
-		<integer>$HOUR</integer>
-		<key>Minute</key>
-		<integer>$MIN</integer>
-	</dict>
-	<key>RunAtLoad</key>
-	<false/>
-	<key>EnvironmentVariables</key>
-	<dict>
-		<key>PATH</key>
-		<string>/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin</string>
-	</dict>
-	<key>StandardOutPath</key>
-	<string>$HOME/Library/Logs/$LABEL.log</string>
-	<key>StandardErrorPath</key>
-	<string>$HOME/Library/Logs/$LABEL.error.log</string>
-</dict>
-</plist>
-EOF
-  if [ "$NO_LAUNCHD" -eq 1 ]; then
-    say "[launchd] $PLIST written, not loaded (--no-launchd). Load it from a Terminal on this Mac:"
-    say "          launchctl bootstrap gui/\$(id -u) $PLIST"
-  else
-    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-    if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
-      say "[launchd] $LABEL daily at $AT"
-    else
-      say "[launchd] $PLIST written but bootstrap failed (no GUI session here?). Load it from a Terminal on this Mac:"
-      say "          launchctl bootstrap gui/\$(id -u) $PLIST"
-    fi
-  fi
-else
-  say "[timer] Linux: schedule $HERE/mirror.sh with a systemd user timer, OnCalendar=*-*-* $AT:00"
-fi
-
 say; say "done. first run is yours to start: brain-mirror-notion --full --dry-run, then --full (hours on a large workspace)."
-say "the job runs a delta every day at $AT and a full walk weekly. status: $STATE_DIR/last-status"
+say "the job runs a delta every day at $AT and a full walk weekly. status: $NOTION_DIR/last-status"

@@ -15,8 +15,8 @@ onboarded: {{DATE}}
 
 Installed by `sov connect cursor` on {{DATE}}.
 
-Write wire: `connectors/harness/cursor/mirror.sh` every {{INTERVAL}}s via launchd
-(`{{LABEL}}`), append-only. `MANIFEST.md` is the heartbeat.
+Write wire: `connectors/harness/cursor/mirror.sh` every {{INTERVAL}}s via {{SCHEDULER}}
+(`{{RUNNER}}`, lane id `{{LABEL}}`), append-only. `MANIFEST.md` is the heartbeat.
 
 Read wire: `connectors/harness/cursor/session-start.py`, a `sessionStart` hook in
 `~/.cursor/hooks.json`, returning the pack as `additional_context`. It never writes

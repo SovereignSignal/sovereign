@@ -388,7 +388,10 @@ window.onerror = function (msg, src, line, col) {
   const readDot = (t) => t.read === "instruction" ? (t.hook_registered === false ? "warn" : "live")
     : t.trusted === false ? "down" : t.hook_registered ? ((t.reads_7d || {}).real > 0 ? "live" : "warn") : "down";
   const runAge = (s) => { const m = /Last run: (\S+)/.exec(s || ""); if (!m) return null; const t = Date.parse(m[1]); return isNaN(t) ? null : (Date.now() - t) / 36e5; };
-  const intervalOf = (t) => { const m = /every (\d+)s/.exec(((t && t.plist) || {}).schedule || ""); return m ? +m[1] : 900; };
+  // The lane declares its own cadence; the schedule string is the fallback for a machine still
+  // on a per-tool job, and only a machine that says neither falls back to the tick default.
+  const intervalOf = (t) => { if (t && t.cadence_s) return +t.cadence_s;
+    const m = /every (\d+)s/.exec(((t && t.plist) || {}).schedule || ""); return m ? +m[1] : 900; };
   const localTool = (id) => (D.harnesses || []).find(x => x.id === id);
   const shortPath = (p) => String(p || "").replace(/^.*\/(?=[^/]*$)/, "…/");
   const dot = (cls, text) => `<span class="dot ${cls}"></span><span class="sr">${esc(text)}</span>`;
@@ -695,8 +698,17 @@ window.onerror = function (msg, src, line, col) {
       Object.keys(hj).sort().forEach(k => { const j = hj[k]; row("hub:job:" + k, { label: k, desc: `last run ${j.ts || "?"}${j.dur_s != null ? " · " + j.dur_s + "s" : ""}`, state: j.exit === 0 ? "live" : j.exit == null ? "" : "down", stateText: j.exit === 0 ? "ok" : "exit " + j.exit, age_h: ago(j.ts),
         detail: [["last run", j.ts], ["exit", j.exit], ["duration", j.dur_s != null ? j.dur_s + "s" : "?"]], note: "Scheduled on the hub through its cron wrapper, which alerts on failure." }); });
     }
-    out.push({ kind: "head", id: "h-mine", section: "mine", label: "Scheduled on this machine · " + (m.host || "here"), n: (D.jobs || []).length + " jobs" });
-    (D.jobs || []).forEach(j => out.push({ kind: "job", id: j.label, o: j }));
+    // What the operating system runs, then what runs inside it. A lane row carries the label of the
+    // one job that kicks it, so counting the two apart is what keeps the header honest.
+    const jobs = D.jobs || [], real = jobs.filter(j => !j.kick), inside = jobs.filter(j => j.kick);
+    const count = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+    out.push({ kind: "head", id: "h-mine", section: "mine", label: "Scheduled on this machine · " + (m.host || "here"),
+      n: count(real.length, "job") + (inside.length ? ", " + count(inside.length, "lane") : "") });
+    real.forEach(j => out.push({ kind: "job", id: j.label, o: j }));
+    if (inside.length) {
+      out.push({ kind: "head", id: "h-lanes", section: "runner", label: "Lanes inside · " + shortLabel(inside[0].kick), n: count(inside.length, "lane") });
+      inside.forEach(j => out.push({ kind: "job", id: j.label, o: j }));
+    }
     return out;
   }
   // ---------- backups: where copies are and how old, read-only ----------
@@ -917,6 +929,18 @@ window.onerror = function (msg, src, line, col) {
     if (!o.vault_name || !rel) return "";
     return `<button data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(o.vault_name)}&file=${encodeURIComponent(rel)}">${esc(label || "Open in Obsidian")}</button>`;
   }
+  // Run one lane now. The job that kicks a lane is not the lane: on the shared connector
+  // job one tick carries every lane there is, so kicking that job restarts the whole tick
+  // and cuts short whatever other lane is mid-copy. A lane the shared job carries (kick
+  // names a job other than the lane's own label) is therefore named to the bridge in
+  // data-lane, and the runner runs that one lane by name. A lane that still keeps a job of
+  // its own - a per-tool job, or a calendar-cadence pull the tick never touches - is
+  // kicked as before, because there the job IS the lane.
+  function runNowBtn(h, label) {
+    if (!h || !h.job_loaded) return "";
+    const job = h.kick || h.label;
+    return `<button data-act="kickstart" data-label="${esc(job)}"${job === h.label ? "" : ` data-lane="${esc(h.id)}"`}>${esc(label || "Run mirror now")}</button>`;
+  }
   const head = (title, sub, badge) => `<div class="insp-head"><div style="min-width:0"><div class="insp-title">${title}${badge ? `<span class="badge">${esc(badge)}</span>` : ""}</div>${sub ? `<div class="insp-sub">${sub}</div>` : ""}</div><span class="sp"></span>
     <button class="quiet" id="pin" aria-pressed="${String(pinned)}" title="Keep the panel open (p)">${pinned ? "Unpin" : "Pin"}</button>
     <button class="quiet" id="insp-close" title="Close (Esc)" aria-label="Close">✕</button></div>`;
@@ -1026,7 +1050,7 @@ window.onerror = function (msg, src, line, col) {
         <div class="acts">
           ${local && local.lane_dir ? `<button data-act="reveal" data-path="${esc(local.lane_dir)}">Show lane</button>` : ""}
           ${obsBtn("raw/tools/" + o.lane + "/LANE")}
-          ${local && local.job_loaded ? `<button data-act="kickstart" data-label="${esc(local.label)}">Run mirror now</button>` : ""}</div>`;
+          ${runNowBtn(local)}</div>`;
       return;
     }
     if (it.kind === "tool") {
@@ -1043,6 +1067,7 @@ window.onerror = function (msg, src, line, col) {
             ["reads 7d", String(t.reads)]])}</div>
           <div class="sect"><h2>Write wire</h2>${kv([
             ["job", `<span class="mono">${esc(h.label)}</span>`, "raw"],
+            ["runs in", h.runs_in ? `<span class="mono">${esc(h.runs_in)}</span>` : null, "raw"],
             ["loaded", h.job_loaded ? "yes" : "no"],
             ["schedule", (h.plist || {}).schedule],
             ["last run", t.run != null ? age(t.run) + " ago" : (h.last_run ? h.last_run.replace(/^Last run: /, "") : "never")],
@@ -1057,7 +1082,7 @@ window.onerror = function (msg, src, line, col) {
           ${h.secret.help ? `<div class="secret-help">${esc(h.secret.help)}</div>` : ""}</div>` : ""}
         <div class="acts">
           ${o.connector && o.detected !== false ? `<button class="${h && h.state === "connected" ? "" : "brass"}" data-act="connect" data-harness="${esc(o.connector)}">${h && h.state === "connected" ? "Reinstall" : "Connect"}</button>` : ""}
-          ${h && h.job_loaded ? `<button data-act="kickstart" data-label="${esc(h.label)}">Run mirror now</button>` : ""}
+          ${runNowBtn(h)}
           ${h && h.lane_dir ? `<button data-act="reveal" data-path="${esc(h.lane_dir)}">Show lane</button>` : ""}
           ${h ? obsBtn("raw/tools/" + h.lane + "/LANE") : ""}</div>`;
       return;
@@ -1067,14 +1092,15 @@ window.onerror = function (msg, src, line, col) {
       <div class="sect"><h2>Run state</h2>${kv([
         ["last exit", `${dot(j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down", "")} ${j.last_exit == null ? "unknown" : j.last_exit}`, "raw"],
         ["running", j.pid ? "pid " + j.pid : "idle between runs"],
-        ["program", j.program ? `<span class="mono">${esc(j.program)}</span>` : null, "raw"]])}</div>
+        ["runs in", j.kick ? `<span class="mono">${esc(j.kick)}</span>` : null, "raw"],
+        ["program", (j.program_full || j.program) ? `<span class="mono">${esc(j.program_full || j.program)}</span>` : null, "raw"]])}</div>
       <div class="sect"><h2>Error log</h2>${kv([
         ["lines", j.stderr_lines == null ? "no log file" : String(j.stderr_lines)],
         ["last write", j.stderr_age_h != null ? age(j.stderr_age_h) + " ago" : null],
         ["path", j.stderr ? `<span class="mono">${esc(shortPath(j.stderr))}</span>` : null, "raw"]])}
         ${j.stderr_lines && j.stderr_age_h > 24 ? `<div class="prose" style="color:var(--muted);margin-top:6px">Older than a day, so it is history rather than a task.</div>` : ""}</div>
       <div class="acts">
-        <button data-act="kickstart" data-label="${esc(j.label)}">Run now</button>
+        <button data-act="kickstart" data-label="${esc(j.kick || j.label)}"${j.harness && j.kick && j.kick !== j.label ? ` data-lane="${esc(j.harness)}"` : ""}>Run now</button>
         ${j.stderr ? `<button data-act="open" data-path="${esc(j.stderr)}">Open log</button>` : ""}
         ${j.stderr_lines ? `<button class="danger" data-act="clearlog" data-path="${esc(j.stderr)}">Clear log</button>` : ""}</div>`;
   }
@@ -1302,7 +1328,12 @@ window.onerror = function (msg, src, line, col) {
         if (f && f.value) { extra.secret = f.value; extra.secretEnv = f.dataset.env; }
         return connect(b.dataset.harness, false, extra);
       }
-      if (act === "kickstart") { openDrawer("Run now: " + b.dataset.label, false); return bridge({ cmd: "kickstart", label: b.dataset.label }); }
+      if (act === "kickstart") {   // data-lane: one lane inside a job that carries many, run by name
+        const m = { cmd: "kickstart", label: b.dataset.label };
+        if (b.dataset.lane) m.lane = b.dataset.lane;
+        openDrawer("Run now: " + (m.lane || m.label), false);
+        return bridge(m);
+      }
       if (act === "reveal") return bridge({ cmd: "reveal", path: b.dataset.path });
       if (act === "open") return bridge({ cmd: "open", path: b.dataset.path });
       if (act === "openurl") return bridge({ cmd: "openurl", url: b.dataset.url });

@@ -15,8 +15,8 @@ onboarded: {{DATE}}
 
 Installed by `sov connect codex` on {{DATE}}.
 
-Write wire: `connectors/harness/codex/mirror.sh` every {{INTERVAL}}s via launchd
-(`{{LABEL}}`), mirroring `~/.codex/memories/` (working tree, never `.git`, never
+Write wire: `connectors/harness/codex/mirror.sh` every {{INTERVAL}}s via {{SCHEDULER}}
+(`{{RUNNER}}`, lane id `{{LABEL}}`), mirroring `~/.codex/memories/` (working tree, never `.git`, never
 session transcripts). `MANIFEST.md` is the heartbeat.
 
 Read wire: `connectors/harness/codex/session-start.py`, a SessionStart hook in

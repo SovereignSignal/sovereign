@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sovereign connector installer: Orca on this machine, the write wire.
 #
-#   sov connect orca --host client --vault "~/My Brain" --apply
+#   sov connect orca --host <short-name> --vault <path> --apply
 #
 # Orca orchestrates other coding agents; those agents carry their own read wires, so
 # this connector installs none. Write wire: a scheduled job running mirror.sh, which
@@ -16,10 +16,11 @@ HARNESS=orca; LANE_PREFIX=orca
 
 sov_parse_args "$@"
 sov_resolve
-sov_plan "mirror     $HERE/mirror.sh  every ${INTERVAL}s as $LABEL  (orchestration.db -> runs/*.md)"
+sov_plan "mirror     $HERE/mirror.sh  every ${INTERVAL}s in $RUNNER_LABEL (this machine's one connector job)  (orchestration.db -> runs/*.md)"
 sov_write_pointers
 sov_link_bins
-sov_install_launchd "$HERE/mirror.sh"
+sov_register_connector "$HERE/mirror.sh"
 sov_lane_contract "$HERE/LANE.md.tmpl" "none (the agents Orca drives carry their own read wires)"
 sov_smoke_mirror "$HERE/mirror.sh"
+sov_smoke_runner "$HARNESS"
 say; say "done. Orca runs land under raw/tools/orca-$HOST/runs/ after each mirror pass."

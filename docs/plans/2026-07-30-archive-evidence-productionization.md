@@ -20,7 +20,7 @@
 
 **Steps:**
 1. Record exact scope, rollback, observation, and owner-gated exclusions.
-2. Publish the one-page execution packet under hub Archivist after a parent snapshot.
+2. Publish the one-page execution packet under the owner's Archivist page after a parent snapshot.
 3. Fetch and verify the exact packet title, parent, content sequence, links, and approval phrase.
 
 ### Task 2: Add safe trusted-card binding
@@ -109,7 +109,7 @@
 **Objective:** Close the immediate deployment loop now and the 30-day loop automatically.
 
 **Steps:**
-1. Snapshot hub Archivist before each publication.
+1. Snapshot the owner's Archivist page before each publication.
 2. Publish the immediate production-readiness receipt only after independent install and non-mutation verification.
 3. Fetch and verify the exact page parent, title, full block sequence, source links, hashes, scope exclusions, and rollback result.
 4. After 30 complete days, the local finalizer publishes and read-backs a separate observation receipt or a blocked receipt.

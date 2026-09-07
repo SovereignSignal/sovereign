@@ -21,13 +21,17 @@ stored copy would come back through the loading dock as if it were new.
 
 ## Write wire: `mirror.sh`
 
-A launchd job, every 15 minutes by default, mirroring every project's distilled
-memory (`~/.claude/projects/*/memory/`) into the lane under `memory/<project>/`.
-Transcripts never cross. `memory/MANIFEST.md` is the heartbeat: last run, project
-count, failures. On macOS, if `~/.vault-staging` exists the mirror writes there and
-a relay job whose program is rsync carries it into the vault (a bash job cannot
-write into `~/Documents` without Full Disk Access). `StandardErrorPath` is always
-set: a job that fails silently is worse than one that never ran.
+Every 15 minutes by default, mirroring every project's distilled memory
+(`~/.claude/projects/*/memory/`) into the lane under `memory/<project>/`. Transcripts
+never cross. `memory/MANIFEST.md` is the heartbeat: last run, project count, failures.
+
+It is not a background job of its own. One job on the machine, the connector runner,
+runs every connected tool's mirror on a tick; this one gets its own time bound, its own
+exit code and its own error log inside it, so a tool that hangs or fails cannot stop the
+others. On macOS, if the vault sits behind a protected folder the mirror writes to a
+staging tree and one rsync job carries it into the vault (a job that runs a script cannot
+write into `~/Documents`, and the denial is silent). Error logs are never optional: a job
+that fails silently is worse than one that never ran.
 
 ## Instance data, never in the template
 
@@ -37,6 +41,11 @@ to card slugs). The installer writes the first three from its flags.
 
 ## Uninstall
 
-Remove the hook entry from `~/.claude/settings.json`, `launchctl bootout
-gui/$UID/com.sovereign.connector.claude-code`, delete the plist. The lane and its
-history stay in the vault; the owner decides what to do with them.
+```
+sov disconnect claude-code --apply
+```
+
+It undeclares the lane, retires its error log, and removes the shared connector job if
+this was the last tool connected on the machine. Remove the hook entry from
+`~/.claude/settings.json` yourself. The lane and its history stay in the vault: `raw/` is
+provenance, and the owner decides what to do with it.

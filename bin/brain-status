@@ -14,8 +14,16 @@ Sections:
   harnesses  the connector catalog (connectors/harness/*/harness.json) with what is
              installed here: hook registered, launchd job loaded, last mirror run,
              reads in the last 7 days, the manual step if any
-  jobs       launchd jobs for the brain on this machine: schedule, last exit, log errors
+  jobs       every write wire on this machine: the real launchd/systemd jobs, plus one row
+             per lane the shared connector job serves (its health comes from the runner's
+             runs.json, not from a job of its own)
+  relay      the one rsync mover, its destination and each declared source
   needs_you  the short list of things only the owner can do
+
+One job or many: a machine may run one launchd job per tool (the old shape) or a single
+shared connector job that runs every lane on a tick (the new one). Both are read here, the
+per-tool label first, so a console on either shape reports the other machine correctly and
+the fleet can migrate one machine at a time.
 
 Config, all instance-level: ~/.brain-root, ~/.brain-host, ~/.brain-core,
   ~/.brain-hub ("sshalias:/path/to/vault"; absent when this machine is the hub).
@@ -37,6 +45,10 @@ def _job_prefixes():
         pass
     return tuple(["com.sovereign.", "sovereign-connector-"] + extra)
 JOB_PREFIXES = _job_prefixes()
+# sov-connectors-run's DEFAULT_TIMEOUT_S. A lane that declares no bound gets this one at
+# run time, so the read side has to assume the same number or the two disagree about which
+# lanes the tick is too short for.
+RUNNER_DEFAULT_TIMEOUT_S = 300
 
 
 def pointer(p):
@@ -169,24 +181,260 @@ def launchctl_rows():
     return rows
 
 
+def _state_dir():
+    return os.environ.get("SOV_STATE_DIR") or os.path.expanduser("~/.local/state/sovereign")
+
+
+def runner_label(manifest=None):
+    """The one job that runs every lane on this machine."""
+    lbl = ((manifest or {}).get("runner") or {}).get("label")
+    return lbl or ("com.sovereign.connector.runner" if sys.platform == "darwin" else "sovereign-connector-runner")
+
+
+def relay_label(manifest=None):
+    """The one rsync mover. It keeps its own log pair, relay.log / relay.error.log, and NOT the
+    <label>.error.log every other unit gets, so the read side has to know its name by itself.
+    A row pointed at a log the installer never writes reports a failing mover as "no log file",
+    which is the silent failure this whole change exists to remove."""
+    lbl = ((manifest or {}).get("relay") or {}).get("label")
+    return lbl or ("com.sovereign.connector.relay" if sys.platform == "darwin" else "sovereign-connector-relay")
+
+
+def lane_ticks(ent):
+    """Does the shared runner serve this lane? A calendar-cadence lane (a cloud pull whose one
+    run can outlive a tick) declares "tick": false: it is in the manifest so `sov disconnect all`
+    can reach it, but it keeps its own job, and the runner never runs it, never counts it due and
+    never stamps it. Every runner-shaped reading below has to skip it - the tick it would shorten,
+    the synthetic lane row, the silence rules - or the console reports a lane as failing to tick
+    when nothing was ever going to tick it, and doubles a row that its own job already fills.
+
+    Read exactly as `sov connect` writes the flag and as the runner and `connect-all` read it,
+    hand-written "false" included: four readers of one manifest disagreeing about one lane is
+    how the console calls a lane ticking that nothing on the machine ever ticks."""
+    if not isinstance(ent, dict):
+        return False
+    t = ent.get("tick", True)
+    if isinstance(t, str):
+        return t.strip().lower() not in ("false", "0", "no", "")
+    return bool(t)
+
+
+def runner_interval(manifest):
+    """The tick the shared runner will actually use, computed the way it computes it: what
+    the manifest declares, else the shortest enabled cadence. Read-time has to agree with
+    run-time here, or a lane the runner refuses reads as a lane that is merely idle."""
+    r = (manifest or {}).get("runner") or {}
+    try:
+        iv = int(r.get("interval_s"))
+    except (TypeError, ValueError):
+        iv = 0
+    if iv > 0:
+        return iv
+    cads = []
+    for e in ((manifest or {}).get("harnesses") or {}).values():
+        if not isinstance(e, dict) or not e.get("enabled", True) or not lane_ticks(e):
+            continue
+        try:
+            c = int(e.get("cadence_s"))
+        except (TypeError, ValueError):
+            continue
+        if c > 0:
+            cads.append(c)
+    return min(cads) if cads else 900
+
+
+def mirror_present(mirror):
+    """The runner's own test for a usable mirror, character for character: a file, at the
+    literal path the manifest declares. Read-time has to use run-time's test, or the two
+    disagree about whether a lane is refused. Expanding a `~` here would be the friendlier
+    read and the wrong one: the runner does not expand it, so it would refuse the lane while
+    this said the mirror was fine, and the lane would stop writing in silence."""
+    return bool(mirror) and os.path.isfile(mirror)
+
+
+def lane_timeout(lane):
+    """The bound the runner will really enforce: what the lane declares, else the runner's
+    own default. Reading a missing timeout_s as 0 would call an over-tick lane healthy."""
+    try:
+        t = int(lane.get("timeout_s"))
+    except (TypeError, ValueError):
+        return RUNNER_DEFAULT_TIMEOUT_S
+    return t if t > 0 else RUNNER_DEFAULT_TIMEOUT_S
+
+
+def lane_refusal(lane, manifest):
+    """Why the shared runner will not run this lane AT ALL, or None.
+
+    A refusal is structural: it holds on every tick until the declaration or the disk
+    changes, so it is not the same thing as a lane that simply was not due. It is computed
+    here from those two facts ONLY, the way the runner computes it, so a lane the installer
+    accepted and the runner will then refuse is loud before the first tick, and a refusal
+    cured on disk clears without waiting for a tick.
+
+    The run record's own `refused` is history and is deliberately not consulted: every row
+    built from this carries a reason recomputed from the CURRENT declaration, so trusting a
+    stale verdict prints a sentence the declaration contradicts ("its timeout (300s) is
+    longer than the 900s tick"). The runner has exactly these two refusals, so nothing the
+    record could say is lost by recomputing instead of copying."""
+    if not mirror_present(lane.get("mirror")):
+        return "mirror missing"
+    if lane_timeout(lane) > runner_interval(manifest):
+        return "timeout exceeds interval"
+    return None
+
+
+def runner_unit(label):
+    """The file that job is declared in, per platform, or None when it is not installed."""
+    p = (os.path.expanduser("~/Library/LaunchAgents/%s.plist" % label) if sys.platform == "darwin"
+         else os.path.expanduser("~/.config/systemd/user/%s.service" % label))
+    return p if os.path.exists(p) else None
+
+
+def runner_state():
+    """The shared connector job's two files: connectors.json, the declaration (written only by
+    sov connect / disconnect / relay), and runs.json, the liveness record (written only by the
+    runner). ({}, {}) on a machine that still runs one job per tool, so nothing else changes."""
+    sd = _state_dir()
+
+    def load(path):
+        try:
+            d = json.load(open(path, encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return d if isinstance(d, dict) else {}
+    return (load(os.environ.get("SOV_MANIFEST") or os.path.join(sd, "connectors.json")),
+            load(os.path.join(sd, "runs.json")))
+
+
+def runner_lane(h, manifest, runs):
+    """What is declared for harness h merged with what last happened to it, or None when this
+    machine does not declare it, or declares it with its own job ("tick": false) so the runner
+    never touches it and every field below would be somebody else's answer. The declaration
+    wins on cadence, timeout and enabled; the run record carries the timing and the exit code
+    that a per-tool job used to provide."""
+    ent = (manifest.get("harnesses") or {}).get(h)
+    if not isinstance(ent, dict) or not lane_ticks(ent):
+        return None
+    run = (runs.get("lanes") or {}).get(h) or {}
+    lane = dict(ent)
+    lane["enabled"] = ent.get("enabled", True)
+    lane["cadence_s"] = ent.get("cadence_s") or run.get("cadence_s") or (manifest.get("runner") or {}).get("interval_s") or 900
+    for k in ("checked_at", "attempted_at", "finished_at", "duration_s", "last_exit",
+              "timed_out", "in_flight", "skipped"):
+        lane[k] = run.get(k)
+    lane["ran"] = bool(run)
+    # Whether this lane is refused is a fact about the declaration and the disk as they are
+    # NOW, never what the last tick found: the record's copy outlives the fix and would keep
+    # a cured lane red until a tick proved otherwise. `skipped` above stays the record's,
+    # because that one is history on purpose.
+    lane["mirror_missing"] = not mirror_present(lane.get("mirror"))
+    lane["refused"] = lane_refusal(lane, manifest) if lane["enabled"] else None
+    return lane
+
+
+def _short_program(prog):
+    """Long argv, readable in a row: head, ellipsis, tail. The full string stays in program_full."""
+    prog = prog or ""
+    return prog if len(prog) <= 81 else prog[:40] + "…" + prog[-40:]
+
+
+def _schedule_seconds(info):
+    """The cadence a plist declares, so a machine with per-tool jobs still reports cadence_s."""
+    if (info or {}).get("cadence_s"):
+        return info["cadence_s"]
+    m = re.search(r"every (\d+)s", ((info or {}).get("schedule") or ""))
+    return int(m.group(1)) if m else None
+
+
+def _log_lines(path):
+    n, a = None, None
+    if path and os.path.exists(path):
+        try:
+            n = sum(1 for _ in open(path, errors="ignore"))
+            a = age_h(os.path.getmtime(path))
+        except OSError:
+            pass
+    return n, a
+
+
+def lane_log_info(h, manifest, runs=None):
+    """The plist-shaped record the console already reads, sourced from the runner instead of a
+    per-tool job. One log pair per lane, same path formula on both platforms, so a clean lane
+    reports 0 lines rather than null (null renders as "no log", which reads as "never ran")."""
+    lane = runner_lane(h, manifest, runs or {}) or {}
+    lanes_dir = (manifest.get("runner") or {}).get("log_dir") or os.path.join(_state_dir(), "lanes")
+    err = os.path.join(lanes_dir, "%s.error.log" % h)
+    n, a = _log_lines(err)
+    return {"plist": runner_unit(runner_label(manifest)),
+            "schedule": "every %ss" % lane.get("cadence_s", 900),   # the console parses this
+            "program": _short_program(lane.get("mirror")), "program_full": lane.get("mirror"),
+            "stderr": err, "stderr_lines": n, "stderr_age_h": a}
+
+
+def unit_info(label, manifest=None):
+    """systemd's answer to plist_info: what a real user unit shows on Linux."""
+    manifest = manifest or {}
+    unit = os.path.expanduser("~/.config/systemd/user/%s.service" % label)
+    if label == runner_label(manifest):
+        err = os.path.join(_state_dir(), "runner.error.log")
+        iv = (manifest.get("runner") or {}).get("interval_s")
+        sched = "every %ss" % iv if iv else "systemd timer"
+    elif label == relay_label(manifest):
+        # The mover writes relay.error.log, not <label>.error.log. Falling through to the
+        # generic name below names a file nothing ever creates, so a mover that is failing
+        # every tick reads as one with no log at all.
+        err = os.path.join(_state_dir(), "relay.error.log")
+        iv = (manifest.get("relay") or {}).get("interval_s")
+        sched = "every %ss" % iv if iv else "systemd timer"
+    else:
+        err = os.path.join(_state_dir(), "%s.error.log" % label)
+        sched = "systemd timer"
+    n, a = _log_lines(err)
+    return {"plist": unit if os.path.exists(unit) else None, "schedule": sched,
+            "program": None, "program_full": None, "stderr": err, "stderr_lines": n, "stderr_age_h": a}
+
+
+def iso_age_h(ts):
+    if not ts:
+        return None
+    try:
+        d = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if not d.tzinfo:
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return round((NOW - d.timestamp()) / 3600, 2)
+
+
 def plist_info(label):
     p = os.path.expanduser("~/Library/LaunchAgents/%s.plist" % label)
-    info = {"plist": p if os.path.exists(p) else None, "schedule": None, "program": None,
-            "stderr": None, "stderr_lines": None, "stderr_age_h": None}
+    info = {"plist": p if os.path.exists(p) else None, "schedule": None, "cadence_s": None, "program": None,
+            "program_full": None, "stderr": None, "stderr_lines": None, "stderr_age_h": None}
     if not info["plist"]:
         return info
     try:
         d = plistlib.load(open(p, "rb"))
     except Exception:
         return info
+    # A property list is not always a dict: an array or a bare string parses fine and has
+    # no .get. Such a file in ~/Library/LaunchAgents is somebody else's, and it may cost
+    # this one row its schedule, never every row in the console.
+    if not isinstance(d, dict):
+        return info
     ci, si = d.get("StartCalendarInterval"), d.get("StartInterval")
     if isinstance(ci, dict):
         ci = [ci]
     if ci:
         info["schedule"] = " | ".join("wd=%s %02d:%02d" % (c.get("Weekday", "*"), c.get("Hour", 0), c.get("Minute", 0)) for c in ci)
+        # a calendar job has a cadence too, and saying so keeps a daily pull from being
+        # judged against a 15-minute default it never claimed
+        info["cadence_s"] = (604800 if any("Weekday" in c for c in ci) else 86400) // max(1, len(ci))
     elif si:
         info["schedule"] = "every %ss" % si
-    info["program"] = " ".join(d.get("ProgramArguments") or [d.get("Program", "")])[-80:]
+        info["cadence_s"] = int(si) if str(si).isdigit() else None
+    prog = " ".join(str(x) for x in (d.get("ProgramArguments") or [d.get("Program", "")]))
+    info["program_full"] = prog
+    info["program"] = _short_program(prog)   # a multi-source rsync argv is unreadable tail-only
     err = d.get("StandardErrorPath")
     info["stderr"] = err
     if err and os.path.exists(err):
@@ -368,6 +616,8 @@ try:
         if meta.get("detect"): continue
         hid = os.path.basename(os.path.dirname(hj))
         lane = meta.get("lane") or ("%s-%s" % (meta.get("lane_prefix", hid), out["hub_host"]))
+        # A cloud pull runs on a calendar, not on the connector tick, so it keeps its own job
+        # and its own label. This construction is correct as written; do not point it at the runner.
         label = "com.sovereign.connector.%s" % hid if sys.platform == "darwin" else "sovereign-connector-%s" % hid
         loaded = subprocess.run(["launchctl", "print", "gui/%d/%s" % (os.getuid(), label)], capture_output=True, text=True).returncode == 0 if sys.platform == "darwin" \
                  else subprocess.run(["systemctl", "--user", "is-active", "--quiet", label + ".timer"]).returncode == 0
@@ -851,6 +1101,17 @@ def main():
 
     # harness catalog + installed state
     rows = launchctl_rows()
+    # the shared connector job, when this machine has one. Empty dicts on a machine that still
+    # runs one job per tool, and every expression below falls back to the per-tool label.
+    manifest, runs = runner_state()
+    declared = manifest.get("harnesses") or {}
+    # The lanes that shared job actually serves. A calendar-cadence lane is in the manifest so
+    # `sov disconnect all` can reach it, but it keeps its own job: it is not the runner's, and
+    # every runner-shaped reading below (a synthetic lane row, the silence rules, the stall
+    # rule, the count in the text view) must be taken over this subset, never over `declared`.
+    served = {hid: ent for hid, ent in declared.items() if lane_ticks(ent)}
+    r_label = runner_label(manifest)
+    r_loaded = r_label in rows
     harnesses = []
     for hd in sorted(glob.glob(os.path.join(TEMPLATE_ROOT, "connectors", "harness", "*"))):
         h = os.path.basename(hd)
@@ -900,7 +1161,13 @@ def main():
         else:
             lane_dir = next((p for p in ((os.path.join(stage, "raw", "tools", lane) if stage else None),
                                          os.path.join(root, "raw", "tools", lane)) if p and os.path.isdir(p)), None)
-        loaded = label in rows
+        # The per-tool label is checked FIRST, so a machine that has not migrated still reports
+        # correctly from a migrated console. Then the lane: it is connected when this machine
+        # declares it and the one shared job that runs it is loaded.
+        lane_rec = runner_lane(h, manifest, runs)
+        legacy_plist = os.path.exists(os.path.expanduser("~/Library/LaunchAgents/%s.plist" % label)) if sys.platform == "darwin" else False
+        legacy_loaded = label in rows
+        loaded = legacy_loaded or bool(lane_rec and lane_rec.get("enabled") and r_loaded)
         trusted = None
         if meta.get("trust_check") and hook_registered:
             try:
@@ -921,7 +1188,22 @@ def main():
         detected = any(os.path.exists(os.path.expanduser(x)) for x in meta.get("detect", [])) if meta.get("detect") else None
         harnesses.append({"id": h, "name": meta.get("name", h), "lane": lane, "lane_dir": lane_dir, "label": label, "detected": detected,
                           "read": read_kind, "hook_file": hook_file, "hook_registered": hook_registered, "trusted": trusted,
-                          "job_loaded": loaded, "job": rows.get(label), "plist": plist_info(label) if loaded or os.path.exists(os.path.expanduser("~/Library/LaunchAgents/%s.plist" % label)) else None,
+                          "job_loaded": loaded,
+                          "job": rows.get(label) or ({"pid": None, "last_exit": lane_rec.get("last_exit")} if lane_rec else None),
+                          "plist": (plist_info(label) if (legacy_loaded or legacy_plist)
+                                    else (lane_log_info(h, manifest, runs) if lane_rec else None)),
+                          # cadence and the job that actually kicks this lane. `label` keeps its
+                          # exact value: it is the console row id, the jump target and the name in
+                          # every LANE.md; only its meaning shifts from launchd handle to lane id.
+                          # A lane with its own job is not the runner's, so `lane_rec` is None
+                          # for it; its declared calendar cadence is then the only one on a
+                          # platform with no plist to read, and without it the console judges a
+                          # daily pull against the 15-minute default it never claimed.
+                          "cadence_s": ((lane_rec or {}).get("cadence_s")
+                                        or _schedule_seconds(plist_info(label) if (legacy_loaded or legacy_plist) else None)
+                                        or (declared.get(h) or {}).get("cadence_s")),
+                          "kick": label if (legacy_loaded or legacy_plist) else (r_label if lane_rec else label),
+                          "runs_in": r_label if (lane_rec and not (legacy_loaded or legacy_plist)) else label,
                           "last_run": file_last_run(meta) or (manifest_last_run(lane_dir) if lane_dir else None),
                           "last_status": one_line(meta.get("last_status_file")),
                           "reads_7d": receipts_7d(lane_dir) if lane_dir else {"total": 0, "real": 0},
@@ -977,15 +1259,35 @@ def main():
     except Exception as e:
         out["archive"] = {"error": str(e)[:200]}
 
-    # jobs on this machine
+    # jobs on this machine: what the OS actually runs, plus one row per lane the shared
+    # connector job serves. A lane row is synthetic on purpose - it keeps the per-lane exit
+    # code, error log and Run-now button that seven separate jobs used to provide, so a lane
+    # failure stays a DOWN verdict instead of a warn-level line.
     jobs = []
     for label, r in sorted(rows.items()):
-        info = plist_info(label)
-        if sys.platform != "darwin":
-            info = {"plist": None, "schedule": "systemd timer", "program": None,
-                    "stderr": os.path.expanduser("~/.local/state/sovereign/%s.error.log" % label), "stderr_lines": None, "stderr_age_h": None}
+        info = plist_info(label) if sys.platform == "darwin" else unit_info(label, manifest)
         jobs.append({"label": label, **r, **info})
+    real = {j["label"] for j in jobs}
+    for hid, ent in sorted(served.items()):
+        lbl = ent.get("label") or (("com.sovereign.connector.%s" if sys.platform == "darwin" else "sovereign-connector-%s") % hid)
+        if lbl in real:
+            continue                      # a legacy per-tool job still carries this lane: no double row
+        rec = runner_lane(hid, manifest, runs) or {}
+        jobs.append({"label": lbl, "kick": r_label, "harness": hid, "lane": ent.get("lane"),
+                     "pid": None, "last_exit": rec.get("last_exit"),
+                     **lane_log_info(hid, manifest, runs)})
     out["jobs"] = jobs
+
+    # the one mover, and which of its sources are really there. One exit code for three sources
+    # would lose the attribution, so each source says whether it still exists.
+    relay = manifest.get("relay")
+    if isinstance(relay, dict):
+        rl = relay.get("label") or relay_label(manifest)   # its name is platform-shaped, like the runner's
+        out["relay"] = {"label": rl, "enabled": relay.get("enabled", True), "dest": relay.get("dest"),
+                        "job_loaded": rl in rows, "last_exit": (rows.get(rl) or {}).get("last_exit"),
+                        "sources": [{"path": src.get("path"), "kind": src.get("kind"), "name": src.get("name"),
+                                     "exists": os.path.isdir(os.path.expanduser(src.get("path") or "/nonexistent"))}
+                                    for src in (relay.get("sources") or []) if isinstance(src, dict)]}
 
     # needs you
     needs = []
@@ -1000,9 +1302,89 @@ def main():
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: %s" % (h["name"], h["manual_step"])})
         elif h["state"] == "connected" and h["read"] == "instruction" and h["manual_step"]:
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: %s" % (h["name"], h["manual_step"])})
+    # lanes the shared connector job serves. Consolidation would otherwise invent one failure
+    # mode: a lane quietly dropped from the loop produces no error anywhere while the shared job
+    # stays green. `checked_at` is stamped for every enabled lane on every tick, so its age is
+    # the anti-silence signal, and this is the most important rule here. A lane the runner
+    # LOOKED at and refused is stamped too, so it gets a rule of its own below: it fires on the
+    # first read after the refusal starts rather than waiting out two cadences.
+    names = {x["id"]: x.get("name", x["id"]) for x in harnesses}
+    lane_flagged = set()
+    ticked = bool((runs.get("runner") or {}).get("tick_started"))
+    for hid in sorted(served):
+        lane = runner_lane(hid, manifest, runs) or {}
+        if not lane.get("enabled"):
+            continue
+        nm = names.get(hid, hid)
+        mirror = lane.get("mirror")
+        # A lane the runner refuses is the quietest failure this design can produce: the
+        # shared job stays green, the lane's error log stays empty, and nothing mirrors. It
+        # is named here, by lane and by reason, on the first read after the refusal starts.
+        refused = lane_refusal(lane, manifest)
+        if refused:
+            lane_flagged.add(hid)
+            if refused == "mirror missing":
+                kind = "mirror-missing"
+                why = "the declared mirror script is gone (%s)" % (mirror or "none is declared")
+                fix = "Run: sov connect %s --apply" % hid
+            elif refused == "timeout exceeds interval":
+                kind = "lane-refused"
+                why = "its timeout (%ss) is longer than the %ss tick" % (lane_timeout(lane), runner_interval(manifest))
+                fix = "Lower timeout_s below the tick, or give this lane a job of its own."
+            else:
+                kind, why, fix = "lane-refused", refused, ""
+            needs.append({"kind": kind, "harness": hid,
+                          "text": ("%s: the connector job refuses to run this lane, so nothing is mirroring it: %s. %s"
+                                   % (nm, why, fix)).strip()})
+            continue
+        if lane.get("timed_out"):
+            lane_flagged.add(hid)
+            needs.append({"kind": "lane-timeout", "harness": hid,
+                          "text": "%s: the mirror was killed after %ss. It is hanging." % (nm, lane_timeout(lane))})
+        if not ticked:
+            continue
+        seen = iso_age_h(lane.get("checked_at"))
+        cad = lane.get("cadence_s") or 900
+        if seen is None or seen > 2 * (cad / 3600.0):
+            needs.append({"kind": "lane-silent", "harness": hid,
+                          "text": "%s: the connector job is running but has not visited this lane %s (cadence %ss). Check %s."
+                                  % (nm, ("for %.1fh" % seen) if seen is not None else "at all", cad,
+                                     os.path.join((manifest.get("runner") or {}).get("log_dir") or os.path.join(_state_dir(), "lanes"), "%s.error.log" % hid))})
+    if served:
+        fin = (runs.get("runner") or {}).get("tick_finished")
+        iv = runner_interval(manifest)
+        # A tick that cannot start because the last one still holds the lock is not a stall yet, so
+        # it says nothing the first time. A streak of them, or a lock held longer than the interval
+        # it is meant to fit inside, is the machine quietly mirroring nothing: name it.
+        rr = runs.get("runner") or {}
+        downs = rr.get("stand_downs") or 0
+        held = rr.get("lock_held_s")
+        if (isinstance(downs, int) and downs >= 2) or (isinstance(held, (int, float)) and held > iv):
+            since = rr.get("stand_down_since")
+            needs.append({"kind": "runner-standing-down",
+                          "text": ("The connector job has stood down %d tick(s) in a row%s: the tick before it is still running%s, so no lane has mirrored since. Check %s."
+                                   % (downs, (" since %s" % since[:16]) if since else "",
+                                      (" and has held the lock %.0fs, past its %ss slot" % (held, iv)) if isinstance(held, (int, float)) else "",
+                                      os.path.join(_state_dir(), "runner.error.log")))})
+        fa = iso_age_h(fin)
+        if fa is None or fa > 2 * (iv / 3600.0):
+            needs.append({"kind": "runner-stalled",
+                          "text": ("The connector job has not finished a tick since %s (every %ss). No lane on this machine is writing." % (fin, iv))
+                                  if fin else
+                                  ("%d lane(s) are declared but the connector job (%s) has never finished a tick. It runs at load, so check that it is loaded: launchctl print gui/$(id -u)/%s" % (len(served), r_label, r_label))})
+    for src in ((out.get("relay") or {}).get("sources") or []):
+        if not src.get("exists"):
+            needs.append({"kind": "relay",
+                          "text": "The mover's source %s is gone; the other sources still copied (exit 23). Run: sov relay remove %s, if that was deliberate."
+                                  % (src.get("path"), src.get("name"))})
     for j in jobs:
+        if j.get("harness") in lane_flagged:
+            continue                      # the lane rule above already names this one, in its own words
         if j.get("last_exit") not in (None, 0):
-            needs.append({"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], j.get("stderr") or "its log")})
+            n = {"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], j.get("stderr") or "its log")}
+            if j.get("harness"):
+                n["harness"] = j["harness"]        # a lane row routes to the tool, not to the job list
+            needs.append(n)
         elif j.get("stderr_lines") and (j.get("stderr_age_h") if j.get("stderr_age_h") is not None else 0) <= 24:
             needs.append({"kind": "job", "text": "%s wrote %d line(s) to its error log in the last day." % (j["label"], j["stderr_lines"])})
     for l in lanes:
@@ -1025,6 +1407,12 @@ def main():
     print("\ntools on this machine")
     for h in harnesses:
         print("  %-12s %-14s hook=%s job=%s reads7d=%d%s" % (h["id"], h["state"], h["hook_registered"], h["job_loaded"], h["reads_7d"]["real"], ("  NOTE: " + h["manual_step"]) if h["manual_step"] and h["reads_7d"]["real"] == 0 else ""))
+    if served:
+        rr = runs.get("runner") or {}
+        print("\nconnector job  %s  %s, every %ss, %d lane(s) declared, last tick %s" %
+              (r_label, "loaded" if r_loaded else "NOT LOADED",
+               (manifest.get("runner") or {}).get("interval_s", "?"), len(served),
+               rr.get("tick_finished") or "never"))
     if needs:
         print("\nneeds you")
         for n in needs:

@@ -48,16 +48,24 @@ output to its own lane. `connectors/harness/<name>/` packages both wires per too
 `bin/sov` is the front door:
 
 ```
-sov connect claude-code --host client --vault ~/my-brain --core me,how-to-work-with-me   # dry run
-sov connect claude-code ... --apply                                                  # install
+sov connect claude-code --host laptop --vault ~/my-brain --core me,how-to-work-with-me   # dry run
+sov connect claude-code ... --apply                                                      # install
+sov relay add ~/Documents/MyTool   # a plain watch folder: one more source on the mover
+sov disconnect claude-code --apply # undeclare the lane; the folder in raw/ stays
 sov load <topic>        # the context pack, same thing the session-start hook injects
 sov status              # pointers, every lane on this machine, freshness per wire
 ```
 
 Claude Code is the first harness: a SessionStart hook maps the working directory to a
-workstream and injects the pack; a launchd job mirrors every project's memory (never
-transcripts) into the lane every 15 minutes. Instance data (vault path, core cards, host
-name, aliases) lives in pointer files under `~`, never in this repo. Tests:
+workstream and injects the pack; its mirror copies every project's memory (never
+transcripts) into the lane every 15 minutes. Connecting a tool declares a lane, not a
+background item: one job per machine runs every connected tool's mirror on a tick, each
+lane bounded and logged on its own. A second job, one rsync mover, appears only where
+something has to be carried the last step into the vault: a staging hop on a Mac whose
+vault sits behind a protected folder, or a folder piped in with `sov relay add`, on either
+platform. A lane whose run is measured in hours, like the Notion pull, keeps a job of its
+own on a wall clock. Instance data (vault path, core cards, host name, aliases) lives in
+pointer files under `~`, never in this repo. Tests:
 `python3 -m unittest tests.test_connector_claude_code`.
 
 ## Archive evidence (optional)

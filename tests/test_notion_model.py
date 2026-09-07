@@ -50,11 +50,11 @@ class Model(unittest.TestCase):
 
     def test_plain_text_prefixes_a_page_mention_in_a_title(self):
         title = [
-            {"type": "mention", "plain_text": "Example Archive",
+            {"type": "mention", "plain_text": "Field Notes",
              "mention": {"type": "page", "page": {"id": "x"}}},
             {"type": "text", "plain_text": " ongoing"},
         ]
-        self.assertEqual(plain_text(title), "@Example Archive ongoing")
+        self.assertEqual(plain_text(title), "@Field Notes ongoing")
 
     def test_plain_text_does_not_double_prefix_a_user_mention(self):
         seg = {"type": "mention", "plain_text": "@Anna", "mention": {"type": "user", "user": {"id": "u1"}}}

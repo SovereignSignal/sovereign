@@ -91,6 +91,11 @@ class Harness(unittest.TestCase):
             self.assertIn("write: pull", lane_md)
             self.assertIn("read: none", lane_md)
             self.assertTrue((home / "brain-bin" / "brain-mirror-notion").is_symlink())
+            # Notion is the ONE harness that still owns a launchd job. Its run is measured in
+            # hours and neither launchd StartInterval nor systemd Type=oneshot starts a second
+            # run while one is in flight, so folding it into the 15-minute shared runner would
+            # starve every other lane. These four assertions are the only place in the repo
+            # that pins which scheduler artifact gets written, so they stay exactly as they are.
             plist_path = home / "Library" / "LaunchAgents" / "com.sovereign.connector.notion.plist"
             plist = plistlib.loads(plist_path.read_bytes())
             self.assertEqual(plist["Label"], "com.sovereign.connector.notion")
@@ -160,6 +165,17 @@ class Harness(unittest.TestCase):
         for name in ("install.sh", "mirror.sh", "watchdog.sh"):
             r = subprocess.run(["bash", "-n", str(ROOT / "connectors" / "harness" / "notion" / name)], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, name + ": " + r.stderr)
+        # the shared installer library and the shared runner: every harness rides these,
+        # so a syntax error in one of them breaks every connector on the machine at once
+        libs = sorted((ROOT / "connectors" / "harness" / "_lib").glob("*.sh"))
+        self.assertTrue(libs)
+        for lib in libs:
+            r = subprocess.run(["bash", "-n", str(lib)], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, lib.name + ": " + r.stderr)
+        runner = ROOT / "bin" / "sov-connectors-run"
+        self.assertTrue(runner.exists(), "bin/sov-connectors-run is missing")
+        r = subprocess.run(["/usr/bin/python3", "-m", "py_compile", str(runner)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
 
 
 if __name__ == "__main__":

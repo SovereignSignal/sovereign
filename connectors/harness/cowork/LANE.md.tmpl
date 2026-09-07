@@ -14,8 +14,8 @@ onboarded: {{DATE}}
 
 Installed by `sov connect cowork` on {{DATE}}.
 
-Write wire: `connectors/harness/cowork/mirror.sh` every {{INTERVAL}}s via launchd
-(`{{LABEL}}`). `MANIFEST.md` is the heartbeat.
+Write wire: `connectors/harness/cowork/mirror.sh` every {{INTERVAL}}s via {{SCHEDULER}}
+(`{{RUNNER}}`, lane id `{{LABEL}}`). `MANIFEST.md` is the heartbeat.
 
 Read wire: the owner pastes `connectors/harness/cowork/INSTRUCTION.md` into each
 Cowork project's instructions; the agent runs `sov load <topic>` before working.

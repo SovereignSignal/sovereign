@@ -6,6 +6,11 @@
 #   sov connect <harness>|all    install a connector on this machine, both wires (all = every tool found)
 #                                 (see connectors/harness/<harness>/install.sh; dry run
 #                                 without --apply)
+#   sov disconnect <harness>|all  undeclare a lane, retire its error log, and drop the
+#                                 shared job when it was the last (dry run without
+#                                 --apply; the lane stays, because raw/ is provenance)
+#   sov relay add|remove|list     the directory pipes this machine's one mover carries
+#                                 (add <path> [--name NAME] [--force]; remove <name>; list)
 #   sov hook <harness>            run a harness's session-start hook here, for testing
 #   sov status                    pointers, lanes on this machine, and their freshness
 #   sov check                     validate the vault (brain-check)
@@ -19,6 +24,20 @@ BIN="$(dirname "$SELF")"
 TEMPLATE="$(dirname "$BIN")"
 HARNESS_DIR="$TEMPLATE/connectors/harness"
 
+# The harnesses a person can actually name. The catalog folder holds its own README.md and
+# the _lib every installer shares, and neither is connectable, so the list is built from the
+# folders that carry an install.sh rather than from a bare `ls`.
+_harness_ids() {
+  local d id
+  for d in "$HARNESS_DIR"/*/; do
+    [ -d "$d" ] || continue
+    id="$(basename "$d")"
+    case "$id" in _*) continue;; esac
+    [ -f "$d/install.sh" ] || continue
+    printf '%s ' "$id"
+  done
+}
+
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   load)     exec /usr/bin/python3 "$BIN/brain-load" "$@";;
@@ -26,7 +45,7 @@ case "$cmd" in
   check)    exec /bin/bash "$BIN/brain-check.sh" "$@";;
   connect)
     h="${1:-}"; shift || true
-    [ -n "$h" ] || { echo "sov connect <harness>|all; available: $(ls "$HARNESS_DIR" | grep -v '^_' | tr '\n' ' ')"; exit 64; }
+    [ -n "$h" ] || { echo "sov connect <harness>|all; available: $(_harness_ids)"; exit 64; }
     [ "$h" = "all" ] && exec /usr/bin/python3 "$HARNESS_DIR/_lib/connect-all.py" "$@"
     [ -x "$HARNESS_DIR/$h/install.sh" ] || chmod +x "$HARNESS_DIR/$h/install.sh" 2>/dev/null || true
     # a cloud pull (no detect paths) runs on the hub: route there from any other machine.
@@ -44,6 +63,59 @@ case "$cmd" in
       fi
     fi
     exec /bin/bash "$HARNESS_DIR/$h/install.sh" "$@";;
+  disconnect)
+    # connect's mirror: install.sh --disconnect undeclares the lane and drops the shared
+    # job when it was the last. `all` walks the lanes this machine actually declares,
+    # which is the manifest, not the catalog of harnesses that exist in the template.
+    h="${1:-}"; shift || true
+    [ -n "$h" ] || { echo "sov disconnect <harness>|all; available: $(_harness_ids)"; exit 64; }
+    if [ "$h" = "all" ]; then
+      . "$HARNESS_DIR/_lib/install-common.sh"
+      sov_resolve_state
+      rc=0; n=0
+      while IFS= read -r lane; do
+        [ -n "$lane" ] || continue
+        [ -f "$HARNESS_DIR/$lane/install.sh" ] || { echo "declared lane '$lane' has no installer in this template; left alone" >&2; rc=64; continue; }
+        n=$((n+1)); echo; echo "=== $lane ==="
+        /bin/bash "$HARNESS_DIR/$lane/install.sh" --disconnect "$@" || rc=$?
+      done < <(_sov_manifest_py get lane-ids)
+      [ "$n" -gt 0 ] || echo "no lane is declared on this machine"
+      exit "$rc"
+    fi
+    [ -x "$HARNESS_DIR/$h/install.sh" ] || chmod +x "$HARNESS_DIR/$h/install.sh" 2>/dev/null || true
+    exec /bin/bash "$HARNESS_DIR/$h/install.sh" --disconnect "$@";;
+  relay)
+    # The directory pipes on this machine's one mover. No harness is named, so the vault
+    # comes from the pointer file and the state paths resolve on their own; the work is
+    # install-common's sov_relay_*, the same library every installer uses.
+    sub="${1:-}"; shift || true
+    . "$HARNESS_DIR/_lib/install-common.sh"
+    VAULT="$(_pointer "$HOME/.brain-root")"; VAULT="${VAULT/#\~/$HOME}"
+    [ -n "$VAULT" ] || { echo "no vault here: connect a tool first (sov connect <harness> --vault PATH --apply)"; exit 64; }
+    [ -d "$VAULT/knowledge" ] || { echo "not a brain: $VAULT has no knowledge/ folder"; exit 66; }
+    sov_resolve_state
+    case "$sub" in
+      add)
+        p="${1:-}"; shift || true
+        [ -n "$p" ] || { echo "usage: sov relay add <path> [--name NAME] [--force]" >&2; exit 64; }
+        rname=""; rforce=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --name) rname="${2:-}"
+                    [ -n "$rname" ] || { echo "usage: sov relay add <path> [--name NAME] [--force]" >&2; exit 64; }
+                    shift 2;;
+            --force) rforce=--force; shift;;
+            *) echo "unknown option: $1" >&2; exit 64;;
+          esac
+        done
+        sov_relay_add "$p" "$rname" "$rforce";;
+      remove)
+        rn="${1:-}"
+        [ -n "$rn" ] || { echo "usage: sov relay remove <name>" >&2; exit 64; }
+        sov_relay_remove "$rn";;
+      list) sov_relay_list;;
+      *) echo "usage: sov relay add <path> [--name NAME] | remove <name> | list" >&2; exit 64;;
+    esac;;
   hook)
     h="${1:-}"; [ -n "$h" ] || { echo "sov hook <harness>"; exit 64; }
     hook="$(ls "$HARNESS_DIR/$h"/session-start.* 2>/dev/null | head -1)"
@@ -74,6 +146,6 @@ case "$cmd" in
       reject)  exec /bin/bash "$BIN/curator-reject.sh" "$@";;
       *) echo "usage: sov gate approve|reject <slug> [reason]" >&2; exit 64;;
     esac;;
-  help|-h|--help) sed -n '2,15p' "$SELF";;
-  *) echo "sov: unknown command '$cmd'"; sed -n '2,15p' "$SELF"; exit 64;;
+  help|-h|--help) sed -n '2,19p' "$SELF";;
+  *) echo "sov: unknown command '$cmd'"; sed -n '2,19p' "$SELF"; exit 64;;
 esac

@@ -15,8 +15,8 @@ onboarded: {{DATE}}
 
 Installed by `sov connect hermes` on {{DATE}}.
 
-Write wire: `connectors/harness/hermes/mirror.sh` every {{INTERVAL}}s via `{{LABEL}}`.
-`MANIFEST.md` is the heartbeat.
+Write wire: `connectors/harness/hermes/mirror.sh` every {{INTERVAL}}s via {{SCHEDULER}}
+(`{{RUNNER}}`, lane id `{{LABEL}}`). `MANIFEST.md` is the heartbeat.
 
 Read wire: `connectors/harness/hermes/session-start.py`, declared under `hooks: pre_llm_call:`
 in `~/.hermes/config.yaml`, consent recorded in `~/.hermes/shell-hooks-allowlist.json`.

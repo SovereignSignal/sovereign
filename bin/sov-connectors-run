@@ -1,0 +1,789 @@
+#!/usr/bin/env python3
+"""sov-connectors-run: one job runs every write wire on this machine.
+
+  sov-connectors-run                  one tick: run every lane whose cadence is due
+  sov-connectors-run --only <lane>    run exactly that lane, ignoring its cadence gate
+  sov-connectors-run --force          ignore every cadence gate this tick
+  sov-connectors-run --dry-run        print the due set and exit; write nothing
+  sov-connectors-run --list           one line per declared lane: cadence, last exit, age
+
+The declaration is `connectors.json`, written only by `sov connect` / `sov disconnect`;
+this script never writes it. The liveness record is `runs.json`, written only here.
+Both live in $SOV_STATE_DIR (default ~/.local/state/sovereign), with one pair of logs
+per lane under lanes/.
+
+Not every declared lane is this job's. A lane whose entry says `"tick": false` keeps a
+job of its own on a wall clock, because one of its runs can outlive a tick; it is in the
+manifest so `sov disconnect all` reaches it, and this script never runs it, never counts
+it, and never stamps it.
+
+Streams are the contract. A lane's own output goes to lanes/<id>.log and
+lanes/<id>.error.log and NOWHERE else; this script's stderr carries runner-level faults
+only (unreadable manifest, unwritable state directory, a reclaimed lock, a tick that has
+overrun its interval, a mirror that is gone), because a job's stderr is read as trouble.
+A normal tick prints nothing.
+
+A failing lane never changes this script's exit code: a bad manifest or an unwritable
+state directory exits 78, an unusable flag exits 64, everything else exits 0.
+"""
+import concurrent.futures
+import datetime
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+DEFAULT_STATE_DIR = "~/.local/state/sovereign"
+DEFAULT_INTERVAL_S = 900
+DEFAULT_TIMEOUT_S = 300
+# launchd hands a job a minimal PATH and a systemd user unit hands it almost none, so
+# every mirror gets the same one instead of inheriting whatever the tick happened to have.
+CHILD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin"
+MAX_WORKERS = 8
+LOG_MAX_BYTES = 2 * 1024 * 1024
+LOG_KEEP_LINES = 500
+KILL_GRACE_S = 5
+TIMEOUT_EXIT = 124
+EXIT_USAGE = 64
+EXIT_CONFIG = 78
+ISO = "%Y-%m-%dT%H:%M:%SZ"
+# The two reasons this script refuses a lane outright. A refusal is structural: unlike
+# "not due" it holds on EVERY tick until the declaration or the disk changes, so it gets
+# its own field in the record and brain-status reads it as a lane that has stopped writing.
+REFUSED_MIRROR = "mirror missing"
+REFUSED_OVER_TICK = "timeout exceeds interval"
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).strftime(ISO)
+
+
+def iso_epoch(s):
+    """Seconds since the epoch for an ISO stamp this script wrote, else None."""
+    if not s:
+        return None
+    try:
+        d = datetime.datetime.strptime(s, ISO)
+    except (TypeError, ValueError):
+        return None
+    return d.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def age_s(stamp):
+    e = iso_epoch(stamp)
+    return None if e is None else max(0.0, time.time() - e)
+
+
+def warn(msg):
+    """Runner-level faults only. Lane chatter never reaches this stream."""
+    sys.stderr.write("connectors: %s\n" % msg)
+    sys.stderr.flush()
+
+
+def host_name():
+    try:
+        with open(os.path.expanduser("~/.brain-host"), encoding="utf-8") as fh:
+            h = fh.read().strip()
+        if h:
+            return h
+    except OSError:
+        pass
+    return os.uname().nodename.split(".")[0].lower()
+
+
+class Paths(object):
+    def __init__(self):
+        self.state = os.path.expanduser(os.environ.get("SOV_STATE_DIR") or DEFAULT_STATE_DIR)
+        self.manifest = os.path.expanduser(os.environ.get("SOV_MANIFEST") or os.path.join(self.state, "connectors.json"))
+        self.status = os.path.join(self.state, "runs.json")
+        self.lanes = os.path.join(self.state, "lanes")
+        self.lock = os.path.join(self.state, "runner.lock")
+
+    def log(self, lane_id):
+        return os.path.join(self.lanes, "%s.log" % lane_id)
+
+    def error_log(self, lane_id):
+        return os.path.join(self.lanes, "%s.error.log" % lane_id)
+
+    def ensure(self):
+        """The state directory must be usable before anything else. It is one of the two
+        conditions that stop a tick, because without it nothing can be recorded."""
+        try:
+            os.makedirs(self.lanes, mode=0o700, exist_ok=True)
+            os.chmod(self.lanes, 0o700)
+        except OSError as e:
+            warn("state directory is not usable (%s): %s" % (self.lanes, e))
+            return False
+        probe = os.path.join(self.state, ".write-probe")
+        try:
+            with open(probe, "w") as fh:
+                fh.write("")
+            os.unlink(probe)
+        except OSError as e:
+            warn("state directory is not writable (%s): %s" % (self.state, e))
+            return False
+        return True
+
+
+def read_json(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def write_json_atomic(path, data):
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, sort_keys=False)
+        fh.write("\n")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------- locks
+
+def take_lock(path, stale_after_s):
+    """mkdir is the only lock primitive that is atomic everywhere and exists on macOS.
+    Returns "taken", "reclaimed" (a dead run left it behind) or "held"."""
+    try:
+        os.mkdir(path)
+        return "taken"
+    except FileExistsError:
+        pass
+    except OSError:
+        return "held"
+    try:
+        age = time.time() - os.path.getmtime(path)
+    except OSError:
+        age = None
+    if age is None or age < stale_after_s:
+        return "held"
+    try:
+        # a lock left by a dead run, or something that is not a lock at all: either way
+        # it must go, or the runner stands down forever and says nothing
+        if os.path.isdir(path):
+            os.rmdir(path)
+        else:
+            os.unlink(path)
+        os.mkdir(path)
+        return "reclaimed"
+    except OSError:
+        return "held"
+
+
+def lock_age_s(path):
+    """How long the lock has stood, or None. mkdir stamps the directory, so its mtime is
+    the moment the tick holding it started."""
+    try:
+        return max(0.0, time.time() - os.path.getmtime(path))
+    except OSError:
+        return None
+
+
+def release_lock(path):
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------- lane logs
+
+def rotate(path):
+    """Keep a lane log readable by a human. stderr_lines stops being a number anyone can
+    act on once a log runs to megabytes."""
+    try:
+        if os.path.getsize(path) <= LOG_MAX_BYTES:
+            return
+    except OSError:
+        return
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            tail = fh.readlines()[-LOG_KEEP_LINES:]
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("[rotated %s: kept the last %d lines]\n" % (now_iso(), len(tail)))
+            fh.writelines(tail)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def ensure_logs(paths, lane_id):
+    """Both files exist on every tick, clean or not. A missing error log makes
+    brain-status report stderr_lines = null, which a reader takes as "never ran"."""
+    for p in (paths.log(lane_id), paths.error_log(lane_id)):
+        rotate(p)
+        try:
+            with open(p, "a"):
+                pass
+        except OSError as e:
+            warn("cannot open the lane log %s: %s" % (p, e))
+
+
+# ---------------------------------------------------------------- the declaration
+
+class Lane(object):
+    """One declared write wire, as the manifest states it."""
+
+    def __init__(self, lane_id, entry, interval_s):
+        self.id = lane_id
+        self.label = entry.get("label") or lane_id
+        self.mirror = entry.get("mirror") or ""
+        self.lane = entry.get("lane") or lane_id
+        self.enabled = bool(entry.get("enabled", True))
+        self.cadence_s = as_int(entry.get("cadence_s"), interval_s)
+        self.timeout_s = as_int(entry.get("timeout_s"), DEFAULT_TIMEOUT_S)
+        self.env = entry.get("env") or {}
+        self.mirror_missing = not (self.mirror and os.path.isfile(self.mirror))
+        # A lane that can outlive a tick starves every other lane, because neither
+        # launchd nor systemd starts a second run while one is in flight.
+        self.over_tick = self.timeout_s > interval_s
+        # What this lane's cadence is worth in ticks, rounded UP so rounding is never
+        # faster than the declaration, and never less than one because the tick is the
+        # fastest thing on offer. This, not a span of seconds, is the cadence gate's
+        # unit: see due_reason for why.
+        self.ticks_needed = max(1, -(-self.cadence_s // interval_s))
+        # Why this lane will not be run on this tick or any other, or None. A lane the owner
+        # switched off is not refused: it is off on purpose, and the record keeps its history.
+        self.refused = None if not self.enabled else (
+            REFUSED_MIRROR if self.mirror_missing else REFUSED_OVER_TICK if self.over_tick else None)
+
+
+def as_int(v, fallback):
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return fallback
+    return n if n > 0 else fallback
+
+
+def ticks(entry):
+    """Whether this entry is one this job ticks. The same reading `sov connect` uses when
+    it writes the file, hand-written "false" included: the two readers of one manifest
+    disagreeing is how a lane nobody counts gets run every quarter hour anyway."""
+    t = entry.get("tick", True)
+    if isinstance(t, str):
+        return t.strip().lower() not in ("false", "0", "no", "")
+    return bool(t)
+
+
+def load_manifest(paths):
+    """(runner block, [Lane], tick seconds, [off-tick lane id]). Exits 78 when the
+    declaration cannot be read: without it this script does not know what a write wire
+    even is."""
+    try:
+        data = read_json(paths.manifest)
+    except FileNotFoundError:
+        warn("no connector manifest at %s; run `sov connect <tool> --apply`" % paths.manifest)
+        sys.exit(EXIT_CONFIG)
+    except (OSError, ValueError) as e:
+        warn("connector manifest %s is unreadable: %s" % (paths.manifest, e))
+        sys.exit(EXIT_CONFIG)
+    if not isinstance(data, dict):
+        warn("connector manifest %s is not an object" % paths.manifest)
+        sys.exit(EXIT_CONFIG)
+    runner = data.get("runner") or {}
+    harnesses = data.get("harnesses") or {}
+    if not isinstance(harnesses, dict):
+        warn("connector manifest %s has no harnesses object" % paths.manifest)
+        sys.exit(EXIT_CONFIG)
+    entries = {k: v for k, v in harnesses.items() if isinstance(v, dict)}
+    # A lane may declare that this tick is not what carries it: `"tick": false` is a
+    # calendar-cadence lane, one whose single run can outlive a tick, so it keeps a job of
+    # its own. It sits in the manifest only so `sov disconnect all` can reach it. Dropping
+    # it here, before anything else looks at the set, is what makes every other property
+    # true at once: it is never due, never run, never stamped, never counted in the tick,
+    # never named as refused for a tick it never asked for, and its cadence (a day, not a
+    # quarter hour) never becomes the interval the runner would judge the real lanes by.
+    off = {k for k, v in entries.items() if not ticks(v)}
+    ticking = {k: v for k, v in entries.items() if k not in off}
+    cadences = [as_int(e.get("cadence_s"), 0) for e in ticking.values() if e.get("enabled", True)]
+    cadences = [c for c in cadences if c > 0]
+    interval_s = as_int(runner.get("interval_s"), min(cadences) if cadences else DEFAULT_INTERVAL_S)
+    lanes = [Lane(k, v, interval_s) for k, v in sorted(ticking.items())]
+    return runner, lanes, interval_s, sorted(off)
+
+
+# ---------------------------------------------------------------- the record
+
+class Status(object):
+    """runs.json: written only here, atomically, after every lane and at end of tick.
+    This file, not a launchd label, is what makes a lane connected."""
+
+    def __init__(self, paths, runner_label, interval_s, dry=False):
+        self.paths = paths
+        self.dry = dry
+        self._lock = threading.Lock()
+        prior = {}
+        try:
+            prior = read_json(paths.status)
+        except (OSError, ValueError):
+            prior = {}
+        if not isinstance(prior, dict):
+            prior = {}
+        prior_runner = prior.get("runner") or {}
+        self.seq_prior = as_int(prior_runner.get("tick_seq"), 0)
+        # The turn a run made HERE counts as. A full tick's own turn; for a hand-run
+        # (--only) the turn that is coming, because a run outside the schedule still
+        # spends the lane's next visit: the installer runs a lane by hand, and the tick
+        # that arrives a second later has nothing to add.
+        self.seq_bill = self.seq_prior + 1
+        self.lanes = {k: v for k, v in (prior.get("lanes") or {}).items() if isinstance(v, dict)}
+        self.runner = {
+            "label": runner_label,
+            "host": host_name(),
+            "interval_s": interval_s,
+            "pid": os.getpid(),
+            "tick_started": None,
+            # the last tick that actually FINISHED stays put until this one does, so a
+            # read taken mid-tick never looks like a stall
+            "tick_finished": prior_runner.get("tick_finished"),
+            "lanes_declared": 0,
+            "lanes_due": 0,
+            "lanes_ran": 0,
+            "lanes_failed": 0,
+            "lanes_timed_out": 0,
+            # The scheduler's own turn count, and the clock the cadence gate reads.
+            # advance() spends a turn; due_reason() counts them.
+            "tick_seq": self.seq_prior,
+            # A stand-down is not a bare flag. ONE is normal: a tick ran long and the next
+            # one found the lock. A RUN of them is a tick wedged behind a lock while every
+            # lane on the machine mirrors nothing, and the count, the first-seen stamp and
+            # how long the lock has been held are the part of that a reader can act on. A
+            # tick that gets through rewrites this whole block, so the streak always reads
+            # "since the last tick that ran".
+            "skipped_overlap": False,
+            "stand_downs": 0,
+            "stand_down_since": None,
+            "lock_held_s": None,
+            "reclaimed_lock": False,
+        }
+
+    def prior(self, lane_id):
+        return self.lanes.get(lane_id) or {}
+
+    def advance(self, only):
+        """Spend one of the machine's turns, unless this is a --only hand-run.
+
+        The cadence gate counts turns (due_reason), so a hand-run of a single lane must
+        not spend one for the whole machine: three of them in a row would otherwise pay
+        off a three-tick cadence for lanes the hand-run never even looked at. It still
+        bills its own lane (seq_bill), so only that lane loses its next visit."""
+        self.runner["tick_seq"] = self.seq_prior + (0 if only else 1)
+        return self.runner["tick_seq"]
+
+    def seed(self, lane, checked):
+        """The record every tick starts from: what the manifest declares now, plus the
+        most recent REAL run carried forward, so a lane skipped this tick never reads as
+        one that has never run.
+
+        A REFUSED lane is the exception. It is not being run at all, so the exit code of the
+        last run it managed before the refusal is history, not health: carried forward it
+        leaves `last_exit: 0` standing on a lane nothing mirrors, which is the one thing this
+        record must never say. attempted_at and finished_at stay, because a timestamp cannot
+        be mistaken for now."""
+        p = self.prior(lane.id)
+        refused = lane.refused
+        rec = {
+            "enabled": lane.enabled,
+            "cadence_s": lane.cadence_s,
+            "timeout_s": lane.timeout_s,
+            "checked_at": now_iso() if checked else p.get("checked_at"),
+            "attempted_at": p.get("attempted_at"),
+            "finished_at": p.get("finished_at"),
+            "ran_at_tick": p.get("ran_at_tick"),
+            "duration_s": None if refused else p.get("duration_s"),
+            "last_exit": None if refused else p.get("last_exit"),
+            "timed_out": False if refused else bool(p.get("timed_out", False)),
+            "in_flight": False,
+            "skipped": refused,
+            "refused": refused,
+            "mirror_missing": lane.mirror_missing,
+            "log": self.paths.log(lane.id),
+            "stderr": self.paths.error_log(lane.id),
+        }
+        self.lanes[lane.id] = rec
+        return rec
+
+    def prune(self, keep_ids):
+        for gone in [k for k in self.lanes if k not in keep_ids]:
+            del self.lanes[gone]
+
+    def update(self, lane_id, **fields):
+        with self._lock:
+            self.lanes.setdefault(lane_id, {}).update(fields)
+            self._write()
+
+    def flush(self, **runner_fields):
+        with self._lock:
+            self.runner.update(runner_fields)
+            self._write()
+
+    def mark_overlap(self, held_s=None):
+        """Standing down patches a few fields onto whatever the tick in flight has already
+        written. A full rewrite here would roll back a record that tick just made.
+
+        The count and the first-seen stamp are what separate the normal case (one tick ran
+        long) from the one that matters (a tick wedged behind a lock, every lane on the
+        machine mirroring nothing and no error log growing anywhere)."""
+        with self._lock:
+            try:
+                cur = read_json(self.paths.status)
+                if not isinstance(cur, dict):
+                    raise ValueError("not an object")
+            except (OSError, ValueError):
+                cur = {"version": 1, "runner": dict(self.runner), "lanes": self.lanes}
+            r = cur.setdefault("runner", {})
+            r["skipped_overlap"] = True
+            r["stand_downs"] = as_int(r.get("stand_downs"), 0) + 1
+            r["stand_down_since"] = r.get("stand_down_since") or now_iso()
+            r["lock_held_s"] = None if held_s is None else round(held_s, 1)
+            for k in ("label", "host", "interval_s"):
+                r.setdefault(k, self.runner[k])
+            try:
+                write_json_atomic(self.paths.status, cur)
+            except OSError as e:
+                warn("cannot write the run record %s: %s" % (self.paths.status, e))
+
+    def _write(self):
+        if self.dry:
+            return
+        try:
+            write_json_atomic(self.paths.status, {"version": 1, "runner": self.runner, "lanes": self.lanes})
+        except OSError as e:
+            warn("cannot write the run record %s: %s" % (self.paths.status, e))
+
+
+# ---------------------------------------------------------------- running one lane
+
+def run_lane(paths, lane, status):
+    """Take the lane's own lock, launch its mirror as a CHILD, bound it, record it.
+
+    The mirror is never sourced and never goes through a shell: every mirror is
+    `set -uo pipefail` (never -e) and ends in a literal `exit 0`, and several exit 0
+    mid-script on a failed mktemp. Sourcing one would end the whole tick at the first lane."""
+    lock = os.path.join(paths.lanes, "%s.lock" % lane.id)
+    state = take_lock(lock, 2 * lane.timeout_s)
+    if state == "held":
+        status.update(lane.id, skipped="in flight", in_flight=True)
+        return "in flight"
+    ensure_logs(paths, lane.id)
+    attempted = now_iso()
+    started = time.time()
+    timed_out = False
+    child_env = os.environ.copy()
+    child_env["PATH"] = CHILD_PATH
+    for k, v in lane.env.items():
+        child_env[str(k)] = str(v)
+    try:
+        try:
+            out = open(paths.log(lane.id), "a")
+            err = open(paths.error_log(lane.id), "a")
+        except OSError as e:
+            warn("%s: cannot open its lane logs: %s" % (lane.id, e))
+            status.update(lane.id, skipped="no log", in_flight=False)
+            return "skipped"
+        try:
+            proc = subprocess.Popen(
+                ["/bin/bash", lane.mirror],
+                stdout=out, stderr=err,
+                start_new_session=True,          # its own process group, so killpg reaches rsync and git
+                env=child_env,
+                cwd=os.path.dirname(lane.mirror) or None,
+            )
+        except OSError as e:
+            out.close(); err.close()
+            warn("%s: could not launch %s: %s" % (lane.id, lane.mirror, e))
+            status.update(lane.id, attempted_at=attempted, finished_at=now_iso(), duration_s=0.0,
+                          last_exit=None, timed_out=False, in_flight=False, skipped=None,
+                          ran_at_tick=status.seq_bill)
+            return "failed"
+        out.close(); err.close()
+        try:
+            code = proc.wait(timeout=lane.timeout_s)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            code = TIMEOUT_EXIT
+            kill_group(proc)
+            warn("%s: the mirror was still running after %ss and was killed" % (lane.id, lane.timeout_s))
+        status.update(lane.id,
+                      attempted_at=attempted,
+                      finished_at=now_iso(),
+                      duration_s=round(time.time() - started, 2),
+                      last_exit=code,
+                      timed_out=timed_out,
+                      in_flight=False,
+                      skipped=None,
+                      ran_at_tick=status.seq_bill)
+        if timed_out:
+            return "timed out"
+        return "ok" if code == 0 else "failed"
+    finally:
+        release_lock(lock)
+
+
+def kill_group(proc):
+    for sig, wait in ((signal.SIGTERM, KILL_GRACE_S), (signal.SIGKILL, 5)):
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            return
+        try:
+            proc.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+# ---------------------------------------------------------------- the tick
+
+def due_reason(lane, status, force, only):
+    """(due, skipped-reason). A lane whose mirror is gone is never due.
+
+    The gate counts TICKS, not seconds, and the arithmetic for why is the whole of this
+    function. One scheduler entry runs every lane, and its interval I is the smallest
+    cadence any lane declares (`load_manifest`). launchd counts StartInterval from the
+    moment the previous tick STARTED, so tick k+1 lands I after tick k began, not I after
+    it ended: a lane that finished d seconds into tick k is only I - d seconds old when
+    tick k+1 asks. Under the obvious gate, `age >= cadence_s`, a lane declaring the
+    interval as its cadence (which every shipped default does) misses by exactly d,
+    waits a whole further interval and mirrors at 2I forever, silently.
+    Widening that gate by a slack cannot be right on both schedulers: systemd's
+    OnUnitInactiveSec spaces ticks END to start, so there the same lane is I + (the tick's
+    own tail) old, and any slack large enough to rescue launchd promotes a 2I lane to
+    every tick. There is no span of seconds that is correct on both.
+    Turns of the wheel are. A cadence is worth n = ceil(cadence_s / I) ticks
+    (`Lane.ticks_needed`), and a lane is due when n ticks have come round since the one it
+    last ran on. For c = I, n = 1: every tick, on either scheduler, whatever d is. For
+    c = k*I, n = k: if a run happens on tick m the next is on tick m + k, so consecutive
+    runs are exactly k*I apart, which is the lane's own rate and never faster, because d
+    cancels out of a difference of tick numbers. A cadence that is not a whole multiple
+    rounds UP (20 minutes over a 15 minute tick is 2 ticks, so 30), which is never faster
+    than the declaration either, and a cadence shorter than the tick asks for more than
+    the scheduler has to give and gets every tick, which is as close as it can be served.
+    The wall clock stays on as a second door, for the machine that slept: launchd
+    coalesces a whole sleep into one firing, so a laptop that was shut for six hours owes
+    a slow lane turns it will never get back. `age >= cadence_s` hands them over. That
+    door can only ever open EARLIER in ticks, never sooner in seconds than the lane's own
+    declared cadence.
+    A hand-run costs its lane one turn. --only, and the run every installer does, bills
+    the turn that is coming, so the tick arriving a second later passes the lane over with
+    the run it just had still standing on its record. That stamp is a normal state, and
+    the migration gate reads it."""
+    if not lane.enabled:
+        return False, "disabled"
+    if lane.mirror_missing:
+        return False, REFUSED_MIRROR
+    if lane.over_tick:
+        return False, REFUSED_OVER_TICK
+    if only:
+        return (lane.id == only), None if lane.id == only else "not selected"
+    if force:
+        return True, None
+    prior = status.prior(lane.id)
+    if not prior.get("finished_at"):
+        return True, None
+    seq = as_int(status.runner.get("tick_seq"), 0)
+    ran_at = prior.get("ran_at_tick")
+    # A record written before this gate existed, or one that outlived a wiped or
+    # rolled-back counter, carries no usable turn number. Run the lane; this tick writes
+    # it a real one. `seq + 1` is a real number and not a rollback: a hand-run bills the
+    # turn that is coming, and this is the tick it billed.
+    if not isinstance(ran_at, int) or ran_at > seq + 1:
+        return True, None
+    if seq - ran_at >= lane.ticks_needed:
+        return True, None
+    age = age_s(prior.get("finished_at"))
+    if age is None or age >= lane.cadence_s:
+        return True, None
+    return False, "not due"
+
+
+def tick(paths, lanes, interval_s, status, force, only):
+    plan = []
+    for lane in lanes:
+        # --only is a hand-run of one lane; it must not stamp a visit on lanes it never
+        # looked at, or lane-silent would never fire for the rest.
+        considered = (not only) or lane.id == only
+        if not considered:
+            continue
+        due, reason = due_reason(lane, status, force, only)
+        rec = status.seed(lane, checked=lane.enabled)
+        if not due:
+            rec["skipped"] = reason
+        plan.append((lane, due))
+        if lane.mirror_missing and lane.enabled:
+            warn("%s: the declared mirror script is gone (%s)" % (lane.id, lane.mirror or "(none)"))
+        if lane.over_tick and lane.enabled:
+            warn("%s: timeout_s %s exceeds the %ss tick, so it is skipped; a lane that can "
+                 "outlive a tick needs its own job" % (lane.id, lane.timeout_s, interval_s))
+        if lane.enabled:
+            ensure_logs(paths, lane.id)
+
+    due_lanes = [lane for lane, due in plan if due]
+    status.flush(tick_started=now_iso(), pid=os.getpid(),
+                 lanes_declared=len(lanes), lanes_due=len(due_lanes),
+                 lanes_ran=0, lanes_failed=0, lanes_timed_out=0)
+
+    results = {}
+    if due_lanes:
+        # Parallel, each lane bounded on its own: serial would cost n * timeout in the
+        # worst case, overrun the interval, and get coalesced away by the scheduler.
+        workers = min(MAX_WORKERS, len(due_lanes))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(run_lane, paths, lane, status): lane for lane in due_lanes}
+            for fut in concurrent.futures.as_completed(futures):
+                lane = futures[fut]
+                try:
+                    results[lane.id] = fut.result()
+                except Exception as e:            # a lane can never take the tick down
+                    results[lane.id] = "failed"
+                    warn("%s: the runner failed to run it: %s" % (lane.id, e))
+    ran = [r for r in results.values() if r in ("ok", "failed", "timed out")]
+    status.flush(tick_finished=now_iso(),
+                 lanes_ran=len(ran),
+                 lanes_failed=sum(1 for r in results.values() if r == "failed"),
+                 lanes_timed_out=sum(1 for r in results.values() if r == "timed out"))
+    return results
+
+
+# ---------------------------------------------------------------- read-only modes
+
+def print_list(lanes, status):
+    for lane in lanes:
+        p = status.prior(lane.id)
+        age = age_s(p.get("finished_at"))
+        when = "never run" if age is None else "ran %s ago" % human(age)
+        code = p.get("last_exit")
+        exit_txt = "last exit -" if code is None else "last exit %s" % code
+        flags = []
+        if not lane.enabled:
+            flags.append("disabled")
+        if lane.mirror_missing:
+            flags.append(REFUSED_MIRROR)
+        if lane.over_tick:
+            flags.append(REFUSED_OVER_TICK)
+        print("%-20s cadence %-7s %-14s %-18s %s"
+              % (lane.id, "%ss" % lane.cadence_s, exit_txt, when, ", ".join(flags)))
+
+
+def print_dry_run(lanes, status, force, only, interval_s):
+    print("tick every %ss, %d lane(s) declared" % (interval_s, len(lanes)))
+    for lane in lanes:
+        if only and lane.id != only:
+            continue
+        due, reason = due_reason(lane, status, force, only)
+        print("  %-20s %s" % (lane.id, "due" if due else "skip (%s)" % reason))
+
+
+def human(seconds):
+    if seconds < 90:
+        return "%.0fs" % seconds
+    if seconds < 5400:
+        return "%.1fm" % (seconds / 60.0)
+    return "%.1fh" % (seconds / 3600.0)
+
+
+# ---------------------------------------------------------------- entry point
+
+def parse_argv(argv):
+    opts = {"only": None, "force": False, "dry": False, "list": False}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--only":
+            if i + 1 >= len(argv):
+                warn("--only needs a lane id")
+                sys.exit(EXIT_USAGE)
+            opts["only"] = argv[i + 1]
+            i += 2
+            continue
+        if a.startswith("--only="):
+            opts["only"] = a.split("=", 1)[1]
+        elif a == "--force":
+            opts["force"] = True
+        elif a == "--dry-run":
+            opts["dry"] = True
+        elif a == "--list":
+            opts["list"] = True
+        elif a in ("-h", "--help"):
+            print(__doc__.strip())
+            sys.exit(0)
+        else:
+            warn("unknown option: %s" % a)
+            sys.exit(EXIT_USAGE)
+        i += 1
+    return opts
+
+
+def main(argv):
+    opts = parse_argv(argv)
+    paths = Paths()
+    runner, lanes, interval_s, off_tick = load_manifest(paths)
+    runner_label = runner.get("label") or "com.sovereign.connector.runner"
+    read_only = opts["list"] or opts["dry"]
+
+    if not read_only and not paths.ensure():
+        return EXIT_CONFIG
+
+    status = Status(paths, runner_label, interval_s, dry=read_only)
+
+    if opts["only"] and opts["only"] not in [l.id for l in lanes]:
+        if opts["only"] in off_tick:
+            # Declared, but not this job's to run. Saying "no lane named that" would send a
+            # reader looking for a declaration that is right there in the manifest.
+            warn("lane '%s' keeps a job of its own (`tick: false`) and is never run from here"
+                 % opts["only"])
+        else:
+            warn("no lane named '%s' in %s" % (opts["only"], paths.manifest))
+        return EXIT_USAGE
+
+    # This invocation's turn number, before anything asks whether a lane is due. A
+    # --only hand-run spends nothing; --dry-run spends nothing on disk but reports the
+    # number the next real tick will carry, so it predicts that tick and not the last one.
+    status.advance(opts["only"])
+
+    if opts["list"]:
+        print_list(lanes, status)
+        return 0
+    if opts["dry"]:
+        print_dry_run(lanes, status, opts["force"], opts["only"], interval_s)
+        return 0
+
+    lock_state = take_lock(paths.lock, 2 * interval_s)
+    if lock_state == "held":
+        # Another tick is still working. An overlap is normal, not a fault: a tick that
+        # ran long, and the record carries it.
+        held = lock_age_s(paths.lock)
+        status.mark_overlap(held)
+        # A tick still holding the lock a WHOLE interval after it started has overrun its
+        # slot, and standing down quietly is how that stays invisible: no lane is visited,
+        # no lane log grows, and the reclaim that would say so is another interval away.
+        # This is the one stand-down that is a runner-level fault, so it takes the stream.
+        if held is not None and held > interval_s:
+            warn("stood down: a tick has held %s for %s, longer than the %ss interval; "
+                 "no lane mirrored this tick" % (paths.lock, human(held), interval_s))
+        return 0
+    if lock_state == "reclaimed":
+        warn("reclaimed a runner lock left by a dead tick")
+        # carried into the tick's own first write, so the record never shows a half-started tick
+        status.runner["reclaimed_lock"] = True
+    try:
+        status.prune({l.id for l in lanes})
+        tick(paths, lanes, interval_s, status, opts["force"], opts["only"])
+    finally:
+        release_lock(paths.lock)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(0)

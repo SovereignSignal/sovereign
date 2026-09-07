@@ -15,8 +15,10 @@ onboarded: {{DATE}}
 
 Installed by `sov connect claude-code` on {{DATE}}.
 
-Write wire: `connectors/harness/claude-code/mirror.sh` every {{INTERVAL}}s via launchd
-(`{{LABEL}}`), mirroring `~/.claude/projects/*/memory/` into `memory/<project>/`.
+Write wire: `connectors/harness/claude-code/mirror.sh` every {{INTERVAL}}s via {{SCHEDULER}}
+(`{{RUNNER}}`, lane id `{{LABEL}}`), mirroring `~/.claude/projects/*/memory/` into
+`memory/<project>/`. One job on this machine runs every tool's write wire; this lane's own
+log and error log sit beside the others under the connector state directory.
 `memory/MANIFEST.md` is the heartbeat: last run, project count, failures.
 Transcripts (`*.jsonl`) never cross.
 

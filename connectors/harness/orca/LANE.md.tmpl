@@ -15,8 +15,8 @@ onboarded: {{DATE}}
 
 Installed by `sov connect orca` on {{DATE}}.
 
-Write wire: `connectors/harness/orca/mirror.sh` every {{INTERVAL}}s via a scheduled job
-(`{{LABEL}}`). It copies `orchestration.db` with its WAL, renders one markdown file per run
+Write wire: `connectors/harness/orca/mirror.sh` every {{INTERVAL}}s via {{SCHEDULER}}
+(`{{RUNNER}}`, lane id `{{LABEL}}`). It copies `orchestration.db` with its WAL, renders one markdown file per run
 into `runs/`, and rewrites a file only when the run changed. `MANIFEST.md` is the heartbeat.
 
 Read wire: none of its own. Orca drives Claude Code, Codex, Cursor and others, and each of
