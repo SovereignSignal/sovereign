@@ -35,7 +35,21 @@ cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$HERE"/ui/* "$APP/Contents/Resources/ui/"
 cp "$HERE/design/tokens.css" "$APP/Contents/Resources/ui/tokens.css"
 cp "$HERE/design/glyphs/MenuBarTemplate.png" "$HERE/design/glyphs/MenuBarTemplate@2x.png" "$APP/Contents/Resources/"
-codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+# Signing decides whether macOS remembers its answer to "may Sovereign read your
+# Documents?". An ad-hoc signature pins the app's identity to the hash of the binary, so
+# every rebuild is a new app to the privacy database and the prompt comes back. Sign with
+# a stable identity when the machine has one (SOV_SIGN_ID, or a certificate whose name
+# starts with "Sovereign Local Signing") and the grant survives rebuilds.
+SIGN_ID="${SOV_SIGN_ID:-}"
+if [ -z "$SIGN_ID" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Sovereign Local Signing"; then
+  SIGN_ID="Sovereign Local Signing"
+fi
+if [ -n "$SIGN_ID" ] && codesign --force --sign "$SIGN_ID" --options runtime "$APP" >/dev/null 2>&1; then
+  echo "    signed as $SIGN_ID (the privacy grant survives rebuilds)"
+else
+  codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+  [ -n "$SIGN_ID" ] && echo "    could not sign as $SIGN_ID; fell back to ad-hoc"
+fi
 echo "    $APP"
 
 if [ "$INSTALL" -eq 1 ]; then
