@@ -587,7 +587,14 @@ def backups_view(root, hub, fleet):
     cache_p = os.path.expanduser("~/.cache/sovereign/hypervisor-backups.json")
     try: cache = json.load(open(cache_p))
     except Exception: cache = {}
-    fresh = (time.time() - cache.get("_at", 0)) < 900
+    # A success is worth caching for 15 minutes; a failure is not. One slow probe right
+    # after a reboot (Tailscale still bringing routes up) used to poison the view for the
+    # whole window and report every VM as unbacked-up-and-unreachable. Failures are
+    # retried once and then held for two minutes only.
+    def _fresh(node):
+        e = cache.get(node) or {}
+        ttl = 900 if e.get("reachable") else 120
+        return (time.time() - e.get("_at", 0)) < ttl
     probed = {}
     for h in fleet.get("hosts", []):
         meta = h.get("meta") or {}
@@ -597,10 +604,11 @@ def backups_view(root, hub, fleet):
             continue
         node, vmid = m.group(1).strip("()"), vm.group(1)
         if node not in probed:
-            if fresh and node in cache:
+            if node in cache and _fresh(node):
                 probed[node] = cache[node]
             else:
-                try:
+                for attempt in (1, 2):                     # one retry: a cold route is not an answer
+                  try:
                     o = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node,
                                         "grep -c '^vzdump' /etc/pve/jobs.cfg 2>/dev/null; ls -t --time-style=+%s -l /var/lib/vz/dump/ 2>/dev/null | awk '{print $6, $7}' | grep -E 'vma|tar' | head -50"],
                                        capture_output=True, text=True, timeout=12).stdout.splitlines()
@@ -612,15 +620,16 @@ def backups_view(root, hub, fleet):
                             mm = re.search(r"vzdump-(?:qemu|lxc)-(\d+)-", parts[1])
                             if mm: dumps.setdefault(mm.group(1), int(parts[0]))
                     probed[node] = {"jobs": jobs, "dumps": dumps, "reachable": True}
-                except Exception:
+                    break
+                  except Exception:
                     probed[node] = {"jobs": None, "dumps": {}, "reachable": False}
-                cache[node] = probed[node]
+                cache[node] = dict(probed[node], _at=time.time())
         pn = probed[node]
         last = pn["dumps"].get(vmid)
         hosts.append({"host": h["host"], "node": node, "vmid": vmid, "reachable": pn["reachable"], "jobs": pn["jobs"],
                       "last_dump_age_h": round((time.time() - last) / 3600, 1) if last else None})
     if probed:
-        cache["_at"] = time.time()
+        cache.pop("_at", None)                         # per-node stamps now, see _fresh
         try:
             os.makedirs(os.path.dirname(cache_p), exist_ok=True); json.dump(cache, open(cache_p, "w"))
         except OSError: pass
