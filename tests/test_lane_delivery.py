@@ -11,7 +11,7 @@ loader = importlib.machinery.SourceFileLoader('lane_delivery', str(ROOT / 'bin/b
 spec = importlib.util.spec_from_loader(loader.name, loader)
 m = importlib.util.module_from_spec(spec); loader.exec_module(m)
 
-class LaneDelivery(unittest.TestCase):
+class LaneFixture:
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.p = Path(self.tmp.name)
@@ -28,6 +28,9 @@ class LaneDelivery(unittest.TestCase):
     def commit(self, msg):
         self.git('add', '-A'); self.git('commit', '-qm', msg); return self.git('rev-parse', 'HEAD')
     def plan(self): return m.plan(self.p, 'lane/fixture', 'fixture')
+
+
+class LaneDelivery(LaneFixture, unittest.TestCase):
     def test_preview_and_apply_only_lane(self):
         self.git('checkout', '-q', 'lane/fixture'); self.write('raw/workspaces/fixture/note.md', 'durable note\n'); self.commit('capture')
         self.git('checkout', '-q', 'main'); before=self.git('rev-parse','HEAD')

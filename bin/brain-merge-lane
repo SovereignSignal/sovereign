@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Preview or merge one producer branch. Default is a non-mutating dry run.
 
-Use --root VAULT --ref REMOTE/lane/SLUG --lane SLUG [--apply]. No push is performed.
+Use --root VAULT --ref REMOTE/lane/SLUG --lane SLUG [--apply | --apply-isolated].
+No push is performed. Isolated apply prepares the merge away from the live index.
 Checks both the introduced history and Git's actual merge result, including multiple
 merge bases. Receipt: .git/sovereign-delivery.json, written only with --apply.
 """
 import argparse
+import contextlib
 import datetime
 import json
 import os
@@ -114,8 +116,11 @@ def plan(root, ref, lane, base="main"):
                     introduced_commits=len(commits), reason="history and merge result passed")
 
 
-def apply(root, report):
-    if text(root, "symbolic-ref", "--short", "HEAD") != report["base"]:
+def apply(root, report, *, detached=False):
+    branch = run(root, "symbolic-ref", "--short", "HEAD", check=False)
+    if detached and branch.returncode == 0:
+        raise Refused("integration worktree is not detached")
+    if not detached and branch.stdout.decode().strip() != report["base"]:
         raise Refused("checkout is not on the target branch")
     if run(root, "status", "--porcelain", "-z").stdout:
         raise Refused("working tree or index is dirty; no files changed")
@@ -143,6 +148,104 @@ def apply(root, report):
                 accepted_commit=text(root, "rev-parse", "HEAD"))
 
 
+@contextlib.contextmanager
+def integration_lock(root):
+    common = Path(text(root, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    lock = common / "sovereign-integration.lock"
+    try:
+        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise Refused("another integration holds the lock; inspect before retrying")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(str(os.getpid()) + "\n")
+        yield
+    finally:
+        lock.unlink()
+
+
+def live_target_ready(root, report):
+    if text(root, "symbolic-ref", "--short", "HEAD") != report["base"]:
+        raise Refused("checkout is not on the target branch")
+    if text(root, "rev-parse", "HEAD") != report["base_head"]:
+        raise Refused("target moved since preview; retry")
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG",
+                   "rebase-merge", "rebase-apply", "index.lock"):
+        path = Path(text(root, "rev-parse", "--path-format=absolute", "--git-path", marker))
+        if path.exists():
+            raise Refused("a Git operation is already in progress")
+    if run(root, "diff", "--cached", "--quiet", check=False).returncode:
+        raise Refused("index contains staged work; no files changed")
+    lane_root = "raw/workspaces/" + report["lane"]
+    # The index is clean, so porcelain contains unstaged paths or untracked files,
+    # never staged rename pairs. Refuse all live work in the producer's own lane.
+    for row in paths(run(root, "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout):
+        if row[:2] not in (" M", " D", " T", "??"):
+            raise Refused("working state changed during inspection; retry")
+        name = row[3:]
+        if name == lane_root or name.startswith(lane_root + "/") or lane_root.startswith(name + "/"):
+            raise Refused("local edits overlap the producer lane; no files changed")
+    for ancestor in (root / lane_root, root / "raw/workspaces", root / "raw"):
+        if ancestor.is_symlink():
+            raise Refused("live lane contains a linked directory")
+
+
+def prepare(root, report):
+    live_target_ready(root, report)
+    if report["state"] == "accepted":
+        return report
+    # A private worktree gets its own HEAD and index. Merge failure and abort only
+    # affect this disposable checkout. The canonical working files are never staged.
+    with tempfile.TemporaryDirectory(prefix="sovereign-integration-") as tmp:
+        checkout = Path(tmp) / "checkout"
+        try:
+            run(root, "worktree", "add", "--detach", str(checkout), report["base_head"])
+            accepted = apply(checkout, report, detached=True)
+            candidate = accepted["accepted_commit"]
+            prepared_ref = "refs/sovereign/prepared/" + report["lane"] + "/" + candidate
+            run(root, "update-ref", prepared_ref, candidate)
+            return dict(report, state="prepared", prepared_commit=candidate, prepared_ref=prepared_ref)
+        finally:
+            # This path was created above inside our private temporary directory.
+            # Keep a failed prepared commit reachable through its dedicated ref.
+            if checkout.exists():
+                run(root, "worktree", "remove", "--force", str(checkout))
+
+
+def promote(root, report):
+    live_target_ready(root, report)
+    if report["state"] == "accepted":
+        return report
+    candidate = report["prepared_commit"]
+    if not re.fullmatch(r"[0-9a-f]{40,64}", candidate):
+        raise Refused("invalid prepared commit")
+    if text(root, "rev-list", "--parents", "-n", "1", candidate).split() != [
+            candidate, report["base_head"], report["source_head"]]:
+        raise Refused("prepared commit has unexpected parents")
+    if text(root, "rev-parse", candidate + "^{tree}") != report["tree"]:
+        raise Refused("prepared commit differs from the reviewed tree")
+    changed = paths(run(root, "diff", "--no-renames", "--name-only", "-z", report["base_head"], candidate).stdout)
+    fence(changed, report["lane"])
+    for name in changed:
+        path = root / name
+        while path != root:
+            if path.is_symlink():
+                raise Refused("merge destination contains a linked path")
+            path = path.parent
+    # Fast-forward only: no merge resolution, commit, stash, reset or abort occurs
+    # in the live checkout. Native Git also refuses overlapping or ignored files.
+    # The explicit autostash override protects users whose Git enables it globally.
+    p = run(root, "merge", "--ff-only", "--no-autostash", "--no-overwrite-ignore",
+            "--no-edit", candidate, check=False)
+    if text(root, "rev-parse", "HEAD") != candidate:
+        raise Refused("fast-forward refused; prepared commit retained; no reset attempted")
+    result = dict(report, state="accepted", accepted_commit=candidate,
+                  accepted_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+    if p.returncode:
+        result["warning"] = "target advanced but Git returned an error; inspect before continuing"
+    return result
+
+
 def receipt(root, report):
     p = Path(text(root, "rev-parse", "--path-format=absolute", "--git-path", "sovereign-delivery.json"))
     try:
@@ -165,21 +268,35 @@ def main():
     ap.add_argument("--ref", required=True)
     ap.add_argument("--lane", required=True)
     ap.add_argument("--base", default="main")
-    ap.add_argument("--apply", action="store_true")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true")
+    mode.add_argument("--apply-isolated", action="store_true",
+                      help="prepare in a private worktree, then fast-forward while preserving unrelated drafts")
     a = ap.parse_args()
     report = {"lane": a.lane, "ref": a.ref, "observed_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
     try:
-        report = plan(a.root, a.ref, a.lane, a.base)
-        if a.apply:
-            report = apply(a.root, report)
-            receipt(a.root, report)
+        with integration_lock(a.root) if a.apply_isolated else contextlib.nullcontext():
+            report = plan(a.root, a.ref, a.lane, a.base)
+            if a.apply_isolated:
+                report = prepare(a.root, report)
+                receipt(a.root, report)
+                report = promote(a.root, report)
+                receipt(a.root, report)
+                if report.get("prepared_ref"):
+                    run(a.root, "update-ref", "-d", report["prepared_ref"], report["prepared_commit"])
+            elif a.apply:
+                report = apply(a.root, report)
+                receipt(a.root, report)
     except (Refused, OSError, ValueError, subprocess.TimeoutExpired) as e:
-        report.update(state="refused", reason=str(e) if isinstance(e, Refused) else "inspection or receipt failed")
-        if a.apply:
+        # A receipt/cleanup failure after acceptance must not misreport an accepted
+        # commit as refused. Keep its actual state and return a nonzero exit.
+        report.update(state=report["state"] if report.get("state") == "accepted" else "refused",
+                      reason=str(e) if isinstance(e, Refused) else "inspection or receipt failed")
+        if a.apply or a.apply_isolated:
             try: receipt(a.root, report)
             except Exception: pass
         print(json.dumps(report)); return 1
-    print(json.dumps(report)); return 0
+    print(json.dumps(report)); return 1 if report.get("warning") else 0
 
 
 if __name__ == "__main__":
