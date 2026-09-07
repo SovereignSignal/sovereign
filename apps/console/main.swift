@@ -25,6 +25,7 @@ enum Settings {
     // owner closing a window is not the owner asking the watch to stop. Opt in to quit.
     static var closeQuits: Bool { get { d.bool(forKey: "sov.closeQuits") } set { d.set(newValue, forKey: "sov.closeQuits") } }
     static var lastError: String? = nil
+    static var archive: String? { get { d.string(forKey: "sov.archive") } set { d.set(newValue, forKey: "sov.archive") } }
 
     static func dict(probe: Bool = false) -> [String: Any] {
         // Asking launchd about the login item is synchronous and can block an ad-hoc
@@ -54,6 +55,20 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         guard let d = m.body as? [String: Any], let cmd = d["cmd"] as? String else { return }
         switch cmd {
+        case "localState":
+            deliver("localState", Settings.archive.map { ["root": $0] } ?? [:])
+        case "chooseArchive":
+            DispatchQueue.main.async { App.shared.chooseArchive(create: (d["create"] as? Bool) == true) }
+        case "local":
+            guard let action = d["action"] as? String, ["list", "read", "capture"].contains(action),
+                  let root = Settings.archive else { return }
+            var request = d
+            request["root"] = root
+            local(request) { result in
+                var response = result
+                response["action"] = action; response["request"] = d["request"]
+                self.deliver("local", response)
+            }
         case "status":
             guard let sov = sov else { deliver("status", ["error": "sov not found: connect this machine first (sov connect <tool> --apply)"]); return }
             var args = [sov, "status", "--json"]
@@ -179,6 +194,32 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         return e
     }
 
+    // This path is independent of shell profiles, Homebrew, Python, Git and fleet pointers.
+    func local(_ request: [String: Any], done: @escaping ([String: Any]) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let resources = Bundle.main.resourceURL,
+                  let input = try? JSONSerialization.data(withJSONObject: request) else { return }
+            let p = Process(), stdin = Pipe(), output = Pipe()
+            p.executableURL = resources.appendingPathComponent("runtime/bin/python3")
+            p.arguments = ["-I", "-B", resources.appendingPathComponent("backend/bin/brain-local").path]
+            p.standardInput = stdin; p.standardOutput = output; p.standardError = output
+            p.environment = ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"]
+            do { try p.run() } catch {
+                done(["error": "The bundled archive engine could not start. Download a complete copy of the app."]); return
+            }
+            let timeout = DispatchWorkItem { if p.isRunning { p.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: timeout)
+            do { try stdin.fileHandleForWriting.write(contentsOf: input) } catch { }
+            try? stdin.fileHandleForWriting.close()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit(); timeout.cancel()
+            guard let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                done(["error": "The archive engine did not finish. Your existing files have been preserved."]); return
+            }
+            done(result)
+        }
+    }
+
     func run(_ args: [String], done: @escaping (String, String, Int32) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
@@ -243,11 +284,23 @@ func qaFrame(_ f: NSRect) -> NSRect {
 }
 
 @main
-final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
-    func webView(_ w: WKWebView, didFailProvisionalNavigation n: WKNavigation!, withError e: Error) { log("navigation failed: \(e)") }
-    func webView(_ w: WKWebView, didFail n: WKNavigation!, withError e: Error) { log("navigation failed late: \(e)") }
-    func webView(_ w: WKWebView, didFinish n: WKNavigation!) { log("loaded \(w.url?.absoluteString ?? "?")") }
-    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { log("web content process terminated") }
+final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let alert = NSAlert(); alert.messageText = message
+        alert.addButton(withTitle: "Discard"); alert.addButton(withTitle: "Keep editing")
+        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+    }
+    func webView(_ w: WKWebView, didFailProvisionalNavigation n: WKNavigation!, withError e: Error) { showLoadFailure(w) }
+    func webView(_ w: WKWebView, didFail n: WKNavigation!, withError e: Error) { showLoadFailure(w) }
+    func webView(_ w: WKWebView, didFinish n: WKNavigation!) {
+        guard w === web else { return }
+        loadWatchdog?.cancel()
+        w.evaluateJavaScript("typeof window.sovDeliver === 'function'") { value, _ in
+            if (value as? Bool) == true { self.loadingOverlay?.removeFromSuperview(); self.loadingOverlay = nil }
+            else { self.showLoadFailure(w) }
+        }
+    }
+    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { showLoadFailure(w) }
     static var shared: App!
     var window: NSWindow!
     var web: WKWebView!
@@ -257,6 +310,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var glanceWeb: WKWebView?
     var glanceBridge: Bridge?
     var sovPath: String?
+    var localMode = false
+    var loadingOverlay: NSView?
+    var loadWatchdog: DispatchWorkItem?
     var glanceSize = NSSize(width: 420, height: 468)
     var qaGlance: Bool { ProcessInfo.processInfo.environment["SOV_GLANCE"] == "1" }
 
@@ -276,6 +332,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
         let w = WKWebView(frame: .zero, configuration: cfg)
         w.navigationDelegate = self
+        w.uiDelegate = self
         b.web = w
         w.setValue(false, forKey: "drawsBackground")
         return (w, b)
@@ -284,21 +341,27 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private func load(_ w: WKWebView, glance: Bool) {
         // resourceURL is relative to the bundle; resolve it, or URLComponents keeps only the
         // relative part and loadFileURL is handed a path with no scheme that never loads
-        guard let ui = Bundle.main.resourceURL?.appendingPathComponent("ui/index.html").absoluteURL else { return }
+        guard let ui = Bundle.main.resourceURL?.appendingPathComponent(localMode ? "ui/local.html" : "ui/index.html").absoluteURL else { return }
         var comps = URLComponents(url: ui, resolvingAgainstBaseURL: true)!
         comps.fragment = glance ? (qaGlance ? "glance-qa" : "glance") : nil
         let target = comps.url ?? ui
         log("loading \(target.absoluteString)")
         w.loadFileURL(target, allowingReadAccessTo: ui.deletingLastPathComponent())
+        if w === web {
+            let watchdog = DispatchWorkItem { [weak self, weak w] in if let w = w { self?.showLoadFailure(w) } }
+            loadWatchdog?.cancel(); loadWatchdog = watchdog
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: watchdog)
+        }
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        buildMenu()
         // SOV_APPEARANCE=dark|light forces the appearance (used with SOV_SNAPSHOT for design QA).
         if let a = ProcessInfo.processInfo.environment["SOV_APPEARANCE"] {
             NSApp.appearance = NSAppearance(named: a == "dark" ? .darkAqua : .aqua)
         }
         sovPath = ["\(NSHomeDirectory())/brain-bin/sov", "/usr/local/bin/sov", "/opt/homebrew/bin/sov"].first { FileManager.default.isExecutableFile(atPath: $0) }
+        localMode = Settings.archive != nil || sovPath == nil || Bundle.main.object(forInfoDictionaryKey: "SovereignPreview") as? Bool == true
+        buildMenu()
         let (w, b) = makeWeb()
         web = w; bridge = b
 
@@ -310,11 +373,14 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
-        window.contentView = web
+        let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        web.frame = container.bounds; web.autoresizingMask = [.width, .height]
+        container.addSubview(web); window.contentView = container
         window.isReleasedWhenClosed = false
         if !qaGlance && ProcessInfo.processInfo.environment["SOV_WINDOW"] == nil { window.setFrameAutosaveName("SovereignConsole") }
 
         applySettings()
+        showLoading(message: "Opening your archive…", retry: false)
         // Menu-bar-only installs start quiet: the panel appears when the crown is clicked.
         let snapshotting = !(ProcessInfo.processInfo.environment["SOV_SNAPSHOT"] ?? "").isEmpty
         if Settings.location != "menubar" || snapshotting {
@@ -372,6 +438,49 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private func showLoading(message: String, retry: Bool) {
+        loadingOverlay?.removeFromSuperview()
+        guard let content = window?.contentView else { return }
+        let panel = NSView(frame: content.bounds); panel.autoresizingMask = [.width, .height]
+        panel.wantsLayer = true; panel.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        let label = NSTextField(wrappingLabelWithString: message); label.alignment = .center
+        label.font = .systemFont(ofSize: 17)
+        let stack = NSStackView(views: [label]); stack.orientation = .vertical; stack.spacing = 18
+        if retry { stack.addArrangedSubview(NSButton(title: "Try again", target: self, action: #selector(retryLoad))) }
+        stack.translatesAutoresizingMaskIntoConstraints = false; panel.addSubview(stack)
+        NSLayoutConstraint.activate([stack.centerXAnchor.constraint(equalTo: panel.centerXAnchor), stack.centerYAnchor.constraint(equalTo: panel.centerYAnchor), stack.widthAnchor.constraint(lessThanOrEqualToConstant: 460)])
+        content.addSubview(panel); loadingOverlay = panel
+    }
+    private func showLoadFailure(_ w: WKWebView) {
+        log("archive view could not load")
+        if w === web { loadWatchdog?.cancel(); showLoading(message: "The archive view could not load. Your files are unchanged.", retry: true) }
+    }
+    @objc private func retryLoad() { showLoading(message: "Opening your archive…", retry: false); load(web, glance: false) }
+
+    func chooseArchive(create: Bool) {
+        let selected: URL?
+        if create {
+            let panel = NSSavePanel(); panel.title = "Create archive"; panel.nameFieldStringValue = "My Archive"
+            panel.prompt = "Create"; panel.canCreateDirectories = false
+            selected = panel.runModal() == .OK ? panel.url : nil
+        } else {
+            let panel = NSOpenPanel(); panel.title = "Open archive"; panel.canChooseDirectories = true
+            panel.canChooseFiles = false; panel.allowsMultipleSelection = false
+            selected = panel.runModal() == .OK ? panel.url : nil
+        }
+        guard let url = selected else { return }
+        bridge.local(["action": create ? "create" : "open", "root": url.path]) { result in
+            DispatchQueue.main.async {
+                if let error = result["error"] as? String {
+                    let alert = NSAlert(); alert.messageText = "Archive could not be opened"; alert.informativeText = error; alert.runModal(); return
+                }
+                guard let root = result["root"] as? String else { return }
+                Settings.archive = root
+                self.bridge.deliver("localState", ["root": root])
             }
         }
     }
@@ -518,6 +627,14 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         Settings.location == "dock" && Settings.closeQuits
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard localMode, web != nil else { return .terminateNow }
+        web.evaluateJavaScript("window.sovCanQuit ? window.sovCanQuit() : true") { result, error in
+            sender.reply(toApplicationShouldTerminate: error != nil || (result as? Bool) == true)
+        }
+        return .terminateLater
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { window.makeKeyAndOrderFront(nil) }
         return true
@@ -529,14 +646,27 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Sovereign", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        if !localMode { appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",") }
         appMenu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Sovereign", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
+        if localMode {
+            let fileItem = NSMenuItem(); main.addItem(fileItem)
+            let file = NSMenu(title: "File")
+            file.addItem(withTitle: "New Capture", action: #selector(newCapture), keyEquivalent: "n")
+            file.addItem(withTitle: "New Archive…", action: #selector(newArchive), keyEquivalent: "")
+            file.addItem(withTitle: "Open Archive…", action: #selector(openArchive), keyEquivalent: "o")
+            fileItem.submenu = file
+        }
         let editItem = NSMenuItem(); main.addItem(editItem)
         let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
         NSApp.mainMenu = main
@@ -544,4 +674,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     @objc func refresh() { web.evaluateJavaScript("window.sovRefresh && window.sovRefresh();", completionHandler: nil) }
     @objc func openSettings() { showConsole(place: ["settings": true]) }
+    @objc func newCapture() { web.evaluateJavaScript("window.sovNewCapture && window.sovNewCapture()", completionHandler: nil) }
+    @objc func newArchive() { web.evaluateJavaScript("window.sovChooseArchive && window.sovChooseArchive(true)", completionHandler: nil) }
+    @objc func openArchive() { web.evaluateJavaScript("window.sovChooseArchive && window.sovChooseArchive(false)", completionHandler: nil) }
 }

@@ -1,0 +1,11 @@
+Bundled Python runtime notices
+
+The license texts in this folder were supplied in the verified upstream full
+distribution for CPython 3.12.14, Apple Silicon, release 20260901.
+Upstream asset: cpython-3.12.14+20260901-aarch64-apple-darwin-pgo+lto-full.tar.zst
+SHA-256: dbefa04d4107b449e17022f9c78d3eacbd37a1aa8c166c6220dbd95addf3f318
+
+Runtime provider: https://github.com/astral-sh/python-build-standalone
+The runtime archive digest is pinned separately in runtime.lock.json.
+The upstream set includes optional components. Python and pip retain their
+original license and vendor notice files inside the bundled runtime as well.

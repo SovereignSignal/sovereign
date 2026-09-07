@@ -6,12 +6,16 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD="$HERE/build"; APP="$BUILD/Sovereign.app"
-INSTALL=0; OPEN=0
-for a in "$@"; do case "$a" in --install) INSTALL=1;; --open) OPEN=1;; esac; done
+INSTALL=0; OPEN=0; PREVIEW=0
+for a in "$@"; do case "$a" in --install) INSTALL=1;; --open) OPEN=1;; --preview) PREVIEW=1;; *) echo "unknown option: $a" >&2; exit 64;; esac; done
+if [ "$PREVIEW" -eq 1 ]; then APP="$BUILD/Sovereign Preview.app"; fi
+if [ "$PREVIEW" -eq 1 ] && [ "$INSTALL" -eq 1 ]; then echo "Preview builds stay separate; do not use --install." >&2; exit 64; fi
+RUNTIME="${SOV_PYTHON_RUNTIME:-}"
+[ -x "$RUNTIME/bin/python3" ] || { echo "Set SOV_PYTHON_RUNTIME to a verified redistributable Python installation. See DISTRIBUTION.md." >&2; exit 66; }
 
 mkdir -p "$BUILD"
 echo "[1] compiling"
-xcrun swiftc -O -parse-as-library -framework Cocoa -framework WebKit -o "$BUILD/Sovereign" "$HERE/main.swift"
+MACOSX_DEPLOYMENT_TARGET=13.0 xcrun swiftc -target arm64-apple-macos13.0 -module-cache-path "$BUILD/module-cache" -O -parse-as-library -framework Cocoa -framework WebKit -o "$BUILD/Sovereign" "$HERE/main.swift"
 
 echo "[2] icon"
 PNG="$HERE/design/icon/AppIcon-1024.png"
@@ -31,10 +35,25 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/ui"
 cp "$BUILD/Sovereign" "$APP/Contents/MacOS/Sovereign"
 cp "$HERE/Info.plist" "$APP/Contents/Info.plist"
+if [ "$PREVIEW" -eq 1 ]; then
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.sovereign.console.preview' "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleName Sovereign Preview' "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Sovereign Preview' "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Add :SovereignPreview bool true' "$APP/Contents/Info.plist"
+fi
 cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$HERE"/ui/* "$APP/Contents/Resources/ui/"
 cp "$HERE/design/tokens.css" "$APP/Contents/Resources/ui/tokens.css"
 cp "$HERE/design/glyphs/MenuBarTemplate.png" "$HERE/design/glyphs/MenuBarTemplate@2x.png" "$APP/Contents/Resources/"
+BACKEND="$APP/Contents/Resources/backend"
+mkdir -p "$BACKEND/bin" "$BACKEND/lib" "$BACKEND/templates"
+cp "$HERE/../../bin/brain-local" "$BACKEND/bin/"
+cp "$HERE/../../lib/brain_local.py" "$HERE/../../lib/brain_redact.py" "$BACKEND/lib/"
+cp "$HERE/../../templates/note.md" "$BACKEND/templates/"
+cp "$HERE/../../CLAUDE.md" "$BACKEND/"
+cp -R "$RUNTIME" "$APP/Contents/Resources/runtime"
+cp -R "$HERE/licenses" "$APP/Contents/Resources/licenses"
+cp "$HERE/runtime.lock.json" "$APP/Contents/Resources/runtime.lock.json"
 # Signing decides whether macOS remembers its answer to "may Sovereign read your
 # Documents?". An ad-hoc signature pins the app's identity to the hash of the binary, so
 # every rebuild is a new app to the privacy database and the prompt comes back. Sign with
@@ -44,12 +63,16 @@ SIGN_ID="${SOV_SIGN_ID:-}"
 if [ -z "$SIGN_ID" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Sovereign Local Signing"; then
   SIGN_ID="Sovereign Local Signing"
 fi
-if [ -n "$SIGN_ID" ] && codesign --force --sign "$SIGN_ID" --options runtime "$APP" >/dev/null 2>&1; then
-  echo "    signed as $SIGN_ID (the privacy grant survives rebuilds)"
-else
-  codesign --force --sign - "$APP" >/dev/null 2>&1 || true
-  [ -n "$SIGN_ID" ] && echo "    could not sign as $SIGN_ID; fell back to ad-hoc"
-fi
+SIGN_ID="${SIGN_ID:--}"
+# Sign embedded Mach-O code inside out; never silently downgrade a requested identity.
+while IFS= read -r -d '' nested; do
+  if file -b "$nested" | grep -q 'Mach-O'; then
+    codesign --force --sign "$SIGN_ID" --options runtime "$nested" >/dev/null 2>&1
+  fi
+done < <(find "$APP/Contents/Resources/runtime" -type f -print0)
+codesign --force --sign "$SIGN_ID" --options runtime "$APP" >/dev/null 2>&1
+codesign --verify --deep --strict "$APP"
+echo "    signed and verified (distribution notarization is separate)"
 echo "    $APP"
 
 if [ "$INSTALL" -eq 1 ]; then
