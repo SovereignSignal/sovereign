@@ -17,6 +17,8 @@ def main():
             root = local.archive_root(request['root'])
             if action in ('list', 'open'):
                 out = local.listing(root, request.get('query', ''))
+            elif action == 'context':
+                out = local.context_state(root)
             elif action == 'read':
                 out = local.read(root, request['path'])
             elif action == 'capture':

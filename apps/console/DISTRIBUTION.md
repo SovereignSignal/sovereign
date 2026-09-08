@@ -2,7 +2,16 @@
 
 Sovereign starts with one local archive. The Apple Silicon preview can create an archive, capture a note, search titles and contents, read notes, and open the underlying Markdown in a text editor. It bundles Python and requires no account, terminal setup, Git, Homebrew, Obsidian, or separate hub for those operations.
 
-The existing connected console remains available on configured installations. The preview has a separate bundle identifier and preferences, starts in local mode, and does not replace the installed app, change brain pointer files, connect tools, install background jobs, or publish files.
+The main window now opens on a unified Home with nodes, producers, contributions,
+review needs, and context preparation receipts. Notes opens the local reader and
+capture interface. Operations opens the existing connected console in the same
+window and reuses its explicit setup and review actions. Home reads status from an
+existing installed `sov` command; it does not bundle or install fleet connectors.
+
+The preview has a separate bundle identifier and preferences. Building or opening
+it does not replace the installed app, change brain pointer files, connect tools,
+install background jobs, or publish files. Local archive selection does not change
+the archive configured for connected tools; Home names any mismatch.
 
 ## Build
 
@@ -25,6 +34,18 @@ Set `SOV_SIGN_ID` to the intended signing identity for a signed build. A signing
 - Existing archives must contain all five folders. Opening one does not rewrite its organization. The local reader covers Markdown in raw, workstreams, and knowledge. It lists at most 500 matching notes, reports the full match count, and excludes linked files, hidden paths, cold storage, repositories, and notes larger than 2 MiB.
 - Captures are limited to 1 MiB and use exclusive writes. Credential recognition is a pattern-based safeguard, not a guarantee that all sensitive information is detected.
 - An existing nonempty or empty folder is refused by Create. Use Open for an existing archive. If creation fails partway, the chosen folder may contain an incomplete scaffold; the app does not delete it or bind it as a successful archive.
+
+## Native verification
+
+After building the preview, run:
+
+```sh
+python3 apps/console/test-home.py
+```
+
+This creates a disposable archive and passes its path through the process's
+temporary preferences. It does not change the saved archive selection. The test
+does perform a read-only status request on a configured machine.
 
 ## Public release gates
 

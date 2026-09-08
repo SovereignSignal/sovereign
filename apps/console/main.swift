@@ -4,7 +4,8 @@
 // small Glance panel (the same ui/index.html loaded with #glance) that shows the
 // numbers that move and opens the window at the right place. A bridge per web
 // view runs `sov`, streams command output, and hands JSON back. The app never
-// writes the vault; the gate goes through `sov gate`, connectors through
+// promotes knowledge automatically; local captures use the bundled archive engine.
+// The gate goes through `sov gate`, connectors through
 // `sov connect`, exactly as the terminal does.
 //
 // Settings live in UserDefaults on each machine: where the app lives (Dock,
@@ -49,35 +50,47 @@ enum Settings {
 final class Bridge: NSObject, WKScriptMessageHandler {
     weak var web: WKWebView?
     let sov: String?
+    var generation = UUID()
 
     init(sov: String?) { self.sov = sov }
 
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         guard let d = m.body as? [String: Any], let cmd = d["cmd"] as? String else { return }
+        let generation = self.generation
         switch cmd {
         case "localState":
             deliver("localState", Settings.archive.map { ["root": $0] } ?? [:])
         case "chooseArchive":
             DispatchQueue.main.async { App.shared.chooseArchive(create: (d["create"] as? Bool) == true) }
         case "local":
-            guard let action = d["action"] as? String, ["list", "read", "capture"].contains(action),
+            guard let action = d["action"] as? String, ["list", "read", "capture", "context"].contains(action),
                   let root = Settings.archive else { return }
             var request = d
             request["root"] = root
             local(request) { result in
                 var response = result
                 response["action"] = action; response["request"] = d["request"]
-                self.deliver("local", response)
+                self.deliver("local", response, generation: generation)
             }
+        case "navigate":
+            guard let page = d["page"] as? String, ["home", "operations"].contains(page) else { return }
+            DispatchQueue.main.async { App.shared.navigate(page: page, place: d["place"] as? [String: Any]) }
         case "status":
-            guard let sov = sov else { deliver("status", ["error": "sov not found: connect this machine first (sov connect <tool> --apply)"]); return }
+            guard let sov = sov else {
+                var response: [String: Any] = ["machine": ["connected": false], "available": false]
+                response["request"] = d["request"]
+                deliver("status", response, generation: generation); return
+            }
             var args = [sov, "status", "--json"]
             if (d["hub"] as? Bool) == false { args.append("--no-hub") }
             run(args) { out, err, code in
                 if let data = out.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    self.deliver("status", obj)
+                    var response = obj; response["request"] = d["request"]
+                    self.deliver("status", response, generation: generation)
                 } else {
-                    self.deliver("status", ["error": "sov status failed (exit \(code)): \(err.suffix(400))"])
+                    var response: [String: Any] = ["error": "System status could not be read (exit \(code)). Retry or inspect Operations."]
+                    response["request"] = d["request"]
+                    self.deliver("status", response, generation: generation)
                 }
             }
         case "connect":
@@ -261,10 +274,13 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    func deliver(_ kind: String, _ payload: [String: Any]) {
+    func deliver(_ kind: String, _ payload: [String: Any], generation: UUID? = nil) {
         guard let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) else { return }
         let js = "window.sovDeliver && window.sovDeliver(\(jsString(kind)), \(json));"
-        DispatchQueue.main.async { self.web?.evaluateJavaScript(js, completionHandler: nil) }
+        DispatchQueue.main.async {
+            if let generation = generation, generation != self.generation { return }
+            self.web?.evaluateJavaScript(js, completionHandler: nil)
+        }
     }
 
     private func jsString(_ s: String) -> String {
@@ -296,7 +312,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         guard w === web else { return }
         loadWatchdog?.cancel()
         w.evaluateJavaScript("typeof window.sovDeliver === 'function'") { value, _ in
-            if (value as? Bool) == true { self.loadingOverlay?.removeFromSuperview(); self.loadingOverlay = nil }
+            if (value as? Bool) == true {
+                self.loadingOverlay?.removeFromSuperview(); self.loadingOverlay = nil
+                if let place = self.pendingPlace { self.pendingPlace = nil; self.bridge.deliver("goto", place) }
+            }
             else { self.showLoadFailure(w) }
         }
     }
@@ -310,7 +329,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     var glanceWeb: WKWebView?
     var glanceBridge: Bridge?
     var sovPath: String?
-    var localMode = false
+    var localMode = true
+    var pendingPlace: [String: Any]?
     var loadingOverlay: NSView?
     var loadWatchdog: DispatchWorkItem?
     var glanceSize = NSSize(width: 420, height: 468)
@@ -339,9 +359,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     }
 
     private func load(_ w: WKWebView, glance: Bool) {
+        if w === web { bridge.generation = UUID() } else if w === glanceWeb { glanceBridge?.generation = UUID() }
         // resourceURL is relative to the bundle; resolve it, or URLComponents keeps only the
         // relative part and loadFileURL is handed a path with no scheme that never loads
-        guard let ui = Bundle.main.resourceURL?.appendingPathComponent(localMode ? "ui/local.html" : "ui/index.html").absoluteURL else { return }
+        guard let ui = Bundle.main.resourceURL?.appendingPathComponent((localMode && !glance) ? "ui/local.html" : "ui/index.html").absoluteURL else { return }
         var comps = URLComponents(url: ui, resolvingAgainstBaseURL: true)!
         comps.fragment = glance ? (qaGlance ? "glance-qa" : "glance") : nil
         let target = comps.url ?? ui
@@ -360,7 +381,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
             NSApp.appearance = NSAppearance(named: a == "dark" ? .darkAqua : .aqua)
         }
         sovPath = ["\(NSHomeDirectory())/brain-bin/sov", "/usr/local/bin/sov", "/opt/homebrew/bin/sov"].first { FileManager.default.isExecutableFile(atPath: $0) }
-        localMode = Settings.archive != nil || sovPath == nil || Bundle.main.object(forInfoDictionaryKey: "SovereignPreview") as? Bool == true
+        localMode = true
         buildMenu()
         let (w, b) = makeWeb()
         web = w; bridge = b
@@ -613,12 +634,27 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func navigate(page: String, place: [String: Any]? = nil) {
+        let wantsLocal = page == "home"
+        if wantsLocal == localMode {
+            bridge.deliver("goto", place ?? ["view": "home"])
+            return
+        }
+        web.evaluateJavaScript("window.sovCanQuit ? window.sovCanQuit() : true") { result, error in
+            guard error == nil, (result as? Bool) == true else { return }
+            self.localMode = wantsLocal
+            self.pendingPlace = place
+            self.showLoading(message: wantsLocal ? "Opening your archive…" : "Reading connected system…", retry: false)
+            self.load(self.web, glance: false)
+        }
+    }
+
     func showConsole(place: [String: Any]?) {
         popover?.performClose(nil)
         if qaGlance { return }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if let place = place { bridge.deliver("goto", place) }
+        if let place = place { navigate(page: "operations", place: place) }
     }
 
     // Only quit on close when the owner asked for it, and only when there is no menu bar
@@ -646,7 +682,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Sovereign", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        if !localMode { appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",") }
+        appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         appMenu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Sovereign", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -654,6 +690,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         if localMode {
             let fileItem = NSMenuItem(); main.addItem(fileItem)
             let file = NSMenu(title: "File")
+            file.addItem(withTitle: "Home", action: #selector(openHome), keyEquivalent: "1")
             file.addItem(withTitle: "New Capture", action: #selector(newCapture), keyEquivalent: "n")
             file.addItem(withTitle: "New Archive…", action: #selector(newArchive), keyEquivalent: "")
             file.addItem(withTitle: "Open Archive…", action: #selector(openArchive), keyEquivalent: "o")
@@ -674,7 +711,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
     @objc func refresh() { web.evaluateJavaScript("window.sovRefresh && window.sovRefresh();", completionHandler: nil) }
     @objc func openSettings() { showConsole(place: ["settings": true]) }
-    @objc func newCapture() { web.evaluateJavaScript("window.sovNewCapture && window.sovNewCapture()", completionHandler: nil) }
-    @objc func newArchive() { web.evaluateJavaScript("window.sovChooseArchive && window.sovChooseArchive(true)", completionHandler: nil) }
-    @objc func openArchive() { web.evaluateJavaScript("window.sovChooseArchive && window.sovChooseArchive(false)", completionHandler: nil) }
+    @objc func openHome() { navigate(page: "home") }
+    @objc func newCapture() { navigate(page: "home", place: ["capture": true]) }
+    @objc func newArchive() { navigate(page: "home", place: ["chooseArchive": true, "create": true]) }
+    @objc func openArchive() { navigate(page: "home", place: ["chooseArchive": true, "create": false]) }
 }

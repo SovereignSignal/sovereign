@@ -1,5 +1,6 @@
 """Local archive operations used by the downloadable app. No network or job control."""
 from datetime import datetime, timezone
+import os
 import json
 from pathlib import Path
 import re
@@ -124,3 +125,54 @@ def capture(root, title, body):
     with p.open('x', encoding='utf-8') as f:
         f.write(content)
     return {'path': str(p.relative_to(root)), 'redactions': len(title_hits) + len(body_hits)}
+
+def context_state(root):
+    """Read existing hook receipts, never infer receipt of context by a model.
+
+    The shared hook writes these before returning its payload. They prove only
+    preparation. Installation/manual receipts stay labelled as tests.
+    """
+    receipts, skipped = [], 0
+    # Only the existing producer layouts. Never crawl arbitrary owner documents.
+    candidates = []
+    for zone, max_depth in (('raw/tools', 1), ('raw/workspaces', 2)):
+        base = root / zone
+        if base.is_symlink():
+            skipped += 1
+            continue
+        for directory, dirs, files in os.walk(base, followlinks=False):
+            parent = Path(directory)
+            depth = len(parent.relative_to(base).parts)
+            dirs[:] = [d for d in dirs if not d.startswith('.') and not (parent / d).is_symlink()] if depth < max_depth else []
+            if depth > 0 and 'brain-load-usage.md' in files:
+                candidates.append(parent / 'brain-load-usage.md')
+    pattern = re.compile(r'^- (\S+) (\S+) scope=(\S+) cards=(\S+) source=(\S+) session=(\S*)\s*$')
+    now = datetime.now(timezone.utc)
+    for candidate in sorted(set(candidates)):
+        relative = str(candidate.relative_to(root))
+        try:
+            path = note_path(root, relative)
+            latest = None
+            for line in path.read_text(encoding='utf-8').splitlines():
+                match = pattern.fullmatch(line)
+                if not match:
+                    continue
+                stamp, topic, scope, cards, source, session = match.groups()
+                try:
+                    when = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+                    if when.tzinfo is None or when > now:
+                        continue
+                except ValueError:
+                    continue
+                if latest is None or when > latest[0]:
+                    latest = (when, {'path': relative, 'producer': str(Path(relative).parent.relative_to('raw')),
+                        'topic': topic, 'scope': scope, 'cards': cards, 'prepared_at': stamp,
+                        'source': source, 'test': session.startswith(('manual', 'install-', 'pilot')),
+                        'prepared': True, 'delivered': None, 'loaded': None})
+            if latest:
+                receipts.append(latest[1])
+        except (OSError, ValueError, UnicodeError):
+            skipped += 1
+    receipts.sort(key=lambda r: datetime.fromisoformat(r['prepared_at'].replace('Z', '+00:00')), reverse=True)
+    return {'root': str(root), 'receipts': receipts[:100], 'total': len(receipts),
+            'limited': len(receipts) > 100, 'skipped': skipped, 'observed_at': now.isoformat()}

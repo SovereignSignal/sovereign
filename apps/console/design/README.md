@@ -1,4 +1,48 @@
-# Console design: the glance
+# Console design: one app, visible context flow
+
+The main window opens on Home. Nodes and producers are first-class: people can
+see what is connected, its health, the topic prepared for a tool, returning
+contributions, and work needing review. Automatic scoped context delivery is the
+primary workflow. Notes supports source inspection, correction, and local capture.
+
+Home, Notes, and Operations share one native window. Operations reuses the
+existing fleet, archive, lane, tool, hub, backup, and owner-review controls. The
+menu-bar glance keeps its compact operational view. A separate Preview bundle is
+a testing boundary, not a second shipping product; remove that boundary after
+upgrade and distribution validation.
+
+## Evidence on Home
+
+- Node reachability describes the network observation only.
+- A configured hook or instruction describes setup, not delivery.
+- Existing `brain-load-usage.md` receipts prove preparation by the hook. Show the
+  topic, producer, time, card count, and whether the receipt was a manual test.
+- Delivery and loading remain unverified. Do not relabel old receipts as consumer
+  acknowledgements. A future acknowledgement must identify the session and exact
+  pack, and still cannot establish that a model used the context correctly.
+- Contribution acceptance requires an explicit `delivery: accepted` observation
+  from status. Missing fields stay unknown on older installations.
+- Show the archive belonging to the connected system. If the user opens a
+  different local archive, name the mismatch; never imply that opening it connects
+  it to the fleet. Context receipts belong to the selected local archive.
+
+Home reads status through the installed command and reads receipts through the
+bundled local API. No installed command means local use remains available.
+Connecting tools, changing schedules, or approving proposals requires an explicit
+action through Operations. Home itself does none of these.
+
+## Verification
+
+`tests/test_context_state.py` checks evidence boundaries and scoped filesystem
+reads, and exercises the existing Codex hook across explicit review in a disposable
+archive. `apps/console/test-home.py` exercises the built native preview with a
+temporary archive: state labels, stale responses, safe rendering, navigation and
+capture preservation. The app's existing snapshot hooks cover appearance and
+Operations navigation. Fresh-device installation and automatic consumer
+acknowledgements remain separate acceptance checks.
+
+## Existing Operations and menu-bar design
+
 
 The console is a glance first. You open it for ten seconds and one screen answers three questions: what needs me, what is fresh, what is stale. Everything else is a drill-down. This folder is the design system the console implements; `ui/index.html` owns behaviour, the bridge, and the QA hooks, and takes these files as its contract.
 

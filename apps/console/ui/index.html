@@ -324,6 +324,7 @@
   <h1 id="vault">Sovereign</h1>
   <div class="meta grow" id="meta">reading status…</div>
   <span class="hubpill" id="hubpill"><span class="dot"></span>hub</span>
+  <button id="unified-home">Home &amp; notes</button>
   <button id="refresh" title="Refresh (⌘R)">Refresh</button>
   <button id="gear" class="quiet" title="Settings (⌘,)" aria-label="Settings">⚙</button>
 </header>
@@ -368,6 +369,7 @@ window.onerror = function (msg, src, line, col) {
 (function () {
   const $ = (s, r) => (r || document).querySelector(s);
   const bridge = (m) => { try { window.webkit.messageHandlers.sov.postMessage(m); } catch (e) { console.warn("no bridge", e); } };
+  let pendingGoto = null;
   let D = null, view = "glance", sel = null, pendingConnect = null, pinned = false, armed = null;
   const GLANCE = location.hash.startsWith("#glance");
   document.body.classList.toggle("glance", GLANCE);
@@ -408,7 +410,7 @@ window.onerror = function (msg, src, line, col) {
   function wireMark(t, local) {
     const r = local && local.read === "none" ? "none" : local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
     const w = runDot(t.run, intervalOf(local));
-    const rt = r === "none" ? "no read wire (pull only)" : `${t.reads} read${t.reads === 1 ? "" : "s"} this week`;
+    const rt = r === "none" ? "no read wire (pull only)" : `${t.reads} preparation receipts this week; delivery and loading unverified`;
     return `<span class="wm" title="${esc(t.id)} · ${rt} · mirror ${age(t.run)} ago"><i class="${r}"></i><i class="${w}"></i></span>`;
   }
   function meter(share, cls) {
@@ -895,13 +897,13 @@ window.onerror = function (msg, src, line, col) {
     const pullOnly = !!(local && local.read === "none");
     const rd = pullOnly ? "none" : local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
     const wd = runDot(t.run, intervalOf(local));
-    const readLabel = pullOnly ? "pull only" : local && local.read === "instruction" ? "by instruction" : local && local.trusted === false ? "not trusted"
-      : local && local.hook_registered === false ? "hook missing" : t.reads + " this week";
+    const readLabel = pullOnly ? "pull only" : local && local.read === "instruction" ? "instructions set" : local && local.trusted === false ? "not trusted"
+      : local && local.hook_registered === false ? "hook missing" : t.reads + " prepared this week";
     if (pullOnly && title === "both wires") title = "write wire only";
     return `<div class="tool">
       <div class="top"><b>${esc(title || t.name || t.id)}</b><span class="sp"></span>
         ${local && local.state ? `<span class="tag ${local.state === "connected" ? "on" : "mid"}" style="font-family:var(--mono);font-size:10px;border:1px solid var(--rule);border-radius:4px;padding:0 5px">${esc(local.state)}</span>` : ""}</div>
-      <div class="wire"><span class="lab">◀ read</span><span class="track"><i class="${rd}"></i></span><span class="v">${esc(readLabel)}</span></div>
+      <div class="wire"><span class="lab" title="Context preparation; delivery and loading unverified">◀ prep</span><span class="track"><i class="${rd}"></i></span><span class="v">${esc(readLabel)}</span></div>
       <div class="wire"><span class="lab">write ▶</span><span class="track"><i class="${wd}"></i></span><span class="v">${age(t.run)} ago</span></div>
       ${t.pulls ? `<div class="pulls">pulls ${esc(t.pulls)}${t.lane ? " · " + esc(t.lane) : ""}</div>` : ""}
       ${local && local.manual_step ? `<div class="note">${esc(local.manual_step)}</div>` : ""}</div>`;
@@ -1051,7 +1053,7 @@ window.onerror = function (msg, src, line, col) {
           ["staging", o.staging_age_h != null ? age(o.staging_age_h) + " ago" : "not staged here"],
           ["this copy", age(o.vault_age_h) + " ago"],
           ["hub", o.hub_age_h != null ? age(o.hub_age_h) + " ago" : "not seen"],
-          ["reads 7d", String((o.reads_7d || {}).real || 0)]])}</div>
+          ["preparations 7d", String((o.reads_7d || {}).real || 0)]])}</div>
         ${contribSect([o])}
         ${o.last_run ? `<div class="sect"><h2>Last mirror run</h2><div class="prose mono">${esc(o.last_run)}</div></div>` : ""}
         <div class="acts">
@@ -1071,7 +1073,7 @@ window.onerror = function (msg, src, line, col) {
             ["declared in", h.hook_file ? `<span class="mono">${esc(shortPath(h.hook_file))}</span>` : "n/a", "raw"],
             ["registered", h.hook_registered == null ? "n/a" : (h.hook_registered ? "yes" : "no")],
             ["trusted", h.trusted == null ? "n/a" : (h.trusted ? "yes" : "no")],
-            ["reads 7d", String(t.reads)]])}</div>
+            ["preparations 7d", String(t.reads)]])}</div>
           <div class="sect"><h2>Write wire</h2>${kv([
             ["job", `<span class="mono">${esc(h.label)}</span>`, "raw"],
             ["runs in", h.runs_in ? `<span class="mono">${esc(h.runs_in)}</span>` : null, "raw"],
@@ -1224,6 +1226,7 @@ window.onerror = function (msg, src, line, col) {
   }
   window.sovView = (v) => {   // design QA: "archive", "archive+open", "archive+open:orphans", "settings", "...+back"
     const parts = String(v).split("+"), name = parts[0];
+    if (name === "home") return bridge({cmd: "navigate", page: "home"});
     if (name === "settings") return openSettings();
     const mode = parts.find(p => p.startsWith("open")) || "", id = mode.includes(":") ? mode.slice(mode.indexOf(":") + 1) : "";
     const at = parts.find(p => p.startsWith("at:")), conn = parts.find(p => p.startsWith("connect:"));
@@ -1387,6 +1390,7 @@ window.onerror = function (msg, src, line, col) {
     if (e.key === "p") setPinned(!pinned);
   });
 
+  document.getElementById("unified-home").onclick = () => bridge({cmd: "navigate", page: "home"});
   function refresh() { bridge({ cmd: "status" }); }
   window.sovRefresh = refresh;
   // Anything thrown inside a call the app injects reaches window.onerror as a bare
@@ -1415,6 +1419,7 @@ window.onerror = function (msg, src, line, col) {
         return; }
       if (payload.machine && !payload.machine.connected) return renderSetup(payload);
       render(payload);
+      if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
     } else if (kind === "vmstart") {
       setTimeout(refresh, 3000);
     } else if (kind === "log") {
@@ -1439,6 +1444,7 @@ window.onerror = function (msg, src, line, col) {
       if (settingsOpen) { renderInspector(); const st = $("#s-state"); if (st && saving) st.textContent = payload.error ? "" : "Saved"; }
       saving = false;
     } else if (kind === "goto") {
+      if (!D && !payload.settings) { pendingGoto = payload; return; }
       if (payload.settings) return openSettings();
       if (payload.view) setView(payload.view, { section: payload.section, silent: !!payload.sel });
       if (payload.sel) { const it = findRow(payload.sel.id); select(it ? it.kind : payload.sel.kind, payload.sel.id, true); }
