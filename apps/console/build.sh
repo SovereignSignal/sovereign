@@ -48,6 +48,7 @@ cp "$HERE/design/glyphs/MenuBarTemplate.png" "$HERE/design/glyphs/MenuBarTemplat
 BACKEND="$APP/Contents/Resources/backend"
 mkdir -p "$BACKEND/bin" "$BACKEND/lib" "$BACKEND/templates"
 cp "$HERE/diagnostics.py" "$BACKEND/"
+cp "$HERE/gate_check.py" "$APP/Contents/Resources/"
 cp "$HERE/../../bin/brain-local" "$BACKEND/bin/"
 cp "$HERE/../../lib/brain_local.py" "$HERE/../../lib/brain_redact.py" "$BACKEND/lib/"
 cp "$HERE/../../templates/note.md" "$BACKEND/templates/"

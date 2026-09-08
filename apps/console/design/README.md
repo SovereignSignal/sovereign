@@ -67,7 +67,34 @@ The menu-bar Glance retains its compact header, verdict, operational summary row
 footer, keyboard shortcuts and drawer behavior. It does not show the full-window
 rail. Neither frame changes approval, capture or producer write contracts.
 
+## Approval decisions
+
+Selecting a proposal reads its current contents and matching trusted cards from the
+approval machine. Approve stays disabled until that check succeeds. Cross-type
+collisions and undeclared replacements show a comparison and a copyable resolution
+request. Resolving or retiring trusted cards still requires an owner decision.
+
+A decision carries a fingerprint of the reviewed proposal, existing cards and
+review metadata. The bundled helper checks it again before invoking the existing
+owner gate. It never force-approves. An archive-scoped lock prevents overlapping
+console decisions; legacy command-line writers do not participate in that lock.
+Their existing curator guards remain authoritative.
+
+Results appear inline with the card name. Success requires the proposal to have
+moved and the destination to match the reviewed content. Commit or push trouble
+is reported separately as a saved decision with sync needing attention. Lost
+connections and timeouts remain unconfirmed until the queue is checked again.
+Repeat clicks are blocked during execution, as are navigation and normal quit.
+Technical details are collapsed and use the existing bounded redaction path.
+
 ## Verification and diagnostics
+
+`tests/test_gate_check.py` covers checks, content changes, lock ownership, command
+timeouts and real curator approve/reject/push-failure paths in disposable Git
+archives. `tests/gate-model.cjs` checks action eligibility and result wording.
+`test-gate.py --evidence <folder>` runs native approval, conflict, rejection and
+failure scenarios, including repeat clicks and quit protection. Its fixture HOME
+override is accepted only during snapshot QA.
 
 `test-home.py` exercises native rendering, labels, safe text, draft preservation,
 stale replies and a capture/read roundtrip in a disposable archive.

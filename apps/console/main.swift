@@ -51,6 +51,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     weak var web: WKWebView?
     let sov: String?
     var generation = UUID()
+    var gateBusy = false
 
     init(sov: String?) { self.sov = sov }
 
@@ -157,23 +158,49 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             log("client error in \((d["where"] as? String) ?? "?"): \((d["msg"] as? String) ?? "")")
         case "openurl":
             if let u = d["url"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
-        case "gate":
-            // The owner's gate. Runs `sov gate <verb> <slug>` where the hub lives: over ssh
-            // when ~/.brain-hub points elsewhere, locally when this machine is the hub.
-            // Inputs are whitelisted before they touch a shell: the verb is one of two
-            // words, the slug is kebab-case, the alias is a hostname, the reason is quoted.
-            guard let verb = d["verb"] as? String, ["approve", "reject"].contains(verb),
-                  let slug = d["slug"] as? String,
-                  slug.range(of: "^[a-z0-9][a-z0-9-]{0,120}$", options: .regularExpression) != nil else { return }
-            let reason = String(((d["reason"] as? String) ?? "").replacingOccurrences(of: "'", with: "").prefix(200))
-            let via = (d["via"] as? String) ?? "local"
-            if via.hasPrefix("ssh "), let alias = via.split(separator: " ").last.map(String.init),
-               alias.range(of: "^[A-Za-z0-9._-]+$", options: .regularExpression) != nil {
-                let remote = "PATH=\"$HOME/brain-bin:$HOME/.local/bin:$PATH\" sov gate \(verb) \(slug) '\(reason)'"
-                stream(["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", alias, remote], id: "gate")
-            } else if let sov = sov {
-                stream([sov, "gate", verb, slug, reason], id: "gate")
+        case "gateCheck", "gate":
+            guard let slug = d["slug"] as? String,
+                  slug.range(of: "^[a-z0-9][a-z0-9-]{0,120}$", options: .regularExpression) != nil,
+                  let request = d["request"] as? String, request.count < 100 else { return }
+            let mode = cmd == "gateCheck" ? "check" : (d["verb"] as? String ?? "")
+            guard ["check", "approve", "reject"].contains(mode) else { return }
+            let kind = cmd == "gateCheck" ? "gateCheck" : "gateResult"
+            func reply(_ payload: [String: Any]) {
+                var result = payload; result["slug"] = slug; result["request"] = request
+                self.deliver(kind, result, generation: generation)
             }
+            if gateBusy { reply(["state": "busy"]); return }
+            guard let resource = Bundle.main.url(forResource: "gate_check", withExtension: "py"),
+                  let source = try? String(contentsOf: resource, encoding: .utf8) else { reply(["state": "unavailable"]); return }
+            let fingerprint = d["fingerprint"] as? String ?? ""
+            if mode != "check" && fingerprint.range(of: "^[a-f0-9]{64}$", options: .regularExpression) == nil { reply(["state": "changed"]); return }
+            let via = d["via"] as? String ?? "local"
+            let args: [String]
+            if via.hasPrefix("ssh ") {
+                let alias = String(via.dropFirst(4))
+                guard alias.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$", options: .regularExpression) != nil else { reply(["state": "unavailable"]); return }
+                func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }
+                let remote = ["/usr/bin/python3", "-c", source, mode, slug, fingerprint].map(quote).joined(separator: " ")
+                args = ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3", alias, remote]
+            } else {
+                guard via == "local", let runtime = Bundle.main.resourceURL?.appendingPathComponent("runtime/bin/python3") else { reply(["state": "unavailable"]); return }
+                args = [runtime.path, "-I", "-B", "-c", source, mode, slug, fingerprint]
+            }
+            if mode != "check" { gateBusy = true }
+            var gateEnvironment: [String: String] = [:]
+            if App.shared.snapshotting, via == "local", let qaHome = ProcessInfo.processInfo.environment["SOV_QA_GATE_HOME"] { gateEnvironment["HOME"] = qaHome }
+            run(args, environment: gateEnvironment) { out, err, _ in
+                var result = (out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]) ?? ["state": mode == "check" ? "unavailable" : "uncertain"]
+                let detail = (result["detail"] as? String ?? "") + (err.isEmpty ? "" : "\n" + err)
+                if !detail.isEmpty { result["detail"] = self.statusDetail(detail) }
+                DispatchQueue.main.async {
+                    if mode != "check" { self.gateBusy = false }
+                    reply(result)
+                }
+            }
+        case "copyText":
+            guard let text = d["text"] as? String, text.utf8.count <= 16000 else { return }
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
         case "settings":
             deliver("settings", Settings.dict(probe: (d["probe"] as? Bool) == true))
         case "setSettings":
@@ -250,12 +277,12 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : "Diagnostics unavailable."
     }
 
-    func run(_ args: [String], done: @escaping (String, String, Int32) -> Void) {
+    func run(_ args: [String], environment extra: [String: String] = [:], done: @escaping (String, String, Int32) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: args[0])
             p.arguments = Array(args.dropFirst())
-            p.environment = self.env()
+            p.environment = self.env().merging(extra) { _, new in new }
             let o = Pipe(), e = Pipe()
             p.standardOutput = o; p.standardError = e
             do { try p.run() } catch { done("", "\(error)", -1); return }
@@ -471,8 +498,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
                     let anchor = ProcessInfo.processInfo.environment["SOV_SNAPSHOT_ANCHOR"] ?? ""
                     self.applySnapshotAnchor(anchor) {
                         let qa = ProcessInfo.processInfo.environment["SOV_QA_JS_AFTER_ANCHOR"] ?? "void 0"
-                        self.web.evaluateJavaScript(qa) { _, err in
-                            if let err = err { log("snapshot QA: \(err)") }
+                        self.web.callAsyncJavaScript(qa, arguments: [:], in: nil, in: .page) { result in
+                            if case .failure(let error) = result { log("snapshot QA: \(error)"); exit(2) }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                                 self.web.takeSnapshot(with: nil) { image2, error in
                                     if let error = error { log("snapshot error: \(error)") }

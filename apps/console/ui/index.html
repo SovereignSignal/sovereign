@@ -333,6 +333,7 @@
 
 <div id="verdict" role="status"><span class="vdot"></span><span class="vtext" id="vtext">reading status…</span><span class="vmeta" id="vmeta"></span></div>
 <div id="glance" hidden></div>
+<div id="gate-notice" role="status" aria-live="polite" hidden></div>
 
 <main>
   <div id="listpane">
@@ -362,6 +363,7 @@
 </div>
 
 <script src="status-model.js"></script>
+<script src="gate-model.js"></script>
 <script>
 // A script error must never be a blank page: paint it where the eye lands.
 window.onerror = function (msg, src, line, col) {
@@ -924,6 +926,24 @@ window.onerror = function (msg, src, line, col) {
     bridge({ cmd: "setSettings", where, loginItem: $("#s-login").checked, refresh: +$("#s-refresh").value, defaultView: $("#s-view").value, closeQuits: $("#s-closequits").checked });
   }
 
+  const gateChecks = new Map(); let gatePending = null, gateRequest = 0;
+  function requestGateCheck(slug) {
+    if(gatePending)return;
+    const request='check-'+(++gateRequest);gateChecks.set(slug,{request,value:{state:'checking'}});
+    bridge({cmd:'gateCheck',slug,request,via:hub().via||'local'});
+    setTimeout(()=>{const entry=gateChecks.get(slug);if(entry?.request===request&&entry.value.state==='checking'){gateChecks.set(slug,{request:null,value:{state:'unavailable'}});if(sel?.id==='p:'+slug)renderInspector()}},20000);
+  }
+  function showGateNotice(state,detail,cardTitle) {
+    const notice=$('#gate-notice'),[title,message]=GateModel.describe(state);
+    notice.hidden=false;notice.className='gate-feedback '+state;
+    notice.innerHTML=`<strong>${esc(cardTitle||gatePending?.title||"Review decision")} · ${esc(title)}</strong><p>${esc(message)}</p>${detail?`<details><summary>Technical details</summary><pre>${esc(detail)}</pre></details>`:''}${state!=='running'?'<button id="gate-refresh">Refresh queue</button><button id="gate-dismiss">Dismiss</button>':''}`;
+    const refreshButton=$('#gate-refresh');if(refreshButton)refreshButton.onclick=()=>{gateChecks.clear();gotoGate();refresh()};
+    const dismiss=$('#gate-dismiss');if(dismiss)dismiss.onclick=()=>notice.hidden=true;
+  }
+  window.sovCanQuit=()=>{
+    if(!gatePending)return true;
+    showGateNotice('running');return false;
+  };
   function renderInspector() {
     const box = $("#insp");
     if (settingsOpen) { box.innerHTML = settingsHTML(); return; }
@@ -946,17 +966,27 @@ window.onerror = function (msg, src, line, col) {
       return;
     }
     if (it.kind === "prop") {
-      const p = o;
-      box.innerHTML = head(esc(p.title || p.slug), `${esc(p.type || "?")} · ${esc(p.confidence || "?")} confidence${p.update_of ? ` · update of <span class="mono">${esc(p.update_of)}</span>` : ""}`, p.hold ? "held" : "") +
-        `${p.reason ? `<div class="prose">${esc(p.reason)}</div>` : ""}
-        ${p.hold ? `<div class="note">Held for you: ${esc(p.hold)}</div>` : ""}
-        ${(p.flags || []).length ? `<div class="note">${esc(p.flags.join(", "))}: the gears stepped aside, this one is yours to call.</div>` : ""}
-        <div class="sect">${kv([["slug", `<span class="mono">${esc(p.slug)}</span>`, "raw"], ["from", p.source ? `<span class="mono">${esc(p.source)}</span>` : null, "raw"], ["length", p.words + " words"], ["waiting", age(p.age_h)]])}</div>
-        <div class="sect"><h2>The card as drafted</h2><div class="card-body">${esc(p.body || "(empty)")}</div></div>
-        <div class="acts">
-          <button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}">Approve</button>
-          <button class="danger" data-act="gate" data-verb="reject" data-slug="${esc(p.slug)}">Reject</button>
-          ${p.source ? obsBtn(p.source.replace(/\.md$/, ""), "Open source") : ""}</div>`;
+      const p = o, entry = gateChecks.get(p.slug), check = entry?.value;
+      if (!entry && !gatePending) requestGateCheck(p.slug);
+      const state = gatePending?.slug === p.slug ? 'running' : check?.state || 'checking';
+      const [title,message] = GateModel.describe(state);
+      const existing = check?.existing || [], shown = check?.proposal || p;
+      box.innerHTML = head(esc(shown.title || p.slug), `${esc(shown.type || '?')} · ${esc(p.confidence || '?')} confidence`, p.hold ? 'held' : '') +
+        `<section class="gate-feedback ${esc(state)}" role="status"><h2>${esc(title)}</h2><p>${esc(message)}</p>
+        ${!['checking','running','ready'].includes(state)?`<button data-act="gate-check" data-slug="${esc(p.slug)}" ${gatePending?'disabled':''}>Check again</button>`:''}
+        ${existing.length?'<button data-act="gate-compare">Compare cards</button>':''}
+        ${['type_conflict','update_conflict'].includes(state)?`<button data-act="gate-copy" data-slug="${esc(p.slug)}">Copy resolution request</button>`:''}
+        ${check?.detail?`<details><summary>Technical details</summary><pre>${esc(check.detail)}</pre></details>`:''}</section>`+
+        `${p.reason?`<div class="prose">${esc(p.reason)}</div>`:''}`+
+        `${p.hold?`<div class="note">Held for you: ${esc(p.hold)}</div>`:''}`+
+        `${(p.flags||[]).length?`<div class="note">${esc(p.flags.join(', '))}: requires your review.</div>`:''}`+
+        (check?.review_notes||[]).map(note=>`<div class="note">${esc(note)}</div>`).join('')+
+        `<div class="sect"><h2>Proposed card</h2><div class="card-body">${esc(check?.proposal?.body || p.body || '(empty)')}</div></div>`+
+        (existing.length?`<details id="gate-comparison" class="gate-comparison"><summary>Existing cards · ${existing.length}</summary>${existing.map(c=>`<section><h2>${esc(c.title)}</h2><p class="mono">${esc(c.path)}</p><div class="card-body">${esc(c.body)}</div></section>`).join('')}</details>`:'')+
+        `<div class="sect">${kv([['from',shown.source],['waiting',age(p.age_h)]])}</div>`+
+        `<div class="acts"><button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}" ${GateModel.canApprove(check,gatePending)?'':'disabled'}>${state==='running'?'Saving…':'Approve'}</button>
+        <button class="danger" data-act="gate" data-verb="reject" data-slug="${esc(p.slug)}" ${GateModel.canReject(check,gatePending)?'':'disabled'}>Reject</button>
+        ${shown.source?obsBtn(shown.source.replace(/\.md$/,''),'Open source'):''}</div>`;
       return;
     }
     if (it.kind === "host") {
@@ -1289,10 +1319,22 @@ window.onerror = function (msg, src, line, col) {
       if (act === "open") return bridge({ cmd: "open", path: b.dataset.path });
       if (act === "openurl") return bridge({ cmd: "openurl", url: b.dataset.url });
       if (act === "clearlog") return armOrFire(b, "Clear log", () => { openDrawer("Clear log", false); bridge({ cmd: "clearlog", path: b.dataset.path }); });
-      if (act === "gate") {
-        const verb = b.dataset.verb, slug = b.dataset.slug, via = hub().via || "local";
-        const fire = () => { openDrawer((verb === "approve" ? "Approving " : "Rejecting ") + slug, false); bridge({ cmd: "gate", verb, slug, via, reason: "console" }); };
-        return verb === "reject" ? armOrFire(b, "Reject", fire) : fire();
+      if (act === 'gate-check') { requestGateCheck(b.dataset.slug); renderInspector(); return; }
+      if (act === 'gate-compare') { const comparison=$('#gate-comparison'); if(comparison){comparison.open=true;comparison.scrollIntoView({block:'start'});} return; }
+      if (act === 'gate-copy') {
+        const check=gateChecks.get(b.dataset.slug)?.value;
+        const text=`Resolve the duplicate card ${b.dataset.slug}. Compare the proposal with these existing cards: ${(check?.existing||[]).map(c=>c.path).join(', ')}. Preserve useful detail and provenance, propose one canonical card, and obtain owner approval before changing trusted knowledge.`;
+        bridge({cmd:'copyText',text}); b.textContent='Copied'; return;
+      }
+      if (act === 'gate') {
+        const verb=b.dataset.verb,slug=b.dataset.slug,check=gateChecks.get(slug)?.value;
+        if(!(verb==='approve'?GateModel.canApprove(check,gatePending):GateModel.canReject(check,gatePending)))return;
+        const fire=()=>{
+          const request='gate-'+(++gateRequest);
+          gatePending={slug,verb,request,title:(hub().proposals||[]).find(p=>p.slug===slug)?.title||slug};showGateNotice('running');renderInspector();
+          bridge({cmd:'gate',verb,slug,request,fingerprint:check.fingerprint,via:hub().via||'local'});
+        };
+        return verb==='reject'?armOrFire(b,'Reject',fire):fire();
       }
       return;
     }
@@ -1331,7 +1373,7 @@ window.onerror = function (msg, src, line, col) {
     if (e.key === "p") setPinned(!pinned);
   });
 
-  for (const name of ['home', 'review', 'notes']) document.getElementById(name+'-tab').onclick = () => bridge({cmd:'navigate',page:'home',place:{view:name}});
+  for (const name of ['home', 'review', 'notes']) document.getElementById(name+'-tab').onclick = () => {if(window.sovCanQuit())bridge({cmd:'navigate',page:'home',place:{view:name}})};
   document.getElementById('operations-tab').onclick = () => setView('glance');
   function refresh() { bridge({ cmd: "status" }); }
   window.sovRefresh = refresh;
@@ -1351,6 +1393,20 @@ window.onerror = function (msg, src, line, col) {
     }
   };
   function deliverInner(kind, payload) {
+    if(kind==='gateCheck'){
+      const entry=gateChecks.get(payload.slug);if(!entry||entry.request!==payload.request)return;
+      entry.value=payload;if(sel?.id==='p:'+payload.slug)renderInspector();return;
+    }
+    if(kind==='gateResult'){
+      if(!gatePending||gatePending.request!==payload.request||gatePending.slug!==payload.slug)return;
+      const finished=gatePending;gatePending=null;gateChecks.delete(payload.slug);
+      if(['approved','rejected','sync_pending'].includes(payload.state)){
+        const h=hub(),before=(h.proposals||[]).length;h.proposals=(h.proposals||[]).filter(p=>p.slug!==payload.slug);
+        if(h.proposals.length<before){h.pending=Math.max(0,(h.pending||before)-1);if(!h.pending)D.needs_you=(D.needs_you||[]).filter(n=>n.kind!=='gate');}
+        sel=null;renderTop();renderList();
+      }
+      showGateNotice(payload.state,['approved','rejected'].includes(payload.state)?null:payload.detail,finished.title);renderInspector();refresh();return;
+    }
     if (kind === "status") {
       if (payload.error) {
         if (GLANCE) { const g = $("#glance"); g.hidden = false; g.innerHTML = `<div class="g-row verdict down"><span class="vdot"></span><span class="vt">${esc(payload.error)}</span></div><div class="g-foot"><span class="sp"></span><button class="brass" id="g-refresh">Try again</button></div>`; return; }
@@ -1360,6 +1416,7 @@ window.onerror = function (msg, src, line, col) {
         $("#rows").innerHTML = `<div class="glance-home"><section class="gcol bare" style="grid-column:1 / -1"><div class="empty" style="text-align:center">The app could not read the brain's status, so nothing below is known. Fix the cause named above, then try again.</div><div class="acts" style="padding:0 16px 16px;margin:0;justify-content:center"><button class="brass" id="err-refresh">Try again</button></div></section></div>`;
         return; }
       if (payload.machine && !payload.machine.connected) return renderSetup(payload);
+      if(!gatePending)gateChecks.clear();
       render(payload);
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
     } else if (kind === "vmstart") {
