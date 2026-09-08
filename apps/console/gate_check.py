@@ -110,6 +110,18 @@ def execute(root, lane, slug, verb, expected, command):
         return execute_locked(root,lane,slug,verb,expected,command,lock.fileno())
 
 
+def rejection_paths(root, lane, slug):
+    folder = root / 'raw/workspaces' / lane / 'rejected'
+    pattern = re.compile(re.escape(slug) + r'(?:--rejected-\d{8}-\d{6})?\.md')
+    return {p for p in folder.glob(slug+'*.md') if pattern.fullmatch(p.name)}
+
+
+def matches_reviewed(path, root, expected):
+    return (not path.is_symlink() and root.resolve() in path.resolve().parents
+            and path.is_file() and path.stat().st_size <= LIMIT
+            and hashlib.sha256(path.read_bytes()).hexdigest() == expected)
+
+
 def execute_locked(root, lane, slug, verb, expected, command, lock_fd):
     before = check(root, lane, slug)
     if not expected or before.get('fingerprint') != expected:
@@ -118,6 +130,7 @@ def execute_locked(root, lane, slug, verb, expected, command, lock_fd):
         return {'state': before['state'], 'check': before}
     env = dict(os.environ, SOVS_VAULT=str(root), CURATOR_LANE=lane, CURATOR_ACTOR='console-owner',
                PATH=str(Path.home()/'brain-bin')+':/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin')
+    prior_rejections = rejection_paths(root, lane, slug) if verb == 'reject' else set()
     try:
         result = run_gate([str(command), 'gate', verb, slug, 'Owner reviewed in Sovereign'], env, lock_fd)
     except subprocess.TimeoutExpired:
@@ -129,8 +142,13 @@ def execute_locked(root, lane, slug, verb, expected, command, lock_fd):
     if verb == 'approve':
         destination = root / before['destination']
     else:
-        destination = root / 'raw/workspaces' / lane / 'rejected' / (slug+'.md')
-    applied = (not prop.exists() and destination.is_file() and hashlib.sha256(destination.read_bytes()).hexdigest() == before['proposal']['sha256'])
+        # Only newly created destinations count. An older matching rejection is
+        # not evidence that this decision completed.
+        matches = [p for p in rejection_paths(root,lane,slug) - prior_rejections
+                   if matches_reviewed(p,root,before['proposal']['sha256'])]
+        destination = matches[0] if len(matches) == 1 else None
+    applied = (not prop.exists() and destination is not None
+               and matches_reviewed(destination,root,before['proposal']['sha256']))
     if applied:
         warning = result.returncode != 0 or re.search(r'(?i)push failed|warning:|refused|fatal:|error:', detail)
         # The legacy gate can exit zero after a failed commit or push. Check the

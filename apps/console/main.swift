@@ -198,6 +198,10 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                     reply(result)
                 }
             }
+        case "qaQuit":
+            // Exercises the real native quit dispatch, only in disposable snapshot QA.
+            guard App.shared.snapshotting else { return }
+            NSApp.terminate(nil)
         case "copyText":
             guard let text = d["text"] as? String, text.utf8.count <= 16000 else { return }
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
@@ -736,9 +740,11 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard localMode, web != nil else { return .terminateNow }
+        guard web != nil else { return .terminateNow }
         web.evaluateJavaScript("window.sovCanQuit ? window.sovCanQuit() : true") { result, error in
-            sender.reply(toApplicationShouldTerminate: error != nil || (result as? Bool) == true)
+            let allowed = error != nil || (result as? Bool) == true
+            if self.snapshotting { log("native quit decision: \(allowed ? "allowed" : "blocked")") }
+            sender.reply(toApplicationShouldTerminate: allowed)
         }
         return .terminateLater
     }

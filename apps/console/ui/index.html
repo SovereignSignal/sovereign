@@ -929,9 +929,9 @@ window.onerror = function (msg, src, line, col) {
   const gateChecks = new Map(); let gatePending = null, gateRequest = 0;
   function requestGateCheck(slug) {
     if(gatePending)return;
-    const request='check-'+(++gateRequest);gateChecks.set(slug,{request,value:{state:'checking'}});
+    const request='check-'+(++gateRequest);gateChecks.set(slug,{request,key:GateModel.reviewKey(D,slug),value:{state:'checking'}});
     bridge({cmd:'gateCheck',slug,request,via:hub().via||'local'});
-    setTimeout(()=>{const entry=gateChecks.get(slug);if(entry?.request===request&&entry.value.state==='checking'){gateChecks.set(slug,{request:null,value:{state:'unavailable'}});if(sel?.id==='p:'+slug)renderInspector()}},20000);
+    setTimeout(()=>{const entry=gateChecks.get(slug);if(entry?.request===request&&entry.value.state==='checking'){gateChecks.set(slug,{request:null,key:entry.key,value:{state:'unavailable'}});if(sel?.id==='p:'+slug)renderInspector()}},20000);
   }
   function showGateNotice(state,detail,cardTitle) {
     const notice=$('#gate-notice'),[title,message]=GateModel.describe(state);
@@ -973,7 +973,7 @@ window.onerror = function (msg, src, line, col) {
       const existing = check?.existing || [], shown = check?.proposal || p;
       box.innerHTML = head(esc(shown.title || p.slug), `${esc(shown.type || '?')} · ${esc(p.confidence || '?')} confidence`, p.hold ? 'held' : '') +
         `<section class="gate-feedback ${esc(state)}" role="status"><h2>${esc(title)}</h2><p>${esc(message)}</p>
-        ${!['checking','running','ready'].includes(state)?`<button data-act="gate-check" data-slug="${esc(p.slug)}" ${gatePending?'disabled':''}>Check again</button>`:''}
+        ${!['checking','running'].includes(state)?`<button data-act="gate-check" data-slug="${esc(p.slug)}" ${gatePending?'disabled':''}>Check again</button>`:''}
         ${existing.length?'<button data-act="gate-compare">Compare cards</button>':''}
         ${['type_conflict','update_conflict'].includes(state)?`<button data-act="gate-copy" data-slug="${esc(p.slug)}">Copy resolution request</button>`:''}
         ${check?.detail?`<details><summary>Technical details</summary><pre>${esc(check.detail)}</pre></details>`:''}</section>`+
@@ -1332,6 +1332,9 @@ window.onerror = function (msg, src, line, col) {
         const fire=()=>{
           const request='gate-'+(++gateRequest);
           gatePending={slug,verb,request,title:(hub().proposals||[]).find(p=>p.slug===slug)?.title||slug};showGateNotice('running');renderInspector();
+          gatePending.timer=setTimeout(()=>{
+            deliverInner('gateResult',{state:'uncertain',slug,request});
+          },GateModel.decisionTimeoutMS);
           bridge({cmd:'gate',verb,slug,request,fingerprint:check.fingerprint,via:hub().via||'local'});
         };
         return verb==='reject'?armOrFire(b,'Reject',fire):fire();
@@ -1399,7 +1402,7 @@ window.onerror = function (msg, src, line, col) {
     }
     if(kind==='gateResult'){
       if(!gatePending||gatePending.request!==payload.request||gatePending.slug!==payload.slug)return;
-      const finished=gatePending;gatePending=null;gateChecks.delete(payload.slug);
+      const finished=gatePending;clearTimeout(finished.timer);gatePending=null;gateChecks.delete(payload.slug);
       if(['approved','rejected','sync_pending'].includes(payload.state)){
         const h=hub(),before=(h.proposals||[]).length;h.proposals=(h.proposals||[]).filter(p=>p.slug!==payload.slug);
         if(h.proposals.length<before){h.pending=Math.max(0,(h.pending||before)-1);if(!h.pending)D.needs_you=(D.needs_you||[]).filter(n=>n.kind!=='gate');}
@@ -1416,7 +1419,9 @@ window.onerror = function (msg, src, line, col) {
         $("#rows").innerHTML = `<div class="glance-home"><section class="gcol bare" style="grid-column:1 / -1"><div class="empty" style="text-align:center">The app could not read the brain's status, so nothing below is known. Fix the cause named above, then try again.</div><div class="acts" style="padding:0 16px 16px;margin:0;justify-content:center"><button class="brass" id="err-refresh">Try again</button></div></section></div>`;
         return; }
       if (payload.machine && !payload.machine.connected) return renderSetup(payload);
-      if(!gatePending)gateChecks.clear();
+      if(!gatePending)for(const [slug,entry] of gateChecks){
+        if(entry.key!==GateModel.reviewKey(payload,slug))gateChecks.delete(slug);
+      }
       render(payload);
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
     } else if (kind === "vmstart") {

@@ -88,6 +88,28 @@ class GateCheckTests(unittest.TestCase):
   bare=self.base/'origin.git';subprocess.run(['git','init','--bare','-q',str(bare)],check=True);git('remote','add','origin',str(bare));git('push','-qu','origin','HEAD');return command
  def test_real_approval_and_sync(self):self.assertEqual(self.execute(self.setup_real_gate())['state'],'approved');self.assertFalse((self.proposals/(self.slug+'.md')).exists())
  def test_real_rejection(self):self.assertEqual(self.execute(self.setup_real_gate(),'reject')['state'],'rejected')
+ def test_repeat_rejection_verifies_stamped_destination(self):
+  old=self.card(self.root/'raw/workspaces/curator/rejected'/(self.slug+'.md'),body='Earlier rejection')
+  command=self.setup_real_gate()
+  self.assertEqual(self.execute(command,'reject')['state'],'rejected')
+  self.assertIn('Earlier rejection',old.read_text())
+  self.assertEqual(len(list(old.parent.glob(self.slug+'--rejected-*.md'))),1)
+ def test_repeat_rejection_with_push_failure_reports_sync_pending(self):
+  self.card(self.root/'raw/workspaces/curator/rejected'/(self.slug+'.md'),body='Earlier rejection')
+  command=self.setup_real_gate();hook=self.base/'origin.git/hooks/pre-receive';hook.write_text('#!/bin/sh\nexit 1\n');hook.chmod(0o700)
+  self.assertEqual(self.execute(command,'reject')['state'],'sync_pending')
+ def test_old_matching_rejection_is_not_proof_of_success(self):
+  self.card(self.root/'raw/workspaces/curator/rejected'/(self.slug+'.md'))
+  self.card(self.root/'raw/workspaces/curator/rejected'/(self.slug+'--rejected-20260101-000000.md'))
+  command=self.fake('rm "$SOVS_VAULT/raw/workspaces/curator/proposals/example-card.md"; exit 0')
+  self.assertEqual(self.execute(command,'reject')['state'],'uncertain')
+ def test_new_wrong_content_rejection_is_not_success(self):
+  command=self.fake('mkdir -p "$SOVS_VAULT/raw/workspaces/curator/rejected"; echo wrong > "$SOVS_VAULT/raw/workspaces/curator/rejected/example-card--rejected-20260101-000000.md"; rm "$SOVS_VAULT/raw/workspaces/curator/proposals/example-card.md"')
+  self.assertEqual(self.execute(command,'reject')['state'],'uncertain')
+ def test_new_symlink_rejection_is_not_success(self):
+  outside=self.card(self.base/'outside.md')
+  command=self.fake('mkdir -p "$SOVS_VAULT/raw/workspaces/curator/rejected"; ln -s "'+str(outside)+'" "$SOVS_VAULT/raw/workspaces/curator/rejected/example-card.md"; rm "$SOVS_VAULT/raw/workspaces/curator/proposals/example-card.md"')
+  self.assertEqual(self.execute(command,'reject')['state'],'uncertain')
  def test_push_failure_is_saved_but_not_synced(self):
   command=self.setup_real_gate();hook=self.base/'origin.git/hooks/pre-receive';hook.write_text('#!/bin/sh\nexit 1\n');hook.chmod(0o700)
   self.assertEqual(self.execute(command)['state'],'sync_pending')

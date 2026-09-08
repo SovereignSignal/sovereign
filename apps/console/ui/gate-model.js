@@ -14,11 +14,18 @@ window.GateModel = (() => {
     rejected:['Rejected','The proposal was moved to the rejected archive.'],
     sync_pending:['Decision saved; sync needs attention','The change is present on the approval machine, but its commit or sync could not be confirmed. Do not approve again. Check the connection and archive sync.'],
     failed:['Your decision did not complete','The proposal is still waiting. Check it again before retrying. Your click has not been reported as a success.'],
-    uncertain:['The result could not be confirmed','The connection ended before the result was confirmed. The decision may have completed. Refresh the queue before trying again.'],
+    uncertain:['The result could not be confirmed','The approval machine did not return a confirmed result. The decision may have completed. Refresh the queue before trying again.'],
     busy:['A decision is already running','Wait for its result before making another decision.']
   };
   function describe(state){return messages[state]||messages.uncertain}
   function canApprove(check,pending){return !pending&&check?.state==='ready'&&/^[a-f0-9]{64}$/.test(check.fingerprint||'')}
   function canReject(check,pending){return !pending&&['ready','type_conflict','update_conflict'].includes(check?.state)&&/^[a-f0-9]{64}$/.test(check.fingerprint||'')}
-  return {describe,canApprove,canReject};
+  // Age changes every status tick; content, routing and review metadata do not.
+  function reviewKey(status,slug){
+    const hub=status.hub||{},proposal=(hub.proposals||[]).find(p=>p.slug===slug);
+    if(!proposal)return null;
+    const stable=Object.keys(proposal).filter(k=>k!=='age_h').sort().map(k=>[k,proposal[k]]);
+    return JSON.stringify([status.machine?.vault,hub.via||'local',hub.reachable,stable]);
+  }
+  return {describe,canApprove,canReject,reviewKey,decisionTimeoutMS:120000};
 })();

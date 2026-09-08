@@ -9,3 +9,13 @@ assert.match(g.describe('uncertain')[1],/may have completed/);
 assert.match(g.describe('sync_pending')[1],/Do not approve again/);
 assert.equal(g.describe('unexpected')[0],g.describe('uncertain')[0]);
 console.log('Gate presentation: readiness, pending guard, all refusal states and honest uncertainty passed.');
+
+const status={machine:{vault:'/fixture'},hub:{reachable:true,via:'local',proposals:[{slug:'example',body:'First',age_h:1,flags:[]}]}};
+const copy=()=>JSON.parse(JSON.stringify(status)),key=g.reviewKey(status,'example');
+let next=copy();next.hub.proposals[0].age_h=2;assert.equal(g.reviewKey(next,'example'),key);
+for(const edit of [s=>s.machine.vault='/different',s=>s.hub.via='ssh other',s=>s.hub.reachable=false,s=>s.hub.proposals[0].body='Changed',s=>s.hub.proposals[0].flags=['held'],s=>s.hub.proposals[0].update_of='other']){
+ next=copy();edit(next);assert.notEqual(g.reviewKey(next,'example'),key);
+}
+next=copy();next.hub.proposals=[];assert.equal(g.reviewKey(next,'example'),null);
+assert.equal(g.decisionTimeoutMS,120000);
+console.log('Review cache: age-only reuse, content/metadata/routing invalidation and 120-second deadline passed.');

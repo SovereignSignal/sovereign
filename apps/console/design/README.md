@@ -84,7 +84,21 @@ Results appear inline with the card name. Success requires the proposal to have
 moved and the destination to match the reviewed content. Commit or push trouble
 is reported separately as a saved decision with sync needing attention. Lost
 connections and timeouts remain unconfirmed until the queue is checked again.
-Repeat clicks are blocked during execution, as are navigation and normal quit.
+Repeat clicks are blocked during execution. Navigation and native normal quit
+consult the pending-decision guard in both Home and Operations. At 120 seconds,
+the interface releases that guard and reports an unconfirmed result; it does not
+claim cancellation. Late replies cannot overwrite this result. The native bridge
+keeps blocking new gate actions while its command is still running, and the
+archive lock remains authoritative across console processes.
+
+Status refreshes preserve checks when only proposal age changes. Changed proposal
+fields, archive or hub routing invalidate the check. This cache is advisory:
+every decision still rechecks the complete content fingerprint on the approval
+machine, and Check again explicitly refreshes a selected card.
+
+Repeated rejections may create a stamped destination. Confirmation requires a new
+matching destination, the reviewed bytes and removal of the proposal. Older
+matching files do not prove the current decision succeeded.
 Technical details are collapsed and use the existing bounded redaction path.
 
 ## Verification and diagnostics
@@ -93,7 +107,10 @@ Technical details are collapsed and use the existing bounded redaction path.
 timeouts and real curator approve/reject/push-failure paths in disposable Git
 archives. `tests/gate-model.cjs` checks action eligibility and result wording.
 `test-gate.py --evidence <folder>` runs native approval, conflict, rejection and
-failure scenarios, including repeat clicks and quit protection. Its fixture HOME
+failure scenarios, including repeat clicks, real native quit dispatch during a
+decision and after completion, status refresh behavior, and timeout recovery with
+late replies. Timeout QA accelerates the scheduled 120-second browser timer while
+keeping the real helper running. Its fixture HOME
 override is accepted only during snapshot QA.
 
 `test-home.py` exercises native rendering, labels, safe text, draft preservation,
