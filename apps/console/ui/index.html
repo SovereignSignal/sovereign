@@ -317,14 +317,16 @@
   @media (prefers-reduced-motion: reduce) { #drawer, #inspector, .meter i, .hbar .track i { transition: none; } }
   body.qa #drawer, body.qa #inspector, body.qa .meter i, body.qa .hbar .track i { transition: none; }   /* snapshot QA: an occluded web view gets no animation frames */
 </style>
+<link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="operations-shell.css">
 </head>
 <body>
-<header>
+<header class="shell-rail" aria-label="Primary navigation"><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="false">Home</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="notes-tab" aria-pressed="false">Notes</button><button id="operations-tab" aria-pressed="true">Operations</button><button id="change" hidden>Open archive…</button></header>
+<header id="operations-bar">
   <svg class="crown" id="home" viewBox="0 0 16 16" fill="currentColor" role="button" aria-label="Glance" tabindex="0"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>
   <h1 id="vault">Sovereign</h1>
   <div class="meta grow" id="meta">reading status…</div>
   <span class="hubpill" id="hubpill"><span class="dot"></span>hub</span>
-  <button id="unified-home">Home &amp; notes</button>
   <button id="refresh" title="Refresh (⌘R)">Refresh</button>
   <button id="gear" class="quiet" title="Settings (⌘,)" aria-label="Settings">⚙</button>
 </header>
@@ -359,6 +361,7 @@
   <pre id="drawer-log"></pre>
 </div>
 
+<script src="status-model.js"></script>
 <script>
 // A script error must never be a blank page: paint it where the eye lands.
 window.onerror = function (msg, src, line, col) {
@@ -428,7 +431,8 @@ window.onerror = function (msg, src, line, col) {
   // ---------- top: header, needs, pulse ----------
   function renderTop() {
     const m = D.machine || {}, h = hub(), obs = D.obsidian || {};
-    $("#vault").textContent = m.vault_name || "Sovereign";
+    $("#vault").textContent = "Operations";
+    $("#archive-name").textContent = m.vault_name || "Your archive";
     $("#meta").textContent = `${m.host}${obs.sync ? " · obsidian " + obs.sync : ""}`;
     const hp = $("#hubpill"), j = h.jobs || {}, nightly = j["archivist-nightly"]; hp.style.opacity = "";
     if (h.reachable) hp.innerHTML = `${dot("live", "hub online")}hub ${esc(((h.via || "").startsWith("ssh ") ? h.via.slice(4) : (h.hub_host || "here")).toLowerCase())}${nightly ? " · nightly " + clock(nightly.ts) : ""}`;
@@ -573,75 +577,11 @@ window.onerror = function (msg, src, line, col) {
   }
   // ---------- one assessment: what needs you, what is fresh, what is stale ----------
   // Cadence per kind; a thing past its cadence is stale, past twice it needs you (down).
-  const HUB_CADENCE_H = { "archivist-nightly": 24, "archivist-weekly": 168, "archivist-weekly-landed": 168, "daily-health-check": 24,
-    "vault-autocommit": 24, "fleet-watch": 1, "fleet-watch-drill": 168, "proxmox-monitor": 24, "pi-cluster-monitor": 24 };
-  const shortLabel = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
   let lastAssess = null;
   function assess() {
-    const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
-    const ago = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
-    const need = [], fresh = [], stale = []; let cad;
-    const late = (name, detail, ageH, cad, jump, cause) => {   // one thing against its cadence
-      if (ageH == null || cad == null) return;
-      if (ageH > 2 * cad) need.push({ state: "down", name, detail: `${detail} ${age(ageH)} ago, expected every ${age(cad)}`, age_h: ageH, jump, cause, order: 0 });
-      else if (ageH > cad) stale.push({ state: "warn", name, detail: `${detail} ${age(ageH)} ago, expected every ${age(cad)}`, age_h: ageH, jump });
-      else return true;
-    };
-    // needs: failures, unreachable, the gate, unprotected machines
-    (D.needs_you || []).forEach((n, i) => need.push({ state: "warn", name: n.kind, detail: n.text, age_h: null, need: i, order: 1, cause: "need:" + n.kind }));
-    (D.jobs || []).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
-    Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k, j]) => need.push({ state: "down", name: k, detail: `exited ${j.exit} on the hub`, age_h: ago(j.ts), jump: { view: "jobs", id: "hub:job:" + k }, order: 0, cause: "job-failed" }));
-    hosts.filter(x => x.net && x.net.online === false).forEach(x => need.push({ state: "down", name: x.host, detail: "unreachable", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
-    (bk.hosts || []).filter(x => x.reachable && x.last_dump_age_h == null).forEach(x => need.push({ state: "warn", name: x.host, detail: `no backup job on ${x.node}`, age_h: null, jump: { view: "backups", id: "bk:host:" + x.host }, order: 2, cause: "no-backup", causeLabel: "have no backup job" }));
-    // cadence: mirrors here, mirrors on every host, producer pushes, hub jobs, the snapshot
-    (D.harnesses || []).forEach(x => { if (x.state !== "connected" || x.runs_on) return; const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run), cad = intervalOf(x) / 3600;
-      if (late(x.name || x.id, "mirror last ran", ah, cad, { view: "tools", id: x.id }, "mirror-late") === true && ah != null && ah <= cad) fresh.push({ state: "live", name: x.name || x.id, detail: `pulled ${age(ah)} ago on ${m.host}`, age_h: ah, jump: { view: "tools", id: x.id }, cause: "pull:" + m.host, host: m.host }); });
-    // a remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
-    // observable cadence is about an hour, not its own 15 minutes
-    // The hub sees its own lanes and the producers' merges first; this copy sees them through the
-    // sync. Take the fresher of the two views, and name the lag itself when this copy falls behind.
-    const hubLanes = h.lanes || {}; let lag = 0, lagLane = null;
-    hosts.filter(x => x.host !== m.host).forEach(x => (x.harnesses || []).forEach(t => {
-      const here = t.run_age_h, there = (hubLanes[t.lane] || {}).age_h, ah = [here, there].filter(v => v != null).length ? Math.min(...[here, there].filter(v => v != null)) : null;
-      if (here != null && there != null && here - there > lag) { lag = here - there; lagLane = t.lane; }
-      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = 1, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host }, cause: "pull:" + x.host, host: x.host }); }));
-    if (lag > 1) stale.push({ state: "warn", name: "this copy", detail: `${age(lag)} behind the hub (${(D.obsidian || {}).sync || "sync"}); ${lagLane} is the widest gap`, age_h: lag, jump: { view: "backups", id: "bk:obsidian" } });
-    (bk.lanes || []).forEach(l => {
-      const ah = ago(l.pushed), jump = { view: "backups", id: "bk:lane:" + l.lane };
-      if (l.delivery !== "accepted") {
-        need.push({ state: "warn", name: `lane ${l.lane}`, detail: l.delivery === "waiting" ? "pushed, awaiting hub acceptance" : "hub acceptance has not been verified", age_h: ah, jump, order: 1 });
-      } else if (late(`lane ${l.lane}`, "last source commit", ah, 24, jump, "lane-late") === true) {
-        fresh.push({ state: "live", name: `lane ${l.lane}`, detail: `source from ${age(ah)} ago is included on the hub`, age_h: ah, jump });
-      }
-    });
-    Object.entries(h.jobs || {}).forEach(([k, j]) => { const cad = HUB_CADENCE_H[k]; if (!cad || j.exit) return; late(k, "last ran", ago(j.ts), cad, { view: "jobs", id: "hub:job:" + k }, "hub-job-late"); });
-    if (bk.snapshots) late("daily snapshot", "last taken", bk.snapshots.newest_age_h, 24, { view: "backups", id: "bk:snapshots" }, "snapshot-late");
-    // fresh: events, not states
-    const today = new Date().toISOString().slice(0, 10), a = arch(), landed = (a.cards || []).filter(c => c.created === today).length;
-    if (landed) fresh.unshift({ state: "live", name: "archive", detail: `${landed} card${landed === 1 ? "" : "s"} landed today`, age_h: null, jump: { view: "archive", id: "week:" + isoWeekKey(new Date()) } });
-    if (st.judged != null) fresh.unshift({ state: "live", name: "judge", detail: `kept ${num(st.new_proposals)} of ${num(st.judged)} last run`, age_h: h.status_age_h, jump: { view: "jobs", id: "hub:judge" } });
-    let prev = {}; try { prev = JSON.parse(localStorage.getItem("sov.online") || "{}"); } catch (e) {}
-    const now = {}; hosts.forEach(x => { if (x.net && x.net.online != null) now[x.host] = x.net.online; if (x.net && x.net.online && prev[x.host] === false) fresh.push({ state: "live", name: x.host, detail: "came back", age_h: null, jump: { view: "hosts", id: x.host } }); });
-    try { localStorage.setItem("sov.online", JSON.stringify(now)); } catch (e) {}
-    fresh.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
-    need.sort((p, q) => p.order - q.order || (q.age_h || 0) - (p.age_h || 0));
-    stale.sort((p, q) => (q.age_h || 0) - (p.age_h || 0));
-    // one row per repeated cause; the drawer lists the members
-    const collapse = (list, mk) => {
-      const out = [], byCause = {};
-      list.forEach(r => { if (!r.cause || r.need != null) { out.push(r); return; } (byCause[r.cause] = byCause[r.cause] || []).push(r); });
-      Object.entries(byCause).forEach(([cause, rows]) => { if (rows.length < 2) out.push(rows[0]); else out.push(Object.assign(mk(cause, rows), { group: cause, members: rows })); });
-      return out;
-    };
-    const needG = collapse(need, (cause, rows) => {
-      const label = rows[0].causeLabel || (cause === "job-failed" ? "failed their last run" : cause === "unreachable" ? "are unreachable" : cause === "mirror-late" ? "are past twice their mirror cadence" : "need a look");
-      return { state: rows.some(r => r.state === "down") ? "down" : "warn", name: `${rows.length} ${cause === "job-failed" || cause === "hub-job-late" ? "jobs" : "machines"}`,
-        detail: `${label}: ${rows.slice(0, 2).map(r => r.name).join(", ")}${rows.length > 2 ? " and " + (rows.length - 2) + " more" : ""}`, age_h: null, order: rows[0].order };
-    }).sort((p, q) => p.order - q.order);
-    const freshG = collapse(fresh, (cause, rows) => { const newest = Math.min(...rows.map(r => r.age_h == null ? Infinity : r.age_h));
-      return { state: "live", name: `${rows.length} mirrors`, detail: `pulled on ${rows[0].host}, newest ${age(newest)} ago`, age_h: isFinite(newest) ? newest : null, order: 1 }; });
-    freshG.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
-    lastAssess = { need: needG, fresh: freshG, stale };
+    lastAssess = SovStatus.assess(D, localStorage);
+    const badge = document.getElementById("review-count");
+    if (badge) badge.textContent = lastAssess.need.length || "";
     return lastAssess;
   }
   // ---------- the verdict: one sentence, the worst state on screen ----------
@@ -746,8 +686,8 @@ window.onerror = function (msg, src, line, col) {
       detail: [["state", ob.sync], ["vault", ob.vault_name], ["carries", "markdown only: no git history, no lane state, no spreadsheets or code"]],
       note: "A live copy of the notes, not of the brain: governance files and anything that is not markdown never cross it." });
     (b.lanes || []).forEach(l => {
-      const p = ageOf(l.pushed), accepted = l.delivery === "accepted", state = accepted && p != null && p < 48 ? "live" : "warn";
-      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : "hub acceptance has not been verified", state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
+      const p = ageOf(l.pushed), accepted = l.delivery === "accepted", state = accepted ? (p != null && p < 48 ? "live" : "warn") : l.delivery === "waiting" ? "warn" : "idle";
+      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : "acceptance not reported by this status version", state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
         detail: [["source commit time", l.pushed || "unknown"], ["last change on main", l.merged || "unknown"], ["source commit", l.source_head || "unknown"], ["observed at", l.observed_at || "unknown"], ["keep", l.keep]],
         note: "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
     });
@@ -1224,6 +1164,7 @@ window.onerror = function (msg, src, line, col) {
     if (opts && opts.open) { const first = items().find(selectable); if (first) return select(first.kind, first.id, true); }
     if (!(opts && opts.silent)) commit();
   }
+  window.sovSnapshotReady = () => !!D && !pendingGoto;
   window.sovView = (v) => {   // design QA: "archive", "archive+open", "archive+open:orphans", "settings", "...+back"
     const parts = String(v).split("+"), name = parts[0];
     if (name === "home") return bridge({cmd: "navigate", page: "home"});
@@ -1390,7 +1331,8 @@ window.onerror = function (msg, src, line, col) {
     if (e.key === "p") setPinned(!pinned);
   });
 
-  document.getElementById("unified-home").onclick = () => bridge({cmd: "navigate", page: "home"});
+  for (const name of ['home', 'review', 'notes']) document.getElementById(name+'-tab').onclick = () => bridge({cmd:'navigate',page:'home',place:{view:name}});
+  document.getElementById('operations-tab').onclick = () => setView('glance');
   function refresh() { bridge({ cmd: "status" }); }
   window.sovRefresh = refresh;
   // Anything thrown inside a call the app injects reaches window.onerror as a bare
@@ -1446,6 +1388,7 @@ window.onerror = function (msg, src, line, col) {
     } else if (kind === "goto") {
       if (!D && !payload.settings) { pendingGoto = payload; return; }
       if (payload.settings) return openSettings();
+      if (payload.snapshot) return window.sovView(payload.snapshot);
       if (payload.view) setView(payload.view, { section: payload.section, silent: !!payload.sel });
       if (payload.sel) { const it = findRow(payload.sel.id); select(it ? it.kind : payload.sel.kind, payload.sel.id, true); }
     }
@@ -1457,7 +1400,7 @@ window.onerror = function (msg, src, line, col) {
     $("#vault").textContent = "Sovereign";
     $("#meta").textContent = "this machine is not connected to a brain yet";
     $("#hubpill").innerHTML = `${dot("", "not connected")}not connected`;
-    $("#needs").hidden = true; $("#pulse").hidden = true;
+    $("#verdict").className = "idle"; $("#vtext").textContent = "Connect tools when you are ready.";
     $("#rows").innerHTML = `<div class="empty">No lanes yet.</div>`;
     $("#insp").innerHTML = `<div class="insp-title">Connect this machine</div>
       <div class="insp-sub">Point it at a brain once. Every tool found here gets both wires: it reads the brain when a session starts, and its notes flow back to its own lane.</div>

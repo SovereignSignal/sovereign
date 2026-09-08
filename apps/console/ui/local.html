@@ -4,8 +4,8 @@
 <title>Sovereign</title><link rel="stylesheet" href="tokens.css">
 <style>
 *{box-sizing:border-box}body{margin:0;background:var(--ground);color:var(--ink);font:14px var(--sans)}button,input,textarea{font:inherit}button{cursor:pointer;border:1px solid var(--rule);border-radius:7px;background:var(--panel);color:var(--ink);padding:8px 13px}button.primary{background:var(--brass);border-color:var(--brass);color:#15181C}button:hover{filter:brightness(.95)}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--brass);outline-offset:2px}button:disabled{opacity:.5;cursor:default}header{height:79px;padding:30px 24px 14px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--rule)}header strong{font-size:17px}header span{color:var(--muted);margin-left:auto}#notice{padding:9px 24px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--rule)}#notice.error{color:var(--down)}.welcome{max-width:620px;margin:70px auto;padding:0 24px}.eyebrow{color:var(--brass-ink);font-size:12px;letter-spacing:.06em;text-transform:uppercase}h1{font-size:34px;line-height:1.15;font-weight:550;margin:16px 0}p{color:var(--muted);line-height:1.6}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}.fine{font-size:12px}.layout{display:grid;grid-template-columns:285px 1fr;height:calc(100vh - 114px)}nav{border-right:1px solid var(--rule);display:flex;flex-direction:column;min-height:0;padding:16px 12px}input,textarea{border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--ink);padding:10px;min-width:0}#search{width:100%}#notes{overflow:auto;flex:1;margin:12px -4px}#notes button{width:100%;text-align:left;background:none;border:none;border-radius:4px;padding:12px 8px;display:block}#notes button.selected{background:var(--sel)}#notes small{display:block;color:var(--muted);margin-top:5px;font-size:11px;overflow:hidden;text-overflow:ellipsis}article{padding:26px;min-width:0;overflow:auto}#reader{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;font-family:var(--sans)}#editor{display:flex;flex-direction:column;gap:14px;height:100%}#editor label{font-size:12px;color:var(--muted)}#body{flex:1;min-height:150px;resize:none;line-height:1.6}#count{font-size:12px;color:var(--muted);padding:7px 4px}[hidden]{display:none!important}.empty{padding:16px 4px;color:var(--muted);line-height:1.6}h2{font-size:22px;margin-top:0}#note-path{font-size:12px;color:var(--muted);overflow-wrap:anywhere}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}@media(max-width:740px){.layout{grid-template-columns:230px 1fr}header{padding-left:18px}article{padding:20px}}
-</style><link rel="stylesheet" href="home.css"></head><body>
-<header><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="true">Home</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="notes-tab" aria-pressed="false" disabled>Notes</button><button id="operations-tab">Operations</button><button id="change" hidden>Open archive…</button></header><div id="app-bar"><span id="page-label">Overview</span><span>Owned by you · Signal Night</span></div>
+</style><link rel="stylesheet" href="home.css"><link rel="stylesheet" href="shell.css"></head><body>
+<header class="shell-rail" aria-label="Primary navigation"><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="true">Home</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="notes-tab" aria-pressed="false" disabled>Notes</button><button id="operations-tab">Operations</button><button id="change" hidden>Open archive…</button></header><div id="app-bar"><span id="page-label">Overview</span><span>Owned by you</span></div>
 <div id="notice" role="status" aria-live="polite">Local files. No account required.</div>
 <section id="system-home" aria-label="System overview"></section>
 <section class="welcome" id="welcome"><div class="eyebrow">A place for what you learn</div><h1>Keep the work.<br>Carry the knowledge.</h1><p>Create an archive of plain Markdown files you own. Capture a thought, find it again, and open it in the editor you already use.</p><div class="actions"><button class="primary" id="create">Create archive…</button><button id="choose">Open existing archive…</button></div><p class="fine">Choose where your files live. Nothing is uploaded, and no background jobs are installed. Backups and connected tools can be added as the app develops.</p></section>
@@ -14,7 +14,7 @@
 <section id="detail" hidden><h2 id="note-title"></h2><div id="note-path"></div><div class="actions"><button id="open-file">Open in text editor</button></div><pre id="reader"></pre></section>
 <form id="editor" hidden><h2>New capture</h2><label for="title">Title</label><input id="title" maxlength="160" required placeholder="A decision, a method, a useful finding"><label for="body">Note</label><textarea id="body" required placeholder="What happened? What is worth keeping?"></textarea><div class="actions" style="margin:0"><button type="submit" id="save" class="primary">Save capture</button><button type="button" id="cancel">Cancel</button></div><p class="fine">Saved as Markdown in raw/workspaces/owner. Recognized credential patterns are redacted before saving.</p></form>
 </article></main>
-<script src="home.js"></script>
+<script src="status-model.js"></script><script src="home.js"></script>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);let root=null,current=null,request=0,listRequest=0,readRequest=0,contextRequest=0,pendingSave=null,view="home",stateReady=false,pendingGoto=null;
@@ -45,7 +45,7 @@ $('editor').onsubmit=e=>{e.preventDefault();if(pendingSave)return;saving(true);p
 window.sovDeliver=(kind,payload)=>{
  if(kind==='settings')return;
  if(kind==='status'){Home.status(payload);return}
- if(kind==='goto'){if(!stateReady){pendingGoto=payload;return}if(payload.chooseArchive)window.sovChooseArchive(payload.create===true);else if(payload.capture)window.sovNewCapture();else setView('home');return}
+ if(kind==='goto'){if(!stateReady){pendingGoto=payload;return}if(payload.chooseArchive)window.sovChooseArchive(payload.create===true);else if(payload.capture)window.sovNewCapture();else setView(payload.view||'home');return}
  if(kind==='localState'){
    stateReady=true;root=payload.root||null;readRequest=++request;listRequest=++request;contextRequest=++request;
    $('welcome').hidden=!!root;$('workspace').hidden=true;$('change').hidden=!root;$('notes-tab').disabled=!root;
@@ -71,7 +71,8 @@ window.sovDeliver=(kind,payload)=>{
  }
 };
 window.sovRefresh=refresh;
-window.sovView=setView;
+window.sovSnapshotReady=()=>stateReady;
+window.sovView=value=>{if(['home','review','notes'].includes(value))return setView(value);return false};
 window.sovCanQuit=leaveDraft;
 window.sovNewCapture=()=>{if(root){if(setView('notes'))$('new').click()}else notice('Create or open an archive to capture a note.')};
 window.sovChooseArchive=create=>{if(leaveDraft())send({cmd:'chooseArchive',create})};

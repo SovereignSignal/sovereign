@@ -1,0 +1,11 @@
+/* Primary navigation shared by every full-window page. */
+body>.shell-rail{grid-column:1;grid-row:1/-1;height:auto;padding:35px 13px 18px;display:flex;flex-direction:column;align-items:stretch;gap:7px;background:var(--sunk);border-right:1px solid var(--rule);border-bottom:0}
+body>.shell-rail strong{font-size:15px;margin:0 7px 27px;font-weight:500}
+body>.shell-rail strong svg{color:var(--brass)}
+body>.shell-rail button{border:0;background:transparent;padding:11px 12px;text-align:left;font:400 12px var(--sans);color:var(--ink);border-radius:4px}
+body>.shell-rail button[aria-pressed="true"]{background:var(--sel);color:var(--ink)}
+body>.shell-rail #archive-name{order:10;margin: auto 7px 0;padding-top:22px;border-top:1px solid var(--rule);font:11px/1.6 var(--mono);white-space:normal;overflow-wrap:anywhere}
+body>.shell-rail #change{order:11;font-size:11px;color:var(--muted);padding-left:7px}
+#review-count{font:11px var(--mono);float:right;color:var(--muted);margin:0;background:var(--panel);padding:1px 5px;border-radius:3px}
+
+@media(max-width:900px){body>.shell-rail{padding-left:9px;padding-right:9px}}

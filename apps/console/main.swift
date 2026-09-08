@@ -88,7 +88,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                     var response = obj; response["request"] = d["request"]
                     self.deliver("status", response, generation: generation)
                 } else {
-                    var response: [String: Any] = ["error": "System status could not be read (exit \(code)). Retry or inspect Operations."]
+                    let detail = self.statusDetail(err)
+                    log("status failed (exit \(code)): \(detail)")
+                    var response: [String: Any] = ["error": "System status could not be read. Retry or inspect Operations.", "detail": detail]
                     response["request"] = d["request"]
                     self.deliver("status", response, generation: generation)
                 }
@@ -233,6 +235,21 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         }
     }
 
+    // Reuse the archive's credential redactor before truncation, so a clipped key
+    // cannot evade its shape checks. Failure never falls back to raw diagnostics.
+    private func statusDetail(_ stderr: String) -> String {
+        guard let resources = Bundle.main.resourceURL else { return "Diagnostics unavailable." }
+        let p = Process(), input = Pipe(), output = Pipe()
+        p.executableURL = resources.appendingPathComponent("runtime/bin/python3")
+        p.arguments = ["-I", "-B", resources.appendingPathComponent("backend/diagnostics.py").path]
+        p.standardInput = input; p.standardOutput = output; p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return "Diagnostics unavailable." }
+        do { try input.fileHandleForWriting.write(contentsOf: Data(stderr.utf8)) } catch {}
+        try? input.fileHandleForWriting.close()
+        let data = output.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+        return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : "Diagnostics unavailable."
+    }
+
     func run(_ args: [String], done: @escaping (String, String, Int32) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
@@ -242,8 +259,12 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             let o = Pipe(), e = Pipe()
             p.standardOutput = o; p.standardError = e
             do { try p.run() } catch { done("", "\(error)", -1); return }
+            // Drain both pipes concurrently: a large stderr must not block stdout/exit.
+            let readers = DispatchGroup(); readers.enter()
+            var ed = Data()
+            DispatchQueue.global().async { ed = e.fileHandleForReading.readDataToEndOfFile(); readers.leave() }
             let od = o.fileHandleForReading.readDataToEndOfFile()
-            let ed = e.fileHandleForReading.readDataToEndOfFile()
+            readers.wait()
             p.waitUntilExit()
             done(String(data: od, encoding: .utf8) ?? "", String(data: ed, encoding: .utf8) ?? "", p.terminationStatus)
         }
@@ -303,6 +324,7 @@ func qaFrame(_ f: NSRect) -> NSRect {
 final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         let alert = NSAlert(); alert.messageText = message
+        alert.window.appearance = NSApp.effectiveAppearance; alert.window.backgroundColor = pageGround
         alert.addButton(withTitle: "Discard"); alert.addButton(withTitle: "Keep editing")
         completionHandler(alert.runModal() == .alertFirstButtonReturn)
     }
@@ -334,6 +356,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     var loadingOverlay: NSView?
     var loadWatchdog: DispatchWorkItem?
     var glanceSize = NSSize(width: 420, height: 468)
+    var snapshotting: Bool { !(ProcessInfo.processInfo.environment["SOV_SNAPSHOT"] ?? "").isEmpty }
+    var theme: String { NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light" }
+    var pageGround: NSColor { theme == "dark" ? NSColor(srgbRed: 0, green: 6/255, blue: 15/255, alpha: 1) : NSColor(srgbRed: 250/255, green: 250/255, blue: 247/255, alpha: 1) }
     var qaGlance: Bool { ProcessInfo.processInfo.environment["SOV_GLANCE"] == "1" }
 
     static func main() {
@@ -341,7 +366,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         let d = App()
         App.shared = d
         app.delegate = d
-        app.setActivationPolicy(Settings.location == "menubar" ? .accessory : .regular)
+        app.setActivationPolicy(d.snapshotting || Settings.location == "menubar" ? .accessory : .regular)
         app.run()
     }
 
@@ -349,6 +374,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         let b = Bridge(sov: sovPath)
         let cfg = WKWebViewConfiguration()
         cfg.userContentController.add(b, name: "sov")
+        cfg.userContentController.addUserScript(WKUserScript(source: "document.documentElement.dataset.theme='\(theme)';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
         let w = WKWebView(frame: .zero, configuration: cfg)
         w.navigationDelegate = self
@@ -377,10 +403,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
     func applicationDidFinishLaunching(_ n: Notification) {
         // SOV_APPEARANCE=dark|light forces the appearance (used with SOV_SNAPSHOT for design QA).
-        if let a = ProcessInfo.processInfo.environment["SOV_APPEARANCE"] {
-            NSApp.appearance = NSAppearance(named: a == "dark" ? .darkAqua : .aqua)
-        }
+        let appearance = ProcessInfo.processInfo.environment["SOV_APPEARANCE"] ?? "dark"
+        NSApp.appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
         sovPath = ["\(NSHomeDirectory())/brain-bin/sov", "/usr/local/bin/sov", "/opt/homebrew/bin/sov"].first { FileManager.default.isExecutableFile(atPath: $0) }
+        if snapshotting, let command = ProcessInfo.processInfo.environment["SOV_QA_STATUS_COMMAND"] { sovPath = command }
         localMode = true
         buildMenu()
         let (w, b) = makeWeb()
@@ -390,6 +416,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
                              : NSRect(x: 120, y: 120, width: 900, height: 600)
         window = NSWindow(contentRect: qaFrame(frame), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Sovereign"
+        window.appearance = NSApp.effectiveAppearance; window.backgroundColor = pageGround
         window.minSize = qaGlance ? glanceSize : NSSize(width: 720, height: 460)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -442,19 +469,16 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
                     save(image, snap)
                     // second frame: after the anchor (a view, a row, a settings pane, or the bottom)
                     let anchor = ProcessInfo.processInfo.environment["SOV_SNAPSHOT_ANCHOR"] ?? ""
-                    let js: String
-                    if anchor.hasPrefix("view:") {
-                        js = "window.sovView && window.sovView(\"\(anchor.dropFirst(5))\");"
-                    } else if anchor.isEmpty {
-                        js = "window.scrollTo(0, document.body.scrollHeight);"
-                    } else {
-                        js = "var el=document.querySelector(\"\(anchor)\"); if(el){el.scrollIntoView({block:'start'});} else {window.scrollTo(0, document.body.scrollHeight);}"
-                    }
-                    self.web.evaluateJavaScript("document.body.classList.add('qa');" + js) { _, _ in
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                            self.web.takeSnapshot(with: nil) { image2, _ in
-                                save(image2, snap.replacingOccurrences(of: ".png", with: "-bottom.png"))
-                                NSApp.terminate(nil)
+                    self.applySnapshotAnchor(anchor) {
+                        let qa = ProcessInfo.processInfo.environment["SOV_QA_JS_AFTER_ANCHOR"] ?? "void 0"
+                        self.web.evaluateJavaScript(qa) { _, err in
+                            if let err = err { log("snapshot QA: \(err)") }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                self.web.takeSnapshot(with: nil) { image2, error in
+                                    if let error = error { log("snapshot error: \(error)") }
+                                    save(image2, snap.replacingOccurrences(of: ".png", with: "-bottom.png"))
+                                    NSApp.terminate(nil)
+                                }
                             }
                         }
                     }
@@ -463,11 +487,32 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         }
     }
 
+    private func applySnapshotAnchor(_ anchor: String, done: @escaping () -> Void) {
+        let operations = anchor.hasPrefix("operations:view:")
+        let value = operations ? String(anchor.dropFirst(16)) : anchor.hasPrefix("view:") ? String(anchor.dropFirst(5)) : anchor
+        let encoded = String(data: try! JSONSerialization.data(withJSONObject: [value]), encoding: .utf8)! + "[0]"
+        if operations { navigate(page: "operations", place: ["snapshot": value]) }
+        func wait(_ attempt: Int) {
+            web.evaluateJavaScript("typeof sovDeliver === 'function' && window.sovSnapshotReady && window.sovSnapshotReady()") { ready, _ in
+                if (ready as? Bool) == true && (!operations || (!self.localMode && self.web.url?.lastPathComponent == "index.html")) {
+                    let js = operations ? "void 0" : anchor.hasPrefix("view:") ? "window.sovView(\(encoded))" : anchor.isEmpty ? "window.scrollTo(0,document.body.scrollHeight)" : "document.querySelector(\(encoded))?.scrollIntoView({block:'start'})"
+                    self.web.evaluateJavaScript("document.body.classList.add('qa');" + js) { _, error in
+                        if let error = error { log("snapshot anchor: \(error)"); exit(2) }
+                        done()
+                    }
+                } else if attempt >= 100 { log("snapshot anchor did not become ready"); exit(2) }
+                else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { wait(attempt + 1) } }
+            }
+        }
+        // Let navigation commit before checking the destination document.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { wait(0) }
+    }
+
     private func showLoading(message: String, retry: Bool) {
         loadingOverlay?.removeFromSuperview()
         guard let content = window?.contentView else { return }
         let panel = NSView(frame: content.bounds); panel.autoresizingMask = [.width, .height]
-        panel.wantsLayer = true; panel.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        panel.wantsLayer = true; panel.layer?.backgroundColor = pageGround.cgColor
         let label = NSTextField(wrappingLabelWithString: message); label.alignment = .center
         label.font = .systemFont(ofSize: 17)
         let stack = NSStackView(views: [label]); stack.orientation = .vertical; stack.spacing = 18
@@ -497,7 +542,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         bridge.local(["action": create ? "create" : "open", "root": url.path]) { result in
             DispatchQueue.main.async {
                 if let error = result["error"] as? String {
-                    let alert = NSAlert(); alert.messageText = "Archive could not be opened"; alert.informativeText = error; alert.runModal(); return
+                    let alert = NSAlert(); alert.messageText = "Archive could not be opened"; alert.informativeText = error; alert.window.appearance = NSApp.effectiveAppearance; alert.window.backgroundColor = self.pageGround; alert.runModal(); return
                 }
                 guard let root = result["root"] as? String else { return }
                 Settings.archive = root
@@ -510,8 +555,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
     func applySettings(loginChanged: Bool = false) {
         let loc = Settings.location
-        NSApp.setActivationPolicy(loc == "menubar" ? .accessory : .regular)
-        if loc == "dock" {
+        NSApp.setActivationPolicy(snapshotting || loc == "menubar" ? .accessory : .regular)
+        if snapshotting || loc == "dock" {
             if let item = statusItem { NSStatusBar.system.removeStatusItem(item); statusItem = nil }
             popover?.performClose(nil)
         } else if statusItem == nil {

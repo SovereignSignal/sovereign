@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native preview integration check. Every capture goes to a disposable archive."""
+"""Native application integration check. Every capture goes to a disposable archive."""
 import json
 import os
 from pathlib import Path
@@ -13,16 +13,16 @@ sys.path.insert(0,str(ROOT/'lib'))
 import brain_local
 
 def main():
-    app=HERE/'build/Sovereign Preview.app/Contents/MacOS/Sovereign'
+    app=HERE/'build/Sovereign.app/Contents/MacOS/Sovereign'
     if not app.exists():
-        raise SystemExit('Build the preview first; see DISTRIBUTION.md.')
+        raise SystemExit('Build the app first; see DISTRIBUTION.md.')
     with tempfile.TemporaryDirectory(prefix='sovereign-native-test-') as folder:
         base=Path(folder); archive=base/'QA Archive'
         brain_local.create(archive,ROOT)
         archive=archive.resolve()
         env=dict(os.environ,SOV_QA_JS=(HERE/'tests/home.js').read_text(),
                  SOV_SNAPSHOT=str(base/'native.png'),SOV_SNAPSHOT_DELAY='18',
-                 SOV_WINDOW='900x680',SOV_SNAPSHOT_ANCHOR='',SOV_APPEARANCE='light')
+                 SOV_WINDOW='900x680',SOV_SNAPSHOT_ANCHOR='',SOV_APPEARANCE=os.environ.get('SOV_APPEARANCE','light'))
         result=subprocess.run([str(app),'-sov.archive',str(archive)],env=env,
                               capture_output=True,text=True,timeout=50)
         if result.returncode:

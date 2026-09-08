@@ -9,11 +9,11 @@
    Home.status({request:1,generated_at:new Date().toISOString(),machine:{connected:true,vault:root,vault_name:'QA archive',host:'test'},hub:{reachable:true,pending:2},needs_you:[{kind:'gate',text:'internal command text'}],fleet:{hosts:[{host:'<img src=x onerror=alert(1)>',net:{online:true},harnesses:[]}]},harnesses:[{id:'codex',name:'Codex',state:'connected',read:'hook',hook_registered:true,detected:true,last_status:'FAILED collection test',job:{last_exit:0}}],backups:{lanes:[{lane:'waiting-producer',delivery:'waiting'},{lane:'unknown-producer'},{lane:'accepted-producer',delivery:'accepted'}]}});
    const html=$('system-home').innerHTML,text=$('system-home').textContent;
    assert('source labels cannot inject HTML',!$('system-home').querySelector('img'));
-   assert('overview keeps review in navigation',!text.includes('Needs your attention')&&$('review-count').textContent==='3');
+   assert('overview keeps review in navigation',!text.includes('Needs your attention')&&$('review-count').textContent==='2');
    $('review-tab').click();const reviewText=$('system-home').textContent;
    assert('gate uses user-facing language',reviewText.includes('2 proposals ready for your review')&&!reviewText.includes('internal command text'));
    assert('waiting is not accepted',reviewText.includes('Published · waiting for hub acceptance'));
-   assert('missing delivery stays unknown',reviewText.includes('Acceptance unverified'));
+   assert('missing delivery stays unknown',reviewText.includes('acceptance not reported by this status version'));
    $('home-tab').click();
    assert('collection failure overrides runner success',text.includes('Last collection failed'));
    assert('loaded remains unverified',text.includes('loading into a model are unverified'));

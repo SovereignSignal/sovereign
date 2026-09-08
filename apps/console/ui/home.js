@@ -22,15 +22,19 @@ window.Home = (() => {
     if(!root&&!machine.connected&&!status?.error)return;
     const grid=element('div',null,'home-grid');host.append(grid);
     const nodes=status?.fleet?.hosts||[],tools=(status?.harnesses||[]).filter(h=>h.detected||h.state==='connected'||h.state==='partial'||h.runs_on||h.hub_installed);
-    const needs=(status?.needs_you||[]).map(n=>n.kind==='gate'?{...n,view:'archive',section:'gate',text:`${hub.pending||'New'} proposals ready for your review`}:n),deliveries=status?.backups?.lanes||[];
-    for(const lane of deliveries)if(lane.delivery!=='accepted')needs.push({text:`${lane.lane}: ${lane.delivery==='waiting'?'contribution waiting for hub acceptance':'contribution acceptance unverified'}`,view:'backups',id:'bk:lane:'+lane.lane});
-    if(hub.reachable===false)needs.unshift({text:'Hub unreachable. Review and contribution acceptance could not be checked.',view:'jobs'});
+    const needs=SovStatus.assess(status||{},localStorage).need,deliveries=status?.backups?.lanes||[];
     const attention=panel('Needs your attention',needs.length||null);
-    for(const need of needs)attention.append(row(need.text||need.kind||'Review needed','Open details','warn',()=>operations(need.view||(need.kind==='gate'?'jobs':'glance'),need.id,need.section)));
+    for(const need of needs){
+      const source=need.need!=null?status.needs_you[need.need]:null;
+      const gate=source?.kind==='gate';
+      const title=gate?`${hub.pending||'New'} proposals ready for your review`:need.name;
+      const jump=need.jump||{view:source?.harness?'tools':source?.kind==='job'?'jobs':'glance',id:source?.harness};
+      attention.append(row(title,gate?'Review proposals':need.detail,need.state,()=>operations(gate?'archive':jump.view,jump.id,gate?'gate':undefined)));
+    }
     if(!needs.length)message(attention,!status||status.error?'Waiting for a successful status check.':hub.reachable===true?'No attention items reported by the connected system.':'No local attention items reported. Hub review status is unverified.');
     if(badge)badge.textContent=needs.length?String(needs.length):'';
     const incoming=panel('Contributions',deliveries.length||null);
-    for(const lane of deliveries){const accepted=lane.delivery==='accepted';incoming.append(row(lane.lane,accepted?'Accepted by the hub · source '+ago(lane.pushed):lane.delivery==='waiting'?'Published · waiting for hub acceptance':'Acceptance unverified',accepted?'live':'warn',()=>operations('backups','bk:lane:'+lane.lane)))}
+    for(const lane of deliveries){const accepted=lane.delivery==='accepted';incoming.append(row(lane.lane,accepted?'Accepted by the hub · source '+ago(lane.pushed):lane.delivery==='waiting'?'Published · waiting for hub acceptance':'acceptance not reported by this status version',accepted?'live':lane.delivery==='waiting'?'warn':'idle',()=>operations('backups','bk:lane:'+lane.lane)))}
     if(!deliveries.length)message(incoming,hub.reachable===true?'No contribution acceptance records were returned.':'Check the hub to verify which contributions have been accepted.');
     if(view==='review'){grid.classList.add('home-review');grid.append(attention,incoming);return}
     const connections=panel('Nodes',nodes.length||null);connections.classList.add('home-nodes');

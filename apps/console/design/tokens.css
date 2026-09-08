@@ -31,7 +31,7 @@
  --ink:#eaf1f6; --ink-2:#bacbd6; --muted:#93a7b4; --faint:#8297a6;
  --brass:#fd881e; --brass-ink:#fd9c44; --brass-wash:#302315;
  --live:#4ade80; --warn:#e7b06c; --down:#f08078; --idle:#688094; --sel:#132639;
- --series-1:#fd881e; --series-2:#2fd4e0; --series-3:#4ade80;
+ --series-1:#c9821c; --series-2:#4F89D2; --series-3:#39A064;
  --cyan:#2fd4e0; --depth:#0b1a2d; --atmosphere:#fd881e0d; --shadow:none; color-scheme:dark;
 }
 :root[data-theme="light"]{--cyan:#086e78;--depth:#e4ecf3;--atmosphere:#fd881e08}
