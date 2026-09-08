@@ -5,11 +5,24 @@ see what is connected, its health, the topic prepared for a tool, returning
 contributions, and work needing review. Automatic scoped context delivery is the
 primary workflow. Notes supports source inspection, correction, and local capture.
 
-Home, Notes, and Operations share one native window. Operations reuses the
+Home, Review, Notes, and Operations share one native window. Operations reuses the
 existing fleet, archive, lane, tool, hub, backup, and owner-review controls. The
 menu-bar glance keeps its compact operational view. A separate Preview bundle is
 a testing boundary, not a second shipping product; remove that boundary after
 upgrade and distribution validation.
+
+## Signal Night v2
+
+The default palette is midnight navy, warm amber actions, and restrained cyan
+context indicators. Home uses a left navigation rail, a compact node row with an
+explicit expansion control, and tools beside their context receipts. Review owns
+attention items and contribution acceptance. Its navigation count counts attention
+items, not individual proposals. Do not add conversational suggestion cards to Home.
+
+Tool selection filters receipts only when the selected archive matches the connected
+archive and a producer lane matches. Missing evidence stays unknown. Notes and the
+existing Operations console use the same palette; their established data and write
+contracts remain intact. An explicit light token override remains available for QA.
 
 ## Evidence on Home
 

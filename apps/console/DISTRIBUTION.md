@@ -3,7 +3,8 @@
 Sovereign starts with one local archive. The Apple Silicon preview can create an archive, capture a note, search titles and contents, read notes, and open the underlying Markdown in a text editor. It bundles Python and requires no account, terminal setup, Git, Homebrew, Obsidian, or separate hub for those operations.
 
 The main window now opens on a unified Home with nodes, producers, contributions,
-review needs, and context preparation receipts. Notes opens the local reader and
+and context preparation receipts. Review contains attention items and contribution
+acceptance. Signal Night supplies the shared navy, amber, and cyan palette. Notes opens the local reader and
 capture interface. Operations opens the existing connected console in the same
 window and reuses its explicit setup and review actions. Home reads status from an
 existing installed `sov` command; it does not bundle or install fleet connectors.

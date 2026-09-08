@@ -24,25 +24,14 @@
   --ease: cubic-bezier(.2,.7,.2,1); --dur: 120ms; --dur-slow: 240ms;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --ground: #17181B; --panel: #1E2024; --sunk: #222428; --rule: #2C2F35; --rule-soft: #26292E;
-    --ink: #ECEBE6; --ink-2: #BDBCB5; --muted: #8E9096; --faint: #6F7278;
-    --brass: #D4A73A; --brass-ink: #EFD9A4; --brass-wash: #2A2416;
-    --live: #3FA96B; --warn: #D19A26; --down: #E0564C; --idle: #4E5259;
-    --sel: #262A31;
-    --series-1: #B58620; --series-2: #4F89D2; --series-3: #39A064;
-    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
-    color-scheme: dark;
-  }
+
+/* Signal Night is the product default. An explicit light appearance remains supported. */
+:root:not([data-theme="light"]) {
+ --ground:#00060f; --panel:#0f1a2a; --sunk:#060e1a; --rule:#1a2a3d; --rule-soft:#142236;
+ --ink:#eaf1f6; --ink-2:#bacbd6; --muted:#93a7b4; --faint:#8297a6;
+ --brass:#fd881e; --brass-ink:#fd9c44; --brass-wash:#302315;
+ --live:#4ade80; --warn:#e7b06c; --down:#f08078; --idle:#688094; --sel:#132639;
+ --series-1:#fd881e; --series-2:#2fd4e0; --series-3:#4ade80;
+ --cyan:#2fd4e0; --depth:#0b1a2d; --atmosphere:#fd881e0d; --shadow:none; color-scheme:dark;
 }
-:root[data-theme="dark"] {
-  --ground: #17181B; --panel: #1E2024; --sunk: #222428; --rule: #2C2F35; --rule-soft: #26292E;
-  --ink: #ECEBE6; --ink-2: #BDBCB5; --muted: #8E9096; --faint: #6F7278;
-  --brass: #D4A73A; --brass-ink: #EFD9A4; --brass-wash: #2A2416;
-  --live: #3FA96B; --warn: #D19A26; --down: #E0564C; --idle: #4E5259;
-  --sel: #262A31;
-  --series-1: #B58620; --series-2: #4F89D2; --series-3: #39A064;
-  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
-  color-scheme: dark;
-}
+:root[data-theme="light"]{--cyan:#086e78;--depth:#e4ecf3;--atmosphere:#fd881e08}
