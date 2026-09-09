@@ -445,13 +445,12 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
         let frame = qaGlance ? NSRect(x: 120, y: 120, width: glanceSize.width, height: glanceSize.height)
                              : NSRect(x: 120, y: 120, width: 900, height: 600)
-        window = NSWindow(contentRect: qaFrame(frame), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: qaFrame(frame), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Sovereign"
         window.appearance = NSApp.effectiveAppearance; window.backgroundColor = pageGround
         window.minSize = qaGlance ? glanceSize : NSSize(width: 720, height: 460)
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
+        // Keep the native title bar outside WKWebView so AppKit owns window dragging.
+        // Web content must retain mouse gestures for controls and text selection.
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         web.frame = container.bounds; web.autoresizingMask = [.width, .height]
         container.addSubview(web); window.contentView = container
