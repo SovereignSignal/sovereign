@@ -657,7 +657,7 @@ window.onerror = function (msg, src, line, col) {
       n: count(real.length, "job") + (inside.length ? ", " + count(inside.length, "lane") : "") });
     real.forEach(j => out.push({ kind: "job", id: j.label, o: j }));
     if (inside.length) {
-      out.push({ kind: "head", id: "h-lanes", section: "runner", label: "Lanes inside · " + shortLabel(inside[0].kick), n: count(inside.length, "lane") });
+      out.push({ kind: "head", id: "h-lanes", section: "runner", label: "Lanes inside · " + SovStatus.shortLabel(inside[0].kick), n: count(inside.length, "lane") });
       inside.forEach(j => out.push({ kind: "job", id: j.label, o: j }));
     }
     return out;
@@ -900,6 +900,9 @@ window.onerror = function (msg, src, line, col) {
     const opt = (v, label) => `<label class="radio"><input type="radio" name="where" value="${v}" ${S.where === v ? "checked" : ""}> ${label}</label>`;
     const login = S.loginState === "on" ? "Registered with macOS." : S.loginState === "off" ? "Not registered." : S.loginState;
     return head("Settings", "Saved on this Mac") + `
+      <div class="sect"><h2><label for="s-appearance">Appearance</label></h2>
+        <select id="s-appearance">${["system", "dark", "light"].map(v => `<option value="${v}" ${(S.appearance || "system") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select>
+        <div class="prose" style="color:var(--muted);margin-top:6px">System follows your Mac. Appearance changes are saved immediately.</div></div>
       <div class="sect"><h2>Where the app lives</h2>
         ${opt("dock", "Dock")}${opt("menubar", "Menu bar only")}${opt("both", "Dock and menu bar")}
         <div class="prose" style="color:var(--muted);margin-top:4px">The menu bar puts a crown up top; click it for the glance panel. Menu bar only hides the Dock icon.</div></div>
@@ -915,6 +918,13 @@ window.onerror = function (msg, src, line, col) {
       ${S.error ? `<div class="note">${esc(S.error)}</div>` : ""}
       <div class="acts"><button class="brass" id="s-save">Save settings</button><span class="pulls" id="s-state" aria-live="polite"></span></div>`;
   }
+  document.addEventListener("change", e => {
+    if (e.target.id === "s-appearance") bridge({cmd: "appearance", value: e.target.value});
+  });
+  window.addEventListener("sov-appearance", e => {
+    S.appearance = e.detail;
+    const control = $("#s-appearance"); if (control) control.value = e.detail;
+  });
   function openSettings() { settingsOpen = true; renderInspector(); openInspector(); commit(); bridge({ cmd: "settings", probe: true }); }
   let saving = false;
   function saveSettings() {

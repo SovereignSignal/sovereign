@@ -88,5 +88,5 @@ window.SovStatus = (() => {
     freshG.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
     return { need: needG, fresh: freshG, stale };
   }
-  return {assess};
+  return {assess, shortLabel};
 })();

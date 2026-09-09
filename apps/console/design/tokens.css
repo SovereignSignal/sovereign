@@ -25,7 +25,7 @@
   color-scheme: light;
 }
 
-/* Signal Night is the product default. An explicit light appearance remains supported. */
+/* The native shell resolves System / Dark / Light before the document loads. */
 :root:not([data-theme="light"]) {
  --ground:#00060f; --panel:#0f1a2a; --sunk:#060e1a; --rule:#1a2a3d; --rule-soft:#142236;
  --ink:#eaf1f6; --ink-2:#bacbd6; --muted:#93a7b4; --faint:#8297a6;
@@ -35,3 +35,17 @@
  --cyan:#2fd4e0; --depth:#0b1a2d; --atmosphere:#fd881e0d; --shadow:none; color-scheme:dark;
 }
 :root[data-theme="light"]{--cyan:#086e78;--depth:#e4ecf3;--atmosphere:#fd881e08}
+
+/* Spatial views share the app appearance. Graphite, brass and cyan on paper in light. */
+:root:not([data-theme="light"]) {
+ --sv-grid:#1a3041; --sv-platform:#122332; --sv-platform-edge:#2a4052;
+ --sv-left:#142536; --sv-right:#0b1724; --sv-top:#203b4e; --sv-edge:#456177; --sv-top-edge:#6c8b9f;
+ --sv-core-top:#403322; --sv-core-left:#241f1e; --sv-core-right:#171c24; --sv-core-edge:#79633e;
+ --sv-selected:#173340; --sv-hover:#34556a;
+}
+:root[data-theme="light"] {
+ --sv-grid:#cbd3d7; --sv-platform:#e6ebed; --sv-platform-edge:#a8b6be;
+ --sv-left:#d4dde2; --sv-right:#bbc9d0; --sv-top:#f5f7f7; --sv-edge:#687e8a; --sv-top-edge:#7d929d;
+ --sv-core-top:#f2e5c5; --sv-core-left:#e5d6b5; --sv-core-right:#cbbb9d; --sv-core-edge:#8c7543;
+ --sv-selected:#d2e9e9; --sv-hover:#e2f1f0;
+}

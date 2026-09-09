@@ -17,7 +17,19 @@ import WebKit
 import ServiceManagement
 
 enum Settings {
-    static let d = UserDefaults.standard
+    // Snapshot QA may persist preferences in its own suite, never the owner's domain.
+    static let d: UserDefaults = {
+        let env = ProcessInfo.processInfo.environment
+        if env["SOV_SNAPSHOT"] != nil, let suite = env["SOV_QA_DEFAULTS_SUITE"], suite.hasPrefix("com.sovereign.qa.") {
+            return UserDefaults(suiteName: suite)!
+        }
+        return .standard
+    }()
+    static let appearances = ["system", "dark", "light"]
+    static var appearance: String {
+        get { let v = d.string(forKey: "sov.appearance") ?? "system"; return appearances.contains(v) ? v : "system" }
+        set { if appearances.contains(newValue) { d.set(newValue, forKey: "sov.appearance") } }
+    }
     static var location: String { get { d.string(forKey: "sov.where") ?? "dock" } set { d.set(newValue, forKey: "sov.where") } }
     static var loginItem: Bool { get { d.bool(forKey: "sov.loginItem") } set { d.set(newValue, forKey: "sov.loginItem") } }
     static var refresh: Int { get { let v = d.integer(forKey: "sov.refresh"); return v > 0 ? v : 60 } set { d.set(newValue, forKey: "sov.refresh") } }
@@ -40,7 +52,7 @@ enum Settings {
             }
         }
         var out: [String: Any] = ["where": location, "loginItem": loginItem, "loginState": login,
-                                  "refresh": refresh, "defaultView": defaultView, "closeQuits": closeQuits,
+                                  "refresh": refresh, "defaultView": defaultView, "closeQuits": closeQuits, "appearance": appearance,
                                   "bundle": Bundle.main.bundlePath]
         if let e = lastError { out["error"] = e }
         return out
@@ -207,6 +219,23 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
         case "settings":
             deliver("settings", Settings.dict(probe: (d["probe"] as? Bool) == true))
+        case "appearance":
+            guard let value = d["value"] as? String, Settings.appearances.contains(value) else { return }
+            App.shared.setAppearance(value)
+        case "qaAppearance":
+            // Simulate a system appearance notification without changing macOS preferences.
+            guard App.shared.snapshotting else { return }
+            if let value = d["systemTheme"] as? String, ["dark", "light"].contains(value), Settings.appearance == "system" {
+                NSApp.appearance = NSAppearance(named: value == "dark" ? .darkAqua : .aqua)
+            }
+            if (d["openGlance"] as? Bool) == true { App.shared.prepareGlance() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                let app = App.shared!
+                app.glanceWeb?.evaluateJavaScript("document.documentElement.dataset.theme") { value, _ in
+                    log("appearance glance: \(value ?? "unavailable")")
+                }
+                log("appearance native: \(app.theme) saved=\(Settings.appearance) inherited=\(NSApp.appearance == nil)")
+            }
         case "setSettings":
             if let w = d["where"] as? String, ["dock", "menubar", "both"].contains(w) { Settings.location = w }
             var loginChanged = false
@@ -355,13 +384,14 @@ func qaFrame(_ f: NSRect) -> NSRect {
 final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         let alert = NSAlert(); alert.messageText = message
-        alert.window.appearance = NSApp.effectiveAppearance; alert.window.backgroundColor = pageGround
+        alert.window.appearance = nil; alert.window.backgroundColor = pageGround
         alert.addButton(withTitle: "Discard"); alert.addButton(withTitle: "Keep editing")
         completionHandler(alert.runModal() == .alertFirstButtonReturn)
     }
     func webView(_ w: WKWebView, didFailProvisionalNavigation n: WKNavigation!, withError e: Error) { showLoadFailure(w) }
     func webView(_ w: WKWebView, didFail n: WKNavigation!, withError e: Error) { showLoadFailure(w) }
     func webView(_ w: WKWebView, didFinish n: WKNavigation!) {
+        syncAppearance()
         guard w === web else { return }
         loadWatchdog?.cancel()
         w.evaluateJavaScript("typeof window.sovDeliver === 'function'") { value, _ in
@@ -390,6 +420,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     var snapshotting: Bool { !(ProcessInfo.processInfo.environment["SOV_SNAPSHOT"] ?? "").isEmpty }
     var theme: String { NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light" }
     var pageGround: NSColor { theme == "dark" ? NSColor(srgbRed: 0, green: 6/255, blue: 15/255, alpha: 1) : NSColor(srgbRed: 250/255, green: 250/255, blue: 247/255, alpha: 1) }
+    var appearanceObservation: NSKeyValueObservation?
+    var appearanceMenu: NSMenu?
     var qaGlance: Bool { ProcessInfo.processInfo.environment["SOV_GLANCE"] == "1" }
 
     static func main() {
@@ -424,6 +456,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         comps.fragment = glance ? (qaGlance ? "glance-qa" : "glance") : nil
         let target = comps.url ?? ui
         log("loading \(target.absoluteString)")
+        // Refresh the document-start script too: later navigation must not reuse the launch theme.
+        let controller = w.configuration.userContentController
+        controller.removeAllUserScripts()
+        controller.addUserScript(WKUserScript(source: "document.documentElement.dataset.theme='\(theme)';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         w.loadFileURL(target, allowingReadAccessTo: ui.deletingLastPathComponent())
         if w === web {
             let watchdog = DispatchWorkItem { [weak self, weak w] in if let w = w { self?.showLoadFailure(w) } }
@@ -433,9 +469,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        // SOV_APPEARANCE=dark|light forces the appearance (used with SOV_SNAPSHOT for design QA).
-        let appearance = ProcessInfo.processInfo.environment["SOV_APPEARANCE"] ?? "dark"
-        NSApp.appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
+        applyAppearance()
+        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.syncAppearance() }
+        }
         sovPath = ["\(NSHomeDirectory())/brain-bin/sov", "/usr/local/bin/sov", "/opt/homebrew/bin/sov"].first { FileManager.default.isExecutableFile(atPath: $0) }
         if snapshotting, let command = ProcessInfo.processInfo.environment["SOV_QA_STATUS_COMMAND"] { sovPath = command }
         localMode = true
@@ -447,7 +484,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
                              : NSRect(x: 120, y: 120, width: 900, height: 600)
         window = NSWindow(contentRect: qaFrame(frame), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Sovereign"
-        window.appearance = NSApp.effectiveAppearance; window.backgroundColor = pageGround
+        window.appearance = nil; window.backgroundColor = pageGround
         window.minSize = qaGlance ? glanceSize : NSSize(width: 720, height: 460)
         // Keep the native title bar outside WKWebView so AppKit owns window dragging.
         // Web content must retain mouse gestures for controls and text selection.
@@ -572,13 +609,45 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         bridge.local(["action": create ? "create" : "open", "root": url.path]) { result in
             DispatchQueue.main.async {
                 if let error = result["error"] as? String {
-                    let alert = NSAlert(); alert.messageText = "Archive could not be opened"; alert.informativeText = error; alert.window.appearance = NSApp.effectiveAppearance; alert.window.backgroundColor = self.pageGround; alert.runModal(); return
+                    let alert = NSAlert(); alert.messageText = "Archive could not be opened"; alert.informativeText = error; alert.window.appearance = nil; alert.window.backgroundColor = self.pageGround; alert.runModal(); return
                 }
                 guard let root = result["root"] as? String else { return }
                 Settings.archive = root
                 self.bridge.deliver("localState", ["root": root])
             }
         }
+    }
+
+    // ---- appearance: update existing documents, never reload a draft or decision preview ----
+
+    func setAppearance(_ value: String) {
+        Settings.appearance = value
+        applyAppearance()
+    }
+
+    private func applyAppearance() {
+        let override = ProcessInfo.processInfo.environment["SOV_APPEARANCE"]
+        let value = override.flatMap { Settings.appearances.contains($0) ? $0 : nil } ?? Settings.appearance
+        NSApp.appearance = value == "system" ? nil : NSAppearance(named: value == "dark" ? .darkAqua : .aqua)
+        syncAppearance()
+    }
+
+    private func syncAppearance() {
+        window?.backgroundColor = pageGround
+        loadingOverlay?.layer?.backgroundColor = pageGround.cgColor
+        NSApp.modalWindow?.backgroundColor = pageGround
+        // Windows inherit the application, including native sheets and alerts.
+        let js = "document.documentElement.dataset.theme='\(theme)';window.dispatchEvent(new CustomEvent('sov-appearance',{detail:'\(Settings.appearance)'}));"
+        for view in [web, glanceWeb].compactMap({ $0 }) {
+            view.evaluateJavaScript(js, completionHandler: nil)
+        }
+        for item in appearanceMenu?.items ?? [] {
+            item.state = (item.representedObject as? String) == Settings.appearance ? .on : .off
+        }
+    }
+
+    @objc func chooseAppearance(_ sender: NSMenuItem) {
+        if let value = sender.representedObject as? String { setAppearance(value) }
     }
 
     // ---- settings ----
@@ -690,6 +759,14 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
     @objc func toggleGlance(_ sender: Any?) {
         if let p = popover, p.isShown { p.performClose(nil); return }
+        prepareGlance()
+        guard let button = statusItem?.button, let p = popover else { return }
+        glanceWeb?.evaluateJavaScript("window.sovRefresh && window.sovRefresh();", completionHandler: nil)
+        p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func prepareGlance() {
         if glanceWeb == nil {
             let (w, b) = makeWeb()
             w.frame = NSRect(origin: .zero, size: glanceSize)
@@ -703,10 +780,6 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
             p.contentViewController = vc
             popover = p
         }
-        guard let button = statusItem?.button, let p = popover else { return }
-        glanceWeb?.evaluateJavaScript("window.sovRefresh && window.sovRefresh();", completionHandler: nil)
-        p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     func navigate(page: String, place: [String: Any]? = nil) {
@@ -783,6 +856,18 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
+        let viewItem = NSMenuItem(); main.addItem(viewItem)
+        let viewMenu = NSMenu(title: "View")
+        let appearanceItem = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
+        let choices = NSMenu(title: "Appearance")
+        for value in Settings.appearances {
+            let item = NSMenuItem(title: value.capitalized, action: #selector(chooseAppearance(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = value
+            item.state = value == Settings.appearance ? .on : .off
+            choices.addItem(item)
+        }
+        appearanceItem.submenu = choices; appearanceMenu = choices
+        viewMenu.addItem(appearanceItem); viewItem.submenu = viewMenu
         NSApp.mainMenu = main
     }
 

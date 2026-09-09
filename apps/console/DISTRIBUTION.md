@@ -103,6 +103,30 @@ python3 apps/console/test-gate.py --evidence /tmp/sovereign-gate-qa
 
 These approval tests use disposable archives and local test Git remotes.
 
+## Appearance and UI repair (0.4.3)
+
+Appearance is available as System / Dark / Light in Settings and View → Appearance.
+System is the default and follows the Mac. Choosing a mode saves immediately in
+`sov.appearance`; updates restyle the current documents and native shell without
+reloading drafts, note selection or review previews. The menu-bar document uses
+the same resolved appearance. System maps use graphite, brass and cyan on paper
+in light mode. Flow scales its SVG to the available width and stacks its route
+picker on narrower windows.
+
+`SOV_APPEARANCE=system|dark|light` is a process-only QA override; it never changes
+the saved choice. Snapshot tests may use `SOV_QA_DEFAULTS_SUITE` with a
+`com.sovereign.qa.` prefix to test persistence without touching owner preferences.
+The `qaAppearance` bridge route is enabled only in snapshot mode and simulates
+an effective-appearance change without changing macOS settings. This exercises
+the observer; it is not evidence of a physical System Settings toggle.
+
+Run `python3 apps/console/test-appearance.py --evidence /path/to/evidence` against
+the built candidate. It covers appearance persistence, rejected invalid values,
+live updates in both web views, draft focus/selection, unchanged proposal previews,
+map colors, Flow bounds and every Operations tab. The Hub check injects the old
+missing-helper defect into a disposable page and verifies the error is detected.
+The ordinary release, System and gate fixture suites remain applicable.
+
 ## Public release gates
 
 This is a development preview. Before advertising a public download:
