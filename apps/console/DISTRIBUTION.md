@@ -79,6 +79,30 @@ The System native test uses a disposable independent archive and status fixture.
 It checks cross-pane selection, routes, component search, safe labels, archive
 isolation and navigation. These checks do not install another application.
 
+## Classification conflict review
+
+A declared update to one existing card can retain its current classification
+through Resolve and review, followed by Approve update. The preview compares
+both versions without writing. Final approval preserves both originals, changes
+only the proposed type label and calls the configured owner's approval command.
+Moving a card between classifications and merging multiple existing cards remain
+manual decisions.
+
+Interrupted resolutions block another console decision and provide a recovery
+request. Their receipts and original snapshots are retained under the approval
+machine's `~/.sovereign/gate-locks/resolutions/`. Check the recorded hashes, current
+proposal and trusted card, decision log and Git state before recovery. Legacy
+writers do not share the console lock or recovery receipt, so coordinate them
+before attempting a manual retry or restoration.
+
+```sh
+python3 apps/console/tests/test_gate_check.py
+node apps/console/tests/gate-model.cjs
+python3 apps/console/test-gate.py --evidence /tmp/sovereign-gate-qa
+```
+
+These approval tests use disposable archives and local test Git remotes.
+
 ## Public release gates
 
 This is a development preview. Before advertising a public download:

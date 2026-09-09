@@ -19,3 +19,15 @@ for(const edit of [s=>s.machine.vault='/different',s=>s.hub.via='ssh other',s=>s
 next=copy();next.hub.proposals=[];assert.equal(g.reviewKey(next,'example'),null);
 assert.equal(g.decisionTimeoutMS,120000);
 console.log('Review cache: age-only reuse, content/metadata/routing invalidation and 120-second deadline passed.');
+
+const conflict={state:'type_conflict',fingerprint:token,update:true,proposal:{type:'entity'},existing:[{type:'concept',path:'knowledge/concepts/example.md'}]};
+assert.equal(g.canResolve(conflict,null),true);
+assert.equal(g.canResolve(conflict,{request:'busy'}),false);
+assert.equal(g.canResolve({...conflict,update:false},null),false);
+assert.equal(g.canResolve({...conflict,existing:[...conflict.existing,...conflict.existing]},null),false);
+assert.equal(g.canResolve({...conflict,existing:[{type:'entity',path:'knowledge/concepts/example.md'}]},null),false);
+assert.equal(g.canApprove({state:'resolution_pending',fingerprint:token},null),false);
+assert.equal(g.canReject({state:'resolution_pending',fingerprint:token},null),false);
+console.log('Resolution eligibility and interrupted-decision guards passed.');
+
+assert.equal(g.canResolve({...conflict,existing:[{type:'concept'}]},null),false);

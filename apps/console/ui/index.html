@@ -926,10 +926,10 @@ window.onerror = function (msg, src, line, col) {
     bridge({ cmd: "setSettings", where, loginItem: $("#s-login").checked, refresh: +$("#s-refresh").value, defaultView: $("#s-view").value, closeQuits: $("#s-closequits").checked });
   }
 
-  const gateChecks = new Map(); let gatePending = null, gateRequest = 0;
+  const gateChecks = new Map(), gateResolutions = new Map(); let gatePending = null, gateRequest = 0;
   function requestGateCheck(slug) {
     if(gatePending)return;
-    const request='check-'+(++gateRequest);gateChecks.set(slug,{request,key:GateModel.reviewKey(D,slug),value:{state:'checking'}});
+    gateResolutions.delete(slug);const request='check-'+(++gateRequest);gateChecks.set(slug,{request,key:GateModel.reviewKey(D,slug),value:{state:'checking'}});
     bridge({cmd:'gateCheck',slug,request,via:hub().via||'local'});
     setTimeout(()=>{const entry=gateChecks.get(slug);if(entry?.request===request&&entry.value.state==='checking'){gateChecks.set(slug,{request:null,key:entry.key,value:{state:'unavailable'}});if(sel?.id==='p:'+slug)renderInspector()}},20000);
   }
@@ -971,20 +971,23 @@ window.onerror = function (msg, src, line, col) {
       const state = gatePending?.slug === p.slug ? 'running' : check?.state || 'checking';
       const [title,message] = GateModel.describe(state);
       const existing = check?.existing || [], shown = check?.proposal || p;
+      const resolvable=GateModel.canResolve(check,gatePending), resolving=resolvable&&gateResolutions.get(p.slug)===check.fingerprint;
+      const retained=existing[0]?.type;
       box.innerHTML = head(esc(shown.title || p.slug), `${esc(shown.type || '?')} · ${esc(p.confidence || '?')} confidence`, p.hold ? 'held' : '') +
         `<section class="gate-feedback ${esc(state)}" role="status"><h2>${esc(title)}</h2><p>${esc(message)}</p>
         ${!['checking','running'].includes(state)?`<button data-act="gate-check" data-slug="${esc(p.slug)}" ${gatePending?'disabled':''}>Check again</button>`:''}
         ${existing.length?'<button data-act="gate-compare">Compare cards</button>':''}
-        ${['type_conflict','update_conflict'].includes(state)?`<button data-act="gate-copy" data-slug="${esc(p.slug)}">Copy resolution request</button>`:''}
+        ${['type_conflict','update_conflict','resolution_pending'].includes(state)?`<button data-act="gate-copy" data-slug="${esc(p.slug)}">${state==='resolution_pending'?'Copy recovery request':'Copy resolution request'}</button>`:''}
         ${check?.detail?`<details><summary>Technical details</summary><pre>${esc(check.detail)}</pre></details>`:''}</section>`+
+        (resolving?`<section class="gate-feedback" id="gate-resolution-preview"><h2>Review update as ${esc(retained)}</h2><p>Keep the existing classification: <strong>${esc(retained)}</strong>. The proposed content below will replace the current card. Review both versions for any detail you want to retain.</p><p>Both originals will be saved before approval. Nothing changes until you choose Approve update.</p><button data-act="gate-cancel-resolution" data-slug="${esc(p.slug)}">Cancel resolution</button></section>`:'')+
         `${p.reason?`<div class="prose">${esc(p.reason)}</div>`:''}`+
         `${p.hold?`<div class="note">Held for you: ${esc(p.hold)}</div>`:''}`+
         `${(p.flags||[]).length?`<div class="note">${esc(p.flags.join(', '))}: requires your review.</div>`:''}`+
         (check?.review_notes||[]).map(note=>`<div class="note">${esc(note)}</div>`).join('')+
         `<div class="sect"><h2>Proposed card</h2><div class="card-body">${esc(check?.proposal?.body || p.body || '(empty)')}</div></div>`+
-        (existing.length?`<details id="gate-comparison" class="gate-comparison"><summary>Existing cards · ${existing.length}</summary>${existing.map(c=>`<section><h2>${esc(c.title)}</h2><p class="mono">${esc(c.path)}</p><div class="card-body">${esc(c.body)}</div></section>`).join('')}</details>`:'')+
+        (existing.length?`<details id="gate-comparison" class="gate-comparison" ${resolving?'open':''}><summary>Existing cards · ${existing.length}</summary>${existing.map(c=>`<section><h2>${esc(c.title)}</h2><p class="mono">${esc(c.path)}</p><div class="card-body">${esc(c.body)}</div></section>`).join('')}</details>`:'')+
         `<div class="sect">${kv([['from',shown.source],['waiting',age(p.age_h)]])}</div>`+
-        `<div class="acts"><button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}" ${GateModel.canApprove(check,gatePending)?'':'disabled'}>${state==='running'?'Saving…':'Approve'}</button>
+        `<div class="acts">${resolvable ? `<button class="brass" data-act="${resolving?'gate':'gate-resolve'}" data-verb="resolve" data-slug="${esc(p.slug)}">${resolving?'Approve update as '+esc(retained):'Resolve and review'}</button>` : `<button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}" ${GateModel.canApprove(check,gatePending)?'':'disabled'}>${state==='running'?'Saving…':'Approve'}</button>`}
         <button class="danger" data-act="gate" data-verb="reject" data-slug="${esc(p.slug)}" ${GateModel.canReject(check,gatePending)?'':'disabled'}>Reject</button>
         ${shown.source?obsBtn(shown.source.replace(/\.md$/,''),'Open source'):''}</div>`;
       return;
@@ -1321,14 +1324,16 @@ window.onerror = function (msg, src, line, col) {
       if (act === "clearlog") return armOrFire(b, "Clear log", () => { openDrawer("Clear log", false); bridge({ cmd: "clearlog", path: b.dataset.path }); });
       if (act === 'gate-check') { requestGateCheck(b.dataset.slug); renderInspector(); return; }
       if (act === 'gate-compare') { const comparison=$('#gate-comparison'); if(comparison){comparison.open=true;comparison.scrollIntoView({block:'start'});} return; }
+      if (act === 'gate-resolve') { const slug=b.dataset.slug,check=gateChecks.get(slug)?.value;if(GateModel.canResolve(check,gatePending)){gateResolutions.set(slug,check.fingerprint);renderInspector();$('#gate-resolution-preview')?.scrollIntoView({block:'start'});}return; }
+      if (act === 'gate-cancel-resolution') {gateResolutions.delete(b.dataset.slug);renderInspector();return;}
       if (act === 'gate-copy') {
         const check=gateChecks.get(b.dataset.slug)?.value;
-        const text=`Resolve the duplicate card ${b.dataset.slug}. Compare the proposal with these existing cards: ${(check?.existing||[]).map(c=>c.path).join(', ')}. Preserve useful detail and provenance, propose one canonical card, and obtain owner approval before changing trusted knowledge.`;
+        const text=check?.state==='resolution_pending'?`Investigate the interrupted Sovereign resolution for ${b.dataset.slug} on the configured approval machine. Inspect its pending receipt under ~/.sovereign/gate-locks/resolutions, preserved originals, current proposal and trusted card, decision log and Git state. Verify exact hashes before any retry or restoration. Report what landed and obtain owner approval before recovery; do not assume failure means nothing changed.`:`Resolve the duplicate card ${b.dataset.slug}. Compare the proposal with these existing cards: ${(check?.existing||[]).map(c=>c.path).join(', ')}. Preserve useful detail and provenance, propose one canonical card, and obtain owner approval before changing trusted knowledge.`;
         bridge({cmd:'copyText',text}); b.textContent='Copied'; return;
       }
       if (act === 'gate') {
         const verb=b.dataset.verb,slug=b.dataset.slug,check=gateChecks.get(slug)?.value;
-        if(!(verb==='approve'?GateModel.canApprove(check,gatePending):GateModel.canReject(check,gatePending)))return;
+        if(!(verb==='resolve'?GateModel.canResolve(check,gatePending)&&gateResolutions.get(slug)===check.fingerprint:verb==='approve'?GateModel.canApprove(check,gatePending):verb==='reject'&&GateModel.canReject(check,gatePending)))return;
         const fire=()=>{
           const request='gate-'+(++gateRequest);
           gatePending={slug,verb,request,title:(hub().proposals||[]).find(p=>p.slug===slug)?.title||slug};showGateNotice('running');renderInspector();
@@ -1402,7 +1407,7 @@ window.onerror = function (msg, src, line, col) {
     }
     if(kind==='gateResult'){
       if(!gatePending||gatePending.request!==payload.request||gatePending.slug!==payload.slug)return;
-      const finished=gatePending;clearTimeout(finished.timer);gatePending=null;gateChecks.delete(payload.slug);
+      const finished=gatePending;clearTimeout(finished.timer);gatePending=null;gateChecks.delete(payload.slug);gateResolutions.delete(payload.slug);
       if(['approved','rejected','sync_pending'].includes(payload.state)){
         const h=hub(),before=(h.proposals||[]).length;h.proposals=(h.proposals||[]).filter(p=>p.slug!==payload.slug);
         if(h.proposals.length<before){h.pending=Math.max(0,(h.pending||before)-1);if(!h.pending)D.needs_you=(D.needs_you||[]).filter(n=>n.kind!=='gate');}
@@ -1420,7 +1425,7 @@ window.onerror = function (msg, src, line, col) {
         return; }
       if (payload.machine && !payload.machine.connected) return renderSetup(payload);
       if(!gatePending)for(const [slug,entry] of gateChecks){
-        if(entry.key!==GateModel.reviewKey(payload,slug))gateChecks.delete(slug);
+        if(entry.key!==GateModel.reviewKey(payload,slug)){gateChecks.delete(slug);gateResolutions.delete(slug);}
       }
       render(payload);
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }

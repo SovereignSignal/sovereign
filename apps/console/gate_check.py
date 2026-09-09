@@ -1,7 +1,8 @@
 """Bundled gate protocol; runs on the approval machine using only the stdlib.
 
 Reads first. Writes only through the installed owner gate, after matching the
-fingerprint the owner reviewed. Never force-approves or retires a card.
+fingerprint the owner reviewed. Resolutions preserve the existing classification and retain both originals.
+Never force-approves or retires a card.
 """
 import fcntl
 import signal
@@ -12,6 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 FOLDERS = {'entity': 'entities', 'concept': 'concepts', 'synthesis': 'syntheses', 'plan': 'syntheses', 'review': 'syntheses'}
 LIMIT = 128 * 1024
@@ -34,9 +36,11 @@ def read_card(path, root):
             'sha256': hashlib.sha256(raw).hexdigest()}
 
 
-def check(root, lane, slug):
+def check(root, lane, slug, *, resolving=False):
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,120}', slug):
         return {'state': 'invalid'}
+    if not resolving and resolution_pending(root, lane, slug):
+        return {'state': 'resolution_pending'}
     base = root / 'raw/workspaces' / lane / 'proposals'
     proposal = next((p for p in [base / (slug+'.md'), base / 'audit' / (slug+'.md')] if p.exists()), None)
     if proposal is None:
@@ -63,7 +67,7 @@ def check(root, lane, slug):
     if isinstance(entry, dict):
         for flag, reason, label in [('screen_flagged','screen_reason','Source screening'),('taste_flagged','taste_reason','Curator review')]:
             if entry.get(flag): notes.append(label+': '+str(entry.get(reason) or 'needs your review'))
-    return {'state': state, 'review_notes': notes, 'fingerprint': digest, 'proposal': card, 'existing': existing, 'destination': destination, 'update': update}
+    return {'state': state, 'review_notes': notes, 'fingerprint': digest, 'proposal': card, 'existing': existing, 'destination': destination, 'update': update, 'metadata_fingerprint': hashlib.sha256(json.dumps(entry,sort_keys=True).encode()).hexdigest()}
 
 
 def lock_path(root):
@@ -107,6 +111,10 @@ def execute(root, lane, slug, verb, expected, command):
     with path.open('a') as lock:
         try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError: return {'state': 'busy'}
+        if verb == 'resolve':
+            return resolve_locked(root,lane,slug,expected,command,lock.fileno())
+        if verb not in ('approve','reject'):
+            return {'state':'invalid'}
         return execute_locked(root,lane,slug,verb,expected,command,lock.fileno())
 
 
@@ -122,8 +130,8 @@ def matches_reviewed(path, root, expected):
             and hashlib.sha256(path.read_bytes()).hexdigest() == expected)
 
 
-def execute_locked(root, lane, slug, verb, expected, command, lock_fd):
-    before = check(root, lane, slug)
+def execute_locked(root, lane, slug, verb, expected, command, lock_fd, *, resolving=False):
+    before = check(root, lane, slug, resolving=resolving)
     if not expected or before.get('fingerprint') != expected:
         return {'state': 'changed', 'check': before}
     if before['state'] != 'ready' and verb == 'approve':
@@ -132,7 +140,7 @@ def execute_locked(root, lane, slug, verb, expected, command, lock_fd):
                PATH=str(Path.home()/'brain-bin')+':/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin')
     prior_rejections = rejection_paths(root, lane, slug) if verb == 'reject' else set()
     try:
-        result = run_gate([str(command), 'gate', verb, slug, 'Owner reviewed in Sovereign'], env, lock_fd)
+        result = run_gate([str(command), 'gate', verb, slug, 'Owner approved update retaining existing classification in Sovereign' if resolving else 'Owner reviewed in Sovereign'], env, lock_fd)
     except subprocess.TimeoutExpired:
         return {'state': 'uncertain'}
     except OSError:
@@ -164,10 +172,114 @@ def execute_locked(root, lane, slug, verb, expected, command, lock_fd):
     return {'state': 'uncertain', 'detail': detail}
 
 
+def resolution_record(root, lane, slug):
+    key = hashlib.sha256((str(root.resolve())+'\0'+lane+'\0'+slug).encode()).hexdigest()
+    return lock_path(root).parent / 'resolutions' / (key+'.json')
+
+
+def resolution_pending(root, lane, slug):
+    record = resolution_record(root,lane,slug)
+    if not record.exists():
+        return False
+    try:
+        return json.loads(record.read_text()).get('status') not in ('completed','restored')
+    except (OSError, ValueError, AttributeError):
+        return True
+
+
+def can_resolve(review):
+    existing = review.get('existing', [])
+    if review.get('state') != 'type_conflict' or not review.get('update') or len(existing) != 1:
+        return False
+    card = existing[0]
+    kind = card.get('type')
+    return (kind in FOLDERS and card['path'].split('/')[-2] == FOLDERS[kind]
+            and kind != review['proposal']['type'])
+
+
+def atomic_write(path, data):
+    # The temporary file and replacement share a directory. Flush both file and
+    # directory so an interrupted decision retains a durable recovery record.
+    fd, name = tempfile.mkstemp(prefix='.resolution-', dir=path.parent)
+    try:
+        with os.fdopen(fd,'wb') as out:
+            out.write(data); out.flush(); os.fsync(out.fileno())
+        os.replace(name,path)
+        directory = os.open(path.parent,os.O_RDONLY)
+        try: os.fsync(directory)
+        finally: os.close(directory)
+    finally:
+        if os.path.exists(name): os.unlink(name)
+
+
+def resolve_locked(root, lane, slug, expected, command, lock_fd):
+    before = check(root,lane,slug)
+    if not expected or before.get('fingerprint') != expected:
+        return {'state':'changed','check':before}
+    if not can_resolve(before):
+        return {'state':before['state'],'check':before}
+    prop = root / before['proposal']['path']
+    existing = root / before['existing'][0]['path']
+    original = prop.read_bytes(); trusted = existing.read_bytes()
+    if (hashlib.sha256(original).hexdigest() != before['proposal']['sha256']
+            or hashlib.sha256(trusted).hexdigest() != before['existing'][0]['sha256']):
+        return {'state':'changed'}
+    # Only the reviewed classification changes; no generated merge or content edit.
+    text = original.decode('utf-8')
+    match = re.fullmatch(r'---\r?\n(.*?)\r?\n---(?:\r?\n|$)(.*)',text,re.S)
+    if match is None: return {'state':'invalid'}
+    labels = match[1]
+    if len(re.findall(r'(?m)^type:',labels)) != 1:
+        return {'state':'invalid'}
+    kind = before['existing'][0]['type']
+    labels = re.sub(r'(?m)^type:[^\r\n]*', 'type: '+kind, labels)
+    resolved = (text[:match.start(1)]+labels+text[match.end(1):]).encode('utf-8')
+    record = resolution_record(root,lane,slug)
+    record.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+    backup = Path(tempfile.mkdtemp(prefix='originals-',dir=record.parent))
+    atomic_write(backup/'proposal.md',original)
+    atomic_write(backup/'existing.md',trusted)
+    receipt = {'status':'pending','slug':slug,'lane':lane,'root':str(root),
+               'fingerprint':expected,'retained_type':kind,'originals':str(backup),
+               'proposal_sha256':before['proposal']['sha256'],
+               'existing_sha256':before['existing'][0]['sha256'],
+               'resolved_sha256':hashlib.sha256(resolved).hexdigest()}
+    # All backups precede mutation; the durable pending marker blocks another
+    # console decision after interruption. No draft is rewritten before final approval.
+    if check(root,lane,slug).get('fingerprint') != expected:
+        return {'state':'changed'}
+    atomic_write(record,(json.dumps(receipt,sort_keys=True)+'\n').encode())
+    try:
+        atomic_write(prop,resolved)
+        current = check(root,lane,slug,resolving=True)
+        expected_proposal = dict(before['proposal'],type=kind,sha256=receipt['resolved_sha256'])
+        if (current.get('proposal') != expected_proposal or current.get('existing') != before['existing']
+                or current.get('metadata_fingerprint') != before.get('metadata_fingerprint')):
+            result = {'state':'changed'}
+        else:
+            result = execute_locked(root,lane,slug,'approve',current.get('fingerprint'),command,lock_fd,resolving=True)
+        if result['state'] in ('approved','sync_pending'):
+            receipt['status']='completed'
+        elif (matches_reviewed(prop,root,receipt['resolved_sha256'])
+              and matches_reviewed(existing,root,receipt['existing_sha256'])):
+            # A known no-change failure restores the original proposal. An
+            # uncertain command may have surviving effects; never restore it blindly.
+            if result['state'] in ('failed','unavailable','changed','ready','type_conflict','update_conflict'):
+                atomic_write(prop,original);receipt['status']='restored'
+        atomic_write(record,(json.dumps(receipt,sort_keys=True)+'\n').encode())
+        if receipt['status']=='pending':
+            return {'state':'resolution_pending','detail':result.get('detail','')}
+        return dict(result, resolution={'retained_type':kind,'originals_saved':True})
+    except (OSError, ValueError):
+        # Originals and the pending record survive partial work. A subsequent
+        # check must report recovery required, never retry approval automatically.
+        return {'state':'resolution_pending'}
+
+
 def main():
     try:
         mode, slug = sys.argv[1:3]
-        if mode not in ('check','approve','reject'):
+        if mode not in ('check','approve','reject','resolve'):
             raise ValueError('Unsupported gate operation')
         home = Path.home()
         root = Path((home/'.brain-root').read_text().strip()).expanduser()

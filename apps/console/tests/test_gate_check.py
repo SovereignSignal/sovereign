@@ -114,4 +114,58 @@ class GateCheckTests(unittest.TestCase):
   command=self.setup_real_gate();hook=self.base/'origin.git/hooks/pre-receive';hook.write_text('#!/bin/sh\nexit 1\n');hook.chmod(0o700)
   self.assertEqual(self.execute(command)['state'],'sync_pending')
 
+ def resolution(self):
+  old=self.existing('concepts','concept')
+  (self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':self.slug,'screen_flagged':True,'screen_reason':'Check source'}}))
+  return old,self.proposals/(self.slug+'.md')
+ def test_resolve_preserves_type_and_originals_through_real_gate(self):
+  old,prop=self.resolution(); originals=(old.read_bytes(),prop.read_bytes());command=self.setup_real_gate()
+  result=self.execute(command,'resolve');self.assertEqual(result['state'],'approved')
+  self.assertFalse(prop.exists());self.assertEqual(gate.read_card(old,self.root)['type'],'concept');self.assertEqual(gate.read_card(old,self.root)['body'],'Reviewed content')
+  record=json.loads(gate.resolution_record(self.root,self.lane,self.slug).read_text());self.assertEqual(record['status'],'completed');backup=Path(record['originals'])
+  self.assertEqual((backup/'existing.md').read_bytes(),originals[0]);self.assertEqual((backup/'proposal.md').read_bytes(),originals[1])
+  self.assertTrue(json.loads((self.proposals/'.meta.json').read_text())[self.slug]['screen_flagged'])
+ def test_resolve_failure_restores_original_without_touching_trusted_card(self):
+  old,prop=self.resolution();originals=(old.read_bytes(),prop.read_bytes())
+  result=self.execute(self.fake('echo REFUSED; exit 1'),'resolve');self.assertEqual(result['state'],'failed');self.assertEqual((old.read_bytes(),prop.read_bytes()),originals);self.assertEqual(self.check()['state'],'type_conflict')
+ def test_resolve_timeout_blocks_retries_and_preserves_backups(self):
+  old,prop=self.resolution()
+  with patch.object(gate,'run_gate',side_effect=subprocess.TimeoutExpired('gate',60)):
+   self.assertEqual(self.execute(self.base/'unused','resolve')['state'],'resolution_pending')
+  self.assertEqual(self.check()['state'],'resolution_pending')
+  self.assertEqual(gate.execute(self.root,self.lane,self.slug,'approve','a'*64,self.base/'unused')['state'],'changed')
+  record=json.loads(gate.resolution_record(self.root,self.lane,self.slug).read_text());self.assertTrue((Path(record['originals'])/'proposal.md').exists());self.assertIn('Existing detail',old.read_text())
+ def test_resolve_changed_proposal_is_refused(self):
+  old,prop=self.resolution();token=self.check()['fingerprint'];prop.write_text(prop.read_text()+'Changed')
+  self.assertEqual(self.execute(self.base/'unused','resolve',token)['state'],'changed');self.assertIn('Changed',prop.read_text())
+ def test_resolve_multiple_existing_cards_is_refused(self):
+  old,prop=self.resolution();self.existing();self.assertFalse(gate.can_resolve(self.check()));self.assertEqual(self.execute(self.base/'unused','resolve')['state'],'type_conflict')
+ def test_resolve_requires_declared_same_card_update(self):
+  self.existing('concepts','concept');self.assertEqual(self.execute(self.base/'unused','resolve')['state'],'type_conflict')
+ def test_resolve_symlink_existing_refused(self):
+  old,prop=self.resolution();old.unlink();old.symlink_to(self.card(self.base/'outside','concept'))
+  with self.assertRaises(ValueError):self.check()
+ def test_resolve_type_folder_mismatch_refused(self):
+  self.resolution();self.existing('concepts','entity');self.assertFalse(gate.can_resolve(self.check()))
+ def test_resolve_keeps_body_delimiters_and_title_delimiters(self):
+  old,prop=self.resolution();prop.write_text(prop.read_text().replace('title: Example','title: An---example')+'\n---\nBody delimiter')
+  original=gate.read_card(prop,self.root);self.assertEqual(self.execute(self.setup_real_gate(),'resolve')['state'],'approved');landed=gate.read_card(old,self.root);self.assertEqual(landed['body'],original['body']);self.assertEqual(landed['title'],original['title'])
+ def test_resolve_duplicate_type_labels_refused(self):
+  old,prop=self.resolution();prop.write_text(prop.read_text().replace('type: entity','type: concept\ntype: entity'))
+  self.assertEqual(self.execute(self.base/'unused','resolve')['state'],'invalid')
+ def test_resolve_push_failure_retains_applied_result(self):
+  old,prop=self.resolution();command=self.setup_real_gate();hook=self.base/'origin.git/hooks/pre-receive';hook.write_text('#!/bin/sh\nexit 1\n');hook.chmod(0o700)
+  self.assertEqual(self.execute(command,'resolve')['state'],'sync_pending');self.assertFalse(prop.exists());self.assertEqual(self.check()['state'],'missing')
+ def test_resolve_rechecks_metadata_before_approval(self):
+  old,prop=self.resolution();original=gate.atomic_write;calls=[]
+  def change(path,data):
+   original(path,data)
+   if path==prop and b'type: concept' in data:
+    (self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':self.slug,'screen_flagged':True,'screen_reason':'Changed after preview'}}))
+  with patch.object(gate,'atomic_write',side_effect=change),patch.object(gate,'run_gate',side_effect=lambda *a:calls.append(a)):
+   result=self.execute(self.base/'unused','resolve')
+  self.assertEqual(result['state'],'changed');self.assertFalse(calls);self.assertEqual(gate.read_card(prop,self.root)['type'],'entity')
+ def test_resolve_unsupported_verb_does_not_execute(self):
+  self.assertEqual(self.execute(self.base/'unused','retire')['state'],'invalid')
+
 if __name__=='__main__':unittest.main()

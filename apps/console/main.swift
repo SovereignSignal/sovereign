@@ -163,7 +163,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                   slug.range(of: "^[a-z0-9][a-z0-9-]{0,120}$", options: .regularExpression) != nil,
                   let request = d["request"] as? String, request.count < 100 else { return }
             let mode = cmd == "gateCheck" ? "check" : (d["verb"] as? String ?? "")
-            guard ["check", "approve", "reject"].contains(mode) else { return }
+            guard ["check", "approve", "reject", "resolve"].contains(mode) else { return }
             let kind = cmd == "gateCheck" ? "gateCheck" : "gateResult"
             func reply(_ payload: [String: Any]) {
                 var result = payload; result["slug"] = slug; result["request"] = request

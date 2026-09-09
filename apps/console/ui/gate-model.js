@@ -9,6 +9,7 @@ window.GateModel = (() => {
     missing:['This proposal is no longer waiting','It may have been handled elsewhere. Refresh the queue to see its current state.'],
     invalid:['This proposal needs correction','Its labels are incomplete or unsupported. Correct the proposal before approving it.'],
     unavailable:['Could not check the approval machine','Check your connection and try Check again. Approval stays unavailable until the current proposal can be checked.'],
+    resolution_pending:['Resolution needs recovery','The interrupted decision must be checked before another approval. Your original proposal and trusted card were saved on the approval machine. Do not submit again; use Copy recovery request.'],
     running:['Saving your decision','Keep this window open while the approval machine finishes. Do not submit the same decision again.'],
     approved:['Approved','The card is now in your trusted archive.'],
     rejected:['Rejected','The proposal was moved to the rejected archive.'],
@@ -19,6 +20,7 @@ window.GateModel = (() => {
   };
   function describe(state){return messages[state]||messages.uncertain}
   function canApprove(check,pending){return !pending&&check?.state==='ready'&&/^[a-f0-9]{64}$/.test(check.fingerprint||'')}
+  function canResolve(check,pending){const c=check?.existing?.[0],folders={entity:'entities',concept:'concepts',synthesis:'syntheses',plan:'syntheses',review:'syntheses'};return !pending&&check?.state==='type_conflict'&&check.update===true&&check.existing.length===1&&!!folders[c?.type]&&typeof c.path==='string'&&c.path.split('/').at(-2)===folders[c.type]&&c.type!==check.proposal?.type&&/^[a-f0-9]{64}$/.test(check.fingerprint||'')}
   function canReject(check,pending){return !pending&&['ready','type_conflict','update_conflict'].includes(check?.state)&&/^[a-f0-9]{64}$/.test(check.fingerprint||'')}
   // Age changes every status tick; content, routing and review metadata do not.
   function reviewKey(status,slug){
@@ -27,5 +29,5 @@ window.GateModel = (() => {
     const stable=Object.keys(proposal).filter(k=>k!=='age_h').sort().map(k=>[k,proposal[k]]);
     return JSON.stringify([status.machine?.vault,hub.via||'local',hub.reachable,stable]);
   }
-  return {describe,canApprove,canReject,reviewKey,decisionTimeoutMS:120000};
+  return {describe,canApprove,canReject,canResolve,reviewKey,decisionTimeoutMS:120000};
 })();
