@@ -15,16 +15,16 @@ window.Home = (() => {
     if(view==='system'){
       const lead=element('div',null,'home-lead'),intro=element('div');intro.append(element('h1','System'));
       const refresh=element('button',pending?'Checking…':'Refresh status');refresh.disabled=pending;refresh.onclick=()=>Home.refresh();lead.append(intro,refresh);host.append(lead);
-      const badge=document.getElementById('review-count');if(badge)badge.textContent='';
+      const badge=document.getElementById('review-count');if(badge)badge.textContent=GateModel.queue(status,root).count||'';
       const environment=element('div');host.append(environment);SystemView.render(environment,{root,status,context},{browse:api.browse,review:api.review,openNote:api.openNote,operations});return;
     }
-    const lead=element('div',null,'home-lead'),intro=element('div');intro.append(element('h1',view==='review'?'Review':'Your system'));
+    const lead=element('div',null,'home-lead'),intro=element('div');intro.append(element('h1','Your system'));
     const machine=status?.machine||{},hub=status?.hub||{};
     intro.append(element('p',status?.error?'System status unavailable. Your local archive is still available.':machine.connected?`${machine.vault_name||'Connected archive'} · ${machine.host||'this device'} · observed ${ago(status.generated_at)}`:'Open an archive and see which tools are connected.'));
     const refresh=element('button',pending?'Checking…':'Refresh status');refresh.disabled=pending;refresh.onclick=()=>Home.refresh();lead.append(intro,refresh);host.append(lead);
     if(root&&machine.vault&&root!==machine.vault)host.append(element('div',`You are browsing ${root.split('/').pop()}. Connections below belong to ${machine.vault_name||'another archive'} (${machine.vault}). Opening an archive does not connect it to these tools.`,'home-banner'));
     if(status?.error)host.append(element('div',status.error,'home-banner'));
-    const badge=document.getElementById('review-count');if(badge)badge.textContent='';
+    const badge=document.getElementById('review-count');if(badge)badge.textContent=GateModel.queue(status,root).count||'';
     if(!root&&!machine.connected&&!status?.error)return;
     const grid=element('div',null,'home-grid');host.append(grid);
     const nodes=status?.fleet?.hosts||[],tools=(status?.harnesses||[]).filter(h=>h.detected||h.state==='connected'||h.state==='partial'||h.runs_on||h.hub_installed);
@@ -35,14 +35,14 @@ window.Home = (() => {
       const gate=source?.kind==='gate';
       const title=gate?`${hub.pending||'New'} proposals ready for your review`:need.name;
       const jump=need.jump||{view:source?.harness?'tools':source?.kind==='job'?'jobs':'glance',id:source?.harness};
-      attention.append(row(title,gate?'Review proposals':need.detail,need.state,()=>operations(gate?'archive':jump.view,jump.id,gate?'gate':undefined)));
+      attention.append(row(title,gate?'Review proposals':need.detail,need.state,()=>gate?api.review():operations(jump.view,jump.id)));
     }
     if(!needs.length)message(attention,!status||status.error?'Waiting for a successful status check.':hub.reachable===true?'No attention items reported by the connected system.':'No local attention items reported. Hub review status is unverified.');
-    if(badge)badge.textContent=needs.length?String(needs.length):'';
+
     const incoming=panel('Contributions',deliveries.length||null);
     for(const lane of deliveries){const accepted=lane.delivery==='accepted';incoming.append(row(lane.lane,accepted?'Accepted by the hub · source '+ago(lane.pushed):lane.delivery==='waiting'?'Published · waiting for hub acceptance':'acceptance not reported by this status version',accepted?'live':lane.delivery==='waiting'?'warn':'idle',()=>operations('backups','bk:lane:'+lane.lane)))}
     if(!deliveries.length)message(incoming,hub.reachable===true?'No contribution acceptance records were returned.':'Check the hub to verify which contributions have been accepted.');
-    if(view==='review'){grid.classList.add('home-review');grid.append(attention,incoming);return}
+    attention.classList.add('home-attention');incoming.classList.add('home-contributions');
     const connections=panel('Nodes',nodes.length||null);connections.classList.add('home-nodes');
     for(const n of (expanded?nodes:nodes.slice(0,4))){const state=n.net?.online===true?'live':n.net?.online===false?'down':'';const label=state==='live'?'Reachable':state==='down'?'Unreachable':'Reachability unknown';const count=(n.harnesses||[]).length;connections.append(row(n.host,`${label} · ${count} producer${count===1?'':'s'}`,state,()=>operations('hosts',n.host)))}
     if(nodes.length>4){const toggle=element('button',expanded?'Show fewer nodes':'Show all '+nodes.length+' nodes','home-node-toggle');toggle.onclick=()=>{expanded=!expanded;render()};connections.append(toggle)}
@@ -63,7 +63,7 @@ window.Home = (() => {
     const list=element('div',null,'home-context');
     for(const r of receipts)list.append(row(r.topic,`${r.producer} · ${r.cards} cards · ${ago(r.prepared_at)}${r.test?' · test receipt':''}`,null,()=>api.openNote(r.path)));
     packs.append(list);if(!receipts.length)message(packs,context?.error||(!root?'Open an archive to inspect its context receipts.':'No readable preparation receipts in this archive. Delivery and loading remain unverified.'));
-    if(context?.skipped)message(packs,`${context.skipped} receipt file(s) could not be read safely.`);if(context?.limited)message(packs,'Showing the latest 100 producer receipts.');grid.append(packs);
+    if(context?.skipped)message(packs,`${context.skipped} receipt file(s) could not be read safely.`);if(context?.limited)message(packs,'Showing the latest 100 producer receipts.');grid.append(packs,attention,incoming);
     if(root){const local=element('div',null,'home-local');local.append(element('span','Your notes remain plain Markdown.'));const b=element('button','Browse & inspect');b.onclick=api.browse;local.append(b);host.append(local)}
   }
   return {init(options){api=options;render()},view(value){view=value;render()},archive(value){root=value;context=null;selected=null;render()},context(value){context=value;render()},status(value){if(value.request!==request)return;clearTimeout(timeout);pending=false;status=value;render()},refresh(){if(pending)return;pending=true;render();api.send({cmd:'status',request:++request});timeout=setTimeout(()=>{pending=false;request++;status={error:'The status check timed out. Retry to get a current observation.'};render()},45000)}};

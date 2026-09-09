@@ -84,6 +84,9 @@ def main():
   code=COMMON.replace('SCENE',json.dumps(scene))+script
   if anchor:env.update(SOV_SNAPSHOT_ANCHOR=anchor,SOV_QA_JS_AFTER_ANCHOR=code)
   else:env['SOV_QA_JS']='(async()=>{'+code+'})().catch(e=>window.webkit.messageHandlers.sov.postMessage({cmd:"clientError",where:"appearance-qa-failure",msg:String(e.stack||e)}));void 0;'
+  # Preserve the draft through all checks and the first screenshot. Clear only
+  # this disposable fixture before snapshot shutdown reaches the native quit guard.
+  if scene=='draft':env['SOV_QA_JS_AFTER_ANCHOR']="const t=document.getElementById('title'),b=document.getElementById('body');if(t.value!=='Keep this draft'||b.value!=='A complete unsaved thought')throw Error('Draft changed before capture');t.value='';b.value='';"
   if scene=='navigation':env['SOV_QA_JS']="window.webkit.messageHandlers.sov.postMessage({cmd:'appearance',value:'dark'});void 0;"
   if home:env['SOV_QA_GATE_HOME']=str(home)
   cp=subprocess.run([str(app),'-sov.archive',str(root)],env=env,text=True,capture_output=True,timeout=50)
@@ -110,7 +113,7 @@ def main():
     data={'machine':{'connected':True,'host':'QA','vault':str(t.root)},'hub':{'reachable':True,'via':'local','pending':1,'proposals':[{'slug':t.slug,'title':'Example','type':'entity','body':'Reviewed content','source':'owner','confidence':'high'}]},'archive':{'cards':[]}}
     status=home/'status';status.write_text('#!/bin/sh\ncat <<\'DATA\'\n'+json.dumps(data)+'\nDATA\n');status.chmod(0o700)
     paths=[t.proposals/(t.slug+'.md'),t.root/'knowledge/concepts'/(t.slug+'.md'),t.proposals/'.meta.json'];before=[p.read_bytes() for p in paths]
-    run('gate',t.root,status,GATE,anchor='operations:view:archive+open:p:'+t.slug,home=home)
+    run('gate',t.root,status,GATE,anchor='operations:view:review+open:p:'+t.slug,home=home)
     assert before==[p.read_bytes() for p in paths],'Appearance mutated proposal or card'
    finally:t.tearDown()
  finally:

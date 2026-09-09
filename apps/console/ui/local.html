@@ -14,7 +14,7 @@
 <section id="detail" hidden><h2 id="note-title"></h2><div id="note-path"></div><div class="actions"><button id="open-file">Open in text editor</button></div><pre id="reader"></pre></section>
 <form id="editor" hidden><h2>New capture</h2><label for="title">Title</label><input id="title" maxlength="160" required placeholder="A decision, a method, a useful finding"><label for="body">Note</label><textarea id="body" required placeholder="What happened? What is worth keeping?"></textarea><div class="actions" style="margin:0"><button type="submit" id="save" class="primary">Save capture</button><button type="button" id="cancel">Cancel</button></div><p class="fine">Saved as Markdown in raw/workspaces/owner. Recognized credential patterns are redacted before saving.</p></form>
 </article></main>
-<script src="status-model.js"></script><script src="system-model.js"></script><script src="system-view.js"></script><script src="home.js"></script>
+<script src="status-model.js"></script><script src="gate-model.js"></script><script src="system-model.js"></script><script src="system-view.js"></script><script src="home.js"></script>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);let root=null,current=null,request=0,listRequest=0,readRequest=0,contextRequest=0,pendingSave=null,view="home",stateReady=false,pendingGoto=null;
@@ -23,7 +23,7 @@ function saving(value){for(const id of ['save','title','body','new','change','ca
 function notice(text,error=false){$('notice').textContent=text;$('notice').classList.toggle('error',error)}
 function local(action,extra={}){const id=++request;send({cmd:'local',action,...extra,request:id});return id}
 function refresh(){if(root){if(view==='notes')listRequest=local('list',{query:$('search').value});contextRequest=local('context')}if(view!=='notes')Home.refresh()}
-function setView(next){if(!leaveDraft())return false;view=next;readRequest=++request;display('empty');$('system-home').hidden=view==='notes';Home.view(view==='system'?'system':view==='review'?'review':'overview');$('system-tab').setAttribute('aria-pressed',view==='system');$('review-tab').setAttribute('aria-pressed',view==='review');$('page-label').textContent=view==='notes'?'Notes':view==='review'?'Review':view==='system'?'System':'Overview';$('workspace').hidden=view!=='notes'||!root;$('welcome').hidden=!!root||view!=='home';$('home-tab').setAttribute('aria-pressed',view==='home');$('notes-tab').setAttribute('aria-pressed',view==='notes');if(view==='notes')refresh();return true}
+function setView(next){if(next==='review'){send({cmd:"navigate",page:"review"});return false}if(!leaveDraft())return false;view=next;readRequest=++request;display('empty');$('system-home').hidden=view==='notes';Home.view(view==='system'?'system':'overview');$('system-tab').setAttribute('aria-pressed',view==='system');$('review-tab').setAttribute('aria-pressed',view==='review');$('page-label').textContent=view==='notes'?'Notes':view==='system'?'System':'Overview';$('workspace').hidden=view!=='notes'||!root;$('welcome').hidden=!!root||view!=='home';$('home-tab').setAttribute('aria-pressed',view==='home');$('notes-tab').setAttribute('aria-pressed',view==='notes');if(view==='notes')refresh();return true}
 $('home-tab').onclick=()=>setView('home');
 $('system-tab').onclick=()=>setView('system');
 $('notes-tab').onclick=()=>setView('notes');

@@ -16,20 +16,25 @@ def probe(theme,view,live=False):
  checks.ground=css.backgroundColor===(expected==='dark'?'rgb(0, 6, 15)':'rgb(250, 250, 247)');
  checks.rail=!!document.querySelector('.shell-rail')&&getComputedStyle(document.querySelector('.shell-rail')).display!=='none';
  checks.noHorizontalOverflow=document.documentElement.scrollWidth<=innerWidth;
- checks.page=view==='operations'?location.pathname.endsWith('/index.html'):location.pathname.endsWith('/local.html');
+ checks.page=['operations','review'].includes(view)?location.pathname.endsWith('/index.html'):location.pathname.endsWith('/local.html');
  const isOps=view==='operations';
  checks.selectedTab=document.getElementById((isOps?'operations':view)+'-tab').getAttribute('aria-pressed')==='true';
  let count=Number(document.getElementById('review-count').textContent||0),unknown=[];
  if(isOps){const col=document.querySelector('.glance-home .gcol');checks.glance=!!col;
-  checks.sameCount=!!col&&Number(col.querySelector('.n').textContent)===count;
+  checks.attentionCount=!!col&&(live||Number(col.querySelector('.n').textContent)===4);
   unknown=[...(col?.querySelectorAll('.row')||[])].filter(e=>/acceptance.*(?:unverified|not reported|unknown)|not been verified/.test(e.textContent)).map(e=>e.textContent);
- }else if(view==='review'){const panel=document.querySelector('.home-review .home-panel');checks.sameCount=panel.querySelectorAll('.home-row').length===count;
-  unknown=[...panel.querySelectorAll('.home-row')].filter(e=>/acceptance.*(?:unverified|not reported|unknown)|not been verified/.test(e.textContent)).map(e=>e.textContent);
-  if(!live)checks.unknownIdle=!![...document.querySelectorAll('.home-review .home-row')].find(e=>e.textContent.includes('acceptance not reported by this status version')&&e.querySelector('.idle'));
+ }else if(view==='review'){
+  checks.queueCount=document.querySelectorAll('#rows [data-id^="p:"]').length===count;
+  checks.reviewHeading=document.getElementById('vault').textContent==='Review';
+  checks.noOperationsTabs=getComputedStyle(document.querySelector('#switch .seg')).display==='none';
  }else if(view==='notes')checks.notesVisible=!document.getElementById('workspace').hidden;
- else checks.homeVisible=!document.getElementById('system-home').hidden;
+ else {checks.homeVisible=!document.getElementById('system-home').hidden;
+  const panel=document.querySelector('.home-attention');
+  unknown=[...panel.querySelectorAll('.home-row')].filter(e=>/acceptance.*(?:unverified|not reported|unknown)|not been verified/.test(e.textContent)).map(e=>e.textContent);
+  if(!live)checks.unknownIdle=!![...document.querySelectorAll('.home-contributions .home-row')].find(e=>e.textContent.includes('acceptance not reported by this status version')&&e.querySelector('.idle'));
+ }
  checks.noUnknownAttention=unknown.length===0;
- if(!live)checks.expectedCount=count===4;
+ if(!live)checks.expectedCount=count===2;
  window.webkit.messageHandlers.sov.postMessage({cmd:'clientError',where:'release-qa',msg:JSON.stringify({view,theme,width:innerWidth,height:innerHeight,count,unknown,checks,failures:Object.keys(checks).filter(k=>!checks[k])})});
 })()'''.replace('THEME',json.dumps(theme)).replace('VIEW',json.dumps(view)).replace('LIVE',json.dumps(live))
 
@@ -40,13 +45,13 @@ def main():
  with tempfile.TemporaryDirectory(prefix='sovereign-release-') as folder:
   base=Path(folder);archive=base/'QA Archive';brain_local.create(archive,ROOT);archive=archive.resolve()
   brain_local.capture(archive,'A useful decision','Local notes remain portable Markdown.')
-  fixture={'version':'QA','generated_at':datetime.now(timezone.utc).isoformat(),'machine':{'connected':True,'host':'studio','vault':str(archive),'vault_name':'QA archive','hub_pointer':'hub:/archive'},'hub':{'reachable':True,'pending':2},'needs_you':[{'kind':'gate','text':'2 proposals ready for review'}],'jobs':[{'label':'collection-test','last_exit':1}],'fleet':{'hosts':[{'host':'studio','net':{'online':True}},{'host':'worker','net':{'online':False}}]},'archive':{'cards':[]},'harnesses':[], 'backups':{'lanes':[{'lane':'unknown-producer'},{'lane':'waiting-producer','delivery':'waiting'},{'lane':'accepted-producer','delivery':'accepted','pushed':datetime.now(timezone.utc).isoformat()}]}}
+  fixture={'version':'QA','generated_at':datetime.now(timezone.utc).isoformat(),'machine':{'connected':True,'host':'studio','vault':str(archive),'vault_name':'QA archive','hub_pointer':'hub:/archive'},'hub':{'reachable':True,'pending':2,'proposals':[{'slug':'first','title':'A useful decision','type':'concept'},{'slug':'second','title':'Keep this finding','type':'entity'}]},'needs_you':[{'kind':'gate','text':'2 proposals ready for review'}],'jobs':[{'label':'collection-test','last_exit':1}],'fleet':{'hosts':[{'host':'studio','net':{'online':True}},{'host':'worker','net':{'online':False}}]},'archive':{'cards':[]},'harnesses':[], 'backups':{'lanes':[{'lane':'unknown-producer'},{'lane':'waiting-producer','delivery':'waiting'},{'lane':'accepted-producer','delivery':'accepted','pushed':datetime.now(timezone.utc).isoformat()}]}}
   command=base/'status';command.write_text('#!/bin/sh\ncat <<\'STATUS\'\n'+json.dumps(fixture)+'\nSTATUS\n');command.chmod(0o700)
   cases=[('dark','900x600','home','operations')] if args.live else [(theme,size,first,second) for theme in ['dark','light'] for size in ['900x600','720x460'] for first,second in [('home','review'),('notes','operations')]]
   for theme,size,first,second in cases:
    name=('live-' if args.live else '')+theme+'-'+size
    snap=args.evidence/(name+'-'+first+'.png')
-   env=dict(os.environ,SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(snap),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR=('operations:view:glance' if second=='operations' else 'view:'+second),SOV_QA_JS='window.sovView('+json.dumps(first)+');setTimeout(()=>{'+probe(theme,first,args.live)+'},1500);',SOV_QA_JS_AFTER_ANCHOR=probe(theme,second,args.live))
+   env=dict(os.environ,SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(snap),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR=('operations:view:glance' if second=='operations' else 'operations:view:'+second),SOV_QA_JS='window.sovView('+json.dumps(first)+');setTimeout(()=>{'+probe(theme,first,args.live)+'},1500);',SOV_QA_JS_AFTER_ANCHOR=probe(theme,second,args.live))
    if not args.live:env['SOV_QA_STATUS_COMMAND']=str(command)
    # CLI defaults override the archive for this process without persisting preferences.
    result=subprocess.run([str(app),'-sov.archive',str(archive)],env=env,capture_output=True,text=True,timeout=45)

@@ -29,5 +29,26 @@ window.GateModel = (() => {
     const stable=Object.keys(proposal).filter(k=>k!=='age_h').sort().map(k=>[k,proposal[k]]);
     return JSON.stringify([status.machine?.vault,hub.via||'local',hub.reachable,stable]);
   }
-  return {describe,canApprove,canReject,canResolve,reviewKey,decisionTimeoutMS:120000};
+  // Bind the connected queue to the archive selected in the native app. Missing
+  // observations must never read as an empty queue. Status currently caps rows at 60.
+  function queue(status,root,known=true){
+    const blocked=(state,title,message)=>({state,title,message,available:false,proposals:[],count:null});
+    if(!known)return blocked('loading','Opening Review','Reading the selected archive.');
+    if(!root)return blocked('no_archive','Open an archive to review','Choose the archive whose knowledge you want to review.');
+    if(!status)return blocked('loading','Checking your review queue','Waiting for the connected system to report its proposals.');
+    if(status.error)return blocked('unavailable','Review status unavailable','Refresh to reconnect. Your last observation cannot confirm which proposals are still waiting.');
+    if(status.machine?.connected!==true)return blocked('not_connected','Review is not connected','This archive can hold local notes. Connect its review service in Operations to receive proposals.');
+    if(status.machine?.vault!==root)return blocked('different_archive','This archive has a different connection','The connected system belongs to another archive. Open that archive to review its proposals.');
+    const h=status.hub||{};
+    if(h.reachable!==true)return blocked('offline','Review service unavailable','Reconnect to the approval machine, then refresh. Its current queue is unverified.');
+    const proposals=h.proposals;
+    if(!Number.isSafeInteger(h.pending)||h.pending<0||!Array.isArray(proposals)||h.pending<proposals.length||
+       proposals.some(p=>!p||typeof p.slug!=='string'||!/^[a-z0-9][a-z0-9_-]*$/.test(p.slug))||new Set(proposals.map(p=>p.slug)).size!==proposals.length)
+      return blocked('incomplete','The review queue was not fully reported','Refresh to retrieve a valid proposal list. An incomplete report does not mean your queue is clear.');
+    if(h.pending&&!proposals.length)return blocked('incomplete','Proposals are waiting to load',h.pending+' reported by the review service. Refresh to load their details.');
+    return {state:h.pending?'ready':'empty',available:true,proposals,count:h.pending,
+      title:h.pending?'Awaiting your decision':'You’re caught up',
+      message:h.pending?(proposals.length<h.pending?'Showing '+proposals.length+' of '+h.pending+' proposals. Refresh after decisions to load more.':'Compare each proposal with existing knowledge, then decide what to keep.'):'The review service reported no waiting proposals in its latest observation.'};
+  }
+  return {describe,canApprove,canReject,canResolve,reviewKey,queue,decisionTimeoutMS:120000};
 })();

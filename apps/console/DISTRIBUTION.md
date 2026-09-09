@@ -3,10 +3,11 @@
 Sovereign starts with one local archive. The Apple Silicon preview can create an archive, capture a note, search titles and contents, read notes, and open the underlying Markdown in a text editor. It bundles Python and requires no account, terminal setup, Git, Homebrew, Obsidian, or separate hub for those operations.
 
 The main window now opens on a unified Home with nodes, producers, contributions,
-and context preparation receipts. Review contains attention items and contribution
-acceptance. Signal Night supplies the shared navy, amber, and cyan palette. Notes opens the local reader and
-capture interface. Operations opens the existing connected console in the same
-window and reuses its explicit setup and review actions. Home reads status from an
+and context preparation receipts. Home also shows connection warnings and contribution
+acceptance. Review owns the proposal queue, comparison, approval, rejection and
+conflict-resolution controls. Signal Night supplies the shared navy, amber and cyan
+palette. Notes opens the local reader and capture interface. Operations opens
+connected setup, statistics and diagnostics in the same window. Home reads status from an
 existing installed `sov` command; it does not bundle or install fleet connectors.
 
 The preview has a separate bundle identifier and preferences. Building or opening
@@ -126,6 +127,19 @@ live updates in both web views, draft focus/selection, unchanged proposal previe
 map colors, Flow bounds and every Operations tab. The Hub check injects the old
 missing-helper defect into a disposable page and verifies the error is detected.
 The ordinary release, System and gate fixture suites remain applicable.
+
+## Proposal queue (0.4.4)
+
+Review is the single decision surface. Its badge counts proposals, independently
+of operational warnings. The selected archive must match the connected status
+archive before decisions are available. Missing observations, an unavailable hub,
+an incomplete list and an explicit empty queue are distinct states. The service
+currently supplies at most 60 rows; larger queues show the loaded and total counts.
+
+Run `python3 apps/console/test-review.py --evidence /tmp/sovereign-review-qa` for
+native navigation, draft preservation, visible decisions, archive isolation,
+failed-status recovery and capped-queue checks. Gate tests use Review and retain
+the real local approval command against disposable proposal files.
 
 ## Public release gates
 

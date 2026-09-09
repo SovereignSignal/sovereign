@@ -31,3 +31,21 @@ assert.equal(g.canReject({state:'resolution_pending',fingerprint:token},null),fa
 console.log('Resolution eligibility and interrupted-decision guards passed.');
 
 assert.equal(g.canResolve({...conflict,existing:[{type:'concept'}]},null),false);
+
+const queueStatus={machine:{connected:true,vault:'/fixture'},hub:{reachable:true,pending:1,proposals:[{slug:'example'}]}};
+assert.equal(g.queue(queueStatus,'/fixture').available,true);
+assert.equal(g.queue(queueStatus,'/fixture').count,1);
+for(const [label,data,root,known,state] of [
+ ['loading',null,'/fixture',false,'loading'],['no archive',queueStatus,null,true,'no_archive'],
+ ['no status',null,'/fixture',true,'loading'],['error',{error:'failed'},'/fixture',true,'unavailable'],
+ ['disconnected',{machine:{connected:false}},'/fixture',true,'not_connected'],
+ ['other archive',queueStatus,'/other',true,'different_archive'],
+ ['offline',{...queueStatus,hub:{...queueStatus.hub,reachable:false}},'/fixture',true,'offline'],
+ ['missing rows',{...queueStatus,hub:{reachable:true,pending:0}},'/fixture',true,'incomplete'],
+ ['rows not loaded',{...queueStatus,hub:{reachable:true,pending:2,proposals:[]}},'/fixture',true,'incomplete'],
+ ['duplicate',{...queueStatus,hub:{reachable:true,pending:2,proposals:[{slug:'x'},{slug:'x'}]}},'/fixture',true,'incomplete'],
+ ['invalid slug',{...queueStatus,hub:{reachable:true,pending:1,proposals:[{slug:'../x'}]}},'/fixture',true,'incomplete']
+]){const q=g.queue(data,root,known);assert.equal(q.state,state,label);assert.equal(q.available,false,label);assert.equal(q.proposals.length,0,label);assert.equal(q.count,null,label)}
+const empty=g.queue({...queueStatus,hub:{reachable:true,pending:0,proposals:[]}},'/fixture');assert.equal(empty.state,'empty');assert.equal(empty.count,0);
+const partial=g.queue({...queueStatus,hub:{...queueStatus.hub,pending:90}},'/fixture');assert.equal(partial.available,true);assert.match(partial.message,/Showing 1 of 90/);
+console.log('Review scope and evidence: missing, offline, different archive, malformed, empty and capped queues passed.');

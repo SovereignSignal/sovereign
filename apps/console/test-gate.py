@@ -31,6 +31,7 @@ if(scenario.startsWith('resolve')){
  }else{
    const action=document.querySelector('[data-act="gate"][data-verb="resolve"]');action.click();action.click();
    checks.running=!!document.querySelector('#gate-notice.running');checks.quitProtected=window.sovCanQuit()===false;
+   document.getElementById('operations-tab').click();checks.navigationProtected=document.body.classList.contains('review');
    if(scenario==='resolve-quit')window.webkit.messageHandlers.sov.postMessage({cmd:'qaQuit'});
    const expected=scenario==='resolve-fail'?'failed':'approved';await wait(()=>!!document.querySelector('#gate-notice.'+expected));
    checks.result=true;checks.noTerminalDump=!document.querySelector('#drawer.open');
@@ -62,6 +63,7 @@ if(scenario.startsWith('resolve')){
  }
  const action=['reject','repeat-reject'].includes(scenario)?document.querySelector('[data-verb="reject"]'):approve();action.click();if(['reject','repeat-reject'].includes(scenario))action.click();else action.click();
  checks.running=!!document.querySelector('#gate-notice.running');checks.quitProtected=window.sovCanQuit()===false;
+   document.getElementById('operations-tab').click();checks.navigationProtected=document.body.classList.contains('review');
  if(scenario==='quit')window.webkit.messageHandlers.sov.postMessage({cmd:'qaQuit'});
  const expected=['approve','quit'].includes(scenario)?'approved':['reject','repeat-reject'].includes(scenario)?'rejected':scenario==='timeout'?'uncertain':'failed';
  await wait(()=>document.querySelector('#gate-notice.'+expected));checks.result=true;
@@ -105,7 +107,7 @@ def main():
    prop={'slug':t.slug,'title':'Example card','type':'entity','body':'Reviewed content','source':'owner','confidence':'high','flags':['needs-source-review'],'words':2,'age_h':1}
    data={'machine':{'connected':True,'host':'test','vault':str(t.root),'vault_name':'Approval QA'},'hub':{'reachable':True,'via':'local','pending':1,'proposals':[prop]},'archive':{'cards':[]},'needs_you':[{'kind':'gate','text':'One proposal to review'}]}
    status=home/'status';status.write_text('#!/usr/bin/python3\nimport json\nfrom pathlib import Path\nd='+repr(data)+'\n'+('' if scene=='missing' else 'if not Path('+repr(str(t.proposals/(t.slug+'.md')))+').exists(): d["hub"].update(proposals=[],pending=0); d["needs_you"]=[]\n')+'print(json.dumps(d))\n');status.chmod(0o700)
-   name=scene+'-'+theme+'-'+size;env=dict(os.environ,SOV_QA_GATE_HOME=str(home),SOV_QA_STATUS_COMMAND=str(status),SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='5',SOV_SNAPSHOT_ANCHOR='operations:view:archive+open:p:'+t.slug,SOV_QA_JS_AFTER_ANCHOR=QA.replace('SCENARIO',json.dumps(scene)).replace('STATUS',json.dumps(data)))
+   name=scene+'-'+theme+'-'+size;env=dict(os.environ,SOV_QA_GATE_HOME=str(home),SOV_QA_STATUS_COMMAND=str(status),SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='5',SOV_SNAPSHOT_ANCHOR='operations:view:review+open:p:'+t.slug,SOV_QA_JS_AFTER_ANCHOR=QA.replace('SCENARIO',json.dumps(scene)).replace('STATUS',json.dumps(data)))
    result=subprocess.run([str(HERE/'build/Sovereign.app/Contents/MacOS/Sovereign'),'-sov.archive',str(t.root)],env=env,capture_output=True,text=True,timeout=40)
    (a.evidence/(name+'.log')).write_text(result.stderr);marker='client error in gate-qa: ';rows=[json.loads(x.split(marker)[1]) for x in result.stderr.splitlines() if marker in x]
    calls=(home/'gate-calls').read_text().splitlines() if (home/'gate-calls').exists() else []

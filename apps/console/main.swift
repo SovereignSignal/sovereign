@@ -86,7 +86,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 self.deliver("local", response, generation: generation)
             }
         case "navigate":
-            guard let page = d["page"] as? String, ["home", "operations"].contains(page) else { return }
+            guard let page = d["page"] as? String, ["home", "review", "operations"].contains(page) else { return }
             DispatchQueue.main.async { App.shared.navigate(page: page, place: d["place"] as? [String: Any]) }
         case "status":
             guard let sov = sov else {
@@ -784,14 +784,15 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
     func navigate(page: String, place: [String: Any]? = nil) {
         let wantsLocal = page == "home"
+        let destination = place ?? ["view": page == "review" ? "review" : wantsLocal ? "home" : "glance"]
         if wantsLocal == localMode {
-            bridge.deliver("goto", place ?? ["view": "home"])
+            bridge.deliver("goto", destination)
             return
         }
         web.evaluateJavaScript("window.sovCanQuit ? window.sovCanQuit() : true") { result, error in
             guard error == nil, (result as? Bool) == true else { return }
             self.localMode = wantsLocal
-            self.pendingPlace = place
+            self.pendingPlace = destination
             self.showLoading(message: wantsLocal ? "Opening your archive…" : "Reading connected system…", retry: false)
             self.load(self.web, glance: false)
         }
