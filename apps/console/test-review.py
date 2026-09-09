@@ -48,6 +48,7 @@ if(scene==='states'){
  check('Partial count explained',rows().length===1&&document.getElementById('review-intro').textContent.includes('Showing 1 of 90'));
  d=copy();d.hub.pending=0;d.hub.proposals=[];deliver(d);
  check('Verified empty queue',document.getElementById('review-intro').textContent.includes('caught up')&&!button());
+ check('Empty detail gives no impossible instruction',document.getElementById('insp').textContent.includes('No proposal is available to inspect.'));
  deliver({machine:{connected:false}});check('Local only is not empty',document.getElementById('review-intro').textContent.includes('not connected'));
  deliver(copy());document.getElementById('operations-tab').click();window.sovView('archive');
  check('Operations keeps archive statistics',!!document.querySelector('.dash'));

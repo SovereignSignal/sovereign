@@ -972,7 +972,7 @@ window.onerror = function (msg, src, line, col) {
     const box = $("#insp");
     if (settingsOpen) { box.innerHTML = settingsHTML(); return; }
     const it = sel ? items().find(i => i.id === sel.id) : null;
-    if (!it) { box.innerHTML = `<div class="insp-head"><span class="sp"></span><button class="quiet" id="insp-close" aria-label="Close">✕</button></div><div class="empty">${view==="review"?"Select a proposal to compare it with existing knowledge.":"Select a row to see its detail."}</div>`; return; }
+    if (!it) { box.innerHTML = `<div class="insp-head"><span class="sp"></span><button class="quiet" id="insp-close" aria-label="Close">✕</button></div><div class="empty">${view==="review"?(reviewQueue().proposals.length?"Select a proposal to compare it with existing knowledge.":"No proposal is available to inspect."):"Select a row to see its detail."}</div>`; return; }
     const o = it.o, me = (D.machine || {}).host;
 
     if (it.kind === "arch") {
