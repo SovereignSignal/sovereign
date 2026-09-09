@@ -1,0 +1,47 @@
+(()=>{
+ const checks=[],failures=[],assert=(name,ok)=>{checks.push(name);if(!ok)failures.push(name);},$=id=>document.getElementById(id),host=()=>$('system-home'),view=()=>host().querySelector('.sv'),tab=id=>view().querySelector('.sv-tab[data-pane="'+id+'"]');
+ try{
+  $('system-tab').click();
+  assert('four native panes exist',view().querySelectorAll('.sv-tab').length===4);
+  assert('Environment is a spatial SVG view',!!view().querySelector('.sv-world-map'));
+  assert('archive and independent devices come from data',host().textContent.includes('Independent QA')&&host().textContent.includes('Worker-QA'));
+  const reader=view().querySelector('[data-node="tool:read"]');reader.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  assert('Environment selection identifies actual tool',view().querySelector('.sv-selection h3').textContent==='QA Reader');
+  tab('flow').click();
+  assert('selection persists into Flow',view().querySelector('select').value==='tool:read');
+  assert('Flow exposes actual mechanism',view().querySelector('.sv-route-body').textContent.includes('Session-start hook'));
+  assert('playback is explicitly illustrative',view().textContent.includes('does not represent live traffic'));
+  assert('Flow does not claim context used',view().textContent.includes('model use remain unverified'));
+  view().querySelector('.sv-replay').click();
+  assert('route playback control exists',!!view().querySelector('.sv-trace'));
+  tab('inspect').click();
+  assert('selection persists into Inspect',view().querySelector('.sv-inspect-detail').dataset.selection==='tool:read');
+  Home.context({root,receipts:[{producer:'tools/read-desk',topic:'Fresh QA preparation',cards:3,prepared_at:new Date().toISOString(),test:true}]});
+  assert('new observations update the selected component',view().querySelector('.sv-inspect-detail').dataset.selection==='tool:read'&&view().textContent.includes('Fresh QA preparation'));
+  assert('prepared evidence remains distinct from tool use',view().textContent.includes('Tool receipt and model use are unverified'));
+  const search=view().querySelector('input');search.value='custom';search.dispatchEvent(new Event('input'));
+  assert('component search filters independently',view().querySelectorAll('.sv-component-list .sv-component').length===2 && [...view().querySelectorAll('.sv-component-list .sv-component')].every(b=>b.textContent.toLowerCase().includes('custom')));
+  view().querySelector('.sv-component-list [data-node="tool:collect"]').click();
+  assert('Inspect selection changes component',view().querySelector('.sv-inspect-detail').dataset.selection==='tool:collect');
+  assert('untrusted label remains text',!view().querySelector('img'));
+  tab('world').click();
+  assert('Inspect selection carries back to Environment',view().querySelector('[data-node="tool:collect"]').getAttribute('aria-pressed')==='true');
+  tab('learn').click();
+  assert('explainer uses configured tools',view().textContent.includes('A custom collector'));
+  view().querySelectorAll('.sv-lesson')[3].click();
+  assert('context chapter uses real readers',view().textContent.includes('QA Reader')&&view().textContent.includes('Received and used remain unknown'));
+  Home.archive('/Other/User/Archive');
+  assert('archive switch hides foreign tools and devices',!host().textContent.includes('QA Reader')&&!host().textContent.includes('Desk-QA'));
+  assert('archive scope warning visible',host().textContent.includes('Their connections are hidden'));
+  tab('inspect').click();
+  assert('archive switch resets selected component',view().querySelector('.sv-inspect-detail').dataset.selection==='archive');
+  Home.archive(root);$('notes-tab').click();
+  assert('existing Notes navigation works',!$('workspace').hidden&&host().hidden);
+  $('system-tab').click();tab('world').click();
+  assert('restored archive repopulates dynamic map',!!view().querySelector('[data-node="tool:read"]'));
+  view().querySelector('[aria-label="Zoom in"]').click();view().querySelector('[aria-label="Fit environment"]').click();
+  assert('Fit contains the map within its viewport',view().querySelector('.sv-world-map').getBoundingClientRect().width<=view().querySelector('.sv-map-scroll').clientWidth+1);
+  assert('no page-level horizontal overflow',document.documentElement.scrollWidth<=document.documentElement.clientWidth);
+ }catch(e){failures.push(String(e.stack||e))}
+ window.webkit.messageHandlers.sov.postMessage({cmd:'clientError',where:'system-qa',msg:JSON.stringify({checks,failures})});
+})();

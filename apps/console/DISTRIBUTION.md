@@ -48,6 +48,37 @@ This creates a disposable archive and passes its path through the process's
 temporary preferences. It does not change the saved archive selection. The test
 does perform a read-only status request on a configured machine.
 
+## Dynamic environment view
+
+System provides four panes over the same archive-scoped observations:
+
+- Environment lays out tools, archive access, the review hub and devices spatially.
+- Flow expands a selected component's reported routes and mechanisms. Replay is
+  explicitly illustrative, not live traffic. Preparation and acceptance evidence
+  are shown separately from route configuration.
+- Inspect preserves the selected component, with search, context records,
+  reported relationships and links to existing operational actions.
+- How it works explains connection, capture, review and context reuse using the
+  configured environment's tools and archive.
+
+Selection carries across panes. Archive changes reset selection and hide foreign
+connections and receipts. Environment groups lane relationships; Flow retains their
+reported steps. Unreported transport endpoints and consuming-tool/model use
+remain unknown. Detected-only tools do not acquire active connections.
+
+After building the normal candidate bundle:
+
+```sh
+node apps/console/tests/system-model.cjs
+python3 apps/console/test-system.py
+SOV_WINDOW=720x680 python3 apps/console/test-system.py
+python3 apps/console/test-home.py
+```
+
+The System native test uses a disposable independent archive and status fixture.
+It checks cross-pane selection, routes, component search, safe labels, archive
+isolation and navigation. These checks do not install another application.
+
 ## Public release gates
 
 This is a development preview. Before advertising a public download:

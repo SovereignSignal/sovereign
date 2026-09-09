@@ -11,7 +11,13 @@ window.Home = (() => {
   function message(p,text){p.append(element('p',text,'home-message'))}
   function ageFromRun(h){if(h.run_age_h!=null&&Number.isFinite(h.run_age_h))return h.run_age_h;const match=String(h.last_run||'').match(/\d{4}-\d\d-\d\dT\S+/);const n=match&&validTime(match[0]);return n==null?null:Math.max(0,(Date.now()-n)/3600000)}
   function render(){
-    if(!api)return;const host=document.getElementById('system-home');host.replaceChildren();
+    if(!api)return;const host=document.getElementById('system-home');host.replaceChildren();host.classList.toggle('system-mode',view==='system');
+    if(view==='system'){
+      const lead=element('div',null,'home-lead'),intro=element('div');intro.append(element('h1','System'));
+      const refresh=element('button',pending?'Checking…':'Refresh status');refresh.disabled=pending;refresh.onclick=()=>Home.refresh();lead.append(intro,refresh);host.append(lead);
+      const badge=document.getElementById('review-count');if(badge)badge.textContent='';
+      const environment=element('div');host.append(environment);SystemView.render(environment,{root,status,context},{browse:api.browse,review:api.review,openNote:api.openNote,operations});return;
+    }
     const lead=element('div',null,'home-lead'),intro=element('div');intro.append(element('h1',view==='review'?'Review':'Your system'));
     const machine=status?.machine||{},hub=status?.hub||{};
     intro.append(element('p',status?.error?'System status unavailable. Your local archive is still available.':machine.connected?`${machine.vault_name||'Connected archive'} · ${machine.host||'this device'} · observed ${ago(status.generated_at)}`:'Open an archive and see which tools are connected.'));
