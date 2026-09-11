@@ -18,3 +18,13 @@ Validation:
 - `tests/test_connectors_install.py` and `tests/test_connectors_runner.py`: shared scheduler and collector regression checks.
 - `apps/console/test-producers.py`: real native bridge with a disposable archive, fake commands and isolated preferences; preview/apply, rejection, cancel, failure, reconnect and narrow layout.
 - `apps/console/tests/producer-lifecycle.cjs`: preserved history without active routes or stale producer alarms.
+
+## Discovery
+
+Operations → Tools scans known local app bundles, command locations and configuration paths. Lanes has a persistent Discover tools entry point. Search and filters distinguish available connectors, configured producers and tools without connectors. Evidence is expandable. Configuration alone can be left behind after uninstalling software and is labelled accordingly. Notion is a cloud service; Hermes desktop and agent detections share one producer.
+
+The bundled scanner uses the existing known-tools catalog. It checks file metadata only, never executes detected commands or opens tool data, and runs independently of system status and the Hub. Permission failures are reported. Scan again repeats this local inspection; it does not run collectors or install software.
+
+Adding and removing reuse the producer preview and apply flow. A current configured archive is required for changes. Discovery remains usable without that service, but cannot claim a connection from detection alone. Producer details opens the existing lane inspector for collection and context diagnostics. Removal preserves history and leaves the tool itself installed; it can still appear as a discovered candidate.
+
+Validation: `tests/test_harness_discovery.py` covers bounded detection, configuration versus installation, aliases, unreadable paths and unexecuted commands. `apps/console/tests/discovery-model.cjs` covers filtering and unavailable service state. `apps/console/test-discovery.py` runs the bundled scanner and native add/remove flow against fixture tools, fake commands, disposable archives and isolated preferences, including unavailable status and a narrow dark view.

@@ -80,6 +80,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     let sov: String?
     var generation = UUID()
     var gateBusy = false
+    var discoveryBusy = false
     var producerBusy = false
     var producerReview: String?
     // Status lives across document swaps, scoped to the selected archive and query.
@@ -123,6 +124,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             requestStatus(d, generation: generation)
         case "deviceAssociation":
             setDeviceAssociation(d, generation: generation)
+        case "discover":
+            discoverTools(d, generation: generation)
         case "producer":
             manageProducer(d, generation: generation)
         case "connect":
@@ -371,6 +374,26 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         value["device_associations"] = deviceAssociationState()
         if statusCache == nil, let error = error { value["error"] = error }
         deliver("status", value, generation: waiter.generation)
+    }
+
+    private func discoverTools(_ request: [String: Any], generation: UUID) {
+        guard !discoveryBusy, let resources = Bundle.main.resourceURL else { return }
+        discoveryBusy = true
+        var args = [resources.appendingPathComponent("runtime/bin/python3").path, "-I", "-B",
+                    resources.appendingPathComponent("backend/bin/brain-discover").path]
+        if App.shared.snapshotting, let home = ProcessInfo.processInfo.environment["SOV_QA_DISCOVERY_HOME"] {
+            args += ["--home", home, "--applications", home + "/Applications", "--path", home + "/bin"]
+        }
+        run(args, timeLimit: 10) { out, _, code in
+            DispatchQueue.main.async {
+            self.discoveryBusy = false
+            var result = (out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any]
+                ?? ["error": "Discovery could not finish. Try Scan again."]
+            if code != 0 && result["error"] == nil { result["error"] = "Discovery could not finish. Try Scan again." }
+            result["request"] = request["request"]
+            self.deliver("discovery", result, generation: generation)
+            }
+        }
     }
 
     private func manageProducer(_ request: [String: Any], generation: UUID) {

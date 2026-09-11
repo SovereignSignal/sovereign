@@ -1,5 +1,5 @@
 {
- "_": "Tools the status can recognize on a machine. `connector` names the harness folder when one exists. `detect` paths mean the tool is installed. Add a row when a new tool appears; a connector can follow later.",
+ "_": "Known tools and producer connectors. Detection is evidence of local software or saved configuration, not an active connection. Discovery never opens session or configuration contents.",
  "tools": [
   {
    "id": "claude-code",
@@ -7,6 +7,9 @@
    "connector": "claude-code",
    "detect": [
     "~/.claude"
+   ],
+   "commands": [
+    "claude"
    ]
   },
   {
@@ -15,6 +18,12 @@
    "connector": "codex",
    "detect": [
     "~/.codex"
+   ],
+   "apps": [
+    "Codex.app"
+   ],
+   "commands": [
+    "codex"
    ]
   },
   {
@@ -24,6 +33,12 @@
    "detect": [
     "~/.cursor",
     "~/Library/Application Support/Cursor"
+   ],
+   "apps": [
+    "Cursor.app"
+   ],
+   "commands": [
+    "cursor"
    ]
   },
   {
@@ -32,6 +47,9 @@
    "connector": "cowork",
    "detect": [
     "~/Library/Application Support/Claude/local-agent-mode-sessions"
+   ],
+   "apps": [
+    "Claude.app"
    ]
   },
   {
@@ -41,7 +59,10 @@
    "detect": [
     "~/.hermes/config.yaml"
    ],
-   "note": "a pre_llm_call hook injects the pack on the first turn of a conversation; MEMORY.md and USER.md are mirrored"
+   "note": "a pre_llm_call hook injects the pack on the first turn of a conversation; MEMORY.md and USER.md are mirrored",
+   "commands": [
+    "hermes"
+   ]
   },
   {
    "id": "hermes-desktop",
@@ -51,7 +72,10 @@
     "~/.hermes/hermes-agent/apps/desktop",
     "/Applications/Hermes.app"
    ],
-   "note": "same install as the Hermes agent; the desktop app is a window onto it"
+   "note": "same install as the Hermes agent; the desktop app is a window onto it",
+   "apps": [
+    "Hermes.app"
+   ]
   },
   {
    "id": "gemini-cli",
@@ -59,6 +83,9 @@
    "connector": null,
    "detect": [
     "~/.gemini"
+   ],
+   "commands": [
+    "gemini"
    ]
   },
   {
@@ -68,6 +95,9 @@
    "detect": [
     "~/.config/opencode",
     "~/.opencode"
+   ],
+   "commands": [
+    "opencode"
    ]
   },
   {
@@ -77,6 +107,9 @@
    "detect": [
     "~/.aider.conf.yml",
     "~/.aider"
+   ],
+   "commands": [
+    "aider"
    ]
   },
   {
@@ -94,6 +127,12 @@
    "detect": [
     "~/.codeium/windsurf",
     "~/Library/Application Support/Windsurf"
+   ],
+   "apps": [
+    "Windsurf.app"
+   ],
+   "commands": [
+    "windsurf"
    ]
   },
   {
@@ -102,6 +141,12 @@
    "connector": null,
    "detect": [
     "~/.config/zed"
+   ],
+   "apps": [
+    "Zed.app"
+   ],
+   "commands": [
+    "zed"
    ]
   },
   {
@@ -110,6 +155,9 @@
    "connector": null,
    "detect": [
     "~/.copilot"
+   ],
+   "commands": [
+    "copilot"
    ]
   },
   {
@@ -119,6 +167,12 @@
    "detect": [
     "~/Library/Application Support/Code",
     "~/.config/Code"
+   ],
+   "apps": [
+    "Visual Studio Code.app"
+   ],
+   "commands": [
+    "code"
    ]
   },
   {
@@ -128,7 +182,10 @@
    "detect": [
     "~/Library/Application Support/com.openai.chat"
    ],
-   "note": "keeps no memory on disk (conversations live in the cloud); the Codex it bundles is the connectable part and is already a connector"
+   "note": "keeps no memory on disk (conversations live in the cloud); the Codex it bundles is the connectable part and is already a connector",
+   "apps": [
+    "ChatGPT.app"
+   ]
   },
   {
    "id": "obsidian",
@@ -138,13 +195,17 @@
     "~/Library/Application Support/obsidian",
     "~/.config/obsidian"
    ],
-   "note": "the vault's own reader; the console uses its CLI for sync state and Open in Obsidian, nothing to mirror"
+   "note": "the vault's own reader; the console uses its CLI for sync state and Open in Obsidian, nothing to mirror",
+   "apps": [
+    "Obsidian.app"
+   ]
   },
   {
    "id": "notion",
    "name": "Notion",
    "connector": "notion",
-   "detect": []
+   "detect": [],
+   "cloud": true
   },
   {
    "id": "orca",
@@ -154,7 +215,13 @@
     "/Applications/Orca.app",
     "~/.orca"
    ],
-   "note": "orchestrates other coding agents; its runs, tasks, decision gates and questions are exported from orchestration.db"
+   "note": "orchestrates other coding agents; its runs, tasks, decision gates and questions are exported from orchestration.db",
+   "apps": [
+    "Orca.app"
+   ],
+   "commands": [
+    "orca"
+   ]
   }
  ]
 }

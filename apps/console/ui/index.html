@@ -322,6 +322,18 @@
   #device-dialog p { font-size:13px; line-height:1.5; }
   #device-dialog .acts { justify-content:flex-end; }
   #device-association-message { color:var(--down); }
+.discovery-toolbar{padding:16px;border-bottom:1px solid var(--rule)}
+.discovery-toolbar h2{margin:0 0 8px;font-size:15px;color:var(--ink);text-transform:none;letter-spacing:0}
+.discovery-toolbar .acts{display:flex;flex-wrap:wrap;gap:8px}
+.discovery-toolbar input{flex:1;min-width:130px;width:160px;margin:0}
+.discovery-toolbar select{width:auto;max-width:100%;margin:0}
+.discovery-caption{font-size:12px;color:var(--muted);margin:10px 0 0}
+.discovery-evidence{font-size:12px}.discovery-evidence span{display:block;color:var(--muted)}
+.discovery-evidence code{overflow-wrap:anywhere;font-size:11px}
+.discovery-row{height:auto;min-height:56px;padding-top:8px;padding-bottom:8px}
+.discovery-name{flex:1;min-width:0}.discovery-name strong{display:block;font:500 13px/1.5 var(--sans)}
+.discovery-name small{display:block;font:11px/1.5 var(--sans);color:var(--muted)}
+@media(min-width:950px){body.discovering main:has(#inspector.open){grid-template-columns:minmax(0,1fr) 380px}body.discovering #inspector.open{position:static;transform:none;width:auto}}
 </style>
 <link rel="stylesheet" href="shell.css">
 <link rel="stylesheet" href="operations-shell.css">
@@ -371,6 +383,7 @@
 
 <script src="status-model.js"></script>
 <script src="gate-model.js"></script>
+<script src="discovery-model.js"></script>
 <dialog id="device-dialog" aria-labelledby="device-dialog-title" aria-describedby="device-dialog-description">
   <h2 id="device-dialog-title">Disassociate device?</h2>
   <p id="device-dialog-description"></p>
@@ -416,7 +429,7 @@ window.onerror = function (msg, src, line, col) {
   // on a per-tool job, and only a machine that says neither falls back to the tick default.
   const intervalOf = (t) => { if (t && t.cadence_s) return +t.cadence_s;
     const m = /every (\d+)s/.exec(((t && t.plist) || {}).schedule || ""); return m ? +m[1] : 900; };
-  const localTool = (id) => (D.harnesses || []).find(x => x.id === id);
+  const localTool = (id) => (D?.harnesses || []).find(x => x.id === id);
   const shortPath = (p) => String(p || "").replace(/^.*\/(?=[^/]*$)/, "…/");
   const dot = (cls, text) => `<span class="dot ${cls}"></span><span class="sr">${esc(text)}</span>`;
   const hub = () => (D && D.hub) || {};
@@ -583,9 +596,41 @@ window.onerror = function (msg, src, line, col) {
       ${tile("long", (a.over_length || []).length, "over 450 words", (a.over_length || []).length / total)}</div></section>`;
     return `<div class="dash">${comp}${pulse}${src}${health}</div>`;
   }
+  let discovery=null, discoveryRequest=null, discoveryQuery='', discoveryFilter='all';
+  function scanTools(){
+    if(discoveryRequest)return;
+    const request=String(Date.now())+Math.random();discoveryRequest=request;
+    bridge({cmd:'discover',request});
+    if(view==='tools')renderList();
+    setTimeout(()=>{if(discoveryRequest===request){discoveryRequest=null;discovery={error:'Discovery could not finish. Try Scan again.'};if(view==='tools'){renderList();renderInspector();}}},12000);
+  }
+  function discoveredTools(){return SovDiscovery.filter(SovDiscovery.candidates(discovery,D),discoveryQuery,discoveryFilter);}
+  function discoveryToolbar(){
+    return `<div class="discovery-toolbar"><h2>Discover tools</h2><p class="prose">Find tools on this Mac and choose which contribute to your archive. Connecting shows a preview first.</p>
+      <div class="acts"><input type="search" id="discovery-search" aria-label="Search discovered tools" placeholder="Search tools" value="${esc(discoveryQuery)}">
+      <select id="discovery-filter" aria-label="Filter discovered tools">${[['all','All found'],['available','Available connectors'],['connected','Configured'],['unsupported','No connector yet']].map(([v,l])=>`<option value="${v}" ${discoveryFilter===v?'selected':''}>${l}</option>`).join('')}</select>
+      <button data-act="scan-tools" ${discoveryRequest?'disabled':''}>${discoveryRequest?'Scanning…':'Scan again'}</button></div>
+      <p class="discovery-caption" role="status">${discovery?.error?esc(discovery.error):discoveryRequest?'Checking known app and command locations…':discovery?`Scanned at ${esc(clock(discovery.scanned_at))}. Configuration can remain after a tool is uninstalled.`:'Ready to scan.'}</p>
+      ${discovery?.warnings?.length?`<details><summary>Some locations could not be inspected</summary>${discovery.warnings.map(w=>`<p class="prose">${esc(w)}</p>`).join('')}</details>`:''}</div>`;
+  }
+  function discoveryInspector(o){
+    const h=o.harness,ready=!!h&&SovDiscovery.current(D)&&!!selectedRoot&&selectedRoot===D?.machine?.vault&&D?.machine?.connected!==false;
+    const add=ready&&o.connector&&!o.active&&h.detected!==false;
+    const setup=!selectedRoot||(D?.machine?.connected===false&&!D?.error&&!D?._status?.error);
+    return head(esc(o.name),esc(o.state)+' · '+esc(o.cloud?'Cloud service':'This Mac'))+`
+      <div class="sect"><h2>${esc(o.found)}</h2><p class="prose">${o.cloud?'This service connects through the configured Hub.':o.installed?'A known application or command is present.':o.detected?'Only saved configuration was found. The tool may no longer be installed.':'No installation was found in the known locations.'}</p>
+      ${o.evidence?.length?`<details><summary>Where it was found · ${o.evidence.length}</summary>${o.evidence.map(e=>`<p class="discovery-evidence"><span>${esc(e.kind)}</span><code>${esc(e.path)}</code></p>`).join('')}</details>`:''}
+      ${o.aliases?.length?`<p class="prose">Also recognized as ${esc(o.aliases.join(', '))}. Uses the same producer.</p>`:''}</div>
+      ${o.connector?`<div class="sect"><h2>Archive connection</h2><p class="prose">${setup?'Set up producers for your archive to connect this tool.':!ready?'Refresh the configured archive to check this producer before changing it.':o.active?`Collection is configured ${h.runs_on?'on '+esc(h.runs_on):'on this Mac'}.`:h.detected===false?'Open the tool once to finish its setup, then refresh the connection status.':'A connector is available. Review its collection and context setup before adding it.'}</p>
+      ${setup?'<button data-goto-view="lanes">Set up producers…</button>':!ready?'<button id="discovery-status-refresh">Refresh connection status</button>':''}
+      ${add&&h.secret?.env?`<label>${esc(h.secret.label||h.secret.env)}<input type="password" id="secret-${esc(o.connector)}" data-env="${esc(h.secret.env)}" autocomplete="off" spellcheck="false"></label>${h.secret.help?`<p class="prose">${esc(h.secret.help)}</p>`:''}`:''}
+      ${add?`<button class="brass" data-act="discover-add" data-harness="${esc(o.connector)}">${h.state==='removed'?'Add again…':'Add producer…'}</button>`:''}</div>
+      ${ready?`<button data-act="producer-details" data-harness="${esc(o.connector)}">Producer details</button>`:''}
+      ${ready&&o.active?producerActions(h):''}`:`<div class="sect"><h2>No connector yet</h2><p class="prose">Sovereign recognizes this tool, but cannot collect from it or configure context for it yet.</p></div>`}`;
+  }
   function producerToolbar(){
     const available=(D.harnesses||[]).filter(h=>h.state!=="connected"&&h.detected!==false);
-    return `<div class="sect" style="padding:16px"><p class="prose">Add or remove producers. Saved history stays.</p>
+    return `<div class="sect" style="padding:16px"><p class="prose">Add or remove producers. Saved history stays.</p><button data-act="discover-tools">Discover tools</button>
       ${available.length?`<div class="acts"><select id="producer-choice" aria-label="Producer to add">${available.map(h=>`<option value="${esc(h.id)}">${esc(h.name)}${h.runs_on?' · '+esc(h.runs_on):''}</option>`).join('')}</select><button class="brass" data-act="add-producer">Add producer…</button></div>`:''}</div>`;
   }
   function producerActions(h){
@@ -596,6 +641,7 @@ window.onerror = function (msg, src, line, col) {
   }
   function items() {
     if (view === "review") return reviewQueue().proposals.map(p => ({kind:"prop",id:"p:"+p.slug,o:p}));
+    if (view === "tools") return discoveredTools().map(t=>({kind:"candidate",id:t.id,o:t}));
     if (!D || D.error) return [];
     if (view === "archive") return archiveItems();
     if (view === "glance") return [];
@@ -605,7 +651,6 @@ window.onerror = function (msg, src, line, col) {
       ...(D.harnesses||[]).map(h=>({kind:"tool",id:h.id,o:{name:h.name,connector:h.id,detected:h.detected}})),
       {kind:"head",id:"history-heading",label:"Lane history",n:"saved contributions"},
       ...(D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }))];
-    if (view === "tools") return (D.tools_found || []).filter(t => t.detected || t.connector).map(t => ({ kind: "tool", id: t.id, o: t }));
     if (view === "backups") return backupItems();
     return hubItems();
   }
@@ -805,6 +850,9 @@ window.onerror = function (msg, src, line, col) {
         <span class="num" style="width:40px">${age(o.vault_age_h)}</span>
         <span class="chev">›</span>`;
     }
+    if (it.kind === "candidate") {
+      return `${dot(o.state==='Connected'?'live':'',o.state)}<span class="discovery-name"><strong>${esc(o.name)}</strong><small>${esc(o.found)}</small></span><span class="tag ${o.state==='Connected'?'on':''}">${esc(o.state)}</span><span class="chev">›</span>`;
+    }
     if (it.kind === "tool") {
       const h = o.connector ? localTool(o.connector) : null;
       const state = h ? h.state : (o.detected ? "no connector" : o.detected === null ? "cloud" : "not here");
@@ -848,16 +896,17 @@ window.onerror = function (msg, src, line, col) {
   function renderList() {
     const review=view==='review',q=reviewQueue();
     document.body.classList.toggle('review',review);
+    document.body.classList.toggle('discovering',view==='tools');
     $('#review-tab').setAttribute('aria-pressed',String(review));
     $('#operations-tab').setAttribute('aria-pressed',String(!review));
     $('#review-count').textContent=q.count||'';
     $('#rows').setAttribute('aria-label',review?'Proposals awaiting your decision':'Records');
     const intro=$('#review-intro');intro.hidden=!review;
     if(review)intro.innerHTML=`<div class="review-heading"><h2>${esc(q.title)}</h2>${q.count?`<span>${num(q.count)}</span>`:''}</div><p>${esc(q.message)}</p>${!q.available?`<button id="review-retry">${['no_archive','different_archive'].includes(q.state)?'Open archive…':'Refresh queue'}</button>`:''}`;
-    if(!review&&D?._status?.pending&&!D.machine){$('#rows').className='';$('#rows').textContent=SovStatus.caption(D);footerMeta(0);return;}
-    if(!review&&D?.error){$('#rows').className='';$('#rows').innerHTML='<div class="empty">System status unavailable. Use Refresh to try again.</div>';sel=null;footerMeta(0);return;}
+    if(!review&&view!=="tools"&&D?._status?.pending&&!D.machine){$('#rows').className='';$('#rows').textContent=SovStatus.caption(D);footerMeta(0);return;}
+    if(!review&&view!=="tools"&&D?.error){$('#rows').className='';$('#rows').innerHTML='<div class="empty">System status unavailable. Use Refresh to try again.</div>';sel=null;footerMeta(0);return;}
 
-    if (!review && D?.machine?.connected === false) {renderSetup(D);return;}
+    if (!review && view!=="tools" && D?.machine?.connected === false) {renderSetup(D);return;}
     if (view === "glance") { $("#rows").className = "home"; $("#rows").innerHTML = D ? glanceHome() : ""; document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", "false")); footerMeta(0); syncActive(); return; }
     $("#rows").className = "";
     const list = items();
@@ -874,9 +923,9 @@ window.onerror = function (msg, src, line, col) {
     if (sel && (sel.view !== view || !list.some(i => i.id === sel.id))) sel = null;
     const shown = view === "archive" ? list.filter(i => i.kind === "head" || i.kind === "quiet") : list;
     const rowsHTML = shown.map((it, i) => selectable(it)
-      ? `<div class="row" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
+      ? `<div class="row ${it.kind==='candidate'?'discovery-row':''}" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
       : `<div class="row ${it.kind}" id="r${i}" ${it.kind === "head" ? `data-section="${esc(it.section)}"` : ""} aria-hidden="true">${rowHTML(it)}</div>`).join("");
-    $("#rows").innerHTML = (view === "lanes" ? producerToolbar() : "") + (rowsHTML || (view === "archive" ? "" : (view === "review" ? "" : `<div class="empty">Nothing here yet.</div>`))) + (view === "archive" ? renderDash() : "");
+    $("#rows").innerHTML = (view === "lanes" ? producerToolbar() : view === "tools" ? discoveryToolbar() : "") + (rowsHTML || (view === "archive" ? "" : (view === "review" ? "" : `<div class="empty">${view==='tools'?(discoveryRequest?'Scanning…':'No tools match this view.'):'Nothing here yet.'}</div>`))) + (view === "archive" ? renderDash() : "");
     syncActive();
   }
   function syncActive() {
@@ -971,7 +1020,13 @@ window.onerror = function (msg, src, line, col) {
       ${S.error ? `<div class="note">${esc(S.error)}</div>` : ""}
       <div class="acts"><button class="brass" id="s-save">Save settings</button><span class="pulls" id="s-state" aria-live="polite"></span></div>`;
   }
+  document.addEventListener('input',e=>{
+    if(e.target.id!=='discovery-search')return;
+    const position=e.target.selectionStart;discoveryQuery=e.target.value;renderList();renderInspector();
+    const input=$('#discovery-search');input.focus();input.setSelectionRange(position,position);
+  });
   document.addEventListener("change", e => {
+    if(e.target.id==='discovery-filter'){discoveryFilter=e.target.value;renderList();renderInspector();$('#discovery-filter').focus();}
     if (e.target.id === "s-appearance") bridge({cmd: "appearance", value: e.target.value});
   });
   window.addEventListener("sov-appearance", e => {
@@ -1010,13 +1065,14 @@ window.onerror = function (msg, src, line, col) {
   };
   const splitReview=()=>view==="review"&&matchMedia("(min-width:1100px)").matches;
   function renderInspector() {
-    if(!settingsOpen&&view!=="review"&&D?.machine?.connected===false){renderSetup(D);return;}
+    if(!settingsOpen&&view!=="review"&&view!=="tools"&&D?.machine?.connected===false){renderSetup(D);return;}
     if(splitReview())$("#inspector").setAttribute("aria-hidden","false");
     const box = $("#insp");
     if (settingsOpen) { box.innerHTML = settingsHTML(); return; }
     const it = sel ? items().find(i => i.id === sel.id) : null;
     if (!it) { box.innerHTML = `<div class="insp-head"><span class="sp"></span><button class="quiet" id="insp-close" aria-label="Close">✕</button></div><div class="empty">${view==="review"?(reviewQueue().proposals.length?"Select a proposal to compare it with existing knowledge.":"No proposal is available to inspect."):"Select a row to see its detail."}</div>`; return; }
-    const o = it.o, me = (D.machine || {}).host;
+    const o = it.o, me = (D?.machine || {}).host;
+    if(it.kind==='candidate'){box.innerHTML=discoveryInspector(o);return;}
 
     if (it.kind === "arch") {
       const x = it.extra || {};
@@ -1193,6 +1249,7 @@ window.onerror = function (msg, src, line, col) {
     settingsOpen = !!p.settings; view = p.view; renderTop();
     sel = p.sel ? { view: p.view, kind: p.sel.kind, id: p.sel.id } : null;
     renderList(); renderInspector();
+    if(view==='tools'&&!discovery)scanTools();
     if (splitReview() || p.settings || (p.open && sel) || pinned) openInspector();
     else { $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
     $("#rows").scrollTop = p.scroll || 0; syncActive(); updateNav();
@@ -1239,6 +1296,7 @@ window.onerror = function (msg, src, line, col) {
     D = d;
     if (GLANCE) return renderGlance();
     renderTop(); renderList(); renderInspector();
+    if(view==='tools'&&!discovery)scanTools();
     if (hist.i < 0) commit();
   }
   const findRow = (id) => items().find(i => i.id === id);
@@ -1267,6 +1325,7 @@ window.onerror = function (msg, src, line, col) {
   function setView(v, opts) {
     if(!window.sovCanQuit())return;
     view = v; sel = null; settingsOpen = false; renderTop(); renderList(); renderInspector();
+    if(v==='tools'&&!discovery)scanTools();
     if (opts && opts.section) { const h = document.querySelector('[data-dash="' + opts.section + '"], .row.head[data-section="' + opts.section + '"]'); if (h) scrollRowsTo(h); }
     if (opts && opts.open) { const first = items().find(selectable); if (first) return select(first.kind, first.id, true); }
     if (!(opts && opts.silent)) commit();
@@ -1421,6 +1480,14 @@ window.onerror = function (msg, src, line, col) {
       if (b.id === "insp-close") { pinned ? setPinned(false) : closeInspector(); commit(); return; }
       if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
       if (b.id === "drawer-apply") { if(pendingProducer)return producer(pendingProducer.harness,pendingProducer.action,true); if (pendingHost) return hostAdd(pendingHost.host, true); if (pendingConnect) connect(pendingConnect.harness, true); return; }
+      if(act==='discover-tools')return setView('tools');
+      if(act==='scan-tools')return scanTools();
+      if(act==='producer-details'){setView('lanes');return select('tool',b.dataset.harness,true);}
+      if(b.id==='discovery-status-refresh')return refresh();
+      if(act==='discover-add'){
+        const f=document.getElementById('secret-'+b.dataset.harness);
+        return producer(b.dataset.harness,'add',false,f?.value?{secret:f.value}:{});
+      }
       if(act === "add-producer")return select("tool",$("#producer-choice").value,true);
       if(act === "remove-producer")return producer(b.dataset.harness,"remove",false);
       if (act === "hostadd") return hostAdd(b.dataset.host, false);
@@ -1528,6 +1595,12 @@ window.onerror = function (msg, src, line, col) {
     }
   };
   function deliverInner(kind, payload) {
+    if(kind==='discovery'){
+      if(payload.request!==discoveryRequest)return;
+      discoveryRequest=null;discovery=payload;
+      if(view==='tools'){renderList();renderInspector();}
+      return;
+    }
     if(kind==='deviceAssociation'){
       if(payload.error){
         if(pendingDevice)pendingDevice.saving=false;
