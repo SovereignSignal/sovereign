@@ -128,6 +128,39 @@ class HypervisorProbe(unittest.TestCase):
         self.assertLess(elapsed, 4.5, "two hanging nodes cost one budget, in parallel")
         self.assertFalse(any(h["reachable"] for h in view["hosts"]))
 
+    def test_tailscale_recheck_is_named_with_its_link_in_needs_you(self):
+        """The failure must say what to do. A Tailscale SSH re-check surfaces as one
+        needs-you row per node with the link, not as a bare 'unreachable'."""
+        m = self.mod
+        banner = (b"# Tailscale SSH requires an additional check.\n"
+                  b"# To authenticate, visit: https://login.tailscale.com/a/abc123\n")
+
+        def fake_run(argv, **kw):
+            if argv[:2] == ["ssh", "-G"]:
+                return subprocess.CompletedProcess(argv, 0, stdout="hostname h\nport 22\n", stderr="")
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"), output=b"", stderr=banner)
+
+        m.subprocess.run = fake_run
+        m.port_open = lambda host, port=22, timeout=1.0: True
+        view = m.backups_view("/nonexistent", {}, fleet_two_nodes())
+        detail = {h["node"]: h["detail"] for h in view["hosts"]}
+        self.assertEqual(detail["proxmox"]["why"], "tailscale-check")
+        self.assertEqual(detail["proxmox"]["url"], "https://login.tailscale.com/a/abc123")
+        self.assertIn("ssh proxmox", detail["proxmox"]["action"])
+        rows = m.hypervisor_needs(view)
+        self.assertEqual([r["node"] for r in rows], ["proxmox", "proxmox2"])
+        self.assertEqual(rows[0]["kind"], "hypervisor")
+        self.assertEqual(rows[0]["url"], "https://login.tailscale.com/a/abc123")
+        self.assertIn("node-11", rows[0]["text"])
+        self.assertIn("open the link", rows[0]["text"])
+        # a reachable node produces no row, and a closed port names that cause
+        self.assertEqual(m.hypervisor_needs({"hosts": [{"host": "x", "node": "n", "reachable": True}]}), [])
+        m.port_open = lambda host, port=22, timeout=1.0: False
+        os.environ["HOME"] = tempfile.mkdtemp(prefix="hv-home2-")
+        closed = m.backups_view("/nonexistent", {}, fleet_two_nodes())
+        self.assertEqual(closed["hosts"][0]["detail"]["why"], "port-closed")
+        self.assertIn("Port 22 did not answer", m.hypervisor_needs(closed)[0]["text"])
+
     def test_failure_is_cached_and_a_fresh_failure_is_not_reprobed(self):
         m = self.mod
         calls = []
