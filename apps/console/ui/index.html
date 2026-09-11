@@ -592,6 +592,8 @@ window.onerror = function (msg, src, line, col) {
   }
   // ---------- the verdict: one sentence, the worst state on screen ----------
   function verdictSentence() {
+    if(D?._status?.error||D?.error)return {state:'down',text:D._status?.error||D.error};
+    if(D?._status?.pending)return {state:'warn',text:SovStatus.caption(D)};
     const A = assess(), h = hub(), st = h.status || {}, hosts = ((D.fleet || {}).hosts || []);
     const down = A.need.filter(r => r.state === "down"), warn = A.need.filter(r => r.state !== "down");
     let state, text;

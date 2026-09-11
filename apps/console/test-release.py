@@ -51,7 +51,7 @@ def main():
   for theme,size,first,second in cases:
    name=('live-' if args.live else '')+theme+'-'+size
    snap=args.evidence/(name+'-'+first+'.png')
-   env=dict(os.environ,SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(snap),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR=('operations:view:glance' if second=='operations' else 'operations:view:'+second),SOV_QA_JS='window.sovView('+json.dumps(first)+');setTimeout(()=>{'+probe(theme,first,args.live)+'},1500);',SOV_QA_JS_AFTER_ANCHOR=probe(theme,second,args.live))
+   env=dict(os.environ,SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(snap),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR=('operations:view:glance' if second=='operations' else 'operations:view:'+second),SOV_QA_JS='window.sovView('+json.dumps(first)+');setTimeout(()=>{'+probe(theme,first,args.live)+'},1500);',SOV_QA_JS_AFTER_ANCHOR="for(let n=0;n<100&&/refreshing|up to \\d+ seconds/.test(document.getElementById('vmeta')?.textContent||'');n++)await new Promise(r=>setTimeout(r,50));"+probe(theme,second,args.live))
    if not args.live:env['SOV_QA_STATUS_COMMAND']=str(command)
    # CLI defaults override the archive for this process without persisting preferences.
    result=subprocess.run([str(app),'-sov.archive',str(archive)],env=env,capture_output=True,text=True,timeout=45)

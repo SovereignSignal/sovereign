@@ -48,7 +48,7 @@ window.Home = (() => {
       const gate=source?.kind==='gate';
       const title=gate?`${hub.pending||'New'} proposals ready for your review`:need.name;
       const jump=need.jump||{view:source?.harness?'tools':source?.kind==='job'?'jobs':'glance',id:source?.harness};
-      attention.append(row(title,gate?'Review proposals':need.detail,need.state,()=>gate?api.review():operations(jump.view,jump.id)),details(source||need));
+      attention.append(row(title,gate?'Review proposals':need.detail,need.state,()=>gate?api.review():operations(jump.view,jump.id)),details(need));
     }
     if(!needs.length)message(attention,!status||status.error?'Waiting for a successful status check.':hub.reachable===true?'No attention items reported by the connected system.':'No local attention items reported. Hub review status is unverified.');
 
