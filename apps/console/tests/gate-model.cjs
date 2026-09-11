@@ -49,3 +49,9 @@ for(const [label,data,root,known,state] of [
 const empty=g.queue({...queueStatus,hub:{reachable:true,pending:0,proposals:[]}},'/fixture');assert.equal(empty.state,'empty');assert.equal(empty.count,0);
 const partial=g.queue({...queueStatus,hub:{...queueStatus.hub,pending:90}},'/fixture');assert.equal(partial.available,true);assert.match(partial.message,/Showing 1 of 90/);
 console.log('Review scope and evidence: missing, offline, different archive, malformed, empty and capped queues passed.');
+
+for(const meta of [{pending:true},{stale:true},{stale:true,error:'failed'}]){
+ const result=box.window.GateModel.queue({machine:{connected:true,vault:'/qa'},hub:{reachable:true,pending:1,proposals:[{slug:'card'}]},_status:meta},'/qa');
+ assert.equal(result.available,false);assert.equal(result.proposals.length,0);
+}
+console.log('Retained and refreshing status never authorize a Review decision.');

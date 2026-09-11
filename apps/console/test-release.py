@@ -31,7 +31,7 @@ def probe(theme,view,live=False):
  else {checks.homeVisible=!document.getElementById('system-home').hidden;
   const panel=document.querySelector('.home-attention');
   unknown=[...panel.querySelectorAll('.home-row')].filter(e=>/acceptance.*(?:unverified|not reported|unknown)|not been verified/.test(e.textContent)).map(e=>e.textContent);
-  if(!live)checks.unknownIdle=!![...document.querySelectorAll('.home-contributions .home-row')].find(e=>e.textContent.includes('acceptance not reported by this status version')&&e.querySelector('.idle'));
+  if(!live)checks.unknownIdle=!![...document.querySelectorAll('.home-contributions .home-row')].find(e=>e.textContent.includes('Hub acceptance is unknown')&&e.querySelector('.idle'));
  }
  checks.noUnknownAttention=unknown.length===0;
  if(!live)checks.expectedCount=count===2;

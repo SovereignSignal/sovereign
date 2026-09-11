@@ -30,12 +30,12 @@ window.SovStatus = (() => {
       else return true;
     };
     // needs: failures, unreachable, the gate, unprotected machines
-    (D.needs_you || []).forEach((n, i) => need.push({ state: "warn", name: n.kind, detail: n.text, age_h: null, need: i, order: 1, cause: "need:" + n.kind }));
+    (D.needs_you || []).forEach((n, i) => need.push({ state: "warn", name: n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: n.kind === "host" ? 0 : 1, cause: "need:" + n.kind, jump:n.host?{view:"hosts",id:n.host}:null }));
     (D.jobs || []).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
     Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k, j]) => need.push({ state: "down", name: k, detail: `exited ${j.exit} on the hub`, age_h: ago(j.ts), jump: { view: "jobs", id: "hub:job:" + k }, order: 0, cause: "job-failed" }));
-    hosts.filter(x => x.net && x.net.online === false).forEach(x => need.push({ state: "down", name: x.host, detail: "unreachable", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
+    hosts.filter(x => x.net && x.net.online === false && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Operations → Hosts.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
     const hubName = h.hub_host || (m.hub_pointer || '').split(':')[0];
-    if (h.reachable === false && !hosts.some(x => x.host === hubName && x.net?.online === false))
+    if (h.reachable === false && !(D.needs_you||[]).some(n=>n.kind==='hub') && !hosts.some(x => x.host === hubName && x.net?.online === false))
       need.push({state:'down',name:'Hub',detail:'unreachable; review and acceptance could not be checked',jump:{view:'jobs'},order:0});
     (bk.hosts || []).filter(x => x.reachable && x.last_dump_age_h == null).forEach(x => need.push({ state: "warn", name: x.host, detail: `no backup job on ${x.node}`, age_h: null, jump: { view: "backups", id: "bk:host:" + x.host }, order: 2, cause: "no-backup", causeLabel: "have no backup job" }));
     // cadence: mirrors here, mirrors on every host, producer pushes, hub jobs, the snapshot
@@ -88,5 +88,25 @@ window.SovStatus = (() => {
     freshG.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
     return { need: needG, fresh: freshG, stale };
   }
-  return {assess, shortLabel};
+  const safeURL=value=>{try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)&&u.hostname?u.href:null}catch(_){return null}};
+  function caption(status) {
+    const s=status?._status||{},stamp=s.observed_at||status?.generated_at;
+    const observed=Date.parse(stamp),minutes=Number.isFinite(observed)?Math.max(0,Math.floor((Date.now()-observed)/60000)):null;
+    const budget=s.budget_s||window.sovStatusBudget;
+    if(!status?.machine&&!status?.error)return 'Checking the connected system'+(budget?', up to '+budget+' seconds':'')+'.';
+    const age=minutes===null?'Observation time unknown':'Observed '+minutes+' min ago';
+    return age+(s.pending?', refreshing':s.error?', refresh failed':'')+(Number.isFinite(s.duration_s)?' · Status took '+s.duration_s.toFixed(1)+' s':'');
+  }
+  function retain(previous, next) {
+    if(next.error&&previous?.machine)return {...previous,_status:{...previous._status,pending:false,stale:true,error:next.error},request:next.request};
+    return next;
+  }
+  function contributionIssue(lane) {
+    if(lane.acceptance_issue)return lane.acceptance_issue;
+    return {text:'Hub acceptance is unknown for '+lane.lane+'.',
+      why:lane.delivery==='unknown'?'The hub could not verify whether the source commit is included.':'The connected status service did not report an acceptance result.',
+      action:'Open Operations → Backups and inspect this lane’s source commit and hub connection. If the service is older, ask its maintainer to update it, then refresh.',
+      verify:'The lane reports accepted or waiting after refresh. Only accepted confirms inclusion on the hub.'};
+  }
+  return {assess, shortLabel, safeURL, caption, retain, contributionIssue};
 })();

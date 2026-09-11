@@ -39,3 +39,5 @@ body.review #inspector{max-width:100%}body.review .insp-title{font-family:var(--
 body.review #inspector .acts{position:sticky;z-index:2}
 @media(min-width:1100px){body.review main,body.review.pinned main{grid-template-columns:minmax(260px,.85fr) minmax(400px,1.15fr)}body.review #inspector{position:static;transform:none;box-shadow:none;width:auto}body.review #inspector .pad{padding:24px}body.review #inspector .acts{bottom:-24px}}
 @media(max-width:760px){#review-intro{padding:18px 16px}.review-heading h2{font-size:20px}body.review .row{padding:12px 16px}body.review.pinned main{grid-template-columns:1fr}body.review.pinned #inspector{position:absolute;width:min(var(--drawer),100%);transform:translateX(104%)}body.review.pinned #inspector.open{transform:none}}
+
+.issue-details{font-size:12px;line-height:1.6;padding:0 12px 16px;overflow-wrap:anywhere;user-select:text}.issue-details p{margin:6px 0}.issue-details a{color:var(--cyan)}.issue-details button{font-size:11px}

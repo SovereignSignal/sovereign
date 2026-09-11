@@ -161,6 +161,21 @@ class HypervisorProbe(unittest.TestCase):
         self.assertEqual(closed["hosts"][0]["detail"]["why"], "port-closed")
         self.assertIn("Port 22 did not answer", m.hypervisor_needs(closed)[0]["text"])
 
+    def test_nonzero_ssh_exit_does_not_report_reachable(self):
+        m = self.mod
+        def fake_run(argv, **kw):
+            if argv[:2] == ["ssh", "-G"]:
+                return subprocess.CompletedProcess(argv, 0, stdout="hostname h\nport 22\n", stderr="")
+            return subprocess.CompletedProcess(argv, 255, stdout="", stderr="Permission denied")
+        m.subprocess.run = fake_run
+        m.port_open = lambda *args, **kwargs: True
+        view = m.backups_view("/nonexistent", {}, fleet_two_nodes())
+        self.assertFalse(any(h["reachable"] for h in view["hosts"]))
+        self.assertTrue(all(h["jobs"] is None for h in view["hosts"]))
+        for row in m.hypervisor_needs(view):
+            for key in ("why", "action", "verify"):
+                self.assertTrue(row[key])
+
     def test_failure_is_cached_and_a_fresh_failure_is_not_reprobed(self):
         m = self.mod
         calls = []

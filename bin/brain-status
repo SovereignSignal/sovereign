@@ -593,6 +593,10 @@ try:
             delivery = "accepted" if result.returncode == 0 else "waiting" if result.returncode == 1 else "unknown"
         bk["lanes"].append({"lane": lane, "pushed": pushed or None, "merged": merged or None, "keep": keep,
                             "source_head": head or None, "delivery": delivery,
+                            "acceptance_reason": None if delivery != "unknown" else
+                                "No exchange remote is configured on the hub." if not keep else
+                                "The hub has no observed source branch for this lane." if not head else
+                                "The hub could not compare the source commit with its main branch.",
                             "observed_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
     snap_root = None
     try: snap_root = os.path.expanduser(open(os.path.expanduser("~/.brain-snapshots")).read().strip())
@@ -894,9 +898,11 @@ def backups_view(root, hub, fleet):
                 host, port = _target(node)
                 if not port_open(host, port, timeout=1.0):
                     raise OSError("port %d closed or filtered" % port)
-                o = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node,
+                probe = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node,
                                     "grep -c '^vzdump' /etc/pve/jobs.cfg 2>/dev/null; ls -t --time-style=+%s -l /var/lib/vz/dump/ 2>/dev/null | awk '{print $6, $7}' | grep -E 'vma|tar' | head -50"],
-                                   capture_output=True, text=True, timeout=PROBE_BUDGET).stdout.splitlines()
+                                   capture_output=True, text=True, timeout=PROBE_BUDGET)
+                probe.check_returncode()
+                o = probe.stdout.splitlines()
                 jobs = int(o[0]) if o and o[0].strip().isdigit() else 0
                 dumps = {}
                 for line in o[1:]:
@@ -963,9 +969,79 @@ def hypervisor_needs(backups):
         d = h.get("detail") or {}
         action = d.get("action") or "The node did not answer from this machine. Check it is on and on the tailnet, then refresh."
         text = "Backup posture of %d VM%s on %s is unknown (%s). %s" % (len(vms), "" if len(vms) == 1 else "s", node, ", ".join(vms), action)
-        row = {"kind": "hypervisor", "node": node, "text": text}
+        cause = {"tailscale-check": "Tailscale SSH requires a browser re-check from this machine.",
+                 "hang": "The SSH probe did not answer within its 6 second budget.",
+                 "port-closed": "The node's SSH port did not answer the connection probe.",
+                 "error": "The SSH probe failed; the underlying cause is unconfirmed."}.get(d.get("why"), "The node did not return backup information.")
+        row = {"kind": "hypervisor", "node": node, "text": text,
+               "why": cause, "action": action,
+               "verify": "Refresh; %s reports reachable and returns backup job and dump information. A missing backup remains a separate issue." % node}
         if d.get("url"): row["url"] = d["url"]
         rows.append(row)
+    return rows
+
+
+def fleet_needs(fleet):
+    """Explain only an observed failed reachability check; absence is not a failure."""
+    rows = []
+    for host in (fleet or {}).get("hosts") or []:
+        net = host.get("net") or {}
+        if net.get("online") is not False:
+            continue
+        via = net.get("via")
+        cause = ("Tailscale reports this device offline." if via == "tailscale" else
+                 "The SSH port probe did not answer within its 1 second connection budget." if via in ("port 22 probe", "parallels") else
+                 "The reported network check failed; the underlying cause is unconfirmed.")
+        rows.append({"kind": "host", "host": host["host"],
+                     "text": "This device cannot currently reach %s." % host["host"],
+                     "why": cause,
+                     "action": "Check the device is powered on and connected to its network%s. Open Operations → Hosts and inspect %s, then refresh." %
+                               (" with Tailscale signed in" if via == "tailscale" else "", host["host"]),
+                     "verify": "Refresh; %s reports reachable. This verifies connectivity only; collection and hub acceptance have their own records." % host["host"]})
+    return rows
+
+
+def contribution_issues(backups):
+    rows = []
+    for lane in (backups or {}).get("lanes") or []:
+        if lane.get("delivery") in ("accepted", "waiting"):
+            continue
+        issue = {"kind": "contribution", "lane": lane["lane"],
+                 "text": "Hub acceptance is unknown for %s." % lane["lane"],
+                 "why": lane.get("acceptance_reason") or
+                        ("The hub could not verify whether the source commit is included." if lane.get("delivery") == "unknown" else
+                         "The connected status service did not report an acceptance result."),
+                 "action": "Open Operations → Backups and inspect this lane's source commit and hub connection. If the service is older, ask its maintainer to update it, then refresh.",
+                 "verify": "The lane reports accepted or waiting after refresh. Only accepted confirms inclusion on the hub."}
+        lane["acceptance_issue"] = issue
+        rows.append(issue)
+    return rows
+
+
+def explain_needs(rows):
+    """Keep legacy summaries readable while giving each existing issue a next step.
+
+    New producers must supply their own fields; unknown kinds remain visibly legacy.
+    """
+    guidance = {
+        "hub": ("The configured hub did not return status; its governance state is unknown.", "Open Operations → Hosts, inspect the configured hub and restore its connection, then refresh.", "Refresh; the hub reports reachable and Review shows a current queue."),
+        "gate": ("Proposals are waiting for an owner decision.", "Open Sovereign → Review to compare and decide (or curator-approve on the hub).", "After your decision, refresh Review; the handled proposal leaves the waiting queue."),
+        "harness": ("The context connection needs the setup step described above.", "Open Operations → Tools, select this tool and follow the setup step above.", "Start a fresh tool session and refresh; its context hook is trusted and a new preparation receipt appears. Model use still requires separate evidence."),
+        "mirror-missing": ("The declared mirror executable is missing.", "Open Operations → Tools for this lane and repair its connector installation.", "After the next connector tick, refresh; the lane records a successful run."),
+        "lane-refused": ("The lane declaration does not fit the runner's execution limits.", "Inspect this lane's declaration in Operations → Tools. Correct the reported limit before the next connector tick.", "After the next tick, refresh; the lane is visited and no longer refused."),
+        "lane-timeout": ("The lane exceeded its configured execution budget.", "Open Operations → Tools for this lane and inspect its error log to resolve the blocking operation.", "After the next connector tick, refresh; the lane finishes within its budget."),
+        "lane-silent": ("The runner has not visited this enabled lane within its cadence.", "Inspect the lane error log named above in Operations → Tools and verify its runner declaration.", "After the next tick, refresh; the lane's checked time advances within its cadence."),
+        "runner-standing-down": ("A previous connector tick still holds the runner lock.", "Open Operations → Jobs and inspect the connector runner log. Identify the still-running operation before any restart.", "Refresh after the next tick; it finishes and the stand-down count stops growing."),
+        "runner-stalled": ("The connector runner has not recorded a completed tick within its cadence.", "Open Operations → Jobs and inspect the connector runner's loaded state and error log.", "After the next tick, refresh; the runner has a recent finish time and its lanes are visited."),
+        "relay": ("The source and destination observations show an incomplete file relay.", "Open Operations → Backups and inspect the relay's source paths and error log. Restore a missing source or review the removal command above if intentional.", "After the next relay run, refresh; the vault copy catches up and the source error clears."),
+        "job": ("The scheduled job reported a failure or recent error-log output.", "Open Operations → Jobs, select the named job and inspect its error log before retrying.", "After the next successful run, refresh and confirm exit 0; inspect remaining log warnings separately."),
+        "not-connected": ("No connected-system archive is configured on this device.", "Use your local archive, or open Operations → Tools to configure an optional connection.", "After connecting, refresh; the intended archive and tool appear.")}
+    for row in rows:
+        if row.get("kind") in guidance:
+            for key, value in zip(("why", "action", "verify"), guidance[row["kind"]]):
+                row.setdefault(key, value)
+        if any(not row.get(key) for key in ("why", "action", "verify")):
+            row["legacy"] = True
     return rows
 
 
@@ -1147,7 +1223,7 @@ def main():
                        "core": [c for c in core.split(",") if c], "template": TEMPLATE_ROOT, "template_rev": rev,
                        "staging": stage, "connected": bool(root), "hub_pointer": hub_pointer}}
     if not root:
-        out["needs_you"] = [{"kind": "not-connected", "text": "This machine is not connected to a brain. Run: sov connect <tool> --vault <path> --host <name> --apply"}]
+        out["needs_you"] = explain_needs([{"kind": "not-connected", "text": "Connected tools are not configured. Your local archive remains available."}])
         print(json.dumps(out, indent=2) if want_json else "not connected: no ~/.brain-root")
         return
 
@@ -1376,7 +1452,7 @@ def main():
     if hub.get("reachable") is False:
         needs.append({"kind": "hub", "text": "The hub did not answer (%s). Governance state is unknown until it does." % hub.get("via", "?")})
     if hub.get("pending"):
-        needs.append({"kind": "gate", "text": "%d proposal%s waiting at the gate. Approve or reject them on Telegram or with curator-approve." % (hub["pending"], "" if hub["pending"] == 1 else "s")})
+        needs.append({"kind": "gate", "text": "%d proposal%s waiting at the gate. Open Sovereign → Review to compare and decide (or curator-approve on the hub)." % (hub["pending"], "" if hub["pending"] == 1 else "s")})
     for h in harnesses:
         if h.get("trusted") is False:
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: the hook is installed but not trusted. Run: sov connect %s --apply" % (h["name"], h["id"])})
@@ -1474,7 +1550,9 @@ def main():
         sa, va = l.get("staging_age_h"), l.get("vault_age_h")
         if sa is not None and va is not None and va - sa > 1.0 and va > 2:
             needs.append({"kind": "relay", "text": "Lane %s: staging is %.1fh old but the vault copy is %.1fh old. The relay may be stuck." % (l["lane"], sa, va)})
-    out["needs_you"] = needs
+    needs.extend(fleet_needs(out.get("fleet")))
+    contribution_issues(out.get("backups"))  # Unknown evidence stays neutral; explain it on each lane.
+    out["needs_you"] = explain_needs(needs)
 
     if want_json:
         print(json.dumps(out, indent=2))

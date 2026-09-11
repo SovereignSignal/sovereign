@@ -64,6 +64,19 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     let sov: String?
     var generation = UUID()
     var gateBusy = false
+    // Status lives across document swaps, scoped to the selected archive and query.
+    // All of this state is accessed on the main queue; old requests cannot replace it.
+    var statusCache: [String: Any]?
+    var statusScope = ""
+    var statusRun: UUID?
+    var statusWaiter: (generation: UUID, request: Any?)?
+    var statusTimer: DispatchWorkItem?
+    var statusStarted = Date()
+    var statusBudget: Double {
+        if App.shared.snapshotting, let value = ProcessInfo.processInfo.environment["SOV_QA_STATUS_BUDGET"],
+           let seconds = Double(value), seconds >= 1, seconds <= 45 { return seconds }
+        return 45
+    }
 
     init(sov: String?) { self.sov = sov }
 
@@ -89,25 +102,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             guard let page = d["page"] as? String, ["home", "review", "operations"].contains(page) else { return }
             DispatchQueue.main.async { App.shared.navigate(page: page, place: d["place"] as? [String: Any]) }
         case "status":
-            guard let sov = sov else {
-                var response: [String: Any] = ["machine": ["connected": false], "available": false]
-                response["request"] = d["request"]
-                deliver("status", response, generation: generation); return
-            }
-            var args = [sov, "status", "--json"]
-            if (d["hub"] as? Bool) == false { args.append("--no-hub") }
-            run(args) { out, err, code in
-                if let data = out.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    var response = obj; response["request"] = d["request"]
-                    self.deliver("status", response, generation: generation)
-                } else {
-                    let detail = self.statusDetail(err)
-                    log("status failed (exit \(code)): \(detail)")
-                    var response: [String: Any] = ["error": "System status could not be read. Retry or inspect Operations.", "detail": detail]
-                    response["request"] = d["request"]
-                    self.deliver("status", response, generation: generation)
-                }
-            }
+            requestStatus(d, generation: generation)
         case "connect":
             guard let sov = sov, let h = d["harness"] as? String else { return }
             var args = [sov, "connect", h]
@@ -169,7 +164,10 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             // This is how a real message reaches the app log and a QA run.
             log("client error in \((d["where"] as? String) ?? "?"): \((d["msg"] as? String) ?? "")")
         case "openurl":
-            if let u = d["url"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
+            if let u = d["url"] as? String, let url = URL(string: u),
+               ["https", "http", "obsidian"].contains(url.scheme?.lowercased() ?? ""), url.host != nil {
+                NSWorkspace.shared.open(url)
+            }
         case "gateCheck", "gate":
             guard let slug = d["slug"] as? String,
                   slug.range(of: "^[a-z0-9][a-z0-9-]{0,120}$", options: .regularExpression) != nil,
@@ -297,6 +295,61 @@ final class Bridge: NSObject, WKScriptMessageHandler {
 
     // Reuse the archive's credential redactor before truncation, so a clipped key
     // cannot evade its shape checks. Failure never falls back to raw diagnostics.
+    private func requestStatus(_ request: [String: Any], generation: UUID) {
+        let scope = "\(Settings.archive ?? "")|\((request["hub"] as? Bool) != false)"
+        if scope != statusScope {
+            statusCache = nil; statusRun = nil; statusTimer?.cancel(); statusScope = scope
+        }
+        statusWaiter = (generation, request["request"])
+        guard let sov = sov else {
+            deliver("status", ["machine": ["connected": false], "available": false,
+                               "request": request["request"] ?? NSNull()], generation: generation)
+            return
+        }
+        // A new page joins the existing read. It does not start another probe.
+        sendStatus(pending: true)
+        guard statusRun == nil else { return }
+        let runID = UUID(); statusRun = runID; statusStarted = Date()
+        let deadline = DispatchWorkItem { [weak self] in
+            guard let self = self, self.statusRun == runID else { return }
+            self.statusRun = nil
+            self.sendStatus(pending: false, error: "The connected-system status probe did not finish within \(Int(self.statusBudget)) seconds. Check the connection in Operations, then refresh to confirm a new observation.")
+        }
+        statusTimer = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + statusBudget, execute: deadline)
+        var args = [sov, "status", "--json"]
+        if (request["hub"] as? Bool) == false { args.append("--no-hub") }
+        run(args, timeLimit: statusBudget) { out, err, code in
+            let obj = out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+            let valid = code == 0 && obj?["error"] == nil && obj?["machine"] is [String: Any]
+            let detail = valid ? "" : self.statusDetail(err)
+            DispatchQueue.main.async {
+                guard self.statusRun == runID else { return }
+                self.statusTimer?.cancel(); self.statusRun = nil
+                if valid, var value = obj {
+                    value["_status"] = ["observed_at": value["generated_at"] ?? ISO8601DateFormatter().string(from: self.statusStarted),
+                                        "duration_s": Date().timeIntervalSince(self.statusStarted)]
+                    self.statusCache = value
+                    self.sendStatus(pending: false)
+                } else {
+                    self.sendStatus(pending: false, error: "System status could not be read (exit \(code)). Check the connection in Operations and refresh to confirm a new observation.", detail: detail)
+                }
+            }
+        }
+    }
+
+    private func sendStatus(pending: Bool, error: String? = nil, detail: String = "") {
+        guard let waiter = statusWaiter else { return }
+        var value = statusCache ?? [:]
+        var state = value["_status"] as? [String: Any] ?? [:]
+        state["pending"] = pending; state["stale"] = pending || error != nil
+        state["budget_s"] = statusBudget
+        if let error = error { state["error"] = error; state["detail"] = detail }
+        value["_status"] = state; value["request"] = waiter.request ?? NSNull()
+        if statusCache == nil, let error = error { value["error"] = error }
+        deliver("status", value, generation: waiter.generation)
+    }
+
     private func statusDetail(_ stderr: String) -> String {
         guard let resources = Bundle.main.resourceURL else { return "Diagnostics unavailable." }
         let p = Process(), input = Pipe(), output = Pipe()
@@ -310,7 +363,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : "Diagnostics unavailable."
     }
 
-    func run(_ args: [String], environment extra: [String: String] = [:], done: @escaping (String, String, Int32) -> Void) {
+    func run(_ args: [String], environment extra: [String: String] = [:], timeLimit: Double? = nil, done: @escaping (String, String, Int32) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: args[0])
@@ -319,6 +372,18 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             let o = Pipe(), e = Pipe()
             p.standardOutput = o; p.standardError = e
             do { try p.run() } catch { done("", "\(error)", -1); return }
+            var deadline: DispatchWorkItem?
+            if let seconds = timeLimit {
+                let stop = DispatchWorkItem {
+                    if p.isRunning { p.terminate() }
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+                        if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+                    }
+                }
+                deadline = stop
+                DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: stop)
+            }
+            defer { deadline?.cancel() }
             // Drain both pipes concurrently: a large stderr must not block stdout/exit.
             let readers = DispatchGroup(); readers.enter()
             var ed = Data()
@@ -460,6 +525,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         let controller = w.configuration.userContentController
         controller.removeAllUserScripts()
         controller.addUserScript(WKUserScript(source: "document.documentElement.dataset.theme='\(theme)';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let budget = glance ? (glanceBridge?.statusBudget ?? 45) : bridge.statusBudget
+        controller.addUserScript(WKUserScript(source: "window.sovStatusBudget=\(budget);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         w.loadFileURL(target, allowingReadAccessTo: ui.deletingLastPathComponent())
         if w === web {
             let watchdog = DispatchWorkItem { [weak self, weak w] in if let w = w { self?.showLoadFailure(w) } }
@@ -556,13 +623,15 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
     private func applySnapshotAnchor(_ anchor: String, done: @escaping () -> Void) {
         let operations = anchor.hasPrefix("operations:view:")
-        let value = operations ? String(anchor.dropFirst(16)) : anchor.hasPrefix("view:") ? String(anchor.dropFirst(5)) : anchor
+        let home = anchor.hasPrefix("home:view:")
+        let value = home ? String(anchor.dropFirst(10)) : operations ? String(anchor.dropFirst(16)) : anchor.hasPrefix("view:") ? String(anchor.dropFirst(5)) : anchor
         let encoded = String(data: try! JSONSerialization.data(withJSONObject: [value]), encoding: .utf8)! + "[0]"
         if operations { navigate(page: "operations", place: ["snapshot": value]) }
+        if home { navigate(page: "home", place: ["view": value]) }
         func wait(_ attempt: Int) {
             web.evaluateJavaScript("typeof sovDeliver === 'function' && window.sovSnapshotReady && window.sovSnapshotReady()") { ready, _ in
-                if (ready as? Bool) == true && (!operations || (!self.localMode && self.web.url?.lastPathComponent == "index.html")) {
-                    let js = operations ? "void 0" : anchor.hasPrefix("view:") ? "window.sovView(\(encoded))" : anchor.isEmpty ? "window.scrollTo(0,document.body.scrollHeight)" : "document.querySelector(\(encoded))?.scrollIntoView({block:'start'})"
+                if (ready as? Bool) == true && (!operations || (!self.localMode && self.web.url?.lastPathComponent == "index.html")) && (!home || (self.localMode && self.web.url?.lastPathComponent == "local.html")) {
+                    let js = operations || home ? "void 0" : anchor.hasPrefix("view:") ? "window.sovView(\(encoded))" : anchor.isEmpty ? "window.scrollTo(0,document.body.scrollHeight)" : "document.querySelector(\(encoded))?.scrollIntoView({block:'start'})"
                     self.web.evaluateJavaScript("document.body.classList.add('qa');" + js) { _, error in
                         if let error = error { log("snapshot anchor: \(error)"); exit(2) }
                         done()

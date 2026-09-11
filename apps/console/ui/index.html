@@ -609,10 +609,10 @@ window.onerror = function (msg, src, line, col) {
   function renderVerdict() {
     const v = $("#verdict"); if (!v || !D) return;
     const q = reviewQueue();
-    const { state, text } = view === "review" ? {state:q.available?"idle":"warn",text:selectedRoot?"Reviewing " + selectedRoot.split("/").pop():"Choose an archive to get started."} : D.error ? {state:"down",text:D.error} : verdictSentence();
+    const { state, text } = view === "review" ? {state:q.available?"idle":"warn",text:selectedRoot?"Reviewing " + selectedRoot.split("/").pop():"Choose an archive to get started."} : D.error||D._status?.error ? {state:"down",text:D.error||D._status.error} : D._status?.pending ? {state:"warn",text:SovStatus.caption(D)} : verdictSentence();
     v.className = state; $("#vtext").textContent = text;
-    $("#vmeta").textContent = "refreshed " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    bridge({ cmd: "verdict", ...(view === "review" && !D.error ? verdictSentence() : D.error ? {state:"down",text:D.error} : {state,text}) });
+    $("#vmeta").textContent = SovStatus.caption(D);
+    bridge({ cmd: "verdict", ...((D._status?.pending||D._status?.error)?{state,text}:view === "review" && !D.error ? verdictSentence() : D.error ? {state:"down",text:D.error} : {state,text}) });
   }
   // ---------- hosts by role: the hub, this machine, producers, the rest ----------
   function hostItems() {
@@ -694,7 +694,7 @@ window.onerror = function (msg, src, line, col) {
       note: "A live copy of the notes, not of the brain: governance files and anything that is not markdown never cross it." });
     (b.lanes || []).forEach(l => {
       const p = ageOf(l.pushed), accepted = l.delivery === "accepted", state = accepted ? (p != null && p < 48 ? "live" : "warn") : l.delivery === "waiting" ? "warn" : "idle";
-      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : "acceptance not reported by this status version", state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
+      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : SovStatus.contributionIssue(l).text+" "+SovStatus.contributionIssue(l).why+" "+SovStatus.contributionIssue(l).action+" "+SovStatus.contributionIssue(l).verify, state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
         detail: [["source commit time", l.pushed || "unknown"], ["last change on main", l.merged || "unknown"], ["source commit", l.source_head || "unknown"], ["observed at", l.observed_at || "unknown"], ["keep", l.keep]],
         note: "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
     });
@@ -788,10 +788,14 @@ window.onerror = function (msg, src, line, col) {
       <span class="tag ${j.stderr_lines ? "mid" : ""}">${j.stderr_lines == null ? "no log" : j.stderr_lines + " err"}</span>
       <span class="chev">›</span>`;
   }
+  function issueHTML(n) {
+    const url=SovStatus.safeURL(n.url);
+    return `<div class="issue-details">${[['why','Why'],['action','Next step'],['verify','Confirm']].filter(([k])=>n[k]).map(([k,label])=>`<p><strong>${label}:</strong> ${esc(n[k])}</p>`).join('')}${url?`<a href="${esc(url)}" data-status-url="${esc(url)}">Open verification link</a>`:''}${n.action?` <button data-copy-step="${esc(n.action)}">Copy next step</button>`:''}</div>`;
+  }
   function glanceHome() {
     const A = assess();
     if (window.__qaEmpty === "needs") A.need = [];                    // design QA: the empty state
-    const rowHTML = (r) => `<div class="row" role="option" tabindex="0" ${r.need != null ? `data-need="${r.need}"` : r.group ? `data-group="${esc(r.group)}"` : `data-jump="${esc(JSON.stringify(r.jump))}"`}>${dot(r.state, r.state)}<span class="name">${esc(r.name)}</span><span class="num">${r.age_h != null ? age(r.age_h) : ""}</span><span class="chev">›</span><span class="desc">${esc(r.detail)}</span></div>`;
+    const rowHTML = (r) => `<div class="row" role="option" tabindex="0" ${r.need != null ? `data-need="${r.need}"` : r.group ? `data-group="${esc(r.group)}"` : `data-jump="${esc(JSON.stringify(r.jump))}"`}>${dot(r.state, r.state)}<span class="name">${esc(r.name)}</span><span class="num">${r.age_h != null ? age(r.age_h) : ""}</span><span class="chev">›</span><span class="desc">${esc(r.detail)}</span></div>${issueHTML(r)}`;
     const col = (title, rows, empty) => `<section class="gcol${rows.length ? "" : " bare"}"><div class="gh">${title}<span class="n">${rows.length}</span></div><div class="gb">${rows.length ? rows.map(rowHTML).join("") : `<div class="empty">${empty}</div>`}</div></section>`;
     return `<div class="glance-home">${col("Needs you", A.need, "nothing waiting")}${col("Fresh", A.fresh, "nothing new since your last look")}${col("Stale", A.stale, "nothing stale")}</div>`;
   }
@@ -802,7 +806,7 @@ window.onerror = function (msg, src, line, col) {
   }
   function footerMeta(n) {
     const m = D?.machine || {}, meName = m.host || "here";
-    $("#listcount").textContent = view === "review" ? (D?.generated_at ? "Observed " + clock(D.generated_at) : "Observation time unknown") : view === "hosts" ? `${n} hosts` : view === "tools" ? `${n} tools on ${meName}` : (m.template_rev || "");
+    $("#listcount").textContent = view === "review" ? SovStatus.caption(D) : view === "hosts" ? `${n} hosts` : view === "tools" ? `${n} tools on ${meName}` : (m.template_rev || "");
   }
   function renderList() {
     const review=view==='review',q=reviewQueue();
@@ -813,6 +817,7 @@ window.onerror = function (msg, src, line, col) {
     $('#rows').setAttribute('aria-label',review?'Proposals awaiting your decision':'Records');
     const intro=$('#review-intro');intro.hidden=!review;
     if(review)intro.innerHTML=`<div class="review-heading"><h2>${esc(q.title)}</h2>${q.count?`<span>${num(q.count)}</span>`:''}</div><p>${esc(q.message)}</p>${!q.available?`<button id="review-retry">${['no_archive','different_archive'].includes(q.state)?'Open archive…':'Refresh queue'}</button>`:''}`;
+    if(!review&&D?._status?.pending&&!D.machine){$('#rows').className='';$('#rows').textContent=SovStatus.caption(D);footerMeta(0);return;}
     if(!review&&D?.error){$('#rows').className='';$('#rows').innerHTML='<div class="empty">System status unavailable. Use Refresh to try again.</div>';sel=null;footerMeta(0);return;}
 
     if (!review && D?.machine?.connected === false) {renderSetup(D);return;}
@@ -1182,9 +1187,9 @@ window.onerror = function (msg, src, line, col) {
         ${row({ view: "archive", section: "judge" }, "unjudged", num(st.deferred ?? cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
         ${row({ view: "archive", section: "composition" }, "cards", num(a.total), a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : "")}
         ${row({ view: "hosts" }, "fleet", `${online} of ${fleet.length} up`, offline ? offline + " offline" : unknown ? unknown + " not probed" : "all reachable", offline ? "hot" : "")}
-        ${needs.filter(n => n.kind !== "gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.harness ? { view: "tools", sel: { kind: "tool", id: n.harness } } : n.kind === "gate" ? { view: "review" } : { view: "jobs" }))}"><span class="l">${esc(n.kind)}</span><span class="s wrap">${esc(n.text)}</span><span class="chev">›</span></button>`).join("")}
+        ${needs.filter(n => n.kind !== "gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.harness ? { view: "tools", sel: { kind: "tool", id: n.harness } } : n.kind === "gate" ? { view: "review" } : { view: "jobs" }))}"><span class="l">${esc(n.kind)}</span><span class="s wrap">${esc(n.text)}</span><span class="chev">›</span></button>${issueHTML(n)}`).join("")}
       </div>
-      <div class="g-foot"><span class="meta">${esc(m.host || "")} · ${clock(D.generated_at)}</span><span class="sp"></span><button class="brass" id="g-console">Open console</button></div>`;
+      <div class="g-foot"><span class="meta">${esc(m.host || "")} · ${esc(SovStatus.caption(D))}</span><span class="sp"></span><button class="brass" id="g-console">Open console</button></div>`;
     requestAnimationFrame(() => bridge({ cmd: "glanceSize", h: Math.ceil(g.scrollHeight) }));
   }
 
@@ -1296,10 +1301,16 @@ window.onerror = function (msg, src, line, col) {
   }
   function onClick(e) {
     const seg = e.target.closest(".seg button"); if (seg) return setView(seg.dataset.view);
+    const link = e.target.closest('[data-status-url]');
+    if(link){e.preventDefault();const url=SovStatus.safeURL(link.dataset.statusUrl);if(url)bridge({cmd:'openurl',url});return;}
+    const step = e.target.closest('[data-copy-step]');
+    if(step){bridge({cmd:'copyText',text:step.dataset.copyStep});step.textContent='Copied';return;}
     const need = e.target.closest("[data-need]");
     if (need) { const n = (D.needs_you || [])[+need.dataset.need];
       if (n && n.harness) { setView("tools"); select("tool", n.harness, true); }
       else if (n && n.kind === "gate") gotoGate();
+      else if (n && n.host) {setView('hosts');select('host',n.host,true);}
+      else if (n && ['hypervisor','contribution'].includes(n.kind)) setView('backups');
       else if (n && n.kind === "job") setView("jobs");
       return; }
     const chip = e.target.closest("[data-goto]");
@@ -1436,7 +1447,7 @@ window.onerror = function (msg, src, line, col) {
     if(kind==='localState'){
       if(selectedRoot!==(payload.root||null)){gateChecks.clear();gateResolutions.clear();sel=null;}
       selectedRoot=payload.root||null;archiveKnown=true;$('#change').hidden=false;
-      if(D)render(D);
+      if(D){render(D);if(view==='review'&&!sel&&reviewQueue().available&&!gatePending)gotoGate();}
       return;
     }
     if(kind==='gateCheck'){
@@ -1454,12 +1465,15 @@ window.onerror = function (msg, src, line, col) {
       showGateNotice(payload.state,['approved','rejected'].includes(payload.state)?null:payload.detail,finished.title);renderInspector();refresh();return;
     }
     if (kind === "status") {
+      const resumeReview=view==='review'&&!reviewQueue().available;
+      payload=SovStatus.retain(D,payload);
       if(!GateModel.queue(payload,selectedRoot,archiveKnown).available){gateChecks.clear();gateResolutions.clear();}
       if (GLANCE && payload.error) {D=payload;const g=$('#glance');g.hidden=false;g.innerHTML=`<div class="empty">${esc(payload.error)}</div><button id="g-refresh">Try again</button>`;return;}
       if(!gatePending)for(const [slug,entry] of gateChecks){
         if(entry.key!==GateModel.reviewKey(payload,slug)){gateChecks.delete(slug);gateResolutions.delete(slug);}
       }
       render(payload);
+      if(resumeReview&&view==='review'&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
     } else if (kind === "vmstart") {
       setTimeout(refresh, 3000);

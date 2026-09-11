@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Status continuity and failure paths in the native app; fixture commands only."""
+import argparse, importlib.machinery, importlib.util, json, os, subprocess, sys, tempfile, uuid
+from pathlib import Path
+from datetime import datetime, timezone
+HERE=Path(__file__).resolve().parent
+ROOT=HERE.parents[1]
+sys.path.insert(0,str(ROOT/'lib'))
+import brain_local
+loader=importlib.machinery.SourceFileLoader('status_fixture',str(ROOT/'bin/brain-status'))
+service=importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name,loader));loader.exec_module(service)
+COMMON=r'''
+const checks={},post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
+const check=(name,ok)=>{checks[name]=!!ok};
+const wait=async fn=>{for(let n=0;n<160;n++){if(fn())return;await pause(50)}throw Error('Timed out: '+fn)};
+const text=()=>document.body.textContent;
+const caption=()=>document.querySelector('.home-observation')?.textContent||document.getElementById('vmeta')?.textContent||'';
+const report=()=>post({cmd:'clientError',where:'transparency-qa',msg:JSON.stringify({checks,failures:Object.keys(checks).filter(k=>!checks[k])})});
+'''
+PROBE=r'''
+check('No horizontal overflow',document.documentElement.scrollWidth<=innerWidth);
+if(SCENE==='first-load'){
+ check('First load states native budget',caption().includes('up to 6 seconds'));
+ check('No false empty environment',!text().includes('0 devices')&&!text().includes('No matching connector environment'));
+ await wait(()=>text().includes('worker'));
+ check('Slow first result renders',true);
+ check('Elapsed status time shown',caption().includes('Status took'));
+}else if(SCENE==='home'){
+ const attention=document.querySelector('.home-attention'),grid=document.querySelector('.home-grid');
+ check('Attention is first in DOM',grid.firstElementChild===attention);
+ check('Attention is above receipts',attention.getBoundingClientRect().top<document.querySelector('.home-packs').getBoundingClientRect().top);
+ for(const term of ['Why:','Next step:','Confirm:','Tailscale SSH','within its 1 second'])check('Explains '+term,attention.textContent.includes(term));
+ check('Unknown contribution explained without alarm',document.querySelector('.home-contributions').textContent.includes('Hub acceptance is unknown')&&!attention.textContent.includes('Hub acceptance is unknown'));
+ check('Link is an anchor',attention.querySelector('a')?.href==='https://example.com/recheck');
+ check('Copy step is available',[...attention.querySelectorAll('button')].some(b=>b.textContent==='Copy next step'));
+ check('Source text cannot inject HTML',!attention.querySelector('img'));
+ const link=attention.querySelector('a');check('Link keyboard reachable',link.tabIndex===0);
+ document.getElementById('system-tab').click();
+ check('System has observed devices',text().includes('2 devices'));
+ window.sovRefresh();await pause(150);
+ check('Pending keeps devices',text().includes('2 devices')&&caption().includes('refreshing'));
+ await wait(()=>!caption().includes('refreshing'));
+ check('Failed refresh keeps devices',text().includes('2 devices')&&caption().includes('refresh failed'));
+ check('Failed refresh gives next step',text().includes('Check the connection in Operations'));
+ window.sovRefresh();await pause(150);check('Retry keeps devices',text().includes('2 devices'));
+ await wait(()=>caption().includes('refresh failed'));
+ check('Timeout names budget and probe',text().includes('status probe did not finish within 4 seconds'));
+ check('Timeout retains last devices',text().includes('2 devices'));
+ window.sovRefresh();await wait(()=>!caption().includes('refreshing'));
+ check('Recovery clears failure',text().includes('2 devices')&&!caption().includes('refresh failed'));
+}else if(SCENE==='to-operations'){
+ check('Operations document loaded',location.pathname.endsWith('/index.html'));
+ check('Cached data survives document swap',text().includes('worker')&&caption().includes('refreshing'));
+ check('Operations renders cause/action/verify',text().includes('Next step:')&&text().includes('Confirm:'));
+ await wait(()=>!caption().includes('refreshing'));
+ check('New document receives in-flight result',!caption().includes('refresh failed')&&text().includes('worker'));
+}else if(SCENE==='to-home'){
+ check('Home document loaded',location.pathname.endsWith('/local.html'));
+ check('System route restored',document.getElementById('system-tab').getAttribute('aria-pressed')==='true');
+ check('Environment survives return navigation',text().includes('2 devices')&&caption().includes('refreshing'));
+ await wait(()=>!caption().includes('refreshing'));
+ check('Returning page receives pending result',text().includes('2 devices'));
+}
+report();
+'''
+def main():
+ p=argparse.ArgumentParser();p.add_argument('--evidence',required=True,type=Path);p.add_argument('--scenes',nargs='*');a=p.parse_args();a.evidence.mkdir(parents=True,exist_ok=True);results=[]
+ cases=[('first-load','dark','900x600'),('home','dark','1200x800'),('home','light','720x460'),('to-operations','dark','900x600'),('to-home','light','900x600')]
+ for scene,theme,size in cases:
+  if a.scenes and scene not in a.scenes:continue
+  with tempfile.TemporaryDirectory(prefix='sovereign-transparency-') as folder:
+   base=Path(folder);archive=base/'QA Archive';brain_local.create(archive,ROOT);archive=archive.resolve();suite='com.sovereign.qa.transparency.'+uuid.uuid4().hex
+   fleet={'hosts':[{'host':'studio','net':{'online':True}},{'host':'worker','net':{'online':False,'via':'port 22 probe'}}]}
+   backups={'lanes':[{'lane':'older-service'},{'lane':'waiting','delivery':'waiting'}],'hosts':[{'host':'worker','node':'hypervisor','reachable':False,'detail':{'why':'tailscale-check','action':'Run ssh hypervisor and open the link it prints.','url':'https://example.com/recheck'}}]}
+   service.contribution_issues(backups)
+   needs=service.hypervisor_needs(backups)+service.fleet_needs(fleet)
+   needs[0]['why']+=' <img src=x onerror=alert(1)>'
+   data={'generated_at':datetime.now(timezone.utc).isoformat(),'machine':{'connected':True,'host':'studio','vault':str(archive),'vault_name':'QA Archive'},'hub':{'reachable':True,'pending':0,'proposals':[]},'fleet':fleet,'backups':backups,'needs_you':needs,'harnesses':[],'archive':{'cards':[]}}
+   (base/'status.json').write_text(json.dumps(data));(base/'count').write_text('0')
+   command=base/'status'
+   # A single process fixture, so timeout cleanup can be checked by PID.
+   behavior="time.sleep(4)" if scene=='first-load' else "\nif n==2: time.sleep(1); sys.exit(7)\nif n==3: time.sleep(9)" if scene=='home' else "\nif n==2: time.sleep(4)"
+   command.write_text('#!'+sys.executable+'\nimport os,json,time,sys\nfrom pathlib import Path\nb=Path(__file__).parent\nn=int((b/"count").read_text())+1\n(b/"count").write_text(str(n))\n(b/"pid").write_text(str(os.getpid()))\n'+behavior+'\nprint((b/"status.json").read_text())\n');command.chmod(0o700)
+   anchor='operations:view:glance' if scene=='to-operations' else 'home:view:system' if scene=='to-home' else ''
+   before="document.getElementById('system-tab').click();" if scene=='first-load' else "document.getElementById('operations-tab').click();" if scene=='to-home' else "window.sovRefresh();" if scene=='to-operations' else 'void 0'
+   name=scene+'-'+theme+'-'+size
+   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(command),SOV_QA_STATUS_BUDGET='6' if scene!='home' else '4',SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='3.2',SOV_SNAPSHOT_ANCHOR=anchor,SOV_QA_JS=before,SOV_QA_JS_AFTER_ANCHOR=COMMON+PROBE.replace('SCENE',json.dumps(scene)))
+   try:
+    cp=subprocess.run([str(HERE/'build/Sovereign.app/Contents/MacOS/Sovereign'),'-sov.archive',str(archive)],env=env,capture_output=True,text=True,timeout=35)
+    (a.evidence/(name+'.log')).write_text(cp.stderr);marker='client error in transparency-qa: '
+    records=[json.loads(line.split(marker,1)[1]) for line in cp.stderr.splitlines() if marker in line]
+    assert cp.returncode==0 and len(records)==1,(name,cp.stderr)
+    result=dict(records[0],scene=scene,theme=theme,size=size,invocations=int((base/'count').read_text()));results.append(result)
+    assert not result['failures'],result
+    if scene in ('to-home','to-operations'):assert result['invocations']==2,('navigation duplicated a probe',result)
+    print(name,len(result['checks']),'checks passed',flush=True)
+   finally:
+    subprocess.run(['defaults','delete',suite],capture_output=True)
+    (a.evidence/'native-transparency.json').write_text(json.dumps(results,indent=2)+'\n')
+ print(sum(len(r['checks']) for r in results),'native transparency checks passed')
+if __name__=='__main__':main()

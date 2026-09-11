@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path');
-const box = {window:{}}; vm.createContext(box);
+const box = {window:{},URL}; vm.createContext(box);
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/status-model.js'),'utf8'),box);
 const assess = box.window.SovStatus.assess;
 const lane = delivery => ({lane:'producer',pushed:'2000-01-01T00:00:00Z',...(delivery===undefined?{}:{delivery})});
@@ -17,3 +17,18 @@ assert.equal(result.need.filter(x=>x.state==='down').length,2);
 assert.equal(result.need.find(x=>x.group==='job-failed').members.length,2);
 assert.equal(assess({hub:{reachable:false}}).need[0].state,'down');
 console.log('Status assessment: 4 unknown variants neutral; waiting, accepted freshness, failures, grouping and hub dedupe passed.');
+
+const model=box.window.SovStatus;
+for(const value of ['javascript:alert(1)','file:///private/secret','data:text/html,hello','not-a-url'])assert.equal(model.safeURL(value),null);
+assert.equal(model.safeURL('https://example.com/check'),'https://example.com/check');
+const observed={machine:{connected:true},generated_at:new Date(Date.now()-120000).toISOString(),_status:{duration_s:7,budget_s:45}};
+const failed=model.retain(observed,{request:9,error:'failed'});
+assert.equal(failed.machine.connected,true);assert.equal(failed._status.stale,true);assert.equal(failed.request,9);
+assert.match(model.caption(failed),/Observed 2 min ago, refresh failed.*7.0 s/);
+assert.match(model.caption({...observed,_status:{pending:true}}),/Observed 2 min ago, refreshing/);
+assert.match(model.caption({_status:{pending:true,budget_s:45}}),/up to 45 seconds/);
+const need=assess({needs_you:[{kind:'hypervisor',text:'unknown',why:'why',action:'action',url:'https://example.com/',verify:'verify'}]}).need[0];
+assert.equal(need.why,'why');assert.equal(need.action,'action');assert.equal(need.url,'https://example.com/');assert.equal(need.verify,'verify');
+assert.equal(assess({needs_you:[{kind:'host',host:'worker',text:'worker offline'}],fleet:{hosts:[{host:'worker',net:{online:false}}]}}).need.length,1);
+for(const delivery of [undefined,'unknown']){const issue=model.contributionIssue({lane:'qa',delivery});for(const key of ['why','action','verify'])assert.ok(issue[key]);}
+console.log('Status transparency: safe URLs, retained failures, observation age/budget, issue fields, dedupe and older-service fallbacks passed.');
