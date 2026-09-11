@@ -69,6 +69,8 @@ log_decision(){ # verdict file detail
 # already contains someone else's staged work. git_commit rechecks this to
 # catch a race between preflight and commit.
 git_scope_preflight(){
+  # Plain-file archives do not require Git or macOS command-line developer tools.
+  [ -e "$VAULT/.git" ] || return 0
   git -C "$VAULT" rev-parse --git-dir >/dev/null 2>&1 || return 0
   if ! git -C "$VAULT" diff --cached --quiet --; then
     echo "REFUSED: vault index already has staged changes; curator action aborted." >&2
@@ -87,6 +89,8 @@ git_scope_preflight(){
 # digest surfaces them instead of silently swallowing.
 git_commit(){ # message [vault-path ...]
   local message="$1"; shift || true
+  # Plain-file archives do not require Git or macOS command-line developer tools.
+  [ -e "$VAULT/.git" ] || return 0
   git -C "$VAULT" rev-parse --git-dir >/dev/null 2>&1 || return 0
 
   # Never mix a curator verdict with paths that were already staged by a

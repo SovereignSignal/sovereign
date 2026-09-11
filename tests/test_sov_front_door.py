@@ -269,7 +269,7 @@ class Disconnect(unittest.TestCase):
                 self.assertEqual(b.connect(h).returncode, 0, h)
             r = sov(["disconnect", "windsurf"], b.env())
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertIn("dry run", r.stdout)
+            self.assertIn("dry run", r.stdout.lower())
             self.assertEqual(sorted(b.manifest()["harnesses"]), ["orca", "windsurf"],
                              "a dry run changed the machine")
             r = sov(["disconnect", "windsurf", "--apply"], b.env())

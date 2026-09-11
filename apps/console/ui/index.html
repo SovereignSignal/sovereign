@@ -334,6 +334,9 @@
 .discovery-name{flex:1;min-width:0}.discovery-name strong{display:block;font:500 13px/1.5 var(--sans)}
 .discovery-name small{display:block;font:11px/1.5 var(--sans);color:var(--muted)}
 @media(min-width:950px){body.discovering main:has(#inspector.open){grid-template-columns:minmax(0,1fr) 380px}body.discovering #inspector.open{position:static;transform:none;width:auto}}
+body.hub-setup main,body.hub-setup.pinned main{grid-template-columns:1fr}body.hub-setup #inspector{display:none}
+.hub-form{max-width:800px;margin:0 auto;padding:24px;white-space:normal}.hub-form h2{font:550 22px/1.3 var(--sans);text-transform:none;letter-spacing:0;color:var(--ink)}
+.hub-form p{font:13px/1.6 var(--sans);color:var(--muted)}.hub-form .fields{display:grid;grid-template-columns:1fr 1fr;gap:16px}.hub-form label{display:block;font:12px/1.5 var(--sans)}.hub-form input,.hub-form select{width:100%}.hub-form pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.5 var(--mono);padding:14px;background:var(--sunk);max-height:300px;overflow:auto}.hub-form ul{font:13px/1.6 var(--sans);padding-left:20px;overflow-wrap:anywhere}.hub-form summary{cursor:pointer;font:12px/1.6 var(--sans);color:var(--muted)}.hub-form .acts{display:flex;gap:8px;flex-wrap:wrap}.hub-form .check{display:flex;gap:8px}.hub-form input[type=checkbox]{width:auto}@media(max-width:760px){.hub-form .fields{grid-template-columns:1fr}}
 </style>
 <link rel="stylesheet" href="shell.css">
 <link rel="stylesheet" href="operations-shell.css">
@@ -384,6 +387,7 @@
 <script src="status-model.js"></script>
 <script src="gate-model.js"></script>
 <script src="discovery-model.js"></script>
+<script src="hub-setup.js"></script>
 <dialog id="device-dialog" aria-labelledby="device-dialog-title" aria-describedby="device-dialog-description">
   <h2 id="device-dialog-title">Disassociate device?</h2>
   <p id="device-dialog-description"></p>
@@ -683,6 +687,7 @@ window.onerror = function (msg, src, line, col) {
     return { state, text: text.replace(/\.\.$/, ".") };
   }
   function renderVerdict() {
+    if(view==='setup'){$('#verdict').className='idle';$('#vtext').textContent='Review Hub changes before applying them.';$('#vmeta').textContent='';return;}
     const v = $("#verdict"); if (!v || !D) return;
     const q = reviewQueue();
     const { state, text } = view === "review" ? {state:q.available?"idle":"warn",text:selectedRoot?"Reviewing " + selectedRoot.split("/").pop():"Choose an archive to get started."} : D.error||D._status?.error ? {state:"down",text:D.error||D._status.error} : D._status?.pending ? {state:"warn",text:SovStatus.caption(D)} : verdictSentence();
@@ -897,6 +902,14 @@ window.onerror = function (msg, src, line, col) {
     const review=view==='review',q=reviewQueue();
     document.body.classList.toggle('review',review);
     document.body.classList.toggle('discovering',view==='tools');
+    document.body.classList.toggle('hub-setup',view==='setup');
+    $('#rows').setAttribute('role',view==='setup'?'region':'listbox');
+    if(view==='setup'){
+      $('#review-intro').hidden=true;$('#review-tab').setAttribute('aria-pressed','false');$('#operations-tab').setAttribute('aria-pressed','true');
+      $('#rows').setAttribute('aria-label','Hub setup and recovery');$('#rows').removeAttribute('aria-activedescendant');
+      document.querySelectorAll('.seg button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.view==='jobs')));
+      SovHub.mount($('#rows'),selectedRoot);footerMeta(0);return;
+    }
     $('#review-tab').setAttribute('aria-pressed',String(review));
     $('#operations-tab').setAttribute('aria-pressed',String(!review));
     $('#review-count').textContent=q.count||'';
@@ -925,7 +938,7 @@ window.onerror = function (msg, src, line, col) {
     const rowsHTML = shown.map((it, i) => selectable(it)
       ? `<div class="row ${it.kind==='candidate'?'discovery-row':''}" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
       : `<div class="row ${it.kind}" id="r${i}" ${it.kind === "head" ? `data-section="${esc(it.section)}"` : ""} aria-hidden="true">${rowHTML(it)}</div>`).join("");
-    $("#rows").innerHTML = (view === "lanes" ? producerToolbar() : view === "tools" ? discoveryToolbar() : "") + (rowsHTML || (view === "archive" ? "" : (view === "review" ? "" : `<div class="empty">${view==='tools'?(discoveryRequest?'Scanning…':'No tools match this view.'):'Nothing here yet.'}</div>`))) + (view === "archive" ? renderDash() : "");
+    $("#rows").innerHTML = (view === "jobs" ? `<div class="sect" style="padding:16px"><button class="brass" data-goto-view="setup">Hub setup and recovery…</button></div>` : view === "lanes" ? producerToolbar() : view === "tools" ? discoveryToolbar() : "") + (rowsHTML || (view === "archive" ? "" : (view === "review" ? "" : `<div class="empty">${view==='tools'?(discoveryRequest?'Scanning…':'No tools match this view.'):'Nothing here yet.'}</div>`))) + (view === "archive" ? renderDash() : "");
     syncActive();
   }
   function syncActive() {
@@ -1058,13 +1071,14 @@ window.onerror = function (msg, src, line, col) {
     const refreshButton=$('#gate-refresh');if(refreshButton)refreshButton.onclick=()=>{gateChecks.clear();gotoGate();refresh()};
     const dismiss=$('#gate-dismiss');if(dismiss)dismiss.onclick=()=>notice.hidden=true;
   }
-  window.sovCanQuit=()=>{
+  window.sovCanQuit=()=>{if(window.SovHub?.busy)return false;
     if(pendingProducer?.running){$('#drawer').classList.add('open');return false;}
     if(!gatePending)return true;
     showGateNotice('running');return false;
   };
   const splitReview=()=>view==="review"&&matchMedia("(min-width:1100px)").matches;
   function renderInspector() {
+    if(view==='setup')return;
     if(!settingsOpen&&view!=="review"&&view!=="tools"&&D?.machine?.connected===false){renderSetup(D);return;}
     if(splitReview())$("#inspector").setAttribute("aria-hidden","false");
     const box = $("#insp");
@@ -1561,7 +1575,7 @@ window.onerror = function (msg, src, line, col) {
 
   document.addEventListener("keydown", (e) => {
     if($("#device-dialog").open)return;
-    const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
     if ((e.metaKey || e.ctrlKey) && e.key === "r") { e.preventDefault(); refresh(); }
     if ((e.metaKey || e.ctrlKey) && e.key === "[") { e.preventDefault(); back(); }
     if ((e.metaKey || e.ctrlKey) && e.key === "]") { e.preventDefault(); forward(); }
@@ -1595,6 +1609,7 @@ window.onerror = function (msg, src, line, col) {
     }
   };
   function deliverInner(kind, payload) {
+    if(kind.startsWith('hub')){SovHub.deliver(kind,payload);return;}
     if(kind==='discovery'){
       if(payload.request!==discoveryRequest)return;
       discoveryRequest=null;discovery=payload;
@@ -1689,7 +1704,7 @@ window.onerror = function (msg, src, line, col) {
     $("#meta").textContent = "this machine is not connected to a brain yet";
     $("#hubpill").innerHTML = `${dot("", "not connected")}not connected`;
     $("#verdict").className = "idle"; $("#vtext").textContent = "Connect tools when you are ready.";
-    $("#rows").innerHTML = `<div class="empty">No lanes yet.</div>`;
+    $("#rows").innerHTML = `<div class="empty">No lanes yet.<p><button class="brass" data-goto-view="setup">Hub setup and recovery…</button></p></div>`;
     $("#insp").innerHTML = `<div class="insp-title">Connect this machine</div>
       <div class="insp-sub">Point it at a brain once. Every tool found here gets both wires: it reads the brain when a session starts, and its notes flow back to its own lane.</div>
       <div class="sect"><h2>Setup</h2>

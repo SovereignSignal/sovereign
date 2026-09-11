@@ -12,6 +12,8 @@
 #   sov relay add|remove|list     the directory pipes this machine's one mover carries
 #                                 (add <path> [--name NAME] [--force]; remove <name>; list)
 #   sov hook <harness>            run a harness's session-start hook here, for testing
+#   sov hub install|status|run|key|recovery|snapshot|restore|activate
+#                                install and recover a local Hub; preview before --apply
 #   sov about [--json]          explain this installation, offline and read-only
 #   sov contribute <command>    assess, collect, deliver, or import selected work
 #   sov status                    pointers, lanes on this machine, and their freshness
@@ -21,8 +23,18 @@
 # (~/.brain-root, ~/.brain-core, ~/.brain-host, ~/.brain-lane), never here.
 set -euo pipefail
 
-SELF="$(/usr/bin/python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")"
-BIN="$(dirname "$SELF")"
+# Resolve links before choosing Python, so a clean managed Hub uses its bundled runtime.
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  DIR="$(cd "$(dirname "$SELF")" && pwd -P)"
+  SELF="$(readlink "$SELF")"
+  case "$SELF" in /*) ;; *) SELF="$DIR/$SELF";; esac
+done
+BIN="$(cd "$(dirname "$SELF")" && pwd -P)"
+SELF="$BIN/$(basename "$SELF")"
+PYTHON="${SOV_PYTHON:-/usr/bin/python3}"
+if [ -x "$BIN/../../python/bin/python3" ]; then PYTHON="$BIN/../../python/bin/python3"; fi
+export SOV_PYTHON="$PYTHON"
 TEMPLATE="$(dirname "$BIN")"
 HARNESS_DIR="$TEMPLATE/connectors/harness"
 
@@ -42,21 +54,22 @@ _harness_ids() {
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
-  about)    exec /usr/bin/python3 "$BIN/brain-about" "$@";;
-  contribute) exec /usr/bin/python3 "$BIN/brain-contribute" "$@";;
-  load)     /usr/bin/python3 "$BIN/brain-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec /usr/bin/python3 "$BIN/brain-load" "$@";;
-  capture)  exec /usr/bin/python3 "$BIN/brain-capture" "$@";;
+  hub) exec "$PYTHON" "$BIN/brain-hub" "$@";;
+  about)    exec "$PYTHON" "$BIN/brain-about" "$@";;
+  contribute) exec "$PYTHON" "$BIN/brain-contribute" "$@";;
+  load)     "$PYTHON" "$BIN/brain-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/brain-load" "$@";;
+  capture)  exec "$PYTHON" "$BIN/brain-capture" "$@";;
   check)    exec /bin/bash "$BIN/brain-check.sh" "$@";;
   connect)
     h="${1:-}"; shift || true
     [ -n "$h" ] || { echo "sov connect <harness>|all; available: $(_harness_ids)"; exit 64; }
     [[ "$h" =~ ^[a-z][a-z0-9-]*$ ]] || { echo "invalid harness" >&2; exit 64; }
-    [ "$h" = "all" ] && exec /usr/bin/python3 "$HARNESS_DIR/_lib/connect-all.py" "$@"
+    [ "$h" = "all" ] && exec "$PYTHON" "$HARNESS_DIR/_lib/connect-all.py" "$@"
     [ -x "$HARNESS_DIR/$h/install.sh" ] || chmod +x "$HARNESS_DIR/$h/install.sh" 2>/dev/null || true
     # a cloud pull (no detect paths) runs on the hub: route there from any other machine.
     # A declared secret travels on stdin, never on the remote command line.
     if [ -f "$HARNESS_DIR/$h/harness.json" ]; then
-      cloud="$(/usr/bin/python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("cloud" if not m.get("detect") else "local"); print((m.get("secret") or {}).get("env") or "")' "$HARNESS_DIR/$h/harness.json" 2>/dev/null)"
+      cloud="$("$PYTHON" -c 'import json,sys; m=json.load(open(sys.argv[1])); print("cloud" if not m.get("detect") else "local"); print((m.get("secret") or {}).get("env") or "")' "$HARNESS_DIR/$h/harness.json" 2>/dev/null)"
       hub="$(cat "$HOME/.brain-hub" 2>/dev/null || true)"; hub_alias="${hub%%:*}"
       if [ "${cloud%%$'\n'*}" = "cloud" ] && [ -n "$hub_alias" ] && [ "$(cat "$HOME/.brain-host" 2>/dev/null)" != "$hub_alias" ]; then
         senv="${cloud#*$'\n'}"
@@ -127,8 +140,8 @@ case "$cmd" in
     h="${1:-}"; [ -n "$h" ] || { echo "sov hook <harness>"; exit 64; }
     hook="$(ls "$HARNESS_DIR/$h"/session-start.* 2>/dev/null | head -1)"
     [ -n "$hook" ] || { echo "no session-start hook for $h"; exit 66; }
-    printf '{"cwd":"%s","session_id":"manual","source":"startup"}' "$PWD" | /usr/bin/python3 "$hook";;
-  status)   exec /usr/bin/python3 "$BIN/brain-status" "$@";;
+    printf '{"cwd":"%s","session_id":"manual","source":"startup"}' "$PWD" | "$PYTHON" "$hook";;
+  status)   exec "$PYTHON" "$BIN/brain-status" "$@";;
   host)     # sov host add NAME ... : runs on the hub; from any other machine it is routed there
     sub="${1:-}"; shift || true
     [ "$sub" = "add" ] || { echo "sov host add NAME --user U --addr IP[,IP] [--identity I] [--workstreams a,b] [--apply]"; exit 64; }
@@ -136,12 +149,16 @@ case "$cmd" in
     if [ -n "$hub_alias" ] && [ "$hub_alias" != "$(hostname -s)" ] && [ ! -f "$HOME/.brain-root" -o "$(cat "$HOME/.brain-host" 2>/dev/null)" != "$hub_alias" ]; then
       exec ssh -o BatchMode=yes "$hub_alias" "~/brain-bin/sov host add $(printf '%q ' "$@")"
     fi
-    exec /usr/bin/python3 "$BIN/brain-host-add" "$@";;
+    exec "$PYTHON" "$BIN/brain-host-add" "$@";;
   gate)
     # The owner's gate from a console or a shell: sov gate approve|reject <slug> [reason].
     # Runs the same deterministic scripts the Telegram poller and the gears use, as a
     # named actor, so the decisions log says who moved the card. Never --force.
     verb="${1:-}"; shift || true
+    if [ -f "$HOME/.sovereign-hub" ] && { [ "$verb" = "approve" ] || [ "$verb" = "reject" ]; }; then
+      proposal="${1:-}"; shift || true
+      exec "$PYTHON" "$BIN/brain-hub" run "$verb" --proposal "$proposal" --reason "$*" --apply
+    fi
     export SOVS_VAULT="${SOVS_VAULT:-$(cat "$HOME/.brain-root" 2>/dev/null)}"
     if [ -z "${CURATOR_LANE:-}" ]; then
       st="$(ls "$SOVS_VAULT"/raw/workspaces/*/status.json 2>/dev/null | head -1)"

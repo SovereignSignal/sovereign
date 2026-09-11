@@ -1657,13 +1657,19 @@ if a.brief_for:
 def _post_json(req, timeout):
     """One retry on a timed-out model call. A single timeout otherwise costs the
     document until the next run; transient queue pressure should not do that."""
+    open_request = urllib.request.urlopen
+    if os.environ.get("CURATOR_LOCAL_ONLY") == "1":
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                raise ValueError("Local Hub inference redirects are refused.")
+        open_request = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open
     try:
-        return json.load(urllib.request.urlopen(req, timeout=timeout))
+        return json.load(open_request(req, timeout=timeout))
     except Exception as exc:
         if "timed out" not in str(exc).lower():
             raise
         time.sleep(30)
-        return json.load(urllib.request.urlopen(req, timeout=timeout))
+        return json.load(open_request(req, timeout=timeout))
 
 
 def judge(path):

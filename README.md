@@ -68,6 +68,13 @@ own on a wall clock. Instance data (vault path, core cards, host name, aliases) 
 pointer files under `~`, never in this repo. Tests:
 `python3 -m unittest tests.test_connector_claude_code`.
 
+## Local Hub package
+
+The macOS app includes Hub preparation, guarded job activation and encrypted recovery.
+Open Operations → Hub → Hub setup and recovery, or use `sov hub` from the bundled command.
+Preparation leaves jobs inactive; every mutation has a preview. See the [setup and recovery guide](docs/hub-setup.md)
+for requirements, the recovery drill and the limits of this clean-install pilot.
+
 ## Archive evidence (optional)
 
 `bin/brain-evidence` is a separate, opt-in helper for exact trusted-card evidence and report-only freshness checks. It does not change `brain-load` or write to the brain.

@@ -80,6 +80,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     let sov: String?
     var generation = UUID()
     var gateBusy = false
+    var hubBusy = false
+    var hubReview: String?
     var discoveryBusy = false
     var producerBusy = false
     var producerReview: String?
@@ -124,6 +126,18 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             requestStatus(d, generation: generation)
         case "deviceAssociation":
             setDeviceAssociation(d, generation: generation)
+        case "hubDefaults":
+            let home = App.shared.snapshotting ? ProcessInfo.processInfo.environment["SOV_QA_HUB_HOME"] ?? NSHomeDirectory() : NSHomeDirectory()
+            deliver("hubDefaults", ["home": home])
+        case "hubPick":
+            guard !hubBusy, let field = d["field"] as? String, ["config", "key-file", "capsule", "folder"].contains(field) else { return }
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = field == "folder"
+            panel.canChooseFiles = !panel.canChooseDirectories
+            panel.allowsMultipleSelection = false
+            if panel.runModal() == .OK, let url = panel.url { deliver("hubPicked", ["field": field, "path": url.path]) }
+        case "hubOperation":
+            hubOperation(d, generation: generation)
         case "discover":
             discoverTools(d, generation: generation)
         case "producer":
@@ -374,6 +388,60 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         value["device_associations"] = deviceAssociationState()
         if statusCache == nil, let error = error { value["error"] = error }
         deliver("status", value, generation: waiter.generation)
+    }
+
+    private func hubOperation(_ request: [String: Any], generation: UUID) {
+        func fail(_ message: String) { deliver("hubResult", ["error": message, "request": request["request"] ?? ""], generation: generation) }
+        guard !hubBusy, let resources = Bundle.main.resourceURL,
+              let command = request["command"] as? String,
+              ["install", "key", "recovery", "snapshot", "restore", "status", "doctor", "activate", "run"].contains(command),
+              let root = Settings.archive, let requestedRoot = request["root"] as? String,
+              Settings.archiveKey(root) == Settings.archiveKey(requestedRoot) else { fail("Open an archive before managing its Hub."); return }
+        var reviewed = request; reviewed.removeValue(forKey: "apply"); reviewed.removeValue(forKey: "request")
+        let key = generation.uuidString + ((try? JSONSerialization.data(withJSONObject: reviewed, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? "")
+        let apply = request["apply"] as? Bool == true
+        guard !apply || hubReview == key else { fail("Preview this exact Hub operation before applying it."); return }
+        let qaHome = App.shared.snapshotting ? ProcessInfo.processInfo.environment["SOV_QA_HUB_HOME"] : nil
+        let home = qaHome ?? NSHomeDirectory()
+        if command == "install", (try? String(contentsOfFile: home + "/.brain-hub", encoding: .utf8)).map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) == true {
+            fail("This Mac is configured as a Client. Set up a new Hub on its own Mac; migrate existing roles through a reviewed cutover."); return
+        }
+        if !["install", "key", "restore"].contains(command) {
+            guard let path = request["config"] as? String,
+                  let raw = try? Data(contentsOf: URL(fileURLWithPath: path)), raw.count <= 1048576,
+                  let config = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
+                  let archive = config["archive"] as? String,
+                  Settings.archiveKey(archive) == Settings.archiveKey(root) else { fail("Choose the Hub configuration for the open archive."); return }
+        }
+        let fields: [String: [String]] = ["install": ["destination", "model", "endpoint"], "key": ["output"], "recovery": ["config", "folder", "key-file"], "snapshot": ["config", "output", "key-file"], "restore": ["capsule", "destination", "key-file"], "status": ["config"], "doctor": ["config"], "activate": ["config"], "run": ["config"]]
+        var args = [resources.appendingPathComponent("runtime/bin/python3").path, "-I", "-B", resources.appendingPathComponent("backend/bin/brain-hub").path, command]
+        if command == "install" { args += ["--archive", root] }
+        if command == "run" {
+            guard let job = request["job"] as? String, ["nightly", "audit"].contains(job) else { fail("Choose curation or audit."); return }
+            args.append(job)
+        }
+        for field in fields[command] ?? [] {
+            guard let value = request[field] as? String, !value.isEmpty, value.count <= 4096,
+                  !value.contains("\n"), !value.contains("\r") else { fail("Complete the " + field + " field first."); return }
+            args += ["--" + field, value]
+        }
+        if command == "activate" {
+            guard request["singleHub"] as? Bool == true else { fail("Confirm this will be the only active Hub before enabling schedules."); return }
+            args.append("--confirm-single-hub")
+        }
+        if apply { args.append("--apply") }
+        hubReview = nil; hubBusy = true
+        var env = ["SOV_PYTHON_RUNTIME": resources.appendingPathComponent("runtime").path]
+        if let home = qaHome { env["HOME"] = home }
+        run(args, environment: env, timeLimit: 1900) { out, _, code in
+            DispatchQueue.main.async {
+                self.hubBusy = false
+                var result = (out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any] ?? ["error": "Hub operation did not return a result. Inspect its receipts before retrying."]
+                result["command"] = command; result["exit"] = code; result["request"] = request["request"] ?? ""
+                if code == 0 && !apply && self.generation == generation && !["status", "doctor"].contains(command) { self.hubReview = key }
+                self.deliver("hubResult", result, generation: generation)
+            }
+        }
     }
 
     private func discoverTools(_ request: [String: Any], generation: UUID) {

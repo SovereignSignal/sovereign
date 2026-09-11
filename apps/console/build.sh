@@ -17,6 +17,8 @@ mkdir -p "$BUILD"
 echo "[1] compiling"
 MACOSX_DEPLOYMENT_TARGET=13.0 xcrun swiftc -target arm64-apple-macos13.0 -module-cache-path "$BUILD/module-cache" -O -parse-as-library -framework Cocoa -framework WebKit -o "$BUILD/Sovereign" "$HERE/main.swift"
 
+MACOSX_DEPLOYMENT_TARGET=13.0 xcrun swiftc -target arm64-apple-macos13.0 -module-cache-path "$BUILD/module-cache" -O -o "$BUILD/hub-crypto" "$HERE/hub-crypto.swift"
+
 echo "[2] icon"
 PNG="$HERE/design/icon/AppIcon-1024.png"
 if [ -f "$PNG" ] && { [ ! -f "$BUILD/AppIcon.icns" ] || [ "$PNG" -nt "$BUILD/AppIcon.icns" ]; }; then
@@ -57,6 +59,17 @@ MACOSX_DEPLOYMENT_TARGET=13.0 xcrun swiftc -target arm64-apple-macos13.0 -module
 cp "$HERE/../../lib/brain_local.py" "$HERE/../../lib/brain_redact.py" "$BACKEND/lib/"
 cp "$HERE/../../templates/note.md" "$BACKEND/templates/"
 cp "$HERE/../../CLAUDE.md" "$BACKEND/"
+# Hub setup includes the same general tools as the template, plus the bundled Python.
+# Omit development caches; no instance configuration is part of this payload.
+"$RUNTIME/bin/python3" -I -B - "$HERE/../.." "$BACKEND" <<'BUNDLE'
+from pathlib import Path
+import shutil,sys
+source,dest=map(Path,sys.argv[1:])
+for name in ('bin','lib','connectors','templates'):
+    shutil.copytree(source/name,dest/name,dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__','*.pyc','.DS_Store'))
+BUNDLE
+cp "$BUILD/hub-crypto" "$BACKEND/bin/hub-crypto"
+
 cp -R "$RUNTIME" "$APP/Contents/Resources/runtime"
 cp -R "$HERE/licenses" "$APP/Contents/Resources/licenses"
 cp "$HERE/runtime.lock.json" "$APP/Contents/Resources/runtime.lock.json"
@@ -76,6 +89,7 @@ while IFS= read -r -d '' nested; do
     codesign --force --sign "$SIGN_ID" --options runtime "$nested" >/dev/null 2>&1
   fi
 done < <(find "$APP/Contents/Resources/runtime" -type f -print0)
+codesign --force --sign "$SIGN_ID" --options runtime "$BACKEND/bin/hub-crypto"
 codesign --force --sign "$SIGN_ID" --options runtime "$APP/Contents/MacOS/sov"
 codesign --force --sign "$SIGN_ID" --options runtime "$APP" >/dev/null 2>&1
 codesign --verify --deep --strict "$APP"
