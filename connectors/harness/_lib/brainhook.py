@@ -31,9 +31,14 @@ def pointer(path):
         return None
 
 
-def read_enabled():
+def read_enabled(harness=None):
     sys.path.insert(0, os.path.join(TEMPLATE_ROOT, "lib"))
     import brain_discovery
+    try:
+        if harness and harness in brain_discovery.manifest().get("retired_harnesses", {}):
+            return False
+    except (OSError, ValueError, TypeError):
+        return False
     return brain_discovery.read_enabled()
 
 
@@ -109,7 +114,7 @@ def build_pack(cwd, harness):
     """Return dict(label, scope, cards, context) or None when there is nothing to load."""
     sys.path.insert(0, os.path.join(TEMPLATE_ROOT, "lib"))
     import brain_discovery
-    if not brain_discovery.read_enabled():
+    if not read_enabled(harness):
         return None
     discovery = brain_discovery.bootstrap()
     root = vault_root()

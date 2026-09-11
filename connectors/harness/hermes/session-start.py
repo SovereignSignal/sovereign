@@ -30,7 +30,7 @@ def topic_from(message):
 
 
 def main():
-    if not brainhook.read_enabled():
+    if not brainhook.read_enabled("hermes"):
         print("{}"); return  # Check before reading a cached pack or a brain pointer.
     try:
         inp = json.load(sys.stdin) if not sys.stdin.isatty() else {}

@@ -80,6 +80,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     let sov: String?
     var generation = UUID()
     var gateBusy = false
+    var producerBusy = false
+    var producerReview: String?
     // Status lives across document swaps, scoped to the selected archive and query.
     // All of this state is accessed on the main queue; old requests cannot replace it.
     var statusCache: [String: Any]?
@@ -121,6 +123,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             requestStatus(d, generation: generation)
         case "deviceAssociation":
             setDeviceAssociation(d, generation: generation)
+        case "producer":
+            manageProducer(d, generation: generation)
         case "connect":
             guard let sov = sov, let h = d["harness"] as? String else { return }
             var args = [sov, "connect", h]
@@ -369,6 +373,52 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         deliver("status", value, generation: waiter.generation)
     }
 
+    private func manageProducer(_ request: [String: Any], generation: UUID) {
+        func fail(_ message: String) {
+            deliver("log", ["id": "producer", "line": message, "state": "end", "exit": 65], generation: generation)
+        }
+        guard !producerBusy else { fail("A producer change is already running."); return }
+        guard let sov = sov, let root = Settings.archive,
+              let requestedRoot = request["root"] as? String,
+              Settings.archiveKey(root) == Settings.archiveKey(requestedRoot),
+              let machine = statusCache?["machine"] as? [String: Any],
+              let vault = machine["vault"] as? String,
+              Settings.archiveKey(root) == Settings.archiveKey(vault),
+              let h = request["harness"] as? String,
+              h.range(of: "^[a-z][a-z0-9-]*$", options: .regularExpression) != nil,
+              let action = request["action"] as? String, ["add", "remove"].contains(action) else {
+            fail("Refresh the configured archive before changing a producer."); return
+        }
+        let template = URL(fileURLWithPath: sov).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
+        let metadata = template.appendingPathComponent("connectors/harness/\(h)/harness.json")
+        guard let data = try? Data(contentsOf: metadata),
+              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            fail("This producer is not supported by the installed connector service."); return
+        }
+        let env = ProcessInfo.processInfo.environment
+        let qa = App.shared.snapshotting ? env["SOV_QA_PRODUCER_COMMAND"] : nil
+        let pointer = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".brain-root")
+        guard qa != nil || (try? String(contentsOf: pointer, encoding: .utf8)).map({ Settings.archiveKey($0.trimmingCharacters(in: .whitespacesAndNewlines)) }) == Settings.archiveKey(root) else {
+            fail("The connector service uses a different archive. Refresh before making changes."); return
+        }
+        var secret: [String: String] = [:]
+        if action == "add", let value = request["secret"] as? String, !value.isEmpty,
+           let definition = meta["secret"] as? [String: Any], let key = definition["env"] as? String,
+           key.range(of: "^[A-Z_][A-Z0-9_]*$", options: .regularExpression) != nil { secret[key] = value }
+        let key = [generation.uuidString, Settings.archiveKey(root), h, action, secret.values.first ?? ""].joined(separator: "\n")
+        let apply = request["apply"] as? Bool == true
+        guard !apply || producerReview == key else { fail("Review this producer change before applying it."); return }
+        producerReview = nil
+        producerBusy = true
+        var args = [qa ?? sov, action == "add" ? "connect" : "disconnect", h]
+        if !(meta["detect"] as? [String] ?? []).isEmpty { args += ["--vault", root] }
+        if apply { args.append("--apply") }
+        stream(args, id: "producer", env: secret) { code in
+            self.producerBusy = false
+            if !apply && code == 0 && self.generation == generation { self.producerReview = key }
+        }
+    }
+
     private func deviceAssociationState() -> [String: Any] {
         guard let root = Settings.archive, let machine = statusCache?["machine"] as? [String: Any],
               let vault = machine["vault"] as? String, Settings.archiveKey(root) == Settings.archiveKey(vault) else {
@@ -450,7 +500,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    func stream(_ args: [String], id: String, env extra: [String: String] = [:]) {
+    func stream(_ args: [String], id: String, env extra: [String: String] = [:], completion: ((Int32) -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: args[0])
@@ -466,11 +516,12 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                     if !line.isEmpty { self.deliver("log", ["id": id, "line": String(line)]) }
                 }
             }
-            do { try p.run() } catch { self.deliver("log", ["id": id, "line": "failed to start: \(error)", "state": "end", "exit": -1]); return }
+            do { try p.run() } catch { DispatchQueue.main.async { completion?(-1) }; self.deliver("log", ["id": id, "line": "failed to start: \(error)", "state": "end", "exit": -1]); return }
             p.waitUntilExit()
             o.fileHandleForReading.readabilityHandler = nil
             let rest = o.fileHandleForReading.readDataToEndOfFile()
             for line in (String(data: rest, encoding: .utf8) ?? "").split(separator: "\n") { self.deliver("log", ["id": id, "line": String(line)]) }
+            DispatchQueue.main.async { completion?(p.terminationStatus) }
             self.deliver("log", ["id": id, "line": "exit \(p.terminationStatus)", "state": "end", "exit": Int(p.terminationStatus)])
         }
     }

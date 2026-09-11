@@ -775,6 +775,8 @@ def main(argv):
         # carried into the tick's own first write, so the record never shows a half-started tick
         status.runner["reclaimed_lock"] = True
     try:
+        # A removal may have finished after our initial read, before this lock.
+        runner, lanes, interval_s, off_tick = load_manifest(paths)
         status.prune({l.id for l in lanes})
         tick(paths, lanes, interval_s, status, opts["force"], opts["only"])
     finally:

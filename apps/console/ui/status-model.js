@@ -117,6 +117,11 @@ window.SovStatus = (() => {
   }
   // Keep raw status and archive history intact. Every app surface uses this projection.
   function associations(value) {
+    const retired=new Set((value?.harnesses||[]).filter(h=>h.state==='removed').map(h=>h.lane));
+    if(retired.size)value={...value,
+      lanes:(value.lanes||[]).map(l=>({...l,retired:retired.has(l.lane),associated:retired.has(l.lane)?false:l.associated})),
+      fleet:{...value.fleet,hosts:(value.fleet?.hosts||[]).map(h=>({...h,harnesses:(h.harnesses||[]).filter(t=>!retired.has(t.lane)),lanes:(h.lanes||[]).filter(l=>!retired.has(l.lane))}))},
+      backups:{...value.backups,lanes:(value.backups?.lanes||[]).filter(l=>!retired.has(l.lane))}};
     const config=value?.device_associations;
     if(!config?.available||config.scope!==value.machine?.vault)return value;
     const key=name=>String(name||'').toLowerCase();
@@ -136,7 +141,7 @@ window.SovStatus = (() => {
       fleet:{...fleet,hosts:unique.filter(hostVisible).map(h=>({...h,associated:true})),disassociated},
       needs_you:(value.needs_you||[]).filter(n=>hostVisible(n)&&laneVisible(n)),
       harnesses:(value.harnesses||[]).filter(h=>!excluded.has(key(h.runs_on))),
-      lanes:(value.lanes||[]).map(l=>({...l,associated:laneVisible(l)})),
+      lanes:(value.lanes||[]).map(l=>({...l,associated:laneVisible(l)&&!l.retired})),
       clients:(value.clients||hub.clients||[]).filter(hostVisible),
       hub:{...hub,clients:(hub.clients||[]).filter(hostVisible)},
       backups:{...backups,hosts:(backups.hosts||[]).filter(hostVisible),lanes:(backups.lanes||[]).filter(laneVisible)}

@@ -633,6 +633,10 @@ try:
     out["backups"] = bk
     # ---- cloud harnesses run here on the hub; report their state for every console ----
     ch = []
+    try:
+        cloud_manifest = json.load(open(os.path.expanduser("~/.local/state/sovereign/connectors.json")))
+    except (OSError, ValueError):
+        cloud_manifest = {}
     tmpl = os.path.dirname(os.path.dirname(os.path.realpath(os.path.expanduser("~/brain-bin/sov"))))
     for hj in sorted(glob.glob(os.path.join(tmpl, "connectors", "harness", "*", "harness.json"))):
         try: meta = json.load(open(hj))
@@ -649,10 +653,11 @@ try:
             p = meta.get(k)
             try: return open(os.path.expanduser(p), encoding="utf-8").readline().strip() if p else None
             except OSError: return None
-        installed = os.path.exists(os.path.join(root, "raw", "tools", lane, "LANE.md"))
+        installed = loaded or hid in cloud_manifest.get("harnesses", {})
+        # A retained LANE.md is history, not an installed cloud collector.
         ch.append({"id": hid, "name": meta.get("name", hid), "lane": lane, "label": label, "job_loaded": loaded, "installed": installed,
                    "last_success": one("last_success_file"), "last_status": one("last_status_file"),
-                   "state": "connected" if loaded else ("partial" if installed else "not connected")})
+                   "state": "connected" if loaded else ("removal incomplete" if (cloud_manifest.get("retired_harnesses", {}).get(hid) or {}).get("cleanup_pending") else "removed" if hid in cloud_manifest.get("retired_harnesses", {}) else "partial" if installed else "not connected")})
     out["cloud_harnesses"] = ch
 except Exception:
     pass
@@ -1287,6 +1292,7 @@ def main():
             v_dir = next((p for p in (os.path.join(root, "raw", "tools", name), os.path.join(root, "raw", "workspaces", name)) if os.path.isdir(p)), None)
             lanes.append({"lane": name, "producer": fm.get("producer"), "host": fm.get("host"), "read": fm.get("read"),
                           "write": fm.get("write"), "status": fm.get("status"),
+                          "relative_path": os.path.relpath(v_dir, root) if v_dir else "raw/tools/" + name,
                           "staging_age_h": age_h(newest_mtime(st_dir)) if st_dir and os.path.isdir(st_dir) else None,
                           "vault_age_h": age_h(newest_mtime(v_dir)) if v_dir else None,
                           "hub_age_h": (hub_lanes.get(name) or {}).get("age_h") if isinstance(hub_lanes.get(name), dict) else hub_lanes.get(name),
@@ -1302,6 +1308,9 @@ def main():
     # runs one job per tool, and every expression below falls back to the per-tool label.
     manifest, runs = runner_state()
     declared = manifest.get("harnesses") or {}
+    retired = manifest.get("retired_harnesses") or {}
+    for lane in lanes:
+        lane["retired"] = any(r.get("lane") == lane["lane"] and not r.get("cleanup_pending") for r in retired.values())
     # The lanes that shared job actually serves. A calendar-cadence lane is in the manifest so
     # `sov disconnect all` can reach it, but it keeps its own job: it is not the runner's, and
     # every runner-shaped reading below (a synthetic lane row, the silence rules, the stall
@@ -1382,10 +1391,12 @@ def main():
         if trusted is False:
             read_ok = False
         state = "connected" if (loaded and read_ok) else ("partial" if (loaded or hook_registered) else "not connected")
+        if h in retired:
+            state = "removal incomplete" if retired[h].get("cleanup_pending") or loaded or hook_registered else "removed"
         detected = any(os.path.exists(os.path.expanduser(x)) for x in meta.get("detect", [])) if meta.get("detect") else None
         harnesses.append({"id": h, "name": meta.get("name", h), "lane": lane, "lane_dir": lane_dir, "label": label, "detected": detected,
                           "read": read_kind, "hook_file": hook_file, "hook_registered": hook_registered, "trusted": trusted,
-                          "job_loaded": loaded,
+                          "job_loaded": loaded, "declared": h in declared, "retired": h in retired,
                           "job": rows.get(label) or ({"pid": None, "last_exit": lane_rec.get("last_exit")} if lane_rec else None),
                           "plist": (plist_info(label) if (legacy_loaded or legacy_plist)
                                     else (lane_log_info(h, manifest, runs) if lane_rec else None)),
@@ -1415,7 +1426,7 @@ def main():
             if c is None or h.get("detected") is not None:
                 continue
             h.update({"runs_on": pointer("~/.brain-hub").split(":")[0] or (out.get("hub") or {}).get("hub_host"), "state": c["state"], "job_loaded": c["job_loaded"], "lane": c["lane"],
-                      "label": c["label"], "last_status": c.get("last_status"), "hub_installed": c["installed"],
+                      "label": c["label"], "last_status": c.get("last_status"), "hub_installed": c["installed"], "declared": c["installed"],
                       "last_run": ("Last run: %s" % c["last_success"]) if c.get("last_success") else None, "hook_registered": None})
     out["harnesses"] = harnesses
 

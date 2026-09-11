@@ -583,13 +583,28 @@ window.onerror = function (msg, src, line, col) {
       ${tile("long", (a.over_length || []).length, "over 450 words", (a.over_length || []).length / total)}</div></section>`;
     return `<div class="dash">${comp}${pulse}${src}${health}</div>`;
   }
+  function producerToolbar(){
+    const available=(D.harnesses||[]).filter(h=>h.state!=="connected"&&h.detected!==false);
+    return `<div class="sect" style="padding:16px"><p class="prose">Add or remove producers. Saved history stays.</p>
+      ${available.length?`<div class="acts"><select id="producer-choice" aria-label="Producer to add">${available.map(h=>`<option value="${esc(h.id)}">${esc(h.name)}${h.runs_on?' · '+esc(h.runs_on):''}</option>`).join('')}</select><button class="brass" data-act="add-producer">Add producer…</button></div>`:''}</div>`;
+  }
+  function producerActions(h){
+    if(!h)return '';
+    const removable=h.declared||h.job_loaded||h.hook_registered||h.state==='partial'||h.state==='removal incomplete';
+    return `<div class="sect"><h2>Producer</h2><p class="prose">${h.state==='removed'?'Removed. Its history is preserved.':`Runs ${h.runs_on?'on '+esc(h.runs_on):'on this Mac'}. Removal stops collection and removes Sovereign’s context setup. Saved captures stay.`}${h.read!=='none'?' Restart the tool to clear context already loaded.':''}</p>
+      ${removable?`<button data-act="remove-producer" data-harness="${esc(h.id)}">Remove producer…</button>`:h.state==='removed'&&h.detected!==false?`<button class="brass" data-act="connect" data-harness="${esc(h.id)}">Add again…</button>`:''}</div>`;
+  }
   function items() {
     if (view === "review") return reviewQueue().proposals.map(p => ({kind:"prop",id:"p:"+p.slug,o:p}));
     if (!D || D.error) return [];
     if (view === "archive") return archiveItems();
     if (view === "glance") return [];
     if (view === "hosts") return hostItems();
-    if (view === "lanes") return (D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }));
+    if (view === "lanes") return [
+      {kind:"head",id:"producer-heading",label:"Producers",n:"collection and context"},
+      ...(D.harnesses||[]).map(h=>({kind:"tool",id:h.id,o:{name:h.name,connector:h.id,detected:h.detected}})),
+      {kind:"head",id:"history-heading",label:"Lane history",n:"saved contributions"},
+      ...(D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }))];
     if (view === "tools") return (D.tools_found || []).filter(t => t.detected || t.connector).map(t => ({ kind: "tool", id: t.id, o: t }));
     if (view === "backups") return backupItems();
     return hubItems();
@@ -782,9 +797,9 @@ window.onerror = function (msg, src, line, col) {
     }
     if (it.kind === "lane") {
       const r = (o.read || "none").replace(/\s*\(.*\)$/, "");
-      return `${dot(freshDot(o.vault_age_h), o.vault_age_h == null ? "age unknown" : o.vault_age_h <= 24 ? "fresh" : o.vault_age_h <= 168 ? "this week" : "stale")}
+      return `${dot(o.retired ? "" : freshDot(o.vault_age_h), o.vault_age_h == null ? "age unknown" : o.vault_age_h <= 24 ? "fresh" : o.vault_age_h <= 168 ? "this week" : "stale")}
         <span class="name" style="width:160px">${esc(o.lane)}</span>
-        <span class="desc">${esc(o.producer || "")}</span>
+        <span class="desc">${esc(o.retired ? "Removed · history preserved" : o.producer || "")}</span>
         <span class="tag ${r === "none" ? "" : "on"}">${esc(r)}</span>
         ${contribCell(o.cards || 0)}
         <span class="num" style="width:40px">${age(o.vault_age_h)}</span>
@@ -851,7 +866,7 @@ window.onerror = function (msg, src, line, col) {
       const ids = {}; list.filter(selectable).forEach(i => { const id = (i.o.meta || {}).identity; if (id) ids[id] = (ids[id] || 0) + 1; });
       domIdentity = Object.keys(ids).sort((x, y) => ids[y] - ids[x])[0] || null;
     }
-    else if (view === "lanes") contribMax = Math.max(1, ...list.map(i => i.o.cards || 0));
+    else if (view === "lanes") contribMax = Math.max(1, ...list.filter(selectable).map(i => i.o.cards || 0));
     const n = list.filter(selectable).length;
     if(review&&!n&&!splitReview()&&!settingsOpen){$('#inspector').classList.remove('open');$('#inspector').setAttribute('aria-hidden','true');}
     footerMeta(n);
@@ -861,7 +876,7 @@ window.onerror = function (msg, src, line, col) {
     const rowsHTML = shown.map((it, i) => selectable(it)
       ? `<div class="row" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
       : `<div class="row ${it.kind}" id="r${i}" ${it.kind === "head" ? `data-section="${esc(it.section)}"` : ""} aria-hidden="true">${rowHTML(it)}</div>`).join("");
-    $("#rows").innerHTML = (rowsHTML || (view === "archive" ? "" : (view === "review" ? "" : `<div class="empty">Nothing here yet.</div>`))) + (view === "archive" ? renderDash() : "");
+    $("#rows").innerHTML = (view === "lanes" ? producerToolbar() : "") + (rowsHTML || (view === "archive" ? "" : (view === "review" ? "" : `<div class="empty">Nothing here yet.</div>`))) + (view === "archive" ? renderDash() : "");
     syncActive();
   }
   function syncActive() {
@@ -989,6 +1004,7 @@ window.onerror = function (msg, src, line, col) {
     const dismiss=$('#gate-dismiss');if(dismiss)dismiss.onclick=()=>notice.hidden=true;
   }
   window.sovCanQuit=()=>{
+    if(pendingProducer?.running){$('#drawer').classList.add('open');return false;}
     if(!gatePending)return true;
     showGateNotice('running');return false;
   };
@@ -1079,11 +1095,13 @@ window.onerror = function (msg, src, line, col) {
           ["this copy", age(o.vault_age_h) + " ago"],
           ["hub", o.hub_age_h != null ? age(o.hub_age_h) + " ago" : "not seen"],
           ["preparations 7d", String((o.reads_7d || {}).real || 0)]])}</div>
+        ${producerActions(local)}
+        ${!local?`<div class="sect"><p class="prose">This lane belongs to ${esc(o.host||"another producer")}. Manage its collector on that device. Saved history can be browsed here.</p></div>`:""}
         ${contribSect([o])}
         ${o.last_run ? `<div class="sect"><h2>Last mirror run</h2><div class="prose mono">${esc(o.last_run)}</div></div>` : ""}
         <div class="acts">
           ${local && local.lane_dir ? `<button data-act="reveal" data-path="${esc(local.lane_dir)}">Show lane</button>` : ""}
-          ${obsBtn("raw/tools/" + o.lane + "/LANE")}
+          ${obsBtn((o.relative_path || "raw/tools/" + o.lane) + "/LANE")}
           ${runNowBtn(local)}</div>`;
       return;
     }
@@ -1091,6 +1109,7 @@ window.onerror = function (msg, src, line, col) {
       const h = o.connector ? localTool(o.connector) : null;
       const t = h ? hz(h) : null;
       box.innerHTML = head(esc(o.name), esc(o.note || (h ? "lane " + h.lane : "no connector for this tool yet"))) + `
+        ${producerActions(h)}
         ${t ? `<div class="sect"><h2>Wires</h2>${toolBlock(t, h, "both wires")}</div>` : ""}
         ${h && h.runs_on ? `<div class="sect"><h2>Runs on the hub</h2><div class="prose">${esc(h.name)} pulls from the cloud, so it lives on the hub (${esc(h.runs_on)}), not on this machine. ${h.hub_installed ? "Installed there" : "Not installed there yet"}${h.job_loaded ? ", job loaded." : ", job not loaded yet (the owner's gate)."}${h.last_status ? ` Last status: ${esc(h.last_status)}` : ""}</div></div>` : ""}
         ${h ? `<div class="sect"><h2>Read wire</h2>${kv([
@@ -1115,7 +1134,7 @@ window.onerror = function (msg, src, line, col) {
           <input type="password" class="secret" id="secret-${esc(o.connector)}" data-env="${esc(h.secret.env)}" autocomplete="off" spellcheck="false" placeholder="${h.state === "connected" ? "kept on this machine; paste again only to replace it" : "paste it here, then Connect"}">
           ${h.secret.help ? `<div class="secret-help">${esc(h.secret.help)}</div>` : ""}</div>` : ""}
         <div class="acts">
-          ${o.connector && o.detected !== false ? `<button class="${h && h.state === "connected" ? "" : "brass"}" data-act="connect" data-harness="${esc(o.connector)}">${h && h.state === "connected" ? "Reinstall" : "Connect"}</button>` : ""}
+          ${o.connector && o.detected !== false && h?.state !== 'removed' ? `<button class="${h && h.state === "connected" ? "" : "brass"}" data-act="connect" data-harness="${esc(o.connector)}">${h && h.state === "connected" ? "Reinstall" : "Add producer…"}</button>` : ""}
           ${runNowBtn(h)}
           ${h && h.lane_dir ? `<button data-act="reveal" data-path="${esc(h.lane_dir)}">Show lane</button>` : ""}
           ${h ? obsBtn("raw/tools/" + h.lane + "/LANE") : ""}</div>`;
@@ -1267,6 +1286,7 @@ window.onerror = function (msg, src, line, col) {
 
   function openDrawer(title, showApply) {
     $("#drawer-title").textContent = title; $("#drawer-log").textContent = ""; $("#drawer-state").textContent = "running…";
+    $("#drawer-apply").textContent = "Install";
     $("#drawer-apply").hidden = !showApply; $("#drawer-apply").disabled = true; $("#drawer").classList.add("open");
   }
   // A machine with nothing deployed: the drawer walks the owner through joining it. A local
@@ -1316,12 +1336,24 @@ window.onerror = function (msg, src, line, col) {
     const f = (id) => ($("#" + id) || {}).value || "";
     const extra = apply && pendingHost ? pendingHost.extra : { user: f("ha-user").trim(), addr: f("ha-addr").trim(), identity: f("ha-identity").trim(), workstreams: f("ha-ws").trim() };
     if (!extra.user || !extra.addr) { openDrawer("Connect " + host, false); $("#drawer-log").textContent = "user and address are needed first"; $("#drawer-state").textContent = ""; return; }
-    pendingHost = { host, apply, extra }; pendingConnect = null;
+    pendingHost = { host, apply, extra }; pendingConnect = null; pendingProducer = null;
     openDrawer((apply ? "Connecting " : "Dry run: ") + host, !apply);
     bridge(Object.assign({ cmd: "hostadd", name: host, apply: !!apply }, extra));
   }
+  let pendingProducer=null;
+  function producer(harness,action,apply,extra={}){
+    if(pendingProducer?.running)return;
+    if(apply){if(!pendingProducer?.reviewed)return;extra=pendingProducer.extra;}
+    pendingConnect=null;pendingHost=null;
+    pendingProducer={harness,action,apply,extra,reviewed:false,running:true};
+    openDrawer((apply?(action==='remove'?'Removing ':'Adding '):'Review '+action+': ')+harness,!apply);
+    $('#drawer-apply').textContent=action==='remove'?'Remove producer':'Add producer';
+    bridge({cmd:'producer',harness,action,apply:!!apply,root:selectedRoot,...extra});
+  }
   function connect(harness, apply, extra) {
     extra = extra || (pendingConnect && pendingConnect.extra) || {};
+    if(harness!=="all"&&selectedRoot&&selectedRoot===D?.machine?.vault)return producer(harness,"add",apply,extra);
+    pendingProducer=null;pendingHost=null;
     pendingConnect = { harness, apply, extra };
     openDrawer((apply ? "Installing " : "Dry run: ") + (harness === "all" ? "every tool found" : harness), !apply);
     bridge(Object.assign({ cmd: "connect", harness, apply: !!apply, host: extra.host || (D.machine || {}).host || "" }, extra));
@@ -1388,7 +1420,9 @@ window.onerror = function (msg, src, line, col) {
       if (b.id === "pin") return setPinned(!pinned);
       if (b.id === "insp-close") { pinned ? setPinned(false) : closeInspector(); commit(); return; }
       if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
-      if (b.id === "drawer-apply") { if (pendingHost) return hostAdd(pendingHost.host, true); if (pendingConnect) connect(pendingConnect.harness, true); return; }
+      if (b.id === "drawer-apply") { if(pendingProducer)return producer(pendingProducer.harness,pendingProducer.action,true); if (pendingHost) return hostAdd(pendingHost.host, true); if (pendingConnect) connect(pendingConnect.harness, true); return; }
+      if(act === "add-producer")return select("tool",$("#producer-choice").value,true);
+      if(act === "remove-producer")return producer(b.dataset.harness,"remove",false);
       if (act === "hostadd") return hostAdd(b.dataset.host, false);
       if (b.id === 'review-retry') return ['no_archive','different_archive'].includes(reviewQueue().state)?bridge({cmd:'navigate',page:'home',place:{chooseArchive:true}}):refresh();
       if (act === "gotogate") return gotoGate();
@@ -1541,9 +1575,14 @@ window.onerror = function (msg, src, line, col) {
     } else if (kind === "log") {
       const log = $("#drawer-log"); log.textContent += payload.line + "\n"; log.scrollTop = log.scrollHeight;
       if (payload.state === "end") {
+        if(payload.id==='producer'&&pendingProducer){
+          pendingProducer.running=false;
+          if(!pendingProducer.apply){pendingProducer.reviewed=payload.exit===0;$('#drawer-apply').disabled=payload.exit!==0;}
+          else {pendingProducer=null;setTimeout(refresh,800);}
+        }
         $("#drawer-state").textContent = payload.exit === 0 ? "done" : "exit " + payload.exit;
-        if (pendingConnect && !pendingConnect.apply && payload.exit === 0) $("#drawer-apply").disabled = false;
-        if (pendingHost && !pendingHost.apply && payload.exit === 0) { $("#drawer-apply").disabled = false; $("#drawer-apply").textContent = "Install"; }
+        if (payload.id === "connect" && pendingConnect && !pendingConnect.apply && payload.exit === 0) $("#drawer-apply").disabled = false;
+        if (payload.id === "hostadd" && pendingHost && !pendingHost.apply && payload.exit === 0) { $("#drawer-apply").disabled = false; $("#drawer-apply").textContent = "Install"; }
         if (pendingHost && pendingHost.apply && payload.state === "end") { pendingHost = null; setTimeout(refresh, 800); }
         if (pendingConnect && pendingConnect.apply) { pendingConnect = null; setTimeout(refresh, 800); }
         if (payload.id === "gate") setTimeout(refresh, 1200);

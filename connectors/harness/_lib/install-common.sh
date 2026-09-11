@@ -387,6 +387,7 @@ if op == "upsert-harness":
             e["at"] = kw["at"]
     e.setdefault("registered", kw["registered"])
     d["harnesses"][hid] = e
+    d.setdefault("retired_harnesses", {}).pop(hid, None)
     # The runner's tick is the SMALLEST cadence on this machine, not this lane's, and it
     # skips every lane whose timeout exceeds that tick. Judging against the lane's own
     # cadence accepts what the runner then refuses on every tick, for good.
@@ -405,6 +406,8 @@ elif op == "remove-harness":
     d = load()
     hid = pos[0] if pos else kw["id"]
     gone = d["harnesses"].pop(hid, None)
+    retired = d.setdefault("retired_harnesses", {}).setdefault(hid, gone or {})
+    retired["cleanup_pending"] = True
     save(d)
     print("removed" if gone else "absent")
 
@@ -1066,6 +1069,11 @@ sov_retire_legacy_jobs() {
 # went with it.
 sov_unregister_connector() {
   local h="${1:-$HARNESS}" left declared own own_label lane_dir
+  if [ "${SOV_DISCONNECT_LOCKED:-}" != "$h" ]; then
+    local options=(/usr/bin/python3 "$TEMPLATE/connectors/harness/_lib/disconnect.py" "$h" --vault "$VAULT" --host "$HOST")
+    [ "$APPLY" -ne 1 ] || options+=(--apply)
+    exec "${options[@]}"
+  fi
   # The manifest, not this run's variables, is the record of where the lane writes and which
   # job (if any) it keeps of its own. A harness that sets its lane AFTER sov_resolve -- the
   # calendar path does, and sov_resolve dispatches this from inside itself -- would otherwise
@@ -1090,10 +1098,18 @@ sov_unregister_connector() {
   if [ -f "$own" ]; then
     mkdir -p "$RETIRED_DIR"
     if [ "$PLATFORM" = "Darwin" ]; then
-      _sov_launchctl bootout "gui/$(id -u)/$own_label" >/dev/null 2>&1 || true
+      if ! _sov_launchctl bootout "gui/$(id -u)/$own_label" >/dev/null 2>&1; then
+        if _sov_launchctl print "gui/$(id -u)/$own_label" >/dev/null 2>&1; then
+          echo "Collection was undeclared, but its old job is still loaded. Retry removal after resolving job control." >&2; exit 65
+        fi
+      fi
       mv "$own" "$RETIRED_DIR/"
     else
-      _sov_systemctl --user disable --now "$own_label.timer" >/dev/null 2>&1 || true
+      if ! _sov_systemctl --user disable --now "$own_label.timer" >/dev/null 2>&1 || ! _sov_systemctl --user stop "$own_label.service" >/dev/null 2>&1; then
+        if _sov_systemctl --user is-active --quiet "$own_label.timer" "$own_label.service"; then
+          echo "Collection was undeclared, but its old job is still active. Retry removal after resolving job control." >&2; exit 65
+        fi
+      fi
       rm -f "$HOME/.config/systemd/user/timers.target.wants/$own_label.timer"
       mv "$own" "$RETIRED_DIR/" 2>/dev/null || true
       mv "${own%.service}.timer" "$RETIRED_DIR/" 2>/dev/null || true

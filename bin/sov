@@ -50,6 +50,7 @@ case "$cmd" in
   connect)
     h="${1:-}"; shift || true
     [ -n "$h" ] || { echo "sov connect <harness>|all; available: $(_harness_ids)"; exit 64; }
+    [[ "$h" =~ ^[a-z][a-z0-9-]*$ ]] || { echo "invalid harness" >&2; exit 64; }
     [ "$h" = "all" ] && exec /usr/bin/python3 "$HARNESS_DIR/_lib/connect-all.py" "$@"
     [ -x "$HARNESS_DIR/$h/install.sh" ] || chmod +x "$HARNESS_DIR/$h/install.sh" 2>/dev/null || true
     # a cloud pull (no detect paths) runs on the hub: route there from any other machine.
@@ -73,6 +74,7 @@ case "$cmd" in
     # which is the manifest, not the catalog of harnesses that exist in the template.
     h="${1:-}"; shift || true
     [ -n "$h" ] || { echo "sov disconnect <harness>|all; available: $(_harness_ids)"; exit 64; }
+    [[ "$h" =~ ^[a-z][a-z0-9-]*$ ]] || { echo "invalid harness" >&2; exit 64; }
     if [ "$h" = "all" ]; then
       . "$HARNESS_DIR/_lib/install-common.sh"
       sov_resolve_state
@@ -87,7 +89,8 @@ case "$cmd" in
       exit "$rc"
     fi
     [ -x "$HARNESS_DIR/$h/install.sh" ] || chmod +x "$HARNESS_DIR/$h/install.sh" 2>/dev/null || true
-    exec /bin/bash "$HARNESS_DIR/$h/install.sh" --disconnect "$@";;
+    # Reuse cloud routing and credential-safe argument handling from connect.
+    exec /bin/bash "$SELF" connect "$h" --disconnect "$@";;
   relay)
     # The directory pipes on this machine's one mover. No harness is named, so the vault
     # comes from the pointer file and the state paths resolve on their own; the work is
