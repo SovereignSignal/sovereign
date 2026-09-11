@@ -845,46 +845,119 @@ def backups_view(root, hub, fleet):
         e = cache.get(node) or {}
         ttl = 900 if e.get("reachable") else 120
         return (time.time() - e.get("_at", 0)) < ttl
-    probed = {}
+    # The probe is optional detail and must never hold the status: with both nodes down
+    # the old serial loop cost two attempts of a 12 s ssh timeout per node (49 s measured
+    # 2026-09-11, the console showing an empty environment the whole time, again every
+    # two minutes when the failure cache expired). Now the wire is checked first with a
+    # one-second TCP connect to the address ssh would dial, and nodes are probed at the
+    # same time, so the worst case is one node's budget rather than the sum.
+    def _target(node):
+        try:
+            host, port = node, 22
+            for line in subprocess.run(["ssh", "-G", node], capture_output=True, text=True, timeout=5).stdout.splitlines():
+                k, _, v = line.partition(" ")
+                if k == "hostname" and v.strip(): host = v.strip()
+                elif k == "port" and v.strip().isdigit(): port = int(v.strip())
+            return host, port
+        except Exception:
+            return node, 22
+    PROBE_BUDGET = 6                                       # seconds; ConnectTimeout does not bound a session that hangs after the TCP connect
+    def _why(exc):
+        """Turn a failed probe into a cause and the owner's next step. Tailscale SSH's
+        browser re-check is the one that looks like a slow network: the session opens,
+        then waits for a click nobody can see (found 2026-09-11)."""
+        err = getattr(exc, "stderr", None) or b""
+        if isinstance(err, bytes): err = err.decode("utf-8", "replace")
+        m = re.search(r"Tailscale SSH requires an additional check.*?(https://\S+)", err, re.S)
+        if m:
+            return {"why": "tailscale-check", "url": m.group(1),
+                    "action": "Tailscale SSH wants a browser re-check from this machine. In a terminal run `ssh %s` and open the link it prints, then refresh."}
+        if isinstance(exc, subprocess.TimeoutExpired):
+            return {"why": "hang", "url": None, "action": "ssh to the node connected but never answered within %d s. Check the node's Tailscale SSH policy from this machine: `ssh -v %%s`." % PROBE_BUDGET}
+        if "closed or filtered" in str(exc):
+            return {"why": "port-closed", "url": None, "action": "Port 22 did not answer from this machine. Check the node is powered on and on the tailnet, then refresh."}
+        return {"why": "error", "url": None, "action": "ssh to the node failed: %s" % (str(exc)[:120] or type(exc).__name__)}
+    def _probe(node):
+        result = {"jobs": None, "dumps": {}, "reachable": False, "detail": None}
+        for attempt in (1, 2):                             # one retry: a cold route is not an answer, a hang is
+            started = time.time()
+            try:
+                host, port = _target(node)
+                if not port_open(host, port, timeout=1.0):
+                    raise OSError("port %d closed or filtered" % port)
+                o = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node,
+                                    "grep -c '^vzdump' /etc/pve/jobs.cfg 2>/dev/null; ls -t --time-style=+%s -l /var/lib/vz/dump/ 2>/dev/null | awk '{print $6, $7}' | grep -E 'vma|tar' | head -50"],
+                                   capture_output=True, text=True, timeout=PROBE_BUDGET).stdout.splitlines()
+                jobs = int(o[0]) if o and o[0].strip().isdigit() else 0
+                dumps = {}
+                for line in o[1:]:
+                    parts = line.split()
+                    if len(parts) == 2:
+                        mm = re.search(r"vzdump-(?:qemu|lxc)-(\d+)-", parts[1])
+                        if mm: dumps.setdefault(mm.group(1), int(parts[0]))
+                return {"jobs": jobs, "dumps": dumps, "reachable": True, "detail": None}
+            except Exception as exc:
+                d = _why(exc)
+                if "%s" in d["action"]: d["action"] = d["action"] % node
+                result = {"jobs": None, "dumps": {}, "reachable": False, "detail": d}
+                if time.time() - started >= 3:             # it hung rather than failed: a second try would only hang again
+                    break
+        return result
+    wanted = []                                            # (host record, node, vmid), registry order
     for h in fleet.get("hosts", []):
         meta = h.get("meta") or {}
         m = re.search(r"Proxmox node (\S+)", (meta.get("where") or "") + " " + (meta.get("kind") or ""))
         vm = re.search(r"\bVM (\d+)\b", meta.get("kind") or "")
-        if not (m and vm):
+        if m and vm:
+            wanted.append((h, m.group(1).strip("()"), vm.group(1)))
+    probed = {}
+    todo = []
+    for _, node, _ in wanted:
+        if node in probed or node in todo:
             continue
-        node, vmid = m.group(1).strip("()"), vm.group(1)
-        if node not in probed:
-            if node in cache and _fresh(node):
-                probed[node] = cache[node]
-            else:
-                for attempt in (1, 2):                     # one retry: a cold route is not an answer
-                  try:
-                    o = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node,
-                                        "grep -c '^vzdump' /etc/pve/jobs.cfg 2>/dev/null; ls -t --time-style=+%s -l /var/lib/vz/dump/ 2>/dev/null | awk '{print $6, $7}' | grep -E 'vma|tar' | head -50"],
-                                       capture_output=True, text=True, timeout=12).stdout.splitlines()
-                    jobs = int(o[0]) if o and o[0].strip().isdigit() else 0
-                    dumps = {}
-                    for line in o[1:]:
-                        parts = line.split()
-                        if len(parts) == 2:
-                            mm = re.search(r"vzdump-(?:qemu|lxc)-(\d+)-", parts[1])
-                            if mm: dumps.setdefault(mm.group(1), int(parts[0]))
-                    probed[node] = {"jobs": jobs, "dumps": dumps, "reachable": True}
-                    break
-                  except Exception:
-                    probed[node] = {"jobs": None, "dumps": {}, "reachable": False}
-                cache[node] = dict(probed[node], _at=time.time())
+        if node in cache and _fresh(node):
+            probed[node] = cache[node]
+        else:
+            todo.append(node)
+    if todo:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(todo))) as pool:
+            for node, res in zip(todo, pool.map(_probe, todo)):
+                probed[node] = res
+                cache[node] = dict(res, _at=time.time())
+    for h, node, vmid in wanted:
         pn = probed[node]
         last = pn["dumps"].get(vmid)
         hosts.append({"host": h["host"], "node": node, "vmid": vmid, "reachable": pn["reachable"], "jobs": pn["jobs"],
-                      "last_dump_age_h": round((time.time() - last) / 3600, 1) if last else None})
-    if probed:
+                      "last_dump_age_h": round((time.time() - last) / 3600, 1) if last else None,
+                      "detail": pn.get("detail")})
+    if todo:
         cache.pop("_at", None)                         # per-node stamps now, see _fresh
         try:
             os.makedirs(os.path.dirname(cache_p), exist_ok=True); json.dump(cache, open(cache_p, "w"))
         except OSError: pass
     bk["hosts"] = hosts
     return bk
+
+
+def hypervisor_needs(backups):
+    """One needs-you row per hypervisor node this machine could not read, carrying the
+    cause and the owner's next step. A silent "unreachable" is not transparent: the
+    2026-09-11 case was a Tailscale re-check link the app never showed."""
+    rows, seen = [], set()
+    for h in (backups or {}).get("hosts") or []:
+        node = h.get("node")
+        if h.get("reachable") or not node or node in seen:
+            continue
+        seen.add(node)
+        vms = [x["host"] for x in backups["hosts"] if x.get("node") == node]
+        d = h.get("detail") or {}
+        action = d.get("action") or "The node did not answer from this machine. Check it is on and on the tailnet, then refresh."
+        text = "Backup posture of %d VM%s on %s is unknown (%s). %s" % (len(vms), "" if len(vms) == 1 else "s", node, ", ".join(vms), action)
+        row = {"kind": "hypervisor", "node": node, "text": text}
+        if d.get("url"): row["url"] = d["url"]
+        rows.append(row)
+    return rows
 
 
 def local_vms():
@@ -1302,6 +1375,7 @@ def main():
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: %s" % (h["name"], h["manual_step"])})
         elif h["state"] == "connected" and h["read"] == "instruction" and h["manual_step"]:
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: %s" % (h["name"], h["manual_step"])})
+    needs.extend(hypervisor_needs(out.get("backups")))
     # lanes the shared connector job serves. Consolidation would otherwise invent one failure
     # mode: a lane quietly dropped from the loop produces no error anywhere while the shared job
     # stays green. `checked_at` is stamped for every enabled lane on every tick, so its age is
