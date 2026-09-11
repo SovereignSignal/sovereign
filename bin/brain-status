@@ -845,40 +845,75 @@ def backups_view(root, hub, fleet):
         e = cache.get(node) or {}
         ttl = 900 if e.get("reachable") else 120
         return (time.time() - e.get("_at", 0)) < ttl
-    probed = {}
+    # The probe is optional detail and must never hold the status: with both nodes down
+    # the old serial loop cost two attempts of a 12 s ssh timeout per node (49 s measured
+    # 2026-09-11, the console showing an empty environment the whole time, again every
+    # two minutes when the failure cache expired). Now the wire is checked first with a
+    # one-second TCP connect to the address ssh would dial, and nodes are probed at the
+    # same time, so the worst case is one node's budget rather than the sum.
+    def _target(node):
+        try:
+            host, port = node, 22
+            for line in subprocess.run(["ssh", "-G", node], capture_output=True, text=True, timeout=5).stdout.splitlines():
+                k, _, v = line.partition(" ")
+                if k == "hostname" and v.strip(): host = v.strip()
+                elif k == "port" and v.strip().isdigit(): port = int(v.strip())
+            return host, port
+        except Exception:
+            return node, 22
+    PROBE_BUDGET = 6                                       # seconds; ConnectTimeout does not bound a session that hangs after the TCP connect
+    def _probe(node):
+        result = {"jobs": None, "dumps": {}, "reachable": False}
+        for attempt in (1, 2):                             # one retry: a cold route is not an answer, a hang is
+            started = time.time()
+            try:
+                host, port = _target(node)
+                if not port_open(host, port, timeout=1.0):
+                    raise OSError("port %d closed or filtered" % port)
+                o = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node,
+                                    "grep -c '^vzdump' /etc/pve/jobs.cfg 2>/dev/null; ls -t --time-style=+%s -l /var/lib/vz/dump/ 2>/dev/null | awk '{print $6, $7}' | grep -E 'vma|tar' | head -50"],
+                                   capture_output=True, text=True, timeout=PROBE_BUDGET).stdout.splitlines()
+                jobs = int(o[0]) if o and o[0].strip().isdigit() else 0
+                dumps = {}
+                for line in o[1:]:
+                    parts = line.split()
+                    if len(parts) == 2:
+                        mm = re.search(r"vzdump-(?:qemu|lxc)-(\d+)-", parts[1])
+                        if mm: dumps.setdefault(mm.group(1), int(parts[0]))
+                return {"jobs": jobs, "dumps": dumps, "reachable": True}
+            except Exception:
+                result = {"jobs": None, "dumps": {}, "reachable": False}
+                if time.time() - started >= 3:             # it hung rather than failed: a second try would only hang again
+                    break
+        return result
+    wanted = []                                            # (host record, node, vmid), registry order
     for h in fleet.get("hosts", []):
         meta = h.get("meta") or {}
         m = re.search(r"Proxmox node (\S+)", (meta.get("where") or "") + " " + (meta.get("kind") or ""))
         vm = re.search(r"\bVM (\d+)\b", meta.get("kind") or "")
-        if not (m and vm):
+        if m and vm:
+            wanted.append((h, m.group(1).strip("()"), vm.group(1)))
+    probed = {}
+    todo = []
+    for _, node, _ in wanted:
+        if node in probed or node in todo:
             continue
-        node, vmid = m.group(1).strip("()"), vm.group(1)
-        if node not in probed:
-            if node in cache and _fresh(node):
-                probed[node] = cache[node]
-            else:
-                for attempt in (1, 2):                     # one retry: a cold route is not an answer
-                  try:
-                    o = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node,
-                                        "grep -c '^vzdump' /etc/pve/jobs.cfg 2>/dev/null; ls -t --time-style=+%s -l /var/lib/vz/dump/ 2>/dev/null | awk '{print $6, $7}' | grep -E 'vma|tar' | head -50"],
-                                       capture_output=True, text=True, timeout=12).stdout.splitlines()
-                    jobs = int(o[0]) if o and o[0].strip().isdigit() else 0
-                    dumps = {}
-                    for line in o[1:]:
-                        parts = line.split()
-                        if len(parts) == 2:
-                            mm = re.search(r"vzdump-(?:qemu|lxc)-(\d+)-", parts[1])
-                            if mm: dumps.setdefault(mm.group(1), int(parts[0]))
-                    probed[node] = {"jobs": jobs, "dumps": dumps, "reachable": True}
-                    break
-                  except Exception:
-                    probed[node] = {"jobs": None, "dumps": {}, "reachable": False}
-                cache[node] = dict(probed[node], _at=time.time())
+        if node in cache and _fresh(node):
+            probed[node] = cache[node]
+        else:
+            todo.append(node)
+    if todo:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(todo))) as pool:
+            for node, res in zip(todo, pool.map(_probe, todo)):
+                probed[node] = res
+                cache[node] = dict(res, _at=time.time())
+    for h, node, vmid in wanted:
         pn = probed[node]
         last = pn["dumps"].get(vmid)
         hosts.append({"host": h["host"], "node": node, "vmid": vmid, "reachable": pn["reachable"], "jobs": pn["jobs"],
                       "last_dump_age_h": round((time.time() - last) / 3600, 1) if last else None})
-    if probed:
+    if todo:
         cache.pop("_at", None)                         # per-node stamps now, see _fresh
         try:
             os.makedirs(os.path.dirname(cache_p), exist_ok=True); json.dump(cache, open(cache_p, "w"))
