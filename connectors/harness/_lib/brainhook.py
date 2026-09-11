@@ -31,6 +31,12 @@ def pointer(path):
         return None
 
 
+def read_enabled():
+    sys.path.insert(0, os.path.join(TEMPLATE_ROOT, "lib"))
+    import brain_discovery
+    return brain_discovery.read_enabled()
+
+
 def vault_root():
     root = os.environ.get("BRAIN_ROOT") or pointer("~/.brain-root")
     return os.path.realpath(os.path.expanduser(root)) if root else None
@@ -101,19 +107,25 @@ def topic_for(cwd, root):
 
 def build_pack(cwd, harness):
     """Return dict(label, scope, cards, context) or None when there is nothing to load."""
-    root = vault_root()
-    if not root:
+    sys.path.insert(0, os.path.join(TEMPLATE_ROOT, "lib"))
+    import brain_discovery
+    if not brain_discovery.read_enabled():
         return None
+    discovery = brain_discovery.bootstrap()
+    root = vault_root()
+    discovery_only = {"label": "installation", "scope": "discovery", "cards": "0", "root": None, "identity": None, "context": discovery, "harness": harness}
+    if not root:
+        return discovery_only
     core = core_slugs()
     topic, scope = topic_for(cwd, root)
     bl = find_brain_load()
     if not bl:
         sys.stderr.write("sovereign hook: brain-load not found\n")
-        return None
+        return discovery_only
     first_core = next((s.strip() for s in core.split(",") if s.strip()), None)
     entry = topic or first_core
     if not entry:
-        return None
+        return discovery_only
     args = [sys.executable, bl, entry, "--root", root,
             "--max", os.environ.get("BRAIN_HOOK_MAX_CARDS", "6")]
     if core:
@@ -123,7 +135,7 @@ def build_pack(cwd, harness):
     res = subprocess.run(args, capture_output=True, text=True, timeout=25)
     pack = res.stdout.strip()
     if not pack:
-        return None
+        return discovery_only
     m = re.search(r"_(\d+) cards from the knowledge layer", pack)
     cards = m.group(1) if m else ("core" if not topic else "0")
     limit = int(os.environ.get("BRAIN_HOOK_MAX_CHARS", "40000"))
@@ -139,11 +151,13 @@ def build_pack(cwd, harness):
               "Do not copy it into memory files: it reloads every session. For more: `sov load <topic>`."
               % (label, root, ident_line))
     return {"label": label, "scope": scope, "cards": cards, "root": root, "identity": ident,
-            "context": header + "\n\n" + pack, "harness": harness}
+            "context": discovery + "\n\n" + header + "\n\n" + pack, "harness": harness}
 
 
 def receipt(root, lane, label, scope, cards, session_id=None, source=None):
     """Append one line to <lane>/brain-load-usage.md. Best effort; never raises to the caller."""
+    if not root or scope == "discovery":
+        return
     try:
         d = lane_dir(root, lane)
         os.makedirs(d, exist_ok=True)

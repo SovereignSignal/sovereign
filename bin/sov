@@ -12,6 +12,8 @@
 #   sov relay add|remove|list     the directory pipes this machine's one mover carries
 #                                 (add <path> [--name NAME] [--force]; remove <name>; list)
 #   sov hook <harness>            run a harness's session-start hook here, for testing
+#   sov about [--json]          explain this installation, offline and read-only
+#   sov contribute <command>    assess, collect, deliver, or import selected work
 #   sov status                    pointers, lanes on this machine, and their freshness
 #   sov check                     validate the vault (brain-check)
 #
@@ -40,7 +42,9 @@ _harness_ids() {
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
-  load)     exec /usr/bin/python3 "$BIN/brain-load" "$@";;
+  about)    exec /usr/bin/python3 "$BIN/brain-about" "$@";;
+  contribute) exec /usr/bin/python3 "$BIN/brain-contribute" "$@";;
+  load)     /usr/bin/python3 "$BIN/brain-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec /usr/bin/python3 "$BIN/brain-load" "$@";;
   capture)  exec /usr/bin/python3 "$BIN/brain-capture" "$@";;
   check)    exec /bin/bash "$BIN/brain-check.sh" "$@";;
   connect)
@@ -146,6 +150,6 @@ case "$cmd" in
       reject)  exec /bin/bash "$BIN/curator-reject.sh" "$@";;
       *) echo "usage: sov gate approve|reject <slug> [reason]" >&2; exit 64;;
     esac;;
-  help|-h|--help) sed -n '2,19p' "$SELF";;
-  *) echo "sov: unknown command '$cmd'"; sed -n '2,19p' "$SELF"; exit 64;;
+  help|-h|--help) sed -n '2,/^set -euo/{ /^set -euo/d; p; }' "$SELF";;
+  *) echo "sov: unknown command '$cmd'"; sed -n '2,/^set -euo/{ /^set -euo/d; p; }' "$SELF"; exit 64;;
 esac

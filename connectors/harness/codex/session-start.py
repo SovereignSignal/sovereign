@@ -32,7 +32,7 @@ def main():
     print(json.dumps({
         "hookSpecificOutput": {"hookEventName": "SessionStart",
                                "additionalContext": pack["context"]},
-        "systemMessage": "Sovereign: loaded %s cards for '%s'" % (pack["cards"], pack["label"]),
+        "systemMessage": "Sovereign: installation pointer; no context pack" if pack["scope"] == "discovery" else "Sovereign: loaded %s cards for '%s'" % (pack["cards"], pack["label"]),
     }))
 
 

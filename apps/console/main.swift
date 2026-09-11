@@ -900,7 +900,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         let main = NSMenu()
         let appItem = NSMenuItem(); main.addItem(appItem)
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Sovereign", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About Sovereign", action: #selector(showIntroduction), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         appMenu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r")
@@ -939,6 +939,21 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         appearanceItem.submenu = choices; appearanceMenu = choices
         viewMenu.addItem(appearanceItem); viewItem.submenu = viewMenu
         NSApp.mainMenu = main
+    }
+
+    @objc func showIntroduction() {
+        guard let resources = Bundle.main.resourceURL else { return }
+        let executable = resources.appendingPathComponent("runtime/bin/python3").path
+        let script = resources.appendingPathComponent("backend/bin/brain-about").path
+        bridge.run([executable, script], timeLimit: 5) { out, _, code in
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Sovereign"
+                alert.informativeText = code == 0 ? out : "Your owned brain and archive. Local setup could not be read. Open Settings to inspect this installation."
+                alert.addButton(withTitle: "Done")
+                alert.runModal()
+            }
+        }
     }
 
     @objc func refresh() { web.evaluateJavaScript("window.sovRefresh && window.sovRefresh();", completionHandler: nil) }

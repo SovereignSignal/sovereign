@@ -35,6 +35,7 @@ window.Home = (() => {
     intro.append(element('p',status?.error?'System status unavailable. Your local archive is still available.':machine.connected?`${machine.vault_name||'Connected archive'} · ${machine.host||'this device'}`:'Open an archive and see which tools are connected.'));
     const refresh=element('button',pending?'Checking…':'Refresh status');refresh.disabled=pending;refresh.onclick=()=>Home.refresh();lead.append(intro,refresh);host.append(lead);
     observation(host);if(!status?.machine&&!status?.error)return;
+    if(machine.role){const mode=machine.client_mode==='contribute-only'?'Contribute only':machine.client_mode==='read-and-contribute'?'Read and contribute':machine.role==='client'?'Mode not declared':'';host.append(element('p',(machine.host||'This machine')+' · '+(machine.role==='hub'?'Hub':'Client')+(mode?' / '+mode:''),'home-subhead'))}
     if(root&&machine.vault&&root!==machine.vault)host.append(element('div',`You are browsing ${root.split('/').pop()}. Connections below belong to ${machine.vault_name||'another archive'} (${machine.vault}). Opening an archive does not connect it to these tools.`,'home-banner'));
     if(status?.error)host.append(element('div',status.error,'home-banner'));
     const badge=document.getElementById('review-count');if(badge)badge.textContent=GateModel.queue(status,root).count||'';
@@ -52,9 +53,11 @@ window.Home = (() => {
     }
     if(!needs.length)message(attention,!status||status.error?'Waiting for a successful status check.':hub.reachable===true?'No attention items reported by the connected system.':'No local attention items reported. Hub review status is unverified.');
 
-    const incoming=panel('Contributions',deliveries.length||null);
+    const clients=status?.clients||hub.clients||[];
+    const incoming=panel('Contributions',(deliveries.length+clients.length)||null);
+    for(const c of clients){const record=element('div',null,'home-intake');record.append(element('h3',c.client_id+' · Client / Contribute only'));for(const [label,value] of [['Collection (client reported)',c.collected_at],['Received by hub',c.received_at],['Imported into raw',c.imported_at]]){const stage=element('div',label,'home-stage');stage.append(element('small',value?ago(value):'Not reported'));record.append(stage)}record.append(element('p',c.state==='error'||c.state==='rejected'?'Intake needs attention: '+(c.reason||'See rejected items in the hub receipt.'):'Intake: '+(c.state||'not reported')+'. Promotion requires curation and review.'));incoming.append(record)}
     for(const lane of deliveries){const accepted=lane.delivery==='accepted';incoming.append(row(lane.lane,accepted?'Accepted by the hub · source '+ago(lane.pushed):lane.delivery==='waiting'?'Published · waiting for hub acceptance':SovStatus.contributionIssue(lane).text,accepted?'live':lane.delivery==='waiting'?'warn':'idle',()=>operations('backups','bk:lane:'+lane.lane)));if(!accepted&&lane.delivery!=='waiting')incoming.append(details(SovStatus.contributionIssue(lane)))}
-    if(!deliveries.length)message(incoming,hub.reachable===true?'No contribution acceptance records were returned.':'Check the hub to verify which contributions have been accepted.');
+    if(!deliveries.length&&!clients.length)message(incoming,hub.reachable===true?'No contribution acceptance records were returned.':'Check the hub to verify which contributions have been accepted.');
     attention.classList.add('home-attention');incoming.classList.add('home-contributions');
     const connections=panel('Nodes',nodes.length||null);connections.classList.add('home-nodes');
     for(const n of (expanded?nodes:nodes.slice(0,4))){const state=n.net?.online===true?'live':n.net?.online===false?'down':'';const label=state==='live'?'Reachable':state==='down'?'Unreachable':'Reachability unknown';const count=(n.harnesses||[]).length;connections.append(row(n.host,`${label} · ${count} producer${count===1?'':'s'}`,state,()=>operations('hosts',n.host)))}

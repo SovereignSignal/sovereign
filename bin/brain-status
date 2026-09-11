@@ -34,6 +34,8 @@ import os, sys, json, glob, time, subprocess, socket, re, plistlib, datetime, sh
 
 HERE = os.path.dirname(os.path.realpath(__file__))   # brain-bin symlinks here; the catalog lives beside the real file
 TEMPLATE_ROOT = os.path.abspath(os.path.join(HERE, ".."))
+sys.path.insert(0, os.path.join(TEMPLATE_ROOT, "lib"))
+import brain_discovery
 NOW = time.time()
 # launchd/systemd labels the status watches. The connector prefix is built in; an
 # instance can add its own legacy prefixes in ~/.brain-job-prefixes (comma separated).
@@ -460,6 +462,15 @@ def scan(path):
             except OSError: pass
     return (best or None), n
 out = {"reachable": True, "root": root, "lanes": {}, "jobs": {}}
+# Intake receipts belong to this hub's state directory, never a mirrored archive.
+client_fields = ("client_id", "role", "client_mode", "lane", "state", "attempted_at", "received_at", "imported_at", "collected_at", "received", "imported_current", "head", "promotion", "reason", "rejections")
+out["clients"] = []
+for receipt in sorted(glob.glob(os.path.join(os.environ.get("SOV_STATE_DIR") or os.path.expanduser("~/.local/state/sovereign"), "intake-*.json")))[:100]:
+    try:
+        if os.path.islink(receipt) or os.path.getsize(receipt) > 8 * 1024 * 1024: continue
+        record = json.load(open(receipt))
+        if isinstance(record, dict) and record.get("archive_root") == os.path.realpath(root): out["clients"].append({k: record[k] for k in client_fields if k in record})
+    except (OSError, ValueError): pass
 lane_name = None
 for cand in glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json")):
     lane_name = os.path.basename(os.path.dirname(cand))
@@ -1024,6 +1035,8 @@ def explain_needs(rows):
     New producers must supply their own fields; unknown kinds remain visibly legacy.
     """
     guidance = {
+        "configuration": ("The local machine role configuration is invalid.", "Repair the local connectors.json machine declaration, then request status again.", "Status reports the declared role without a configuration error."),
+        "client-intake": ("The contribution intake reported a delivery or validation failure.", "Inspect the client receipt and retry after resolving its reported cause.", "Refresh status; delivery and hub import each show their own successful receipt."),
         "hub": ("The configured hub did not return status; its governance state is unknown.", "Open Operations → Hosts, inspect the configured hub and restore its connection, then refresh.", "Refresh; the hub reports reachable and Review shows a current queue."),
         "gate": ("Proposals are waiting for an owner decision.", "Open Sovereign → Review to compare and decide (or curator-approve on the hub).", "After your decision, refresh Review; the handled proposal leaves the waiting queue."),
         "harness": ("The context connection needs the setup step described above.", "Open Operations → Tools, select this tool and follow the setup step above.", "Start a fresh tool session and refresh; its context hook is trusted and a new preparation receipt appears. Model use still requires separate evidence."),
@@ -1222,6 +1235,29 @@ def main():
            "machine": {"vault": root, "vault_name": os.path.basename(root) if root else None, "host": host,
                        "core": [c for c in core.split(",") if c], "template": TEMPLATE_ROOT, "template_rev": rev,
                        "staging": stage, "connected": bool(root), "hub_pointer": hub_pointer}}
+    try:
+        intro = brain_discovery.describe()
+        out["machine"].update({key: intro["machine"].get(key) for key in ("role", "client_mode", "role_basis")})
+        out["machine"]["role_warnings"] = intro["warnings"]
+    except (ValueError, OSError):
+        out["machine"].update(role=None, client_mode=None, role_warnings=["Machine configuration could not be read."])
+        out["needs_you"] = explain_needs([{"kind": "configuration", "text": "Connector configuration is unreadable.", "why": "The machine role cannot be established safely.", "action": "Inspect the connector manifest before reconnecting this machine.", "verify": "Refresh after correcting the manifest."}])
+        print(json.dumps(out, indent=2)); return
+    if out["machine"].get("client_mode") == "contribute-only":
+        # This role has no brain read wire, even while a legacy pointer awaits cutover.
+        receipt = brain_discovery.state_dir() / "contribution.json"
+        try:
+            if receipt.exists() and not receipt.is_symlink() and receipt.stat().st_size <= 1024 * 1024:
+                out["contribution"] = json.loads(receipt.read_text())
+        except (ValueError, OSError):
+            out["contribution"] = {"state": "unreadable"}
+        out["hub"] = {"reachable": None, "error": "Contribute-only client: no brain status requested."}
+        out["needs_you"] = []
+        for phase in ("collection", "delivery"):
+            record = out.get("contribution", {}).get(phase, {})
+            if record.get("state") in ("error", "partial"):
+                out["needs_you"].append({"kind": "contribution", "text": "Client " + phase + " needs attention.", "why": record.get("reason") or "Some selected sources could not be collected.", "action": "Inspect the contribution receipt and configured source or intake connection; rerun the uploader after correcting it.", "verify": "The next receipt reports successful collection and confirmed delivery."})
+        print(json.dumps(out, indent=2)); return
     if not root:
         out["needs_you"] = explain_needs([{"kind": "not-connected", "text": "Connected tools are not configured. Your local archive remains available."}])
         print(json.dumps(out, indent=2) if want_json else "not connected: no ~/.brain-root")
@@ -1229,6 +1265,9 @@ def main():
 
     hub = fetch_hub(root, hub_pointer, want_hub)
     out["hub"] = hub
+    if not out["machine"].get("role") and hub.get("via") == "local":
+        out["machine"].update(role="hub", role_basis="local-hub-status")
+    out["clients"] = hub.get("clients", [])
     hub_lanes = hub.get("lanes", {}) if isinstance(hub, dict) else {}
     hub_contrib = hub.get("contrib", {}) if isinstance(hub, dict) else {}
 
@@ -1552,6 +1591,9 @@ def main():
             needs.append({"kind": "relay", "text": "Lane %s: staging is %.1fh old but the vault copy is %.1fh old. The relay may be stuck." % (l["lane"], sa, va)})
     needs.extend(fleet_needs(out.get("fleet")))
     contribution_issues(out.get("backups"))  # Unknown evidence stays neutral; explain it on each lane.
+    for client in out.get("clients", []):
+        if client.get("state") in ("error", "rejected"):
+            needs.append({"kind": "client-intake", "text": "Client intake needs attention: " + str(client.get("client_id", "unknown")), "why": client.get("reason") or "One or more submitted items failed the hub validation.", "action": "Inspect the client in System and the hub intake receipt. Correct the source or intake connection, then rerun the configured intake job.", "verify": "A new receipt reports the received head, imported captures and no rejected items."})
     out["needs_you"] = explain_needs(needs)
 
     if want_json:

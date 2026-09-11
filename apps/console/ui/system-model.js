@@ -19,14 +19,23 @@
     if(archive)edge('local-archive',app.id,archive.id,'Local archive engine','Selected archive','local','Read and capture on this device. A local capture is not approved knowledge.');
     if(!bound)return {root:selected||null,bound,mismatch,unavailable,observedAt:null,nodes,edges,tools,devices,clients,notConnected,receipts,archive,hub:null,pending:null,warning:mismatch?'This archive is not the archive configured for this device’s connectors. Their connections are hidden.':unavailable?'System status is unavailable. The selected local archive remains accessible.':selected?'Local archive open. No matching connector environment has been reported.':'Open or create an archive to see its environment.'};
     function device(name,extra={}){if(!name)return null;const id='device:'+name;let d=devices.find(d=>d.id===id);if(!d){d=node(id,name,'device',{online:null,...extra});devices.push(d);}else Object.assign(d,extra);return d;}
-    device(text(machine.host),{local:true});
+    device(text(machine.host),{local:true,role:machine.role||null,clientMode:machine.client_mode||null});
     for(const h of list(observed.fleet?.hosts)){if(!text(h.host))continue;device(h.host,{online:typeof h.net?.online==='boolean'?h.net.online:null,local:h.host===machine.host,harnesses:list(h.harnesses),registry:h});}
+    for(const c of list(observed.clients||hub.clients)){
+      if(!text(c.client_id))continue;
+      device(c.client_id,{role:'client',clientMode:c.client_mode||null,intake:c});
+    }
     const hubConfigured=!!machine.hub_pointer||hub.via==='local'||text(hub.via).startsWith('ssh ');
     let hubNode=null;
     if(hubConfigured){
       const name=text(hub.hub_host)||text(hub.via).replace(/^ssh /,'')||text(machine.hub_pointer).split(':')[0]||'Configured hub';
       hubNode=node('hub',name==='local'?(text(machine.host)||'This device'):name,'hub',{reachable:hub.reachable===true?true:hub.reachable===false?false:null,via:hub.via||null});
       edge('hub-control','app','hub',text(hub.via).startsWith('ssh ')?'SSH':hub.via==='local'?'Local subprocess':'Transport not reported',hub.reachable===true?'Hub answered':hub.reachable===false?'Hub unavailable':'Configured; not verified','control','Status reads and owner decisions share the configured hub. Decisions still require validation and explicit owner action.');
+    }
+    for(const d of devices.filter(d=>d.intake)){
+      const c=d.intake,n=node('intake:'+c.client_id,c.client_id+' intake','intake',{record:c});
+      edge('receive:'+c.client_id,d.id,n.id,'Selected contribution',c.received_at?'Received by hub':'Receipt unverified','contribution','Collection time is client reported. Hub receipt confirms transport only.');
+      edge('import:'+c.client_id,n.id,'archive','Validated raw import',c.imported_at?'Imported into raw':'Import unverified','contribution','Validated items enter the assigned capture lane. Promotion requires curation and review.');
     }
     const laneNodes=new Map();
     function lane(name){if(!name)return null;if(laneNodes.has(name))return laneNodes.get(name);const record=list(observed.lanes).find(l=>l.lane===name)||{};const n=node('lane:'+name,name,'lane',{record});laneNodes.set(name,n);return n;}
@@ -39,7 +48,7 @@
       const last=text(h.last_run).match(/\d{4}-\d\d-\d\dT\S+/)?.[0],date=last?Date.parse(last):NaN;
       const runAge=Number.isFinite(h.run_age_h)?h.run_age_h:Number.isFinite(date)?Math.max(0,(Date.now()-date)/3600000):null;
       const late=runAge!=null&&Number.isFinite(h.cadence_s)&&h.cadence_s>0&&runAge*3600>h.cadence_s;
-      const canRead=h.trusted!==false&&h.hook_registered===true&&['hook','instruction'].includes(h.read);
+      const canRead=(d?.clientMode||machine.client_mode)!=='contribute-only'&&h.trusted!==false&&h.hook_registered===true&&['hook','instruction'].includes(h.read);
       const collects=h.job_loaded===true&&(h.has_mirror===true||h.hub_installed===true);
       const rawSuffix=text(h.lane_dir).split('/raw/')[1];
       const receipt=receipts.find(r=>r.producer===(rawSuffix||('tools/'+text(h.lane))))||null;

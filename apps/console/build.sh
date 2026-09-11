@@ -49,7 +49,9 @@ BACKEND="$APP/Contents/Resources/backend"
 mkdir -p "$BACKEND/bin" "$BACKEND/lib" "$BACKEND/templates"
 cp "$HERE/diagnostics.py" "$BACKEND/"
 cp "$HERE/gate_check.py" "$APP/Contents/Resources/"
-cp "$HERE/../../bin/brain-local" "$BACKEND/bin/"
+cp "$HERE/../../bin/brain-local" "$HERE/../../bin/brain-about" "$BACKEND/bin/"
+cp "$HERE/../../lib/brain_discovery.py" "$BACKEND/lib/"
+MACOSX_DEPLOYMENT_TARGET=13.0 xcrun swiftc -target arm64-apple-macos13.0 -module-cache-path "$BUILD/module-cache" -O -o "$APP/Contents/MacOS/sov" "$HERE/about-cli.swift"
 cp "$HERE/../../lib/brain_local.py" "$HERE/../../lib/brain_redact.py" "$BACKEND/lib/"
 cp "$HERE/../../templates/note.md" "$BACKEND/templates/"
 cp "$HERE/../../CLAUDE.md" "$BACKEND/"
@@ -72,6 +74,7 @@ while IFS= read -r -d '' nested; do
     codesign --force --sign "$SIGN_ID" --options runtime "$nested" >/dev/null 2>&1
   fi
 done < <(find "$APP/Contents/Resources/runtime" -type f -print0)
+codesign --force --sign "$SIGN_ID" --options runtime "$APP/Contents/MacOS/sov"
 codesign --force --sign "$SIGN_ID" --options runtime "$APP" >/dev/null 2>&1
 codesign --verify --deep --strict "$APP"
 echo "    signed and verified (distribution notarization is separate)"

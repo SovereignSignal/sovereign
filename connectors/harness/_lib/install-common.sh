@@ -121,6 +121,7 @@ _sov_vault_is_protected() {
 }
 
 sov_resolve() {
+  /usr/bin/python3 "$TEMPLATE/bin/brain-about" --read-enabled || { echo "Use the selected contribution installer for a contribute-only client; read-wire connector setup is disabled." >&2; exit 65; }
   case "${HARNESS:-}" in
     runner|relay) echo "harness id '$HARNESS' is reserved for the shared connector job" >&2; exit 64;;
   esac
@@ -193,7 +194,7 @@ sov_write_pointers() {
 
 sov_link_bins() {
   mkdir -p "$HOME/brain-bin"
-  for b in brain-load brain-capture brain-lane-scope sov sov-connectors-run; do
+  for b in brain-load brain-capture brain-lane-scope brain-about brain-contribute sov sov-connectors-run; do
     [ -e "$TEMPLATE/bin/$b" ] && ln -sfn "$TEMPLATE/bin/$b" "$HOME/brain-bin/$b"
   done
   chmod +x "$TEMPLATE/bin/sov" 2>/dev/null || true

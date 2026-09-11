@@ -69,12 +69,13 @@ class CursorHook(unittest.TestCase):
             receipt = Path(tmp) / "stage/raw/tools/cursor-testbox/brain-load-usage.md"
             self.assertIn("source=agent", receipt.read_text())
 
-    def test_not_connected_prints_empty_object(self):
+    def test_unconfigured_hook_offers_product_discovery_without_brain_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             v = make_vault(tmp)
             e = env_for(tmp, v); e.pop("BRAIN_ROOT")
             res = run_hook("cursor", v, e)
-            self.assertEqual(res.stdout.strip(), "{}")
+            self.assertIn("Sovereign discovery", res.stdout)
+            self.assertIn("about --json", res.stdout)
             self.assertEqual(res.returncode, 0)
 
 
