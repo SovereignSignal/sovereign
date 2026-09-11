@@ -40,6 +40,22 @@ enum Settings {
     static var lastError: String? = nil
     static var archive: String? { get { d.string(forKey: "sov.archive") } set { d.set(newValue, forKey: "sov.archive") } }
 
+    // A reversible view preference, scoped to the selected archive on this Mac.
+    static func archiveKey(_ root: String) -> String {
+        URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath().path
+    }
+    static func disassociatedDevices(_ root: String) -> [String] {
+        (d.dictionary(forKey: "sov.deviceAssociations") as? [String: [String]])?[archiveKey(root)] ?? []
+    }
+    static func associateDevice(_ name: String, associated: Bool, root: String) {
+        var all = d.dictionary(forKey: "sov.deviceAssociations") as? [String: [String]] ?? [:]
+        let key = archiveKey(root)
+        var names = Set(all[key] ?? [])
+        if associated { names.remove(name) } else { names.insert(name) }
+        if names.isEmpty { all.removeValue(forKey: key) } else { all[key] = names.sorted() }
+        d.set(all, forKey: "sov.deviceAssociations")
+    }
+
     static func dict(probe: Bool = false) -> [String: Any] {
         // Asking launchd about the login item is synchronous and can block an ad-hoc
         // signed app; do it only when the settings pane is open, never on the boot path.
@@ -103,6 +119,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.async { App.shared.navigate(page: page, place: d["place"] as? [String: Any]) }
         case "status":
             requestStatus(d, generation: generation)
+        case "deviceAssociation":
+            setDeviceAssociation(d, generation: generation)
         case "connect":
             guard let sov = sov, let h = d["harness"] as? String else { return }
             var args = [sov, "connect", h]
@@ -346,8 +364,45 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         state["budget_s"] = statusBudget
         if let error = error { state["error"] = error; state["detail"] = detail }
         value["_status"] = state; value["request"] = waiter.request ?? NSNull()
+        value["device_associations"] = deviceAssociationState()
         if statusCache == nil, let error = error { value["error"] = error }
         deliver("status", value, generation: waiter.generation)
+    }
+
+    private func deviceAssociationState() -> [String: Any] {
+        guard let root = Settings.archive, let machine = statusCache?["machine"] as? [String: Any],
+              let vault = machine["vault"] as? String, Settings.archiveKey(root) == Settings.archiveKey(vault) else {
+            return ["available": false]
+        }
+        let hub = statusCache?["hub"] as? [String: Any] ?? [:]
+        let hubAlias = (machine["hub_pointer"] as? String ?? "").components(separatedBy: ":").first ?? ""
+        let protected = [machine["host"] as? String ?? "", hubAlias, hub["hub_host"] as? String ?? ""]
+            .filter { !$0.isEmpty }
+        return ["available": true, "scope": vault, "protected_hosts": protected,
+                "disassociated": Settings.disassociatedDevices(root)]
+    }
+
+    private func setDeviceAssociation(_ request: [String: Any], generation: UUID) {
+        let state = deviceAssociationState()
+        guard state["available"] as? Bool == true, let root = Settings.archive,
+              let requestedRoot = request["root"] as? String,
+              Settings.archiveKey(requestedRoot) == Settings.archiveKey(root),
+              let name = request["host"] as? String, !name.isEmpty, name.count <= 128,
+              let associated = request["associated"] as? Bool else {
+            deliver("deviceAssociation", ["error": "Refresh this archive's device list before changing an association."], generation: generation)
+            return
+        }
+        let protected = state["protected_hosts"] as? [String] ?? []
+        let fleet = statusCache?["fleet"] as? [String: Any] ?? [:]
+        let known = (fleet["hosts"] as? [[String: Any]] ?? []).contains { $0["host"] as? String == name }
+        let saved = Settings.disassociatedDevices(root).contains(name)
+        guard !protected.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }),
+              known || (associated && saved) else {
+            deliver("deviceAssociation", ["error": "This device cannot be disassociated. The current device and Hub stay associated."], generation: generation)
+            return
+        }
+        Settings.associateDevice(name, associated: associated, root: root)
+        deliver("deviceAssociation", ["host": name, "associated": associated], generation: generation)
     }
 
     private func statusDetail(_ stderr: String) -> String {

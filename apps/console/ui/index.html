@@ -316,6 +316,12 @@
   .row:focus-visible, #rows:focus-visible .row[aria-selected="true"] { outline: 2px solid color-mix(in srgb, var(--brass) 60%, transparent); outline-offset: -2px; }
   @media (prefers-reduced-motion: reduce) { #drawer, #inspector, .meter i, .hbar .track i { transition: none; } }
   body.qa #drawer, body.qa #inspector, body.qa .meter i, body.qa .hbar .track i { transition: none; }   /* snapshot QA: an occluded web view gets no animation frames */
+  #device-dialog { width:min(420px,calc(100vw - 64px)); padding:24px; border:1px solid var(--rule); border-radius:12px; background:var(--panel); color:var(--ink); }
+  #device-dialog::backdrop { background:rgba(0,0,0,.35); }
+  #device-dialog h2 { margin:0 0 12px; font-size:18px; }
+  #device-dialog p { font-size:13px; line-height:1.5; }
+  #device-dialog .acts { justify-content:flex-end; }
+  #device-association-message { color:var(--down); }
 </style>
 <link rel="stylesheet" href="shell.css">
 <link rel="stylesheet" href="operations-shell.css">
@@ -365,6 +371,14 @@
 
 <script src="status-model.js"></script>
 <script src="gate-model.js"></script>
+<dialog id="device-dialog" aria-labelledby="device-dialog-title" aria-describedby="device-dialog-description">
+  <h2 id="device-dialog-title">Disassociate device?</h2>
+  <p id="device-dialog-description"></p>
+  <p>Past notes stay in the archive. You can restore this device from Disassociated devices.</p>
+  <p class="secret-help">Saved for this archive on this Mac. Device access, collection jobs and external fleet alerts keep their own settings.</p>
+  <p id="device-association-message" role="status"></p>
+  <div class="acts"><button id="device-cancel" autofocus>Cancel</button><button class="brass" id="device-confirm">Disassociate</button></div>
+</dialog>
 <script>
 // A script error must never be a blank page: paint it where the eye lands.
 window.onerror = function (msg, src, line, col) {
@@ -629,6 +643,11 @@ window.onerror = function (msg, src, line, col) {
       out.push({ kind: "head", id: "h-" + sec, section: sec, label, n: rows.length === 1 ? rows[0].host : rows.length + " machines" });
       rows.forEach(h => out.push({ kind: "host", id: h.host, o: h }));
     });
+    const inactive=D.fleet?.disassociated||[];
+    if(inactive.length){
+      out.push({kind:'head',id:'h-disassociated',section:'disassociated',label:'Disassociated devices',n:inactive.length+' saved'});
+      inactive.forEach(h=>out.push({kind:'host',id:h.host,o:h}));
+    }
     return out;
   }
   // ---------- the hub: its health and its work, then what is scheduled here ----------
@@ -738,6 +757,7 @@ window.onerror = function (msg, src, line, col) {
     }
     if (it.kind === "host") {
       const m = o.meta || {}, net = o.net || {};
+      if(o.associated===false)return `${dot('', 'disassociated')}<span class="name" style="width:138px">${esc(o.host)}</span><span class="desc">Disassociated · history retained</span><span class="chev">›</span>`;
       const hs = (o.harnesses || []).map(hz);
       const isMe = o.host === (D.machine || {}).host;
       const ages = (o.lanes || []).map(l => l.newest_age_h).filter(x => x != null);
@@ -808,7 +828,7 @@ window.onerror = function (msg, src, line, col) {
   }
   function footerMeta(n) {
     const m = D?.machine || {}, meName = m.host || "here";
-    $("#listcount").textContent = view === "review" ? SovStatus.caption(D) : view === "hosts" ? `${n} hosts` : view === "tools" ? `${n} tools on ${meName}` : (m.template_rev || "");
+    $("#listcount").textContent = view === "review" ? SovStatus.caption(D) : view === "hosts" ? `${D.fleet?.hosts?.length||0} active · ${D.fleet?.disassociated?.length||0} disassociated` : view === "tools" ? `${n} tools on ${meName}` : (m.template_rev || "");
   }
   function renderList() {
     const review=view==='review',q=reviewQueue();
@@ -1027,13 +1047,14 @@ window.onerror = function (msg, src, line, col) {
       const m = o.meta || {}, net = o.net || {}, isMe = o.host === me;
       const hs = (o.harnesses || []).map(hz);
       box.innerHTML = head(esc(o.host), esc([m.kind, m.where].filter(Boolean).join(" · ") || "not in the host registry"), isMe ? "this machine" : "") + `
+        ${deviceAssociationSect(o)}
         <div class="sect"><h2>Network</h2>${kv([
-          ["state", `${dot(net.online == null ? "" : net.online ? "live" : "down", "")} ${net.online == null ? "unknown" : net.online ? "online" : "offline"}`, "raw"],
+          ["state", o.associated===false ? "Disassociated; excluded from active monitoring" : `${dot(net.online == null ? "" : net.online ? "live" : "down", "")} ${net.online == null ? "unknown" : net.online ? "online" : "offline"}`, "raw"],
           ["address", net.ip ? `<span class="mono">${esc(net.ip)}</span>` : null, "raw"],
           ["seen via", net.via], ["reach", m.reach]])}</div>
         <div class="sect"><h2>Reaches the brain</h2><div class="prose">${esc(m.transport || "no transport recorded")}
           ${m.notes ? `<div style="color:var(--muted);margin-top:4px">${esc(m.notes)}</div>` : ""}</div></div>
-        ${!isMe && !hs.length ? connectMachineSect(o) : ""}
+        ${o.associated!==false && !isMe && !hs.length ? connectMachineSect(o) : ""}
         <div class="sect"><h2>Tools deployed · ${hs.length}</h2>
           ${hs.length ? hs.map(t => toolBlock(t, isMe ? localTool(t.id) : null)).join("") : `<div class="prose" style="color:var(--warn)">No tools deployed on this host.</div>`}</div>
         ${contribSect(o.lanes || [])}
@@ -1251,6 +1272,30 @@ window.onerror = function (msg, src, line, col) {
   // A machine with nothing deployed: the drawer walks the owner through joining it. A local
   // VM gets the one line to run inside it first; then the hub does the rest (sov host add).
   let pendingHost = null;
+  let pendingDevice=null;
+  function deviceAssociationSect(host){
+    const settings=D.device_associations||{},protectedHost=(settings.protected_hosts||[]).some(n=>n.toLowerCase()===host.host.toLowerCase());
+    if(!settings.available||selectedRoot!==D.machine?.vault)return '';
+    if(protectedHost)return '<div class="sect"><h2>Association</h2><div class="prose">The current device and Hub stay associated.</div></div>';
+    const inactive=host.associated===false;
+    return `<div class="sect"><h2>Association</h2><div class="prose">${inactive?'Excluded from the active map and app warnings. Past notes remain available.':'Retired this device? Remove it from the active map and app warnings.'}</div><div class="acts"><button data-act="${inactive?'device-restore':'device-disassociate'}" data-host="${esc(host.host)}">${inactive?'Associate again':'Disassociate device…'}</button></div><div class="secret-help">Saved for this archive on this Mac.</div><p id="device-inline-message" role="status"></p></div>`;
+  }
+  function deviceAssociation(host,associated){
+    if(pendingDevice?.saving)return;
+    pendingDevice={host,associated,root:selectedRoot,saving:associated};
+    if(associated){bridge({cmd:'deviceAssociation',host,associated:true,root:selectedRoot});return;}
+    $('#device-dialog-title').textContent='Disassociate '+host+'?';
+    $('#device-dialog-description').textContent='Remove '+host+' from the active map, device counts and app warnings for '+(D.machine?.vault_name||'this archive')+'.';
+    $('#device-association-message').textContent='';$('#device-confirm').disabled=false;$('#device-cancel').disabled=false;
+    $('#device-dialog').showModal();
+  }
+  $('#device-cancel').onclick=()=>{$('#device-dialog').close();pendingDevice=null;};
+  $('#device-dialog').addEventListener('cancel',e=>{if(pendingDevice?.saving)e.preventDefault();else pendingDevice=null;});
+  $('#device-confirm').onclick=()=>{
+    if(!pendingDevice||pendingDevice.saving)return;
+    pendingDevice.saving=true;$('#device-confirm').disabled=true;$('#device-cancel').disabled=true;
+    bridge({cmd:'deviceAssociation',host:pendingDevice.host,associated:false,root:pendingDevice.root});
+  };
   function connectMachineSect(o) {
     const vm = o.vm, net = o.net || {}, bs = ((D.fleet || {}).bootstrap) || {};
     const addr = net.ip || (vm && vm.ip) || "";
@@ -1302,6 +1347,8 @@ window.onerror = function (msg, src, line, col) {
     bridge({ cmd: "clientError", where: where, msg: msg });   // reaches the app's log, where a QA run can read it
   }
   function onClick(e) {
+    const association=e.target.closest('[data-act="device-disassociate"],[data-act="device-restore"]');
+    if(association)return deviceAssociation(association.dataset.host,association.dataset.act==='device-restore');
     const seg = e.target.closest(".seg button"); if (seg) return setView(seg.dataset.view);
     const link = e.target.closest('[data-status-url]');
     if(link){e.preventDefault();const url=SovStatus.safeURL(link.dataset.statusUrl);if(url)bridge({cmd:'openurl',url});return;}
@@ -1412,6 +1459,7 @@ window.onerror = function (msg, src, line, col) {
   });
 
   document.addEventListener("keydown", (e) => {
+    if($("#device-dialog").open)return;
     const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
     if ((e.metaKey || e.ctrlKey) && e.key === "r") { e.preventDefault(); refresh(); }
     if ((e.metaKey || e.ctrlKey) && e.key === "[") { e.preventDefault(); back(); }
@@ -1446,6 +1494,17 @@ window.onerror = function (msg, src, line, col) {
     }
   };
   function deliverInner(kind, payload) {
+    if(kind==='deviceAssociation'){
+      if(payload.error){
+        if(pendingDevice)pendingDevice.saving=false;
+        $('#device-association-message').textContent=payload.error;
+        const inline=$('#device-inline-message');if(inline)inline.textContent=payload.error;
+        $('#device-confirm').disabled=false;$('#device-cancel').disabled=false;
+      }else{
+        $('#device-dialog').close();pendingDevice=null;refresh();
+      }
+      return;
+    }
     if(kind==='localState'){
       if(selectedRoot!==(payload.root||null)){gateChecks.clear();gateResolutions.clear();sel=null;}
       selectedRoot=payload.root||null;archiveKnown=true;$('#change').hidden=false;

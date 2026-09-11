@@ -58,7 +58,7 @@
       if(collects&&l)edge('capture:'+h.id,t.id,l.id,'Connector collection',failed?'Last collection failed':late?'Collection overdue':'Collection configured','capture','Contributes captured material to its declared lane. Success and publication are separate observations.');
     }
     for(const l of list(observed.lanes)){
-      if(!text(l.lane))continue;const n=lane(l.lane);
+      if(!text(l.lane)||l.associated===false)continue;const n=lane(l.lane);
       if(l.write==='git-branch'){
         const d=device(text(l.host)||text(l.producer));
         if(d)edge('producer:'+l.lane,d.id,n.id,'Git branch contract','Declared lane; transport endpoint not reported','contribution','Publishes this producer’s lane. This status does not prove its remote URL or that the hub accepted the latest head.');

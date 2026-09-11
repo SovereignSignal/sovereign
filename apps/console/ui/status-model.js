@@ -113,7 +113,34 @@ window.SovStatus = (() => {
   }
   function retain(previous, next) {
     if(next.error&&previous?.machine)return {...previous,_status:{...previous._status,pending:false,stale:true,error:next.error},request:next.request};
-    return next;
+    return associations(next);
+  }
+  // Keep raw status and archive history intact. Every app surface uses this projection.
+  function associations(value) {
+    const config=value?.device_associations;
+    if(!config?.available||config.scope!==value.machine?.vault)return value;
+    const key=name=>String(name||'').toLowerCase();
+    const protectedHosts=new Set((config.protected_hosts||[]).map(key));
+    const excluded=new Set((config.disassociated||[]).map(key).filter(n=>!protectedHosts.has(n)));
+    const fleet=value.fleet||{},hosts=[...(fleet.hosts||[]),...(fleet.disassociated||[])];
+    const unique=[...new Map(hosts.map(h=>[key(h.host),h])).values()];
+    const disassociated=unique.filter(h=>excluded.has(key(h.host))).map(h=>({...h,associated:false}));
+    for(const name of config.disassociated||[])if(excluded.has(key(name))&&!unique.some(h=>key(h.host)===key(name)))
+      disassociated.push({host:name,associated:false,lanes:[],harnesses:[],meta:{},net:{online:null}});
+    const hiddenLanes=new Set(disassociated.flatMap(h=>[...(h.lanes||[]),...(h.harnesses||[])].map(l=>l.lane)));
+    for(const lane of value.lanes||[])if(excluded.has(key(lane.host)))hiddenLanes.add(lane.lane);
+    const hostVisible=r=>!excluded.has(key(r.host||r.client_id));
+    const laneVisible=r=>!hiddenLanes.has(r.lane);
+    const hub=value.hub||{},backups=value.backups||{};
+    return {...value,
+      fleet:{...fleet,hosts:unique.filter(hostVisible).map(h=>({...h,associated:true})),disassociated},
+      needs_you:(value.needs_you||[]).filter(n=>hostVisible(n)&&laneVisible(n)),
+      harnesses:(value.harnesses||[]).filter(h=>!excluded.has(key(h.runs_on))),
+      lanes:(value.lanes||[]).map(l=>({...l,associated:laneVisible(l)})),
+      clients:(value.clients||hub.clients||[]).filter(hostVisible),
+      hub:{...hub,clients:(hub.clients||[]).filter(hostVisible)},
+      backups:{...backups,hosts:(backups.hosts||[]).filter(hostVisible),lanes:(backups.lanes||[]).filter(laneVisible)}
+    };
   }
   function contributionIssue(lane) {
     if(lane.acceptance_issue)return lane.acceptance_issue;
@@ -122,5 +149,5 @@ window.SovStatus = (() => {
       action:'Open Operations → Backups and inspect this lane’s source commit and hub connection. If the service is older, ask its maintainer to update it, then refresh.',
       verify:'The lane reports accepted or waiting after refresh. Only accepted confirms inclusion on the hub.'};
   }
-  return {assess, shortLabel, safeURL, caption, retain, contributionIssue};
+  return {assess, shortLabel, safeURL, caption, retain, contributionIssue, associations};
 })();
