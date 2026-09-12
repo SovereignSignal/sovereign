@@ -39,3 +39,10 @@ for(const status of [failures,{needs_you:[{kind:'legacy',text:'Something failed'
 const backupNeed=assess({backups:{hosts:[{host:'vm',node:'node',reachable:true,jobs:1,last_dump_age_h:null}]}}).need[0];
 assert.match(backupNeed.detail,/no completed backup/);assert.doesNotMatch(backupNeed.detail,/no backup job/);
 console.log('Derived and grouped alerts carry explanations; a configured backup job is not mistaken for no job.');
+
+// Notification delivery must never direct an owner decision outside Review.
+for (const file of fs.readdirSync(path.join(__dirname,'../ui')).filter(f=>/\.(html|js)$/.test(f))) {
+ const content=fs.readFileSync(path.join(__dirname,'../ui',file),'utf8');
+ assert.doesNotMatch(content,/\b(?:approve|reject)\b[^"\n]*\b(?:digest buttons|on Telegram|Archive view)\b/i,`${file}: retired decision instructions`);
+}
+console.log('Decision guidance: no retired digest, Telegram or Archive-view approval instructions in app UI.');
