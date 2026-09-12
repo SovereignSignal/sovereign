@@ -25,10 +25,10 @@ class Discovery(unittest.TestCase):
   (self.state/'connectors.json').write_text('{broken')
   self.assertFalse(brain_discovery.read_enabled())
   self.config({'machine':{'role':'hub','mode':'contribute-only'}});self.assertFalse(brain_discovery.read_enabled())
- def test_fresh_hooks_explain_product_without_a_vault_or_receipt(self):
-  for tool in ('claude-code','codex','cursor'):
+ def test_unconfigured_hooks_are_silent_without_a_receipt(self):
+  for tool in ('claude-code','codex','cursor','hermes'):
    result=subprocess.run([sys.executable,str(ROOT/'connectors/harness'/tool/'session-start.py')],input='{}',capture_output=True,text=True,check=True)
-   self.assertIn('Sovereign discovery',result.stdout,tool);self.assertIn('about --json',result.stdout)
+   self.assertEqual(json.loads(result.stdout or '{}'),{},tool)
   self.assertFalse((self.home/'raw').exists())
  def test_contribute_only_hooks_ignore_old_private_cache(self):
   self.config({'machine':{'role':'client','mode':'contribute-only'}});(self.home/'.brain-root').write_text('/private/old-vault')

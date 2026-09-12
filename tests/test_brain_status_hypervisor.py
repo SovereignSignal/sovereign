@@ -1,6 +1,6 @@
 """The hypervisor backup probe must never stall the status.
 
-Found 2026-09-11: with both Proxmox nodes unreachable from the client, `sov status --json`
+Found 2026-09-11: with both Proxmox nodes unreachable from the client laptop, `sov status --json`
 took 49.5 s (two nodes, two attempts each, 12 s ssh timeout, serial) and the console
 rendered an empty environment for the whole wait, then again two minutes later when
 the failure cache expired. A backup-posture probe is optional detail; it may not hold
@@ -35,10 +35,10 @@ def reader():
 
 def fleet_two_nodes():
     return {"hosts": [
-        {"host": "node-11", "meta": {"kind": "Ubuntu VM 102", "where": "Proxmox node proxmox"}},
-        {"host": "node-12", "meta": {"kind": "Ubuntu VM 103", "where": "Proxmox node proxmox"}},
-        {"host": "node-17", "meta": {"kind": "Ubuntu VM 108", "where": "Proxmox node proxmox2 (Nuc)"}},
-        {"host": "client", "meta": {"kind": "laptop", "where": "here"}},
+        {"host": "worker-a", "meta": {"kind": "Ubuntu VM 102", "where": "Proxmox node node-a"}},
+        {"host": "worker-b", "meta": {"kind": "Ubuntu VM 103", "where": "Proxmox node node-a"}},
+        {"host": "worker-c", "meta": {"kind": "Ubuntu VM 108", "where": "Proxmox node node-b (Nuc)"}},
+        {"host": "laptop-a", "meta": {"kind": "laptop", "where": "here"}},
     ]}
 
 
@@ -76,7 +76,7 @@ class HypervisorProbe(unittest.TestCase):
         self.assertEqual(probes, [], "an unreachable node must not be ssh-ed to")
         self.assertLess(elapsed, 2.0)
         hosts = {h["host"]: h for h in view["hosts"]}
-        self.assertEqual(set(hosts), {"node-11", "node-12", "node-17"})
+        self.assertEqual(set(hosts), {"worker-a", "worker-b", "worker-c"})
         self.assertFalse(any(h["reachable"] for h in hosts.values()))
         self.assertTrue(all(h["jobs"] is None for h in hosts.values()))
 
@@ -102,9 +102,9 @@ class HypervisorProbe(unittest.TestCase):
         self.assertGreaterEqual(peak[0], 2, "the two nodes must be probed at the same time")
         self.assertLess(elapsed, 0.75, "two 0.4 s probes in parallel, not in series")
         hosts = {h["host"]: h for h in view["hosts"]}
-        self.assertTrue(hosts["node-11"]["reachable"])
-        self.assertEqual(hosts["node-11"]["jobs"], 1)
-        self.assertIsNotNone(hosts["node-11"]["last_dump_age_h"])
+        self.assertTrue(hosts["worker-a"]["reachable"])
+        self.assertEqual(hosts["worker-a"]["jobs"], 1)
+        self.assertIsNotNone(hosts["worker-a"]["last_dump_age_h"])
 
     def test_a_hanging_session_is_bounded_and_not_retried(self):
         """Port 22 answers but the session never completes (the 2026-09-11 case)."""
@@ -144,14 +144,14 @@ class HypervisorProbe(unittest.TestCase):
         m.port_open = lambda host, port=22, timeout=1.0: True
         view = m.backups_view("/nonexistent", {}, fleet_two_nodes())
         detail = {h["node"]: h["detail"] for h in view["hosts"]}
-        self.assertEqual(detail["proxmox"]["why"], "tailscale-check")
-        self.assertEqual(detail["proxmox"]["url"], "https://login.tailscale.com/a/abc123")
-        self.assertIn("ssh proxmox", detail["proxmox"]["action"])
+        self.assertEqual(detail["node-a"]["why"], "tailscale-check")
+        self.assertEqual(detail["node-a"]["url"], "https://login.tailscale.com/a/abc123")
+        self.assertIn("ssh node-a", detail["node-a"]["action"])
         rows = m.hypervisor_needs(view)
-        self.assertEqual([r["node"] for r in rows], ["proxmox", "proxmox2"])
+        self.assertEqual([r["node"] for r in rows], ["node-a", "node-b"])
         self.assertEqual(rows[0]["kind"], "hypervisor")
         self.assertEqual(rows[0]["url"], "https://login.tailscale.com/a/abc123")
-        self.assertIn("node-11", rows[0]["text"])
+        self.assertIn("worker-a", rows[0]["text"])
         self.assertIn("open the link", rows[0]["text"])
         # a reachable node produces no row, and a closed port names that cause
         self.assertEqual(m.hypervisor_needs({"hosts": [{"host": "x", "node": "n", "reachable": True}]}), [])

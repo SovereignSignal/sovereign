@@ -116,11 +116,11 @@ def build_pack(cwd, harness):
     import brain_discovery
     if not read_enabled(harness):
         return None
-    discovery = brain_discovery.bootstrap()
     root = vault_root()
-    discovery_only = {"label": "installation", "scope": "discovery", "cards": "0", "root": None, "identity": None, "context": discovery, "harness": harness}
     if not root:
-        return discovery_only
+        return None  # An unconfigured hook must leave the session alone.
+    discovery = brain_discovery.bootstrap()
+    discovery_only = {"label": "installation", "scope": "discovery", "cards": "0", "root": None, "identity": None, "context": discovery, "harness": harness}
     core = core_slugs()
     topic, scope = topic_for(cwd, root)
     bl = find_brain_load()

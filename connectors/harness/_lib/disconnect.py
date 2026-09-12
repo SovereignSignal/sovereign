@@ -157,7 +157,7 @@ def main():
         print('Update managed configuration: ' + str(path))
     print('Restart the tool to clear context already loaded in an open session.', flush=True)
     if not args.apply:
-        print('Dry run. No changes made. Apply to remove this producer.')
+        print('dry run. No changes made. Apply to remove this producer.')
         return 0
     state.mkdir(parents=True, exist_ok=True)
     lock = state / 'runner.lock'
