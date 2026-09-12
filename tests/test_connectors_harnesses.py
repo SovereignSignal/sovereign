@@ -74,7 +74,7 @@ class CursorHook(unittest.TestCase):
             v = make_vault(tmp)
             e = env_for(tmp, v); e.pop("BRAIN_ROOT")
             res = run_hook("cursor", v, e)
-            self.assertEqual(res.stdout.strip(), "")
+            self.assertEqual(json.loads(res.stdout), {})  # Cursor requires a JSON reply.
             self.assertEqual(res.returncode, 0)
 
 
