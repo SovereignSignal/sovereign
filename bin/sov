@@ -32,10 +32,10 @@ while [ -L "$SELF" ]; do
 done
 BIN="$(cd "$(dirname "$SELF")" && pwd -P)"
 SELF="$BIN/$(basename "$SELF")"
-PYTHON="${SOV_PYTHON:-/usr/bin/python3}"
-if [ -x "$BIN/../../python/bin/python3" ]; then PYTHON="$BIN/../../python/bin/python3"; fi
-export SOV_PYTHON="$PYTHON"
 TEMPLATE="$(dirname "$BIN")"
+. "$BIN/_sov-python.sh"
+PYTHON="$(sov_python "$TEMPLATE")"
+export SOV_PYTHON="$PYTHON"
 HARNESS_DIR="$TEMPLATE/connectors/harness"
 
 # The harnesses a person can actually name. The catalog folder holds its own README.md and

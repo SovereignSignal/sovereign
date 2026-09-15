@@ -71,6 +71,11 @@ class Box:
             p = self.stub / name
             p.write_text(STUB)
             p.chmod(0o755)
+        # A python that is not the /usr/bin/python3 shim, which is what the shared job must be
+        # pointed at on a Mac; stood in for by a script that hands off to the real interpreter.
+        self.clt_python = self.stub / "clt-python3"
+        self.clt_python.write_text('#!/bin/bash\nexec /usr/bin/python3 "$@"\n')
+        self.clt_python.chmod(0o755)
         if staging:
             (self.home / ".vault-staging" / "raw" / "tools").mkdir(parents=True)
         self.log = self.tmp / "stub.log"
@@ -83,6 +88,7 @@ class Box:
              "SOV_LAUNCHCTL": str(self.stub / "launchctl"),
              "SOV_SYSTEMCTL": str(self.stub / "systemctl"),
              "SOV_PLATFORM": self.platform,
+             "SOV_CLT_PYTHON": str(self.clt_python),
              "USER": os.environ.get("USER", "tester"), "LOGNAME": os.environ.get("USER", "tester")}
         e.update(extra)
         # A None value unsets the variable: `sov connect all` arrives over ssh, where USER
@@ -150,7 +156,7 @@ class Count(unittest.TestCase):
                 self.assertLessEqual(ent["timeout_s"], m["runner"]["interval_s"])
             p = b.runner_plist()
             self.assertEqual(p["Label"], "com.sovereign.connector.runner")
-            self.assertEqual(p["ProgramArguments"][0], "/usr/bin/python3")
+            self.assertEqual(p["ProgramArguments"][0], str(b.clt_python), "the job named the Xcode shim")
             self.assertTrue(p["ProgramArguments"][1].endswith("bin/sov-connectors-run"))
             self.assertEqual(p["StartInterval"], m["runner"]["interval_s"])
             self.assertTrue(p["StandardErrorPath"], "StandardErrorPath is never omitted")
@@ -676,3 +682,37 @@ class Environment(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Interpreter(unittest.TestCase):
+    """What runs the shared job. /usr/bin/python3 on a Mac is an Xcode shim: after an Xcode
+    update it exits 69 ("You have not agreed to the Xcode license agreements") until someone
+    accepts the license, and a launchd job that names it fails every tick, silently, from
+    then on (one laptop, 2026-09-14, seven hours of it). The Command Line Tools ship a real
+    interpreter at a stable path; the job names that one when it exists."""
+
+    def test_the_job_runs_on_a_python_an_xcode_update_cannot_revoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp)
+            r = b.connect("windsurf")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(b.runner_plist()["ProgramArguments"][0], str(b.clt_python))
+            self.assertNotIn("xcodebuild", r.stdout + r.stderr, "no warning when the interpreter is safe")
+
+    def test_a_mac_without_command_line_tools_falls_back_and_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp)
+            r = b.connect("windsurf", SOV_CLT_PYTHON=str(Path(tmp) / "no-such-python3"))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(b.runner_plist()["ProgramArguments"][0], "/usr/bin/python3")
+            self.assertIn("xcodebuild -license accept", r.stdout + r.stderr,
+                          "the fallback names its risk and the fix, or the next outage is silent again")
+
+    def test_linux_keeps_the_system_python(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp, platform="Linux")
+            r = b.connect("windsurf")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            unit = (b.home / ".config" / "systemd" / "user" / "sovereign-connector-runner.service").read_text()
+            exec_line = next(l for l in unit.splitlines() if l.startswith("ExecStart="))
+            self.assertTrue(exec_line.startswith("ExecStart=/usr/bin/python3 "), exec_line)

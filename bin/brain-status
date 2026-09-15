@@ -1034,6 +1034,25 @@ def contribution_issues(backups):
     return rows
 
 
+def xcode_license_blocked(job):
+    """A job that exited 69 whose error log ends in the Xcode shim's refusal. /usr/bin/python3
+    on a Mac is that shim: after an Xcode update it refuses to run until the new license is
+    accepted, and a launchd job that names it fails every tick. Only the tail is read: the
+    log is append-only and keeps the refusals after the fix, so the exit code decides and
+    the log explains."""
+    err = job.get("stderr")
+    if job.get("last_exit") != 69 or not err or not os.path.exists(err):
+        return False
+    try:
+        with open(err, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 4096))
+            tail = f.read().decode("utf-8", "ignore")
+    except OSError:
+        return False
+    return "Xcode license" in tail
+
+
 def explain_needs(rows):
     """Keep legacy summaries readable while giving each existing issue a next step.
 
@@ -1052,6 +1071,7 @@ def explain_needs(rows):
         "runner-standing-down": ("A previous connector tick still holds the runner lock.", "Open Operations → Jobs and inspect the connector runner log. Identify the still-running operation before any restart.", "Refresh after the next tick; it finishes and the stand-down count stops growing."),
         "runner-stalled": ("The connector runner has not recorded a completed tick within its cadence.", "Open Operations → Jobs and inspect the connector runner's loaded state and error log.", "After the next tick, refresh; the runner has a recent finish time and its lanes are visited."),
         "relay": ("The source and destination observations show an incomplete file relay.", "Open Operations → Backups and inspect the relay's source paths and error log. Restore a missing source or review the removal command above if intentional.", "After the next relay run, refresh; the vault copy catches up and the source error clears."),
+        "xcode-license": ("The job's program is the /usr/bin/python3 Xcode shim, which refuses to run until the current Xcode license is accepted.", "Run sudo xcodebuild -license accept, then launchctl kickstart the named job. Reconnect a tool with sov connect to point the job at the Command Line Tools interpreter.", "Refresh after the kickstart; the job's last exit is 0 and its lanes report a fresh run."),
         "job": ("The scheduled job reported a failure or recent error-log output.", "Open Operations → Jobs, select the named job and inspect its error log before retrying.", "After the next successful run, refresh and confirm exit 0; inspect remaining log warnings separately."),
         "not-connected": ("No connected-system archive is configured on this device.", "Use your local archive, or open Operations → Tools to configure an optional connection.", "After connecting, refresh; the intended archive and tool appear.")}
     for row in rows:
@@ -1589,7 +1609,13 @@ def main():
     for j in jobs:
         if j.get("harness") in lane_flagged:
             continue                      # the lane rule above already names this one, in its own words
-        if j.get("last_exit") not in (None, 0):
+        if xcode_license_blocked(j):
+            needs.append({"kind": "xcode-license",
+                          "text": "%s cannot start: its program is /usr/bin/python3, an Xcode shim, and the current Xcode license has not been accepted. Every scheduled run exits 69." % j["label"],
+                          "why": "macOS routes /usr/bin/python3 through Xcode. After an Xcode update the shim refuses to run until the new license is agreed, and a launchd job that names it fails silently from then on.",
+                          "action": "Run: sudo xcodebuild -license accept   then: launchctl kickstart gui/$(id -u)/%s. Reconnecting any tool with sov connect points the job at the Command Line Tools interpreter, which an Xcode update cannot revoke." % j["label"],
+                          "verify": "Refresh after the kickstart; the job's last exit is 0 and its lanes report a fresh run."})
+        elif j.get("last_exit") not in (None, 0):
             n = {"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], j.get("stderr") or "its log")}
             if j.get("harness"):
                 n["harness"] = j["harness"]        # a lane row routes to the tool, not to the job list

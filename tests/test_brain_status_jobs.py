@@ -601,3 +601,49 @@ class OneBadPlistIsOneBadRow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class XcodeLicense(unittest.TestCase):
+    """A launchd job whose program is /usr/bin/python3 stops after an Xcode update: the shim
+    exits 69 with "You have not agreed to the Xcode license agreements" until someone accepts
+    it. The console already says "last exited 69" and points at a log; this rule reads the
+    log and names the fix instead, once, in place of that row."""
+
+    LAUNCHCTL = """#!/bin/bash
+case "$1" in
+  list)  printf 'PID\\tStatus\\tLabel\\n-\\t69\\t%s\\n' "$SOV_STUB_LABELS" ;;
+  print) echo "last exit code = 69" ;;
+esac
+exit 0
+"""
+    LINE = ("You have not agreed to the Xcode license agreements. Please run 'sudo xcodebuild -license' "
+            "from within a Terminal window to review and agree to the Xcode and Apple SDKs license.\n")
+
+    def box(self, tmp, lines):
+        b = Box(tmp)
+        (b.stub / "launchctl").write_text(self.LAUNCHCTL)
+        b.declare({"orca": b.lane_entry("orca")})
+        b.record({"orca": b.lane_run()})
+        (b.state / (RUNNER_LABEL + ".error.log")).write_text(lines)
+        return b
+
+    def test_a_job_the_xcode_license_stopped_is_named_with_its_fix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self.box(tmp, self.LINE * 29)
+            d = b.status()
+            rows = [n for n in d["needs_you"] if n.get("kind") == "xcode-license"]
+            self.assertEqual(len(rows), 1, d["needs_you"])
+            n = rows[0]
+            self.assertIn(RUNNER_LABEL, n["text"])
+            self.assertIn("sudo xcodebuild -license accept", n["action"])
+            self.assertIn("launchctl kickstart", n["action"])
+            self.assertFalse(n.get("legacy"), "the rule ships its own why / action / verify")
+            self.assertFalse([x for x in d["needs_you"] if x.get("kind") == "job" and RUNNER_LABEL in x.get("text", "")],
+                             "the generic exit-code row named the same job a second time")
+
+    def test_a_job_that_failed_for_another_reason_keeps_the_generic_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self.box(tmp, "Traceback (most recent call last):\n  boom\n")
+            d = b.status()
+            self.assertFalse([n for n in d["needs_you"] if n.get("kind") == "xcode-license"])
+            self.assertTrue([n for n in d["needs_you"] if n.get("kind") == "job" and RUNNER_LABEL in n.get("text", "")])

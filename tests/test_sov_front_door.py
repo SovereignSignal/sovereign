@@ -529,3 +529,21 @@ class ConnectAll(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Interpreter(unittest.TestCase):
+    """bin/sov and the job it installs answer "which python" the same way. The front door
+    runs the brain's own tools on its choice and hands it down, so on a Mac whose shim an
+    Xcode update just revoked (exit 69) the status probe and the connector job survive
+    together, or the console reads "not connected" with the tick still failing behind it."""
+
+    def test_the_front_door_and_the_job_it_installs_pick_the_same_python(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp)
+            b.clt_python.write_text('#!/bin/bash\necho "clt-python3 $*" >> "$SOV_STUB_LOG"\nexec /usr/bin/python3 "$@"\n')
+            r = sov(["connect", "windsurf", "--vault", str(b.vault), "--host", "testbox", "--core", "me", "--apply"],
+                    b.env(BRAIN_ROOT=str(b.vault)))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(b.runner_plist()["ProgramArguments"][0], str(b.clt_python))
+            used = [l for l in b.log.read_text().splitlines() if l.startswith("clt-python3 ")]
+            self.assertTrue(used, "bin/sov ran none of its own tools on the interpreter it gave the job")

@@ -584,10 +584,18 @@ sov_register_connector() {
 # Render the unit, compare byte for byte, and only rewrite plus reload when it changed:
 # connecting a second tool must not boot out a tick already in flight.
 sov_ensure_runner_job() {
-  local ivl tmp env_extra="" changed=0
+  local ivl tmp env_extra="" changed=0 py
   [ -x "$RUNNER_BIN" ] || chmod +x "$RUNNER_BIN" 2>/dev/null || true
   [ -f "$RUNNER_BIN" ] || { echo "the connector runner is missing: $RUNNER_BIN" >&2; exit 70; }
   ivl="$(_sov_manifest_py get runner-interval)"
+  # The program the job names is the one thing an Xcode update can take away: the shim
+  # exits 69 until the new license is accepted, and launchd retries it forever. Same
+  # resolver as bin/sov, so the job and the front door agree.
+  . "$(dirname "${BASH_SOURCE[0]}")/../../../bin/_sov-python.sh"
+  py="$(sov_python "$TEMPLATE")"
+  if sov_python_is_shim "$py"; then
+    say "[runner] note: no Command Line Tools python found; the job runs on /usr/bin/python3, an Xcode shim that stops after an Xcode update until: sudo xcodebuild -license accept"
+  fi
   mkdir -p "$STATE_DIR"
   if [ "$PLATFORM" = "Darwin" ]; then
     mkdir -p "$HOME/Library/LaunchAgents"
@@ -602,7 +610,7 @@ sov_ensure_runner_job() {
 	<string>$RUNNER_LABEL</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/usr/bin/python3</string>
+		<string>$py</string>
 		<string>$RUNNER_BIN</string>
 	</array>
 	<key>RunAtLoad</key>
@@ -634,7 +642,7 @@ EOF
     tmp="$(mktemp)"
     {
       echo "[Unit]"; echo "Description=Sovereign connectors: every write wire on this machine"; echo
-      echo "[Service]"; echo "Type=oneshot"; echo "ExecStart=/usr/bin/python3 $RUNNER_BIN"
+      echo "[Service]"; echo "Type=oneshot"; echo "ExecStart=$py $RUNNER_BIN"
       echo "TimeoutStartSec=$ivl"
       echo "Environment=PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
       [ -n "${SOV_STATE_DIR:-}" ] && echo "Environment=SOV_STATE_DIR=$STATE_DIR"
