@@ -7,7 +7,8 @@ runs through the hub runner (`sov-hub tick <id>`), which is what gives it receip
 one log line, an alert on failure and delivery of clean output when `deliver` is set.
 
 Schedules: a calendar job has `hour` and `minute` (and optionally `weekday`, 0=Sunday
-as launchd counts); an interval job has `interval_s`. Exactly one of the two.
+as launchd counts), or `hours` (a list) and `minute` for several times a day; an
+interval job has `interval_s`. Exactly one of the three.
 """
 from pathlib import Path
 
@@ -44,6 +45,8 @@ def label(job_id):
 def _schedule(spec):
     if "interval_s" in spec:
         return {"StartInterval": int(spec["interval_s"])}
+    if "hours" in spec:
+        return {"StartCalendarInterval": [{"Hour": int(h), "Minute": int(spec["minute"])} for h in spec["hours"]]}
     cal = {"Hour": int(spec["hour"]), "Minute": int(spec["minute"])}
     if "weekday" in spec:
         cal["Weekday"] = int(spec["weekday"])
@@ -59,8 +62,10 @@ def all_jobs(instance):
             raise ValueError("instance job '%s' shadows a template job" % job_id)
         if not isinstance(spec, dict) or not spec.get("program"):
             raise ValueError("instance job '%s' needs a program" % job_id)
-        if ("interval_s" in spec) == ("hour" in spec):
-            raise ValueError("instance job '%s' needs exactly one of interval_s or hour/minute" % job_id)
+        if sum(k in spec for k in ("interval_s", "hour", "hours")) != 1:
+            raise ValueError("instance job '%s' needs exactly one of interval_s, hour/minute or hours/minute" % job_id)
+        if "hours" in spec and (not isinstance(spec["hours"], list) or not spec["hours"] or "minute" not in spec):
+            raise ValueError("instance job '%s': hours must be a non-empty list, with a minute" % job_id)
         jobs[job_id] = dict(spec)
     return jobs
 

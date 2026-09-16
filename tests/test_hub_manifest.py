@@ -46,6 +46,16 @@ class Manifest(unittest.TestCase):
             item = manifest.render("weekly-audit", manifest.JOBS["weekly-audit"], ROOT, "/opt/py/bin/python3", tmp, tmp)
             self.assertEqual(item["StartCalendarInterval"], {"Hour": 10, "Minute": 0, "Weekday": 5})
 
+    def test_a_job_with_several_times_a_day_renders_a_calendar_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            spec = {"program": "/opt/x/monitor", "hours": [0, 6, 12, 18], "minute": 15, "deliver": True, "description": "t"}
+            jobs = manifest.all_jobs({"instance_jobs": {"monitor": spec}})
+            item = manifest.render("monitor", jobs["monitor"], ROOT, "/opt/py/bin/python3", tmp, tmp)
+            self.assertEqual(item["StartCalendarInterval"], [{"Hour": h, "Minute": 15} for h in (0, 6, 12, 18)])
+            with self.assertRaises(ValueError):
+                manifest.all_jobs({"instance_jobs": {"bad": {"program": "/x", "hours": [1], "hour": 2, "minute": 0}}})
+
     def test_instance_jobs_join_the_manifest_without_replacing_it(self):
         inst = {"instance_jobs": {"health": {"program": "/opt/venv/bin/python3", "args": ["/opt/scripts/health.py"],
                                              "hour": 9, "minute": 0, "deliver": True, "description": "Daily health"}}}

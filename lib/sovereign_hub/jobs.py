@@ -103,6 +103,8 @@ def describe(spec):
     if "interval_s" in spec:
         return "every %ss" % spec["interval_s"]
     days = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat"}
+    if "hours" in spec:
+        return ",".join("%02d" % int(h) for h in spec["hours"]) + ":%02d daily" % int(spec["minute"])
     when = "%02d:%02d" % (int(spec["hour"]), int(spec["minute"]))
     return when + (" " + days[int(spec["weekday"])] if "weekday" in spec else " daily")
 
