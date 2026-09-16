@@ -14,6 +14,9 @@
 #   sov hook <harness>            run a harness's session-start hook here, for testing
 #   sov hub install|status|run|key|recovery|snapshot|restore|activate
 #                                install and recover a local Hub; preview before --apply
+#   sov hub init|env|tick|jobs|kit|law
+#                                the template-run hub: instance file, runner, jobs from the
+#                                manifest, the rebuild kit, Part 1 drift (sov-hub)
 #   sov about [--json]          explain this installation, offline and read-only
 #   sov contribute <command>    assess, collect, deliver, or import selected work
 #   sov status                    pointers, lanes on this machine, and their freshness
@@ -54,7 +57,13 @@ _harness_ids() {
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
-  hub) exec "$PYTHON" "$BIN/brain-hub" "$@";;
+  hub)
+    # The template-run hub (instance file, runner, jobs, kit, law) lives in sov-hub; the
+    # app-installed managed hub keeps its commands on brain-hub.
+    case "${1:-}" in
+      init|env|tick|jobs|kit|kit-restore|law) exec "$PYTHON" "$BIN/sov-hub" "$@";;
+      *) exec "$PYTHON" "$BIN/brain-hub" "$@";;
+    esac;;
   about)    exec "$PYTHON" "$BIN/brain-about" "$@";;
   contribute) exec "$PYTHON" "$BIN/brain-contribute" "$@";;
   load)     "$PYTHON" "$BIN/brain-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/brain-load" "$@";;

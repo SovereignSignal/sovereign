@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""sov hub, the template-run hub: the instance file, the runner and the job installer.
+  sov hub init [--from-scripts FILE ...] [--vault DIR --lane NAME --model TAG --endpoint URL]
+  sov hub env                       print hub.json as shell exports
+  sov hub tick <job>                run one job through the fail-loud runner (what launchd calls)
+  sov hub jobs install [--apply] [--retire-legacy PREFIX]
+  sov hub jobs status | uninstall [--apply]
+  sov hub kit [--apply]             encrypt the rebuild kit, copy it off-site, mirror-push
+  sov hub kit-restore --capsule F --destination DIR --key-file KEY
+  sov hub law                       Part 1 of the vault's law against the template's
+The managed-hub commands (install, key, recovery, snapshot, restore, activate, run, doctor,
+status) stay on brain-hub; bin/sov routes by the first word.
+"""
+import argparse
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+from sovereign_hub import instance, runner  # noqa: E402
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="sov hub"); sub = ap.add_subparsers(dest="cmd")
+    p = sub.add_parser("init"); p.add_argument("--from-scripts", nargs="*", default=[]); p.add_argument("--vault"); p.add_argument("--lane")
+    p.add_argument("--model"); p.add_argument("--endpoint"); p.add_argument("--audit-model")
+    sub.add_parser("env")
+    p = sub.add_parser("tick"); p.add_argument("job")
+    p = sub.add_parser("jobs"); p.add_argument("action", choices=["install", "status", "uninstall"])
+    p.add_argument("--apply", action="store_true"); p.add_argument("--retire-legacy", metavar="PREFIX")
+    p = sub.add_parser("kit"); p.add_argument("--apply", action="store_true")
+    p = sub.add_parser("kit-restore"); p.add_argument("--capsule", required=True); p.add_argument("--destination", required=True); p.add_argument("--key-file", required=True)
+    sub.add_parser("law")
+    args = ap.parse_args(argv)
+    if not args.cmd:
+        ap.print_help(); return 64
+    state = runner.state_dir()
+    if args.cmd == "env":
+        sys.stdout.write(instance.env_exports(instance.load(state))); return 0
+    if args.cmd == "tick":
+        return runner.tick(args.job, state)
+    if args.cmd == "init":
+        inst = instance.from_scripts([Path(f) for f in args.from_scripts]) if args.from_scripts else {}
+        for k in ("vault", "lane", "model", "endpoint", "audit_model"):
+            if getattr(args, k):
+                inst[k] = getattr(args, k)
+        p = instance.write(state, inst)
+        print("wrote %s; edit remotes, snapshot, notify, kit, offsite and instance_jobs by hand" % p); return 0
+    if args.cmd == "jobs":
+        from sovereign_hub import jobs
+        template = runner.template_root(); home = Path.home(); ctl = os.environ.get("SOV_LAUNCHCTL", "/bin/launchctl")
+        if args.action == "status":
+            for r in jobs.status(state, template):
+                last_ok = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["last_ok"])) if r["last_ok"] else "never"
+                print("%-16s %-14s last exit %-4s last ok %s" % (r["job"], r["schedule"], r["last_exit"] if r["last_exit"] is not None else "-", last_ok))
+            return 0
+        if args.action == "uninstall":
+            for p in jobs.uninstall(state, template, home, ctl, args.apply):
+                print(("parked " if args.apply else "would park ") + p)
+            return 0
+        pl = jobs.plan(state, template, home, jobs.resolver(template), args.retire_legacy)
+        for it in pl["items"]:
+            print("%-10s %s" % (it["action"], it["label"]))
+        for p in pl["retire"]:
+            print("%-10s %s" % ("retire", p))
+        print("interpreter %s" % pl["interpreter"])
+        if not args.apply:
+            print("dry run. add --apply to write and load."); return 0
+        r = jobs.apply(pl, ctl, home); print("written %d, parked %d" % (len(r["written"]), len(r["parked"]))); return 0
+    if args.cmd == "kit":
+        from sovereign_hub import kit
+        r = kit.build(instance.load(state), state, Path.home(), runner.template_root(), args.apply)
+        print(json.dumps(r, indent=1)); return 0
+    if args.cmd == "kit-restore":
+        from sovereign_hub import kit
+        for n in kit.restore(Path(args.capsule), Path(args.destination), Path(args.key_file)):
+            print(n)
+        return 0
+    if args.cmd == "law":
+        from sovereign_hub import law
+        vault = Path(instance.load(state)["vault"]) / "CLAUDE.md"
+        d = law.drift(vault, runner.template_root() / "CLAUDE.md")
+        if not d:
+            print("Part 1 matches between the vault and the template"); return 0
+        print("Part 1 drift, vault (-) vs template (+):")
+        for x in d:
+            print(x)
+        return 1
+    return 64
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except ValueError as e:
+        print("sov hub: %s" % e, file=sys.stderr); sys.exit(65)

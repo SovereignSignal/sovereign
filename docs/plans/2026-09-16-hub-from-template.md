@@ -741,7 +741,7 @@ Expected: runner tests PASS; front-door routing tests still PASS (the docs will 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add lib/sovereign_hub/runner.py bin/sov-hub bin/sov tests/test_hub_runner.py
+git add tests/test_hub_runner.py lib/sovereign_hub/runner.py bin/sov-hub bin/sov
 git commit -m "Hub runner: every job through one fail-loud wrapper with receipts"
 ```
 
@@ -1600,7 +1600,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add lib/sovereign_hub/law.py bin/sov-hub bin/sov CLAUDE.md tests/test_hub_law.py
+git add tests/test_hub_law.py lib/sovereign_hub/law.py bin/sov-hub bin/sov CLAUDE.md
 git commit -m "sov hub law: Part 1 drift between the vault and the template"
 ```
 
