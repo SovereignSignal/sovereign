@@ -43,6 +43,8 @@ Never invent a type; add to this list instead, with the owner's sign-off.
 | `entity` | One real thing: a person, org, place, or system | `knowledge/entities/` |
 | `concept` | An idea, playbook, position, or piece of language | `knowledge/concepts/` |
 | `synthesis` | A writeup that pulls several things together | `knowledge/syntheses/` |
+| `plan` | A plan of record: sequenced work with owners and gates, kept current | `knowledge/syntheses/` |
+| `review` | A retrospective or assessment of something that happened, with verdicts | `knowledge/syntheses/` |
 | `note` | Working material for an active workstream | `workstreams/<ws>/` |
 | `log` | A running record of what happened, newest on top | `workstreams/<ws>/` |
 | `capture` | Raw material from a tool or agent | `raw/` |
@@ -60,7 +62,7 @@ An agent that reads `overview.md` should be able to start working.
 
 ## Written for context windows
 
-Notes in `knowledge/` are briefing cards, never articles. Short, dense, self-contained; one screen is the target. The brain's product is the right two thousand tokens for the task at hand, so the curator distills, it does not transcribe.
+Notes in `knowledge/` are briefing cards, never articles. Short, dense, self-contained; one screen is the target. The brain's product is the right two thousand tokens for the task at hand, so the curator distills, it does not transcribe. If a note outgrows a screen, split it or tighten it.
 
 ## Who writes where
 
@@ -88,7 +90,7 @@ How finely the curator slices a subject (one summary card, or a node per person,
 
 ## Validation and trust
 
-The curator drafts proposals into its own lane in `raw/`; a proposal becomes trusted only when it moves into `knowledge/`, and the move is the approval. Every verdict (approved, edited, rejected, and why) goes in an append-only decisions log. The curator runs in one of three gears per kind of action: **ask first**, **act and report** (apply it, list it in the next digest; git makes undo one command), or **routine** (logged only). Everything starts at ask-first. When the log shows a kind of action approved repeatedly without edits, the curator may propose its own promotion to the next gear; only the owner grants it. Some things never graduate: new entity cards, anything destructive, anything crossing a doorway to another brain, and changes to these rules.
+The curator drafts proposals into its own lane in `raw/`; a proposal becomes trusted only when it moves into `knowledge/`, and the move is the approval. Every verdict (approved, edited, rejected, and why) goes in an append-only decisions log. The curator runs in one of three gears per kind of action: **ask first**, **act and report** (apply it, list it in the next digest; git makes undo one command), or **routine** (logged only). Everything starts at ask-first. When the log shows a kind of action approved repeatedly without edits, the curator may propose its own promotion to the next gear; only the owner grants it. **A decision that authorizes future agent behavior must be made outside the agent.** That rule, plus a human on anything irreversible and the owner's eyes on anything newly real, is why some things never graduate: new entity cards, anything destructive, anything crossing a doorway to another brain, and changes to these rules.
 
 ## Connectors
 
@@ -109,7 +111,7 @@ The brain never *controls* a connector. For an autonomous agent the brain only *
 
 ## Search is disposable
 
-The brain's native retrieval is filenames, folders, grep, and links between notes. Any index built on top (vector, full-text, graph) is a client-side convenience: rebuildable from the files, never the truth, never required.
+The brain's native retrieval is filenames, folders, grep, and links between notes. Any index built on top (vector, full-text, graph) is a client-side convenience: rebuildable from the files, never the truth, never required. If an index disappears, the brain has lost nothing.
 
 ## Rollout is forward-only
 

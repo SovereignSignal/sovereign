@@ -68,7 +68,11 @@ case "$cmd" in
   contribute) exec "$PYTHON" "$BIN/brain-contribute" "$@";;
   load)     "$PYTHON" "$BIN/brain-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/brain-load" "$@";;
   capture)  exec "$PYTHON" "$BIN/brain-capture" "$@";;
-  check)    exec /bin/bash "$BIN/brain-check.sh" "$@";;
+  check)
+    # The label check, then Part 1 drift when this machine runs a template hub (warns only).
+    /bin/bash "$BIN/brain-check.sh" "$@"; rc=$?
+    if [ -f "${SOV_STATE_DIR:-$HOME/.local/state/sovereign}/hub.json" ]; then "$PYTHON" "$BIN/sov-hub" law || true; fi
+    exit $rc;;
   connect)
     h="${1:-}"; shift || true
     [ -n "$h" ] || { echo "sov connect <harness>|all; available: $(_harness_ids)"; exit 64; }
