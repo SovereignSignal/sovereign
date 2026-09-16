@@ -1,0 +1,1367 @@
+#!/usr/bin/env python3
+"""tg-verdict-poll.py -- deterministic Telegram verdict parser for the archive bot.
+
+Polls getUpdates on the archive bot. Owner-only messages
+(chat.id == from.id == TG_CHAT_ID) are parsed line by line for:
+
+    approve <slug> [reason...]
+    reject  <slug> [reason...]
+    revert  <slug> [reason...]
+
+Each valid verdict line executes the template's curator-approve.sh or
+curator-reject.sh with CURATOR_ACTOR=telegram-owner and reason
+"telegram verdict[: trailing text]", then replies to the chat with the outcome.
+
+Revert build 2026-08-10: autonomy widened, so the per-item approval gate gave
+way to the weekly "what landed on its own" review plus per-card revert. The
+revert verb undoes ONE autonomous promotion after the fact:
+
+    - it takes the audited removal path, the template's curator-retire.sh, NOT a
+      raw `git revert` of the promotion commit. A promotion commit carries the
+      card AND the decisions.log append, so reverting it would erase the audit
+      row that records the promotion. curator-retire.sh instead moves the card
+      to the lane's rejected/ folder, appends a `retired` verdict with the
+      owner's reason, and commits the scoped paths (its git_commit never
+      force-pushes).
+    - before retiring, the card's current bytes are compared against the blob
+      in its landing commit. If it changed since it landed, the revert is
+      REFUSED with "changed since it landed": Owner's own edit would go with it,
+      so that case needs a human look.
+    - same owner-only rule and same per-run cap as approve/reject.
+
+Buttons build 2026-08-04: callback_query updates (the digest's inline
+keyboard) are processed too, owner-only, every tap answered via
+answerCallbackQuery. Routes:
+    aap        -> confirmation message ("Confirm approve all" / "Cancel")
+    aapc       -> approve every pending proposal (cap 60 per confirm; a
+                  confirmation older than 30 min is refused as expired),
+                  actor telegram-owner, reason "telegram button: approve all",
+                  consolidated results reply
+    aapx       -> cancel (edits the confirmation message)
+    rev        -> one compact card per pending proposal (max 15 per tap,
+                  oldest first) with Approve/Reject buttons; a held card
+                  leads with "⚠ FLAGGED (...)" so the reason is visible
+                  before the button
+    a:<slug> / r:<slug> -> run the matching gate script, edit the tapped
+                  card to the outcome (buttons drop with the edit)
+Callback data stays under Telegram's 64-byte cap: slugs longer than 56 chars
+ride an index map (keys c1..cN) persisted to
+the hub state dir, tg-verdict.cbmap.json.
+A bare "approved"/"approve"/"ok"/"yes" message earns a pointer reply and
+never runs a gate script.
+
+Taste hold-back build 2026-08-10: the bulk "Approve all" path now holds back
+BOTH kinds of flag curator-run persists in proposals/.meta.json — the
+injection screen (`screen_flagged`, the source is suspect) and the
+deterministic taste veto (`taste_flagged`, the body carries a private-money
+figure or a labeled secret value). Both flags demote a proposal to ask-first
+precisely so the owner LOOKS at it, and
+approve-all is the one path that skips looking. The reply names how many were
+held and why. Single verdicts are untouched: `approve <slug>` and the per-card
+Approve button still land a flagged proposal, because an explicit single
+verdict IS the owner looking.
+
+Contract (build 2026-08-03, buttons 2026-08-04):
+  - NO model calls, ever. Stdlib only. Deterministic.
+  - Owner-only: any update not from the owner's private chat advances the
+    offset silently and is never processed or replied to (non-owner button
+    taps are answered -- spinner cleared -- but never acted on).
+  - Never crashes: pre-processing failures (network, bad JSON) log to
+    the hub state dir verdict-poll.log and exit 0 with the offset preserved for
+    retry. Per-message failures log, and the offset ALWAYS advances past a
+    message once processing was attempted (a poison message cannot wedge
+    the loop). The offset file is written atomically after every message.
+  - Concurrency: flock on tg-verdict.lock; an overlapping run exits instantly.
+  - Per-run cap: 20 gate-script executions for text verdicts and single-card
+    buttons. "Approve all" has its own cap of 60 per confirmed tap. Unstarted
+    messages wait for the next run (offset not advanced); excess verdicts
+    inside one message get a FAILED-resend reply.
+  - Packet-level phrases ("approve as recommended", "reject the packet",
+    "approve all/everything") never run a gate script: one pointer reply
+    (Claude executes those), offset advances normally. Slug "as" is reserved.
+  - Files touched: <state>/hub/tg-verdict.{offset,lock,cbmap.json}
+    and <state>/hub/verdict-poll.log. Nothing else (the gate scripts own
+    their own writes).
+
+Sovereign transition build 2026-09-11: routine archive decisions moved into
+the Sovereign app (Review). Every approve/reject route above, typed or
+button, historical or new, now answers with a pointer to Sovereign and runs
+NO gate script; "Review cards" reports the count and sends no buttons.
+`revert` is the one verdict still executed here (audited retire path).
+Owner filtering, callback acknowledgement, offset and lock are unchanged.
+
+Run every 60s by launchd job com.sov.cron.tg-verdict-poll via cron-run-hub.sh.
+Self-test (no network; only writes are throwaway tempfiles for the cbmap
+round-trip): tg-verdict-poll.py --self-test
+"""
+
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import traceback
+import urllib.parse
+import urllib.request
+
+HOME = os.path.expanduser("~")
+STATE_DIR = os.path.join(os.environ.get("SOV_STATE_DIR") or os.path.join(HOME, ".local", "state", "sovereign"), "hub")
+TEMPLATE_BIN = os.path.join(os.environ.get("SOV_TEMPLATE") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))), "bin")
+OFFSET_FILE = os.path.join(STATE_DIR, "tg-verdict.offset")
+LOCK_FILE = os.path.join(STATE_DIR, "tg-verdict.lock")
+CBMAP_FILE = os.path.join(STATE_DIR, "tg-verdict.cbmap.json")
+LOG_FILE = os.path.join(STATE_DIR, "verdict-poll.log")
+ENV_FILE = os.environ.get(
+    "TG_ENV_FILE", os.path.join(HOME, ".config", "sovereign", "telegram.env")
+)
+GATE = {
+    "approve": os.path.join(TEMPLATE_BIN, "curator-approve.sh"),
+    "reject": os.path.join(TEMPLATE_BIN, "curator-reject.sh"),
+}
+# The audited removal path for a trusted card. Deliberately NOT in GATE: revert
+# has a pre-check (unchanged-since-landing) that approve/reject do not.
+RETIRE = os.path.join(TEMPLATE_BIN, "curator-retire.sh")
+
+
+def _read_pointer(path, default):
+    try:
+        with open(path) as f:
+            return f.read().strip() or default
+    except OSError:
+        return default
+
+
+# The curator lane (same pointer-file fallbacks _curator-lib.sh uses).
+VAULT = _read_pointer(
+    os.path.join(HOME, ".brain-root"),
+    os.environ.get("SOVS_VAULT", ""),
+)
+LANE_NAME = _read_pointer(os.path.join(HOME, ".curator-lane"), "archivist")
+LANE_DIR = os.path.join(VAULT, "raw", "workspaces", LANE_NAME)
+PROPOSALS_DIR = os.path.join(LANE_DIR, "proposals")
+INBOX_FILE = os.path.join(LANE_DIR, "INBOX.md")
+META_FILE = os.path.join(PROPOSALS_DIR, ".meta.json")
+KNOWLEDGE_DIR = os.path.join(VAULT, "knowledge")
+KNOWLEDGE_SUBS = ("entities", "concepts", "syntheses")
+
+# Verb case-insensitive; slug strictly lowercase kebab.
+VERDICT_RE = re.compile(
+    r"^((?i:approve|reject|revert))\s+([a-z0-9][a-z0-9-]*)\s*(.*)$"
+)
+
+# Bulk-approve hold-back (see hold_flags). A digest line carries zero or more
+# flag marks between the "(type, conf, tag)" head and the " — reason":
+#   - **slug** (entity, high, new) ⚠ SCREENED ⚠ TASTE — why it matters
+# Fallback only; proposals/.meta.json is the real source of both flags.
+INBOX_FLAG_RE = re.compile(r"^- \*\*([^*]+)\*\* \([^)]*\)((?: ⚠ (?:SCREENED|TASTE))+)")
+SCREEN_LABEL = "injection screen"
+
+# Packet-level phrases ("approve as recommended", "reject the packet", ...)
+# are verdicts on a whole review packet, executed by Claude (the relay),
+# never by this bot. Detected on the whole message BEFORE per-line parsing.
+PACKET_PHRASE_RE = re.compile(
+    r"^(approve|reject)\s+(as\s+recommended|the\s+packet|all|everything)\b",
+    re.IGNORECASE,
+)
+# Slugs that can never name a proposal (guards "approve as ..." misparses).
+# "all"/"everything" are reserved so a sweeping phrase can never be read as a
+# single-card verdict. PACKET_PHRASE_RE already catches "approve all" and
+# "reject all" at the whole-message level; "revert all" has no packet meaning
+# at all, and must never resolve to a card literally named "all".
+RESERVED_SLUGS = frozenset(["as", "all", "everything"])
+# Sovereign transition (2026-09-11): routine archive decisions moved into the
+# Sovereign app. This channel notifies; every approve/reject route below
+# answers with this pointer and runs NO gate script. `revert` stays live on
+# purpose: it is the audited undo for act-and-report landings (the Sunday
+# landed-review tells the owner to use it) and Sovereign has no revert yet.
+SOVEREIGN_REPLY = (
+    "Decisions moved to Sovereign. Open Sovereign \u2192 Review to compare and "
+    "decide. This channel only notifies now; revert <slug> still works here."
+)
+PACKET_REPLY = SOVEREIGN_REPLY
+
+# A bare acknowledgment is not a verdict: point at the buttons instead.
+BARE_ACK_RE = re.compile(r"^(approved|approve|ok|yes)[.!]*$", re.IGNORECASE)
+BARE_REPLY = SOVEREIGN_REPLY
+
+POLL_TIMEOUT = 5        # Telegram long-poll seconds
+HTTP_TIMEOUT = 25       # socket timeout; must exceed POLL_TIMEOUT
+MAX_VERDICTS = 20       # gate executions per run (text + single-card buttons)
+MAX_APPROVE_ALL = 60    # gate executions per confirmed approve-all tap
+STALE_CONFIRM_SECS = 1800   # a confirm older than this is refused
+GATE_TIMEOUT = 180      # seconds per gate script (does a git commit + push)
+CB_SLUG_MAX = 56        # longest slug sent literally in callback_data
+USAGE = (
+    "usage: revert <slug> [reason], one per line, slug lowercase kebab-case. "
+    "Approve and reject moved to Sovereign \u2192 Review."
+)
+EXPIRED_CARD_REPLY = SOVEREIGN_REPLY
+
+
+def log(msg):
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(
+                "%s tg-verdict-poll %s\n"
+                % (time.strftime("%Y-%m-%dT%H:%M:%S%z"), msg)
+            )
+    except OSError:
+        pass
+
+
+def load_env():
+    conf = {}
+    with open(ENV_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            conf[k.strip()] = v.strip().strip('"').strip("'")
+    return conf
+
+
+def api(token, method, params):
+    data = urllib.parse.urlencode(params).encode()
+    req = urllib.request.Request(
+        "https://api.telegram.org/bot%s/%s" % (token, method), data=data
+    )
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        return json.load(resp)
+
+
+def read_offset():
+    try:
+        with open(OFFSET_FILE) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def write_offset(value):
+    tmp = OFFSET_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("%d\n" % value)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, OFFSET_FILE)
+
+
+def html_escape(s):
+    """Escape &, <, > for Telegram parse_mode=HTML (order matters: & first)."""
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def is_packet_phrase(text):
+    """True when the whole message is a packet-level verdict for Claude
+    (the relay), e.g. 'approve as recommended' -- never for this bot."""
+    return bool(PACKET_PHRASE_RE.match((text or "").strip()))
+
+
+def is_bare_ack(text):
+    """True when the whole message is a bare 'approved'/'approve'/'ok'/'yes'
+    (optionally punctuated) -- pointed at the buttons, never a gate run."""
+    return bool(BARE_ACK_RE.match((text or "").strip()))
+
+
+def parse_verdicts(text):
+    """Return (verdicts, starts_with_verb).
+
+    verdicts: list of (verb, slug, trailing) from valid lines. Lines whose
+    slug is reserved (e.g. 'as', 'all') never parse as verdicts.
+    starts_with_verb: message text starts with approve/reject/revert (any
+    case), used to decide whether an invalid message earns one usage reply.
+    """
+    verdicts = []
+    for raw in (text or "").splitlines():
+        m = VERDICT_RE.match(raw.strip())
+        if m and m.group(2) not in RESERVED_SLUGS:
+            verdicts.append((m.group(1).lower(), m.group(2), m.group(3).strip()))
+    lead = (text or "").strip().lower()
+    starts = lead.startswith(("approve", "reject", "revert"))
+    return verdicts, starts
+
+
+def owner_message(update, chat_id):
+    """Return the message dict if this update is a text message from the
+    owner's private chat (chat.id == from.id == TG_CHAT_ID), else None."""
+    msg = update.get("message")
+    if not isinstance(msg, dict):
+        return None
+    chat = msg.get("chat") or {}
+    frm = msg.get("from") or {}
+    if str(chat.get("id")) != chat_id or str(frm.get("id")) != chat_id:
+        return None
+    if not isinstance(msg.get("text"), str):
+        return None
+    return msg
+
+
+def owner_callback(update, chat_id):
+    """Return the callback_query dict if it is from the owner (from.id ==
+    TG_CHAT_ID) with string callback data, else None."""
+    cb = update.get("callback_query")
+    if not isinstance(cb, dict):
+        return None
+    frm = cb.get("from") or {}
+    if str(frm.get("id")) != chat_id:
+        return None
+    if not isinstance(cb.get("data"), str):
+        return None
+    return cb
+
+
+def route_callback(data):
+    """Pure routing table for callback data. Returns (route, arg):
+    ('aap'|'aapc'|'aapx'|'rev', None), ('approve'|'reject', token),
+    or (None, None) for anything unknown."""
+    if data == "aap":
+        return ("aap", None)
+    if data == "aapc":
+        return ("aapc", None)
+    if data == "aapx":
+        return ("aapx", None)
+    if data == "rev":
+        return ("rev", None)
+    if isinstance(data, str) and data.startswith("a:") and len(data) > 2:
+        return ("approve", data[2:])
+    if isinstance(data, str) and data.startswith("r:") and len(data) > 2:
+        return ("reject", data[2:])
+    return (None, None)
+
+
+def cbmap_load(path=None):
+    """Load the callback index map (token -> slug); {} on any problem."""
+    try:
+        with open(path or CBMAP_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items()}
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def cbmap_save(mapping, path=None):
+    """Atomically persist the callback index map."""
+    path = path or CBMAP_FILE
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(mapping, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def cb_token(slug, cbmap):
+    """Callback-data token for a slug. The slug itself when it fits under
+    Telegram's 64-byte callback_data cap ('a:'/'r:' prefix + <=56 chars);
+    otherwise a short index key c1..cN. Returns (token, new_cbmap)."""
+    if len(slug) <= CB_SLUG_MAX:
+        return slug, cbmap
+    for k, v in cbmap.items():
+        if v == slug:
+            return k, cbmap
+    n = 1
+    while "c%d" % n in cbmap:
+        n += 1
+    out = dict(cbmap)
+    out["c%d" % n] = slug
+    return "c%d" % n, out
+
+
+def resolve_slug(arg, cbmap, pending):
+    """Resolve a callback token to a slug. Literal pending slugs win; c<N>
+    tokens go through the map (None when the map has rotated = stale button);
+    anything else passes through for the gate script to refuse loudly."""
+    if arg in pending:
+        return arg
+    if re.match(r"^c\d+$", arg or ""):
+        return cbmap.get(arg)
+    return arg
+
+
+def pending_slugs():
+    """Slugs of the proposals on disk, oldest first (mtime, then name)."""
+    try:
+        names = os.listdir(PROPOSALS_DIR)
+    except OSError:
+        return []
+    entries = []
+    for name in names:
+        if name.startswith(".") or not name.endswith(".md"):
+            continue
+        path = os.path.join(PROPOSALS_DIR, name)
+        try:
+            entries.append((os.path.getmtime(path), name[:-3]))
+        except OSError:
+            continue
+    entries.sort()
+    return [slug for _, slug in entries]
+
+
+def taste_label(reason):
+    """'taste: <what fired>' from curator-run's taste_reason, which reads
+    "taste veto: evm wallet address" (or "..., email address x2"). The reason
+    names the RULES that fired and deliberately never echoes the matched text,
+    so it is safe to put in a Telegram reply. Detail-free flag -> plain label."""
+    r = re.sub(r"^\s*taste veto:\s*", "", (reason or "").strip(), flags=re.I)
+    return "taste: " + r if r else "taste veto"
+
+
+def hold_flags():
+    """{slug: why} for every pending proposal a BULK approve must not sweep.
+
+    Two independent demotions, one consequence. The injection screen
+    (`screen_flagged`) says the SOURCE is suspect; the deterministic taste veto
+    (`taste_flagged`) says the BODY carries a private-money figure or a labeled
+    secret value. Both demote to ask-first for the same reason: the owner is
+    supposed to LOOK. Approve-all is the one path that skips looking, so both are
+    held back from it (basis: kyambogo landed 27s after its SCREENED digest,
+    2026-08-09; taste added 2026-08-10).
+
+    Wallets, vendor-prefixed keys and contact details are NOT in this list any
+    more. Since 2026-08-20 curator-run redacts those out of the card in place
+    (there is no decision in them for the owner to make) and never sets
+    taste_flagged for them, so they no longer hold anything back from a bulk
+    approve. That is the whole point of the change: the queue drains.
+
+    Reads proposals/.meta.json (curator-run persists both flags plus
+    taste_reason there); falls back to the current INBOX digest's "⚠ SCREENED"
+    and "⚠ TASTE" marks for proposals judged before those fields existed.
+    Unreadable state -> nothing held, exactly the pre-flag behavior."""
+    screened, tasted = set(), {}
+    try:
+        with open(META_FILE) as f:
+            meta = json.load(f)
+        for slug, entry in meta.items():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("screen_flagged"):
+                screened.add(slug)
+            if entry.get("taste_flagged"):
+                tasted[slug] = entry.get("taste_reason") or ""
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(INBOX_FILE) as f:
+            for line in f:
+                m = INBOX_FLAG_RE.match(line)
+                if not m:
+                    continue
+                slug, marks = m.group(1).strip(), m.group(2)
+                if "SCREENED" in marks:
+                    screened.add(slug)
+                if "TASTE" in marks and slug not in tasted:
+                    tasted[slug] = ""  # digest carries the mark, not the reason
+    except OSError:
+        pass
+    flags = {slug: SCREEN_LABEL for slug in screened}
+    for slug, reason in tasted.items():
+        label = taste_label(reason)
+        flags[slug] = flags[slug] + " + " + label if slug in flags else label
+    return flags
+
+
+def split_screened(slugs, flags=None):
+    """(clean, held) — held are the proposals hold_flags() withholds from a
+    bulk approve, in the order they arrived. Pass `flags` to reuse one read."""
+    if flags is None:
+        flags = hold_flags()
+    clean = [s for s in slugs if s not in flags]
+    held = [s for s in slugs if s in flags]
+    return clean, held
+
+
+def held_summary(held, flags):
+    """One line naming how many were held and why, for a bulk-approve reply:
+    "held 2 (1 injection screen, 1 taste: evm wallet address) — ..." """
+    if not held:
+        return ""
+    counts, order = {}, []
+    for slug in held:
+        why = flags.get(slug) or "flagged"
+        if why not in counts:
+            order.append(why)
+        counts[why] = counts.get(why, 0) + 1
+    return "held %d (%s) — review with the Review cards button or approve by slug" % (
+        len(held),
+        ", ".join("%d %s" % (counts[w], w) for w in order),
+    )
+
+
+def held_lines(held, flags):
+    """Reply lines for what a bulk approve held back: the summary line, then
+    one line per proposal carrying the verdict that releases it. Holding back
+    is only about the BULK path — an explicit `approve <slug>` (or the per-card
+    Approve button) IS the owner looking, and stays permitted."""
+    if not held:
+        return []
+    lines = [held_summary(held, flags)]
+    for slug in held:
+        lines.append(
+            "HELD %s: %s — read it, then: approve %s"
+            % (slug, flags.get(slug) or "flagged", slug)
+        )
+    return lines
+
+
+def card_text(slug, flags=None):
+    """Message text for one review card. A held proposal LEADS with why it is
+    held, so the owner sees the flag before the Approve button, not after."""
+    typ, conf, reason = proposal_info(slug)
+    why = (flags or {}).get(slug)
+    head = "⚠ FLAGGED (%s)\n" % html_escape(why) if why else ""
+    return "%s<b>%s</b> (%s, %s)\n%s" % (
+        head,
+        html_escape(slug),
+        html_escape(typ),
+        html_escape(conf),
+        html_escape(reason),
+    )
+
+
+def proposal_info(slug):
+    """(type, confidence, one-line reason) for a pending proposal, best
+    effort from the note frontmatter, proposals/.meta.json, and INBOX.md."""
+    typ, conf, reason = "?", "?", ""
+    try:
+        with open(os.path.join(PROPOSALS_DIR, slug + ".md")) as f:
+            head = f.read(4000)
+        m = re.search(r"^---\n(.*?)^---", head, re.S | re.M)
+        if m:
+            t = re.search(r"^type:\s*(\S+)", m.group(1), re.M)
+            if t:
+                typ = t.group(1)
+    except OSError:
+        pass
+    try:
+        with open(META_FILE) as f:
+            meta = json.load(f)
+        conf = (meta.get(slug) or {}).get("confidence") or conf
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(INBOX_FILE) as f:
+            inbox = f.read()
+        m = re.search(
+            r"^- \*\*%s\*\* \(([^)]*)\) — (.*)$" % re.escape(slug),
+            inbox,
+            re.M,
+        )
+        if m:
+            parts = [p.strip() for p in m.group(1).split(",")]
+            if parts and parts[0]:
+                typ = parts[0]
+            if len(parts) > 1 and conf == "?":
+                conf = parts[1]
+            reason = m.group(2).strip()
+    except OSError:
+        pass
+    if not reason:
+        reason = "(pending from an earlier run)"
+    return typ, conf, reason
+
+
+def first_error_line(*streams):
+    """Best error line from gate output. Gate scripts print a status line
+    first ("approving x.md"), so the first non-empty line is usually NOT the
+    failure. Prefer the first line containing REFUSED or error
+    (case-insensitive); otherwise fall back to the LAST non-empty line."""
+    fallback = ""
+    for s in streams:
+        for line in (s or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            low = line.lower()
+            if "refused" in low or "error" in low:
+                return line
+            fallback = line
+    return fallback
+
+
+def run_gate(verb, slug, reason):
+    """Execute the gate script for one verdict. Returns the reply line."""
+    env = dict(os.environ)
+    env["CURATOR_ACTOR"] = "telegram-owner"
+    try:
+        cp = subprocess.run(
+            [GATE[verb], slug, reason],
+            capture_output=True,
+            text=True,
+            timeout=GATE_TIMEOUT,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        log("verdict %s %s TIMEOUT after %ds" % (verb, slug, GATE_TIMEOUT))
+        return "FAILED %s: gate script timed out" % slug
+    except OSError as e:
+        log("verdict %s %s exec error: %s" % (verb, slug, e))
+        return "FAILED %s: %s" % (slug, e)
+    log("verdict %s %s rc=%d reason=%r" % (verb, slug, cp.returncode, reason))
+    if cp.returncode == 0:
+        return ("landed: %s" if verb == "approve" else "rejected: %s") % slug
+    err = first_error_line(cp.stdout, cp.stderr) or ("exit %d" % cp.returncode)
+    return "FAILED %s: %s" % (slug, err)
+
+
+def knowledge_paths(slug):
+    """Every trusted card matching a slug, vault-relative. Normally 0 or 1;
+    2+ means the same slug exists in two knowledge folders, which is ambiguous
+    and must never be resolved by guessing."""
+    found = []
+    for sub in KNOWLEDGE_SUBS:
+        rel = "knowledge/%s/%s.md" % (sub, slug)
+        if os.path.isfile(os.path.join(VAULT, rel)):
+            found.append(rel)
+    return found
+
+
+def git_out(*args):
+    """Run git in the vault. Returns (rc, stdout, stderr) with text stdout."""
+    try:
+        cp = subprocess.run(
+            ["git", "-C", VAULT] + list(args),
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return (1, b"", str(e).encode())
+    return (cp.returncode, cp.stdout, cp.stderr)
+
+
+def landing_commit(relpath):
+    """Short hash of the commit that landed `relpath` in knowledge/.
+
+    The newest `curator: approve <relpath>` commit touching the path, so an
+    update landing resolves to the update rather than the original add.
+    Falls back to the first-add commit, then "".
+    """
+    rc, out, _ = git_out(
+        "log", "--format=%h\x1f%s", "--max-count=200", "--", relpath
+    )
+    if rc == 0:
+        for line in out.decode("utf-8", "replace").splitlines():
+            if "\x1f" not in line:
+                continue
+            h, subject = line.split("\x1f", 1)
+            if subject.strip() == "curator: approve %s" % relpath:
+                return h.strip()
+    rc, out, _ = git_out(
+        "log", "-1", "--format=%h", "--diff-filter=A", "--", relpath
+    )
+    return out.decode("utf-8", "replace").strip() if rc == 0 else ""
+
+
+def changed_since_landing(relpath, commit):
+    """True when the card on disk differs from its bytes in `commit`.
+
+    Compared as raw bytes: a reverted card must be exactly what the curator
+    landed, otherwise the owner's own later edit would be carried out with it.
+    """
+    rc, blob, _ = git_out("show", "%s:%s" % (commit, relpath))
+    if rc != 0:
+        return True  # cannot prove it is unchanged, so refuse
+    try:
+        with open(os.path.join(VAULT, relpath), "rb") as f:
+            return f.read() != blob
+    except OSError:
+        return True
+
+
+def run_revert(slug, reason):
+    """Undo one landed promotion. Returns the reply line.
+
+    Audited path: curator-retire.sh (moves the card to the lane's rejected/
+    archive, logs a `retired` verdict, commits scoped paths, plain push). A raw
+    `git revert` of the promotion commit is deliberately NOT used: that commit
+    also carries the decisions.log append, so reverting it would erase the row
+    recording the promotion.
+    """
+    found = knowledge_paths(slug)
+    if not found:
+        log("revert %s: no trusted card" % slug)
+        return "FAILED %s: no trusted card by that name in knowledge/" % slug
+    if len(found) > 1:
+        log("revert %s: ambiguous (%s)" % (slug, ", ".join(found)))
+        return "FAILED %s: ambiguous, that slug exists in %d knowledge folders" % (
+            slug,
+            len(found),
+        )
+    relpath = found[0]
+
+    commit = landing_commit(relpath)
+    if not commit:
+        log("revert %s: no landing commit for %s" % (slug, relpath))
+        return (
+            "FAILED %s: cannot find the commit that landed it, needs a manual look"
+            % slug
+        )
+    if changed_since_landing(relpath, commit):
+        log("revert %s: changed since landing commit %s, refused" % (slug, commit))
+        return (
+            "FAILED %s: changed since it landed (commit %s). Reverting would take "
+            "the later edit with it, so this one needs a manual look." % (slug, commit)
+        )
+
+    env = dict(os.environ)
+    env["CURATOR_ACTOR"] = "telegram-owner"
+    try:
+        cp = subprocess.run(
+            [RETIRE, slug, reason],
+            capture_output=True,
+            text=True,
+            timeout=GATE_TIMEOUT,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        log("revert %s TIMEOUT after %ds" % (slug, GATE_TIMEOUT))
+        return "FAILED %s: retire script timed out" % slug
+    except OSError as e:
+        log("revert %s exec error: %s" % (slug, e))
+        return "FAILED %s: %s" % (slug, e)
+    log("revert %s rc=%d commit=%s reason=%r" % (slug, cp.returncode, commit, reason))
+    if cp.returncode == 0:
+        return "reverted: %s (was %s, now in rejected/)" % (slug, commit)
+    err = first_error_line(cp.stdout, cp.stderr) or ("exit %d" % cp.returncode)
+    return "FAILED %s: %s" % (slug, err)
+
+
+def run_verdict(verb, slug, trailing):
+    """Dispatch one parsed verdict line to its executor."""
+    if verb == "revert":
+        reason = "telegram revert" + (": " + trailing if trailing else "")
+        return run_revert(slug, reason)
+    reason = "telegram verdict" + (": " + trailing if trailing else "")
+    return run_gate(verb, slug, reason)
+
+
+def send_reply(token, chat_id, text, reply_markup=None, parse_mode=None):
+    try:
+        if len(text) > 3900:
+            text = text[:3900] + "\n...[truncated]"
+        params = {"chat_id": chat_id, "text": text}
+        if reply_markup is not None:
+            params["reply_markup"] = json.dumps(reply_markup)
+        if parse_mode:
+            params["parse_mode"] = parse_mode
+        r = api(token, "sendMessage", params)
+        if not r.get("ok"):
+            log("reply not ok: %s" % r.get("description", "?"))
+    except Exception as e:
+        log("reply send failed: %s" % e)
+
+
+def answer_callback(token, cb_id, text=None):
+    """Always answer a callback query so the tap spinner clears."""
+    try:
+        params = {"callback_query_id": cb_id}
+        if text:
+            params["text"] = text
+        r = api(token, "answerCallbackQuery", params)
+        if not r.get("ok"):
+            log("answerCallbackQuery not ok: %s" % r.get("description", "?"))
+    except Exception as e:
+        log("answerCallbackQuery failed: %s" % e)
+
+
+def edit_message(token, chat_id, message_id, text):
+    """Edit a bot message in place. reply_markup is omitted on purpose:
+    the edit drops the tapped message's buttons."""
+    try:
+        r = api(
+            token,
+            "editMessageText",
+            {"chat_id": chat_id, "message_id": message_id, "text": text},
+        )
+        if not r.get("ok"):
+            log("editMessageText not ok: %s" % r.get("description", "?"))
+    except Exception as e:
+        log("editMessageText failed: %s" % e)
+
+
+def edit_or_reply(token, chat_id, message_id, text):
+    if message_id:
+        edit_message(token, chat_id, message_id, text)
+    else:
+        send_reply(token, chat_id, text)
+
+
+def handle_callback(cb, token, chat_id, budget):
+    """Process one owner callback tap. The query is already answered.
+    Returns the number of gate executions used (always 0 since the
+    Sovereign transition: no button decides anything any more).
+
+    Historical buttons keep getting a clear answer: a tap on an old digest's
+    "Approve all" or on an old card's Approve/Reject edits that message to
+    the pointer, so the buttons drop and nothing lands. "Review cards" no
+    longer sends cards with buttons; it reports the count and points at the
+    app. Cancel still cancels. Owner filtering happened in handle_update.
+    """
+    data = cb.get("data") or ""
+    route, arg = route_callback(data)
+    msg = cb.get("message") or {}
+    msg_id = msg.get("message_id")
+
+    if route in ("aap", "aapc", "approve", "reject"):
+        log("callback %s: refused, decisions live in Sovereign (no gate run)" % route)
+        edit_or_reply(token, chat_id, msg_id, SOVEREIGN_REPLY)
+        return 0
+
+    if route == "aapx":
+        log("callback aapx: cancelled")
+        edit_or_reply(token, chat_id, msg_id, "Cancelled.")
+        return 0
+
+    if route == "rev":
+        n = len(pending_slugs())
+        log("callback rev: %d pending, pointing at Sovereign (no cards sent)" % n)
+        if not n:
+            send_reply(token, chat_id, "Nothing pending.")
+            return 0
+        send_reply(
+            token,
+            chat_id,
+            "%d proposal%s waiting. %s" % (n, "" if n == 1 else "s", SOVEREIGN_REPLY),
+        )
+        return 0
+
+    log("callback unknown data %r ignored" % data)
+    return 0
+
+
+def handle_update(update, token, chat_id, budget):
+    """Process one update (message or button tap). Returns gate executions used."""
+    raw_cb = update.get("callback_query")
+    if isinstance(raw_cb, dict):
+        # Always answer, owner or not, so the client's tap spinner clears.
+        answer_callback(token, raw_cb.get("id", ""))
+        cb = owner_callback(update, chat_id)
+        if cb is None:
+            log(
+                "callback ignored (non-owner or malformed) update=%s"
+                % update.get("update_id")
+            )
+            return 0
+        return handle_callback(cb, token, chat_id, budget)
+    msg = owner_message(update, chat_id)
+    if msg is None:
+        return 0  # silent: not the owner, or not a text message
+    if is_bare_ack(msg["text"]):
+        send_reply(token, chat_id, BARE_REPLY)
+        return 0  # a bare "approved"/"ok"/"yes" never runs a gate script
+    if is_packet_phrase(msg["text"]):
+        send_reply(token, chat_id, PACKET_REPLY)
+        return 0  # no gate scripts; offset advances normally in poll()
+    verdicts, starts = parse_verdicts(msg["text"])
+    if not verdicts:
+        if starts:
+            send_reply(token, chat_id, USAGE)
+        return 0
+    used = 0
+    replies = []
+    pointed = False
+    for verb, slug, trailing in verdicts:
+        if verb in ("approve", "reject"):
+            # Sovereign transition: typed verdicts no longer run a gate script.
+            log("verdict %s %s refused, decisions live in Sovereign" % (verb, slug))
+            if not pointed:
+                replies.append(SOVEREIGN_REPLY)
+                pointed = True
+            continue
+        if used >= budget:
+            replies.append(
+                "FAILED %s: per-run cap (%d) reached, resend this verdict"
+                % (slug, MAX_VERDICTS)
+            )
+            continue
+        replies.append(run_verdict(verb, slug, trailing))
+        used += 1
+    send_reply(token, chat_id, "\n".join(replies))
+    return used
+
+
+def poll():
+    os.makedirs(STATE_DIR, exist_ok=True)
+
+    # Concurrency guard: overlapping runs exit instantly.
+    lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("lock held by another run, exiting")
+        return 0
+
+    conf = load_env()
+    token = conf.get("TG_BOT_TOKEN", "")
+    chat_id = conf.get("TG_CHAT_ID", "")
+    if not token or not chat_id:
+        log("ERROR TG_BOT_TOKEN/TG_CHAT_ID unset in %s" % ENV_FILE)
+        print("env incomplete, exiting")
+        return 0
+
+    offset = read_offset()
+    if offset is None:
+        write_offset(0)
+        offset = 0
+
+    params = {
+        "timeout": POLL_TIMEOUT,
+        "limit": 100,
+        "allowed_updates": json.dumps(["message", "callback_query"]),
+    }
+    if offset > 0:
+        params["offset"] = offset
+
+    # Failures up to here (and in getUpdates itself) preserve the offset:
+    # the top-level handler logs them and the next run retries.
+    resp = api(token, "getUpdates", params)
+    if not resp.get("ok"):
+        log("getUpdates not ok: %s" % resp.get("description", "?"))
+        print("getUpdates not ok")
+        return 0
+
+    updates = sorted(resp.get("result", []), key=lambda u: u.get("update_id", 0))
+    verdicts_run = 0
+    processed = 0
+    for u in updates:
+        if verdicts_run >= MAX_VERDICTS:
+            break  # unstarted messages wait for the next run, offset untouched
+        try:
+            verdicts_run += handle_update(u, token, chat_id, MAX_VERDICTS - verdicts_run)
+        except Exception:
+            log(
+                "update %s handler error: %s"
+                % (
+                    u.get("update_id"),
+                    traceback.format_exc().strip().splitlines()[-1],
+                )
+            )
+        # Poison rule: once processing was attempted, ALWAYS advance.
+        write_offset(u["update_id"] + 1)
+        processed += 1
+    print(
+        "updates=%d processed=%d verdicts=%d offset=%s"
+        % (len(updates), processed, verdicts_run, read_offset())
+    )
+    return 0
+
+
+def self_test():
+    """Unit-test parse + routing + filter logic. No network; the only writes
+    are throwaway tempfiles for the cbmap round-trip."""
+    import tempfile
+
+    failures = []
+    total = [0]
+
+    def check(name, cond):
+        total[0] += 1
+        if cond:
+            print("PASS %s" % name)
+        else:
+            failures.append(name)
+            print("FAIL %s" % name)
+
+    # --- parse_verdicts ---
+    v, s = parse_verdicts("approve my-slug")
+    check("plain approve", v == [("approve", "my-slug", "")] and s)
+    v, s = parse_verdicts("REJECT some-slug2 too thin, off-topic")
+    check("upper verb + reason", v == [("reject", "some-slug2", "too thin, off-topic")] and s)
+    v, s = parse_verdicts("  Approve   spaced-slug   ")
+    check("leading/trailing space", v == [("approve", "spaced-slug", "")])
+    v, s = parse_verdicts("approve My-Slug")
+    check("uppercase slug rejected", v == [] and s)
+    v, s = parse_verdicts("approve -bad-slug")
+    check("leading-hyphen slug rejected", v == [])
+    v, s = parse_verdicts("approved my-slug")
+    check("'approved' is not a verb but earns usage", v == [] and s)
+    v, s = parse_verdicts("approve")
+    check("bare verb invalid", v == [] and s)
+    v, s = parse_verdicts("thanks, looks good")
+    check("chatter ignored", v == [] and not s)
+    v, s = parse_verdicts("")
+    check("empty text", v == [] and not s)
+    v, s = parse_verdicts("approve slug-one\nchatter line\nreject slug-two dup of x")
+    check(
+        "multiline mixed",
+        v == [("approve", "slug-one", ""), ("reject", "slug-two", "dup of x")],
+    )
+    v, s = parse_verdicts("please approve my-slug")
+    check("mid-line verb ignored", v == [] and not s)
+    v, s = parse_verdicts("reject slug--x")
+    check("double hyphen slug ok", v == [("reject", "slug--x", "")])
+
+    # --- parse_verdicts: the revert verb (build 2026-08-10) ---
+    v, s = parse_verdicts("revert my-slug")
+    check("revert valid", v == [("revert", "my-slug", "")] and s)
+    v, s = parse_verdicts("REVERT some-slug2 not durable, my call")
+    check(
+        "revert upper verb + reason",
+        v == [("revert", "some-slug2", "not durable, my call")] and s,
+    )
+    v, s = parse_verdicts("revert")
+    check("revert missing slug invalid but earns usage", v == [] and s)
+    v, s = parse_verdicts("revert My-Slug")
+    check("revert uppercase slug rejected", v == [] and s)
+    v, s = parse_verdicts("revert -bad-slug")
+    check("revert leading-hyphen slug rejected", v == [])
+    v, s = parse_verdicts("revert all")
+    check("revert all reserved, never a card verdict", v == [] and s)
+    v, s = parse_verdicts("revert everything now")
+    check("revert everything reserved", v == [] and s)
+    v, s = parse_verdicts("please revert my-slug")
+    check("mid-line revert ignored", v == [] and not s)
+    v, s = parse_verdicts("approve slug-one\nrevert slug-two landed wrong")
+    check(
+        "revert mixes with other verbs",
+        v == [("approve", "slug-one", ""), ("revert", "slug-two", "landed wrong")],
+    )
+    v, s = parse_verdicts("reverted my-slug")
+    check("'reverted' is not a verb but earns usage", v == [] and s)
+
+    # --- revert wiring: the audited path, never the unchecked one ---
+    check("revert not in GATE (needs its pre-check)", "revert" not in GATE)
+    check("RETIRE is curator-retire.sh", RETIRE.endswith("/curator-retire.sh"))
+    check("approve still in GATE", GATE.get("approve", "").endswith("/curator-approve.sh"))
+    check("reject still in GATE", GATE.get("reject", "").endswith("/curator-reject.sh"))
+
+    # --- owner filter ---
+    OWNER = "394395765"
+    good = {"message": {"chat": {"id": 394395765}, "from": {"id": 394395765}, "text": "approve x-y"}}
+    check("owner message accepted", owner_message(good, OWNER) is not None)
+    bad_chat = {"message": {"chat": {"id": 111}, "from": {"id": 394395765}, "text": "approve x-y"}}
+    check("wrong chat rejected", owner_message(bad_chat, OWNER) is None)
+    bad_from = {"message": {"chat": {"id": 394395765}, "from": {"id": 222}, "text": "approve x-y"}}
+    check("wrong sender rejected", owner_message(bad_from, OWNER) is None)
+    no_from = {"message": {"chat": {"id": 394395765}, "text": "approve x-y"}}
+    check("missing from rejected", owner_message(no_from, OWNER) is None)
+    no_msg = {"edited_message": {"chat": {"id": 394395765}, "from": {"id": 394395765}, "text": "approve x-y"}}
+    check("non-message update rejected", owner_message(no_msg, OWNER) is None)
+    no_text = {"message": {"chat": {"id": 394395765}, "from": {"id": 394395765}, "photo": []}}
+    check("no-text message rejected", owner_message(no_text, OWNER) is None)
+
+    # --- packet-level phrase detection (never runs a gate script) ---
+    check("packet: approve as recommended", is_packet_phrase("approve as recommended"))
+    check("packet: case-insensitive", is_packet_phrase("Approve As Recommended"))
+    check("packet: reject as recommended", is_packet_phrase("reject as recommended"))
+    check("packet: reject the packet", is_packet_phrase("reject the packet"))
+    check("packet: approve all", is_packet_phrase("approve all"))
+    check("packet: reject everything", is_packet_phrase("reject everything"))
+    check(
+        "packet: trailing text still detected",
+        is_packet_phrase("approve as recommended, thanks"),
+    )
+    check("packet: normal verdict not a phrase", not is_packet_phrase("approve my-slug"))
+    check("packet: mid-message phrase ignored", not is_packet_phrase("please approve everything"))
+
+    # --- reserved slug guard ('as' never runs a gate script) ---
+    v, s = parse_verdicts("approve as recommended")
+    check("reserved slug 'as' never parses", v == [] and s)
+    v, s = parse_verdicts("reject as")
+    check("reserved slug 'as' bare", v == [] and s)
+    v, s = parse_verdicts("approve as-recommended-card")
+    check("slug starting 'as-' still valid", v == [("approve", "as-recommended-card", "")])
+
+    # --- reason construction (mirrors handle_update's text path) ---
+    check(
+        "reason with trailing",
+        "telegram verdict" + (": " + "dup" if "dup" else "") == "telegram verdict: dup",
+    )
+
+    # --- callback routing table ---
+    check("route aap", route_callback("aap") == ("aap", None))
+    check("route aapc", route_callback("aapc") == ("aapc", None))
+    check("route aapx", route_callback("aapx") == ("aapx", None))
+    check("route rev", route_callback("rev") == ("rev", None))
+    check("route a:<slug>", route_callback("a:my-slug") == ("approve", "my-slug"))
+    check("route r:<slug>", route_callback("r:my-slug") == ("reject", "my-slug"))
+    check("route a:<token>", route_callback("a:c3") == ("approve", "c3"))
+    check("route unknown", route_callback("zzz") == (None, None))
+    check("route empty", route_callback("") == (None, None))
+    check("route bare a:", route_callback("a:") == (None, None))
+
+    # --- owner filter on callbacks ---
+    cb_good = {"callback_query": {"id": "1", "from": {"id": 394395765}, "data": "aap"}}
+    check("owner callback accepted", owner_callback(cb_good, OWNER) is not None)
+    cb_bad = {"callback_query": {"id": "1", "from": {"id": 222}, "data": "aap"}}
+    check("non-owner callback rejected", owner_callback(cb_bad, OWNER) is None)
+    cb_nofrom = {"callback_query": {"id": "1", "data": "aap"}}
+    check("callback missing from rejected", owner_callback(cb_nofrom, OWNER) is None)
+    cb_nodata = {"callback_query": {"id": "1", "from": {"id": 394395765}}}
+    check("callback missing data rejected", owner_callback(cb_nodata, OWNER) is None)
+    not_cb = {"message": {"chat": {"id": 394395765}, "from": {"id": 394395765}, "text": "hi"}}
+    check("message update is not a callback", owner_callback(not_cb, OWNER) is None)
+
+    # --- cbmap round-trip + token assignment ---
+    tmpdir = tempfile.mkdtemp(prefix="tg-verdict-selftest.")
+    tmpmap = os.path.join(tmpdir, "cbmap.json")
+    long_slug = "x" * 60
+    mapping = {"c1": long_slug, "c2": "another-" + "y" * 55}
+    cbmap_save(mapping, tmpmap)
+    check("cbmap round-trip", cbmap_load(tmpmap) == mapping)
+    with open(tmpmap, "w") as f:
+        f.write("{not json")
+    check("cbmap corrupt file -> {}", cbmap_load(tmpmap) == {})
+    check("cbmap missing file -> {}", cbmap_load(os.path.join(tmpdir, "nope.json")) == {})
+    tok, m2 = cb_token("short-slug", {})
+    check("cb_token short slug literal", tok == "short-slug" and m2 == {})
+    tok, m2 = cb_token(long_slug, {})
+    check("cb_token long slug mapped", tok == "c1" and m2 == {"c1": long_slug})
+    tok2, m3 = cb_token(long_slug, m2)
+    check("cb_token reuses existing key", tok2 == "c1" and m3 == m2)
+    tok3, m4 = cb_token("z" * 70, m2)
+    check("cb_token next free key", tok3 == "c2" and m4.get("c2") == "z" * 70)
+
+    # --- resolve_slug ---
+    pend = {"my-slug", "c1"}
+    check("resolve literal pending", resolve_slug("my-slug", {}, pend) == "my-slug")
+    check(
+        "resolve mapped token",
+        resolve_slug("c9", {"c9": long_slug}, {long_slug}) == long_slug,
+    )
+    check("resolve stale token -> None", resolve_slug("c9", {}, set()) is None)
+    check(
+        "resolve pending wins over map",
+        resolve_slug("c1", {"c1": long_slug}, pend) == "c1",
+    )
+    check(
+        "resolve unknown literal passes through",
+        resolve_slug("gone-slug", {}, set()) == "gone-slug",
+    )
+
+    # --- bare acknowledgment (pointer reply, never a gate run) ---
+    check("bare: approved", is_bare_ack("approved"))
+    check("bare: Approve", is_bare_ack("Approve"))
+    check("bare: OK", is_bare_ack("OK"))
+    check("bare: yes.", is_bare_ack("yes."))
+    check("bare: padded ok", is_bare_ack("  ok  "))
+    check("bare: verdict is not bare", not is_bare_ack("approve my-slug"))
+    check("bare: sentence is not bare", not is_bare_ack("yes we should"))
+    check("bare: empty is not bare", not is_bare_ack(""))
+
+    # --- HTML escaping helper ---
+    check("html_escape basic", html_escape("a<b>&c") == "a&lt;b&gt;&amp;c")
+    check("html_escape amp first", html_escape("&lt;") == "&amp;lt;")
+    check("html_escape none", html_escape(None) == "")
+
+    # --- gate error-line extraction (FAILED replies) ---
+    check(
+        "err line prefers REFUSED over first line",
+        first_error_line(
+            "approving x.md\nREFUSED, knowledge/entities/x.md already exists.\n"
+            "That is an update to an existing note, not a new one.",
+            "",
+        )
+        == "REFUSED, knowledge/entities/x.md already exists.",
+    )
+    check(
+        "err line falls back to last non-empty",
+        first_error_line("approving x.md\nsomething odd happened\n\n", "")
+        == "something odd happened",
+    )
+
+    # --- split_screened (approve-all holds screen-flagged proposals) ---
+    global META_FILE, INBOX_FILE
+    _meta_save, _inbox_save = META_FILE, INBOX_FILE
+    try:
+        META_FILE = os.path.join(tmpdir, "meta.json")
+        INBOX_FILE = os.path.join(tmpdir, "INBOX.md")
+        check("split: no state files -> nothing held",
+              split_screened(["a", "b"]) == (["a", "b"], []))
+        with open(META_FILE, "w") as f:
+            json.dump({"a": {"confidence": "high", "screen_flagged": True},
+                       "b": {"confidence": "high", "screen_flagged": False},
+                       "c": {"confidence": "med"}}, f)
+        check("split: meta flag held, order kept",
+              split_screened(["a", "b", "c"]) == (["b", "c"], ["a"]))
+        with open(INBOX_FILE, "w") as f:
+            f.write("- **c** (entity, high, new) ⚠ SCREENED — reveals internal file path\n"
+                    "- **b** (entity, high, new) — clean line\n")
+        check("split: inbox ⚠ SCREENED fallback held",
+              split_screened(["a", "b", "c"]) == (["b"], ["a", "c"]))
+        with open(META_FILE, "w") as f:
+            f.write("{not json")
+        check("split: corrupt meta -> inbox only",
+              split_screened(["a", "b", "c"]) == (["a", "b"], ["c"]))
+    finally:
+        META_FILE, INBOX_FILE = _meta_save, _inbox_save
+
+    # --- taste hold-back (approve-all holds taste-flagged proposals too) ---
+    global PROPOSALS_DIR
+    _meta_save, _inbox_save, _prop_save = META_FILE, INBOX_FILE, PROPOSALS_DIR
+    try:
+        META_FILE = os.path.join(tmpdir, "tmeta.json")
+        INBOX_FILE = os.path.join(tmpdir, "TINBOX.md")
+        PROPOSALS_DIR = os.path.join(tmpdir, "proposals")
+        os.makedirs(PROPOSALS_DIR, exist_ok=True)
+        order = ["clean-card", "wallet-card", "screened-card", "both-card"]
+        for slug in order:
+            with open(os.path.join(PROPOSALS_DIR, slug + ".md"), "w") as f:
+                f.write("---\ntype: concept\nsource: sov\n---\nbody\n")
+        with open(META_FILE, "w") as f:
+            json.dump({
+                "clean-card": {"confidence": "high", "screen_flagged": False,
+                               "taste_flagged": False, "taste_reason": ""},
+                "wallet-card": {"confidence": "high", "screen_flagged": False,
+                                "taste_flagged": True,
+                                "taste_reason": "taste veto: evm wallet address"},
+                "screened-card": {"confidence": "high", "screen_flagged": True,
+                                  "taste_flagged": False, "taste_reason": ""},
+                "both-card": {"confidence": "med", "screen_flagged": True,
+                              "taste_flagged": True,
+                              "taste_reason": "taste veto: private money figure"},
+            }, f)
+        with open(INBOX_FILE, "w") as f:
+            f.write("- **clean-card** (concept, high, new) — nothing tripped\n")
+        flags = hold_flags()
+        check("taste: unflagged stays in the bulk path",
+              split_screened(["clean-card"], flags) == (["clean-card"], []))
+        check("taste: taste-flagged excluded from bulk",
+              split_screened(["clean-card", "wallet-card"], flags)
+              == (["clean-card"], ["wallet-card"]))
+        check("taste: screen-flagged excluded from bulk",
+              split_screened(["clean-card", "screened-card"], flags)
+              == (["clean-card"], ["screened-card"]))
+        check("taste: both kinds excluded together, order kept",
+              split_screened(order, flags)
+              == (["clean-card"], ["wallet-card", "screened-card", "both-card"]))
+        check("taste: reason names the rule that fired",
+              flags.get("wallet-card") == "taste: evm wallet address")
+        check("taste: screen reason label",
+              flags.get("screened-card") == SCREEN_LABEL)
+        check("taste: a doubly-flagged card names both reasons",
+              flags.get("both-card")
+              == "injection screen + taste: private money figure")
+        check("taste: clean card carries no flag", "clean-card" not in flags)
+        check(
+            "taste: held summary counts each reason in one line",
+            held_summary(["screened-card", "wallet-card"], flags)
+            == "held 2 (1 injection screen, 1 taste: evm wallet address) — "
+               "review with the Review cards button or approve by slug",
+        )
+        check("taste: held lines carry the releasing verdict",
+              held_lines(["wallet-card"], flags)[1]
+              == "HELD wallet-card: taste: evm wallet address — read it, "
+                 "then: approve wallet-card")
+        check("taste: nothing held -> no lines", held_lines([], flags) == [])
+        # per-card render (Review cards): the flag is visible BEFORE the button
+        check("taste: card render leads with the taste flag",
+              card_text("wallet-card", flags).startswith(
+                  "⚠ FLAGGED (taste: evm wallet address)\n<b>wallet-card</b>"))
+        check("taste: card render leads with the screen flag",
+              card_text("screened-card", flags).startswith(
+                  "⚠ FLAGGED (injection screen)\n<b>screened-card</b>"))
+        check("taste: unflagged card render has no flag line",
+              "FLAGGED" not in card_text("clean-card", flags)
+              and card_text("clean-card", flags).startswith(
+                  "<b>clean-card</b> (concept, high)"))
+        # holding back is about the BULK path only
+        v_one, _ = parse_verdicts("approve wallet-card")
+        check(
+            "taste: single-slug approve of a flagged item still permitted",
+            v_one == [("approve", "wallet-card", "")]
+            and resolve_slug("wallet-card", {}, {"wallet-card"}) == "wallet-card"
+            and "wallet-card" in flags,
+        )
+        # digest fallback for proposals judged before the fields were persisted
+        with open(META_FILE, "w") as f:
+            f.write("{not json")
+        with open(INBOX_FILE, "w") as f:
+            f.write("- **legacy-taste** (concept, high, new) ⚠ TASTE — old row\n"
+                    "- **legacy-both** (concept, high, new) ⚠ SCREENED ⚠ TASTE — old\n"
+                    "- **legacy-clean** (concept, high, new) — clean line\n")
+        legacy = hold_flags()
+        check("taste: inbox ⚠ TASTE fallback held",
+              legacy.get("legacy-taste") == "taste veto")
+        check("taste: inbox both marks -> both reasons",
+              legacy.get("legacy-both") == "injection screen + taste veto")
+        check("taste: inbox clean line not held", "legacy-clean" not in legacy)
+    finally:
+        META_FILE, INBOX_FILE = _meta_save, _inbox_save
+        PROPOSALS_DIR = _prop_save
+
+    # --- knowledge_paths (revert resolves a slug to exactly one card) ---
+    global VAULT, KNOWLEDGE_DIR
+    _vault_save, _kd_save = VAULT, KNOWLEDGE_DIR
+    try:
+        VAULT = os.path.join(tmpdir, "vault")
+        KNOWLEDGE_DIR = os.path.join(VAULT, "knowledge")
+        for sub in KNOWLEDGE_SUBS:
+            os.makedirs(os.path.join(KNOWLEDGE_DIR, sub), exist_ok=True)
+        check("knowledge_paths: missing slug -> []", knowledge_paths("nope") == [])
+        with open(os.path.join(KNOWLEDGE_DIR, "concepts", "one-card.md"), "w") as f:
+            f.write("---\ntype: concept\nsource: sov\n---\n")
+        check(
+            "knowledge_paths: single match",
+            knowledge_paths("one-card") == ["knowledge/concepts/one-card.md"],
+        )
+        with open(os.path.join(KNOWLEDGE_DIR, "entities", "one-card.md"), "w") as f:
+            f.write("---\ntype: entity\nsource: sov\n---\n")
+        check("knowledge_paths: ambiguous slug -> 2", len(knowledge_paths("one-card")) == 2)
+    finally:
+        VAULT, KNOWLEDGE_DIR = _vault_save, _kd_save
+
+    # --- Sovereign transition (2026-09-11): no Telegram route runs a gate ---
+    g = globals()
+    saved = {k: g[k] for k in ("run_gate", "run_revert", "send_reply",
+                                "edit_or_reply", "answer_callback",
+                                "pending_slugs", "hold_flags", "cbmap_load")}
+    gate_calls, revert_calls, out = [], [], []
+    g["run_gate"] = lambda verb, slug, reason: gate_calls.append((verb, slug)) or "landed: x"
+    g["run_revert"] = lambda slug, reason: revert_calls.append(slug) or "retired: x"
+    g["send_reply"] = lambda t, c, text, reply_markup=None, parse_mode=None: out.append((text, reply_markup))
+    g["edit_or_reply"] = lambda t, c, m, text: out.append((text, None))
+    g["answer_callback"] = lambda t, i, text=None: None
+    g["pending_slugs"] = lambda: ["p-one", "p-two"]
+    g["hold_flags"] = lambda: {}
+    g["cbmap_load"] = lambda path=None: {"c1": "p-one"}
+    owner = "394395765"
+    try:
+        def tmsg(text):
+            return {"message": {"chat": {"id": 394395765}, "from": {"id": 394395765}, "text": text}}
+        def tcb(data):
+            return {"callback_query": {"id": "1", "from": {"id": 394395765}, "data": data,
+                                       "message": {"message_id": 5, "date": int(time.time())}}}
+        for text in ("approve p-one", "reject p-one too thin", "approve p-one\nreject p-two",
+                     "approved", "approve all", "approve as recommended", "ok"):
+            out.clear(); used = handle_update(tmsg(text), "tok", owner, MAX_VERDICTS)
+            check("text %r runs no gate" % text, used == 0 and not gate_calls)
+            check("text %r points at Sovereign" % text, out and "Sovereign" in out[-1][0])
+        for data in ("aap", "aapc", "a:p-one", "r:p-one", "a:c1", "r:c1"):
+            out.clear(); used = handle_update(tcb(data), "tok", owner, MAX_VERDICTS)
+            check("callback %r runs no gate" % data, used == 0 and not gate_calls)
+            check("callback %r points at Sovereign" % data, out and "Sovereign" in out[-1][0])
+        out.clear(); handle_update(tcb("rev"), "tok", owner, MAX_VERDICTS)
+        check("callback rev sends no buttons", out and all(m is None for _, m in out))
+        check("callback rev points at Sovereign", out and "Sovereign" in out[-1][0])
+        out.clear(); handle_update(tcb("aapx"), "tok", owner, MAX_VERDICTS)
+        check("callback aapx still cancels", out and out[-1][0] == "Cancelled.")
+        out.clear(); used = handle_update(tmsg("revert p-one my reason"), "tok", owner, MAX_VERDICTS)
+        check("revert still runs the audited retire path", used == 1 and revert_calls == ["p-one"] and not gate_calls)
+        out.clear(); used = handle_update({"message": {"chat": {"id": 1}, "from": {"id": 1}, "text": "approve p-one"}}, "tok", owner, MAX_VERDICTS)
+        check("non-owner text still silent", used == 0 and not out and not gate_calls)
+    finally:
+        g.update(saved)
+
+    print("%d checks, %d failures" % (total[0], len(failures)))
+    return 1 if failures else 0
+
+
+def main():
+    if "--self-test" in sys.argv[1:]:
+        return self_test()
+    try:
+        return poll()
+    except Exception:
+        tb = traceback.format_exc().strip().splitlines()[-1]
+        log("RUN ERROR (offset preserved): %s" % tb)
+        print("run error: %s" % tb, file=sys.stderr)
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

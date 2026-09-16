@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Brain exchange sync: hub <-> node-12. Scheduled via launchd (every 30 min).
+#
+# OUT: push main + tags (vault + template repos) to the node-12 bare repos —
+#      the standing off-machine mirror (architecture review finding #1).
+# IN:  fetch producer lane/* branches from node-12; FENCE each one (its diff
+#      must stay inside its own raw/workspaces/<slug>/ and may never touch the
+#      owner-written LANE.md), then merge into main so the curator sees the
+#      captures. A lane that escapes its fence is REFUSED and logged loudly,
+#      never merged.
+#
+# Never `push --mirror` here: producers' not-yet-fetched lane refs on node-12
+# must survive every sync.
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOV_TEMPLATE="${SOV_TEMPLATE:-$(cd "$HERE/../.." && pwd)}"; export SOV_TEMPLATE
+STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
+# Settings come from the instance file. The runner exports them; a hand run asks the front door.
+[ -n "${SOVS_VAULT:-}" ] || eval "$(/bin/bash "$SOV_TEMPLATE/bin/sov" hub env)"
+V="$SOVS_VAULT"
+X="$SOV_HUB_EXCHANGE"
+LOG="$HOME/Library/Logs/brain-exchange-sync.log"
+say() { printf '%s  %s\n' "$(date -Iseconds)" "$*" >> "$LOG"; }
+
+cd "$V" || { say "FATAL: vault missing"; exit 1; }
+
+# ---- OUT: the mirror ----
+if git push -q "$X" main --tags 2>>"$LOG"; then
+  say "out: vault -> $X ok"
+else
+  say "OUT FAIL: vault -> $X (exchange down or key problem)"
+fi
+# Canonical remote too, unconditionally: the gate scripts push origin on every
+# verdict, but a manual commit (or a quiet gate) would otherwise leave Gitea
+# behind while node-12 stays current.
+if git push -q origin main --tags 2>>"$LOG"; then
+  say "out: vault -> gitea ok"
+else
+  say "OUT FAIL: vault -> gitea (canonical remote not advancing)"
+fi
+if git -C "$SOV_TEMPLATE" push -q "$X" main 2>>"$LOG"; then
+  say "out: template -> $X ok"
+else
+  say "OUT FAIL: template -> $X"
+fi
+
+# ---- IN: producer lanes ----
+git fetch -q "$X" "+refs/heads/lane/*:refs/remotes/$X/lane/*" "+refs/heartbeats/*:refs/heartbeats/*" 2>>"$LOG" || say "IN FAIL: lane fetch"
+for ref in $(git for-each-ref --format='%(refname:short)' "refs/remotes/$X/lane/"); do
+  slug="${ref##*/}"
+  lane_dir="raw/workspaces/$slug/"
+  # Owner-declared intake lanes are imported by the separate validated intake job.
+  if grep -Eq '^write:[[:space:]]*intake[[:space:]]*$' "${lane_dir}LANE.md" 2>/dev/null; then
+    continue
+  fi
+  [ -z "$(git rev-list -1 "main..$ref" 2>/dev/null)" ] && continue   # nothing new
+  # Two-dot diff against an explicit merge base. The three-dot form warns on stderr
+  # whenever a lane has more than one merge base with main, and a job's stderr is read
+  # as trouble by the console: 128 lines of a benign warning is not a job in trouble.
+  base="$(git merge-base main "$ref" 2>/dev/null || echo main)"
+  changed="$(git diff --name-only "$base" "$ref")"
+  outside="$(printf '%s\n' "$changed" | grep -v "^$lane_dir" || true)"
+  if [ -n "$outside" ]; then
+    say "REFUSED lane/$slug: escapes its lane: $(printf '%s' "$outside" | head -3 | tr '\n' ' ')"
+    continue
+  fi
+  if printf '%s\n' "$changed" | grep -qx "${lane_dir}LANE.md"; then
+    say "REFUSED lane/$slug: tried to rewrite its own LANE.md (the contract is owner-written)"
+    continue
+  fi
+  if git merge -q --no-edit -m "producer: merge lane/$slug" "$ref" 2>>"$LOG"; then
+    say "in: merged lane/$slug"
+    git push -q origin main 2>>"$LOG" || say "PUSH FAIL: gitea after lane merge — vault not backed up to canonical remote"
+    git push -q "$X" main 2>>"$LOG" || true
+  else
+    git merge --abort 2>/dev/null || true
+    say "MERGE FAIL lane/$slug (aborted, lane left unmerged)"
+  fi
+done

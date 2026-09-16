@@ -4,13 +4,13 @@ Date: 2026-09-15. Status: proposed, awaiting the owner's review. Implements move
 
 ## The problem
 
-The hub is the one piece of Sovereign nobody can rebuild. On the hub it is twenty launchd jobs, twelve of them wrapped by a hand-copied fail-loud script, running about fifteen scripts that live only in `~/brain-bin` and `~/.hermes/scripts`, beside thirty `.pre-*` copies. Instance settings (vault path, model tag, endpoint, excludes, pending limits, remotes) are `export` lines inside those scripts. Secrets and SSH keys have no durable copy. The template's managed-hub code (`lib/sovereign_hub`) already renders launchd jobs from a dictionary, but only for the app-installed hub, with three jobs and a bundled runtime, and nothing on the hub uses it. Template fixes therefore never reach what actually runs, and a dead hub means rebuilding by hand from memory.
+The hub is the one piece of Sovereign nobody can rebuild. On the hub machine it is twenty launchd jobs, twelve of them wrapped by a hand-copied fail-loud script, running about fifteen scripts that live only in `~/brain-bin` and `~/.hermes/scripts`, beside thirty `.pre-*` copies. Instance settings (vault path, model tag, endpoint, excludes, pending limits, remotes) are `export` lines inside those scripts. Secrets and SSH keys have no durable copy. The template's managed-hub code (`lib/sovereign_hub`) already renders launchd jobs from a dictionary, but only for the app-installed hub, with three jobs and a bundled runtime, and nothing on the hub machine uses it. Template fixes therefore never reach what actually runs, and a dead hub means rebuilding by hand from memory.
 
 ## What this builds
 
-One manifest of hub jobs in the template, one renderer that turns it into scheduler items, one instance file that holds everything that is Owner's rather than Sovereign's, one fail-loud runner that replaces the wrapper, and one nightly job that packages what a rebuild needs and pushes it off-site. The hub is cut over to run from the manifest, and the runbook is followed once on a throwaway machine.
+One manifest of hub jobs in the template, one renderer that turns it into scheduler items, one instance file that holds everything that is the owner's rather than Sovereign's, one fail-loud runner that replaces the wrapper, and one nightly job that packages what a rebuild needs and pushes it off-site. The hub machine is cut over to run from the manifest, and the runbook is followed once on a throwaway machine.
 
-Not in scope: generalizing the Hermes-stack monitors (daily health check, Proxmox and Pi monitors, Hermes self-health); rewriting any job's logic; the app's managed-hub install flow, which keeps working and gains the same renderer underneath.
+Not in scope: generalizing the agent-stack monitors (daily health check, Proxmox and Pi monitors, agent self-health); rewriting any job's logic; the app's managed-hub install flow, which keeps working and gains the same renderer underneath.
 
 ## Components
 
@@ -35,7 +35,7 @@ The existing `core.JOBS` (nightly, audit, snapshot for the app-installed hub) be
 
 ### 2. The instance file: `~/.local/state/sovereign/hub.json`
 
-Everything Owner-specific, nothing else. Written once by `sov hub init` from the values found on the machine (the current scripts' `export` lines, read by the migration step below), edited by hand after. Fields: `vault`, `lane`, `model`, `audit_model`, `endpoint`, `exclude` (list), `pending_limit`, `burndown` (since_days, max, pending_limit, keep_floor_pct), `remotes` (push targets, in order), `snapshot` (folder, keep), `notify` (telegram env file per channel: archive, alerts), `kit` (include paths, key file, targets), `offsite` (bare-repo targets for the vault and the template), `instance_jobs` (extra jobs with absolute programs and their own schedules: today the daily health check, Proxmox and Pi monitors, Hermes self-health, the node-17 macro sync, the Notion pass). The file is never copied into the template and is the first thing the kit packages.
+Everything owner-specific, nothing else. Written once by `sov hub init` from the values found on the machine (the current scripts' `export` lines, read by the migration step below), edited by hand after. Fields: `vault`, `lane`, `model`, `audit_model`, `endpoint`, `exclude` (list), `pending_limit`, `burndown` (since_days, max, pending_limit, keep_floor_pct), `remotes` (push targets, in order), `snapshot` (folder, keep), `notify` (telegram env file per channel: archive, alerts), `kit` (include paths, key file, targets), `offsite` (bare-repo targets for the vault and the template), `instance_jobs` (extra jobs with absolute programs and their own schedules: today the daily health check, Proxmox and Pi monitors, agent self-health, the a producer sync, the Notion pass). The file is never copied into the template and is the first thing the kit packages.
 
 `sov hub env` prints the instance file as shell exports (`SOVS_VAULT`, `CURATOR_LANE`, `CURATOR_MODEL`, `CURATOR_ENDPOINT`, `CURATOR_EXCLUDE`, ...), which is how the moved scripts read their settings without a rewrite.
 
@@ -49,15 +49,15 @@ The fail-loud wrapper in Python, semantics copied exactly from `cron-run-hub.sh`
 
 ### 5. The scripts move, unchanged in logic
 
-The hub scripts that carry no Owner specifics move into `bin/hub/` as they are: the nightly digest composer, burndown, weekly audit, weekly landed review, verdict poll, autocommit, secret scan, snapshot, exchange sync. Their `export` lines are replaced by `eval "$(sov hub env)"`, and their hardcoded remotes and folders become reads of the same fields. `sov-fleet-watch` and the two notify scripts are already identical to the template's copies and simply stop being copied. The Hermes-stack monitors stay where they are and are declared as instance jobs. `.pre-*` files are not carried anywhere; git is the undo.
+The hub scripts that carry no owner specifics move into `bin/hub/` as they are: the nightly digest composer, burndown, weekly audit, weekly landed review, verdict poll, autocommit, secret scan, snapshot, exchange sync. Their `export` lines are replaced by `eval "$(sov hub env)"`, and their hardcoded remotes and folders become reads of the same fields. `sov-fleet-watch` and the two notify scripts are already identical to the template's copies and simply stop being copied. The agent-stack monitors stay where they are and are declared as instance jobs. `.pre-*` files are not carried anywhere; git is the undo.
 
 ### 6. The kit: `sov hub kit` and the nightly `kit` job
 
-The rebuild tarball. Inventory from the instance file: `hub.json` itself, the pointer files (`~/.brain-*`), the notify env files, the recovery key's *location* (never the key), and every path listed under `kit.include` (Owner's list will name `~/.hermes/.env` and the SSH private keys the hub uses). Encrypted with the existing capsule machinery in `recovery.py` (AES-256-GCM through `hub-crypto`, which the hub has from the installed app), written to `snapshot.folder/hub-kit/<date>.capsule`, then copied by `scp` to every `kit.targets` entry (node-12 and the Amsterdam droplet), keeping the last seven. The same job then does the off-site push from move 2: `git push --mirror` of the vault and the template to bare repos on the droplet, and writes a receipt with each remote's head and age. The daily health check gains a remote-age check on those receipts (red past 36 hours). The recovery key never leaves owner-controlled storage; the proposed default is the client at `~/.config/sovereign/hub-recovery.key` plus one offline copy, and the owner decides.
+The rebuild tarball. Inventory from the instance file: `hub.json` itself, the pointer files (`~/.brain-*`), the notify env files, the recovery key's *location* (never the key), and every path listed under `kit.include` (the owner's list will name an agent's env file and the SSH private keys the hub uses). Encrypted with the existing capsule machinery in `recovery.py` (AES-256-GCM through `hub-crypto`, which the hub machine has from the installed app), written to `snapshot.folder/hub-kit/<date>.capsule`, then copied by `scp` to every `kit.targets` entry (the exchange and the off-site droplet), keeping the last seven. The same job then does the off-site push from move 2: `git push --mirror` of the vault and the template to bare repos on the droplet, and writes a receipt with each remote's head and age. The daily health check gains a remote-age check on those receipts (red past 36 hours). The recovery key never leaves owner-controlled storage; the proposed default is the working laptop at `~/.config/sovereign/hub-recovery.key` plus one offline copy, and the owner decides.
 
 ### 7. The runbook and the drill: `docs/hub-rebuild.md`
 
-One screen: clone the template, restore the kit with the key, clone the vault from any remote, `sov hub init --from-kit`, `sov hub install --apply`, `sov hub status`. Followed once on a throwaway machine (a Parallels VM or a disposable user on the client) and timed; that run is the R rehearsal's acceptance.
+One screen: clone the template, restore the kit with the key, clone the vault from any remote, `sov hub init --from-kit`, `sov hub install --apply`, `sov hub status`. Followed once on a throwaway machine (a Parallels VM or a disposable user on the working laptop) and timed; that run is the R rehearsal's acceptance.
 
 ### 8. Part 1 drift: `sov check --law`
 
@@ -65,7 +65,7 @@ One screen: clone the template, restore the kit with the key, clone the vault fr
 
 ## Data flow
 
-Manifest and instance file → renderer → scheduler items → runner → receipts → status, brain-status, health check. Kit job → capsule → off-site targets → receipts → health check. Nothing in the template reads Owner's paths; nothing in `hub.json` is required to be general.
+Manifest and instance file → renderer → scheduler items → runner → receipts → status, brain-status, health check. Kit job → capsule → off-site targets → receipts → health check. Nothing in the template reads the owner's paths; nothing in `hub.json` is required to be general.
 
 ## Error handling
 
@@ -75,7 +75,7 @@ The runner never retries and never repairs: it records and alerts, as the wrappe
 
 Same fixture style as `tests/test_hub.py` and `tests/test_connectors_install.py`: a throwaway HOME, a stub `launchctl` on PATH, a real vault skeleton. Tests cover: manifest rendering (every job renders, labels and schedules match, program is never `/usr/bin/python3`); runner receipts and alert behaviour with a stub notify command (exit 0 with and without deliver, exit 1 alerts with the tail); install dry-run is zero-write and its plan names create/replace/unchanged/retire correctly; apply writes only changed plists and rolls back on a failed bootstrap; instance jobs render through the runner; `sov hub env` round-trips the instance file; the kit inventory includes exactly the declared paths and refuses the key file; the kit capsule restores byte for byte; the Part 1 check passes on the template and fails on a mutated copy. The full suite runs on system Python and the 3.12 venv before the packet, as today.
 
-## Cutover on the hub, owner-approved moment
+## Cutover on the hub machine, owner-approved moment
 
 1. `sov hub init` writes `hub.json` from the current scripts' values; Owner reviews it.
 2. `sov hub install` dry run: the plan shows ten new labels and twelve retirable old ones.

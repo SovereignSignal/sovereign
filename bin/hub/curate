@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Nightly Archivist run: curate new raw on owned inference, deliver the digest.
+set -euo pipefail
+export PATH="/opt/homebrew/bin:$PATH"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOV_TEMPLATE="${SOV_TEMPLATE:-$(cd "$HERE/../.." && pwd)}"; export SOV_TEMPLATE
+STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
+# Settings come from the instance file. The runner exports them; a hand run asks the front door.
+[ -n "${SOVS_VAULT:-}" ] || eval "$(/bin/bash "$SOV_TEMPLATE/bin/sov" hub env)"
+# Notion: opened selectively 2026-08-13. The lane holds ~17k exported files; the
+# bulk below stays pruned and the rest (the owner's top-level pages,
+# ENS MetaGov Term 7, Cardano Funding Assessment ~ 457 files) is now curated.
+
+pending_limit="${ARCHIVIST_PENDING_LIMIT:-50}"
+if ! [[ "$pending_limit" =~ ^[0-9]+$ ]] || (( pending_limit < 1 )); then
+  printf 'archivist-nightly: invalid ARCHIVIST_PENDING_LIMIT=%q\n' "$pending_limit" >&2
+  exit 64
+fi
+
+shopt -s nullglob
+pending_cards=("$SOVS_VAULT/raw/workspaces/$CURATOR_LANE/proposals"/*.md)
+pending_count=${#pending_cards[@]}
+if (( pending_count >= pending_limit )); then
+  printf 'curator-run: queue circuit breaker open: %d pending >= limit %d; no new sources judged\n' \
+    "$pending_count" "$pending_limit"
+  exit 0
+fi
+
+"$HERE/../curator-run" --max 50

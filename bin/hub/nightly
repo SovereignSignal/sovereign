@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# archivist-nightly-cron.sh — launchd replacement for ~/.hermes/scripts/archivist-cron.sh
+# (cutover 2026-08-01). Same sequence and env as the old wrapper, WITHOUT the
+# ">/dev/null 2>&1" output swallowing and WITHOUT Hermes delivery:
+#   1) ~/brain-bin/archivist-nightly.sh  (curator-run behind the queue circuit breaker)
+#   2) ~/.hermes/scripts/archivist-notion-digest.py  (Notion review page)
+#   3) compose the Telegram digest HERE and send it via tg-send.sh
+# Runs under cron-run-hub.sh (stamps + failure alerts). Cloud proposal review
+# stays disabled (ARCHIVIST_GLM_REVIEW_DISABLE=1), as in the old wrapper.
+#
+# Buttons build 2026-08-04: the Telegram digest is now compact HTML with an
+# no decision buttons since the 2026-09-11 Sovereign transition (only the
+# review page link; decisions happen in Sovereign → Review),
+# handled by tg-verdict-poll.py. Per-card revert commands and raw markdown no
+# longer go to the phone; revert lines stay in INBOX.md and the Notion review
+# page (curator-run's writes are unchanged).
+#   Dry run: archivist-nightly-cron.sh --compose-dry-run
+#   composes from the LAST run's captured output ($SOV_STATE_DIR/hub/
+#   archivist-nightly.last-output) + the lane's current INBOX.md/proposals,
+#   prints the message and reply_markup, sends NOTHING, runs no curation.
+set -uo pipefail
+export PATH="/opt/homebrew/bin:$PATH"
+export ARCHIVIST_GLM_REVIEW_DISABLE=1
+# prompt-injection screen over promoted sources (curator-run, shipped 2026-08-05):
+# a flag withholds the act-and-report gears and queues the item for the owner.
+# It never drops material; an unreachable screener demotes the whole run to
+# ask-first. Rollback: remove this line (or set off) + the .pre-screenon backup.
+export CURATOR_SCREEN=on
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOV_TEMPLATE="${SOV_TEMPLATE:-$(cd "$HERE/../.." && pwd)}"; export SOV_TEMPLATE
+STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
+# Settings come from the instance file. The runner exports them; a hand run asks the front door.
+[ -n "${SOVS_VAULT:-}" ] || eval "$(/bin/bash "$SOV_TEMPLATE/bin/sov" hub env)"
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+TG_SEND="$HERE/tg-send"
+LANE="$SOVS_VAULT/raw/workspaces/$CURATOR_LANE"
+
+# --- HTML escaping for dynamic content (Telegram parse_mode=HTML) ---
+html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"; }
+
+# --- compose the compact HTML digest + inline keyboard ---
+# $1 = file holding the combined run output (curator-run summary lines +
+#      archivist-notion-digest.py stdout). Sets globals MSG and KB.
+MSG=""
+KB=""
+compose_digest() {
+  local combined="$1"
+  local judged_n new_n autoprom_n autorej_n pending_n notion_url breaker_line
+  judged_n="$(sed -n 's/^curator-run: judged \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
+  [[ -n "$judged_n" ]] || judged_n="$(sed -n 's/^JUDGED_COUNT: //p' "$combined" 2>/dev/null | head -1)"
+  judged_n="${judged_n:-0}"
+  new_n="$(sed -n 's/^NEW_COUNT: //p' "$combined" 2>/dev/null | head -1)"
+  [[ -n "$new_n" ]] || new_n="$(sed -n 's/^curator-run: judged [0-9][0-9]* new item(s), proposed \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
+  new_n="${new_n:-0}"
+  autoprom_n="$(sed -n 's/^curator-run: auto-promoted \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
+  autoprom_n="${autoprom_n:-0}"
+  autorej_n="$(sed -n 's/^curator-run: auto-rejected \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
+  autorej_n="${autorej_n:-0}"
+  notion_url="$(sed -n 's/^NOTION_URL: //p' "$combined" 2>/dev/null | head -1)"
+  breaker_line="$(grep -m1 'queue circuit breaker open' "$combined" 2>/dev/null || true)"
+
+  # Pending = the proposals actually on disk (the authoritative queue; INBOX
+  # only lists this run's cards, older pending ones live on in proposals/).
+  pending_n="$(ls "$LANE/proposals"/*.md 2>/dev/null | wc -l | tr -d ' ')"
+  pending_n="${pending_n:-0}"
+
+  # Header: one line of counts.
+  local msg
+  msg="<b>${ARCHIVIST_DIGEST_TITLE:-Archivist nightly}</b> $(date '+%Y-%m-%d %H:%M')"
+  msg+=$'\n'"judged $judged_n · new $new_n · auto-applied $autoprom_n · auto-rejected $autorej_n · pending $pending_n"
+  if [[ -n "$breaker_line" ]]; then
+    msg+=$'\n'"$(html_escape "$breaker_line")"
+  fi
+
+  # Auto-applied: card names only, one per line with type tag. NO revert
+  # commands here; they stay in INBOX.md and the Notion review page.
+  local autoprom_failed=""
+  grep -m1 '^curator-run: auto-promoted .*FAILURE' "$combined" >/dev/null 2>&1 && autoprom_failed=1
+  if (( autoprom_n > 0 )) || [[ -n "$autoprom_failed" ]]; then
+    local auto_lines=""
+    # the /^## / reset is load-bearing: without it this swallows the `- **slug**`
+    # lines of every section BELOW Auto-applied (Screened, Taste-flagged) and
+    # reports flagged cards to the phone as though a gear had landed them.
+    auto_lines="$(awk '/^## Auto-applied/{f=1;next} /^## /{f=0} f && /^- \*\*/' "$LANE/INBOX.md" 2>/dev/null || true)"
+    if [[ -n "$auto_lines" ]]; then
+      msg+=$'\n\n'"<b>Auto-applied ($autoprom_n)</b>"
+      local line slug meta typ
+      while IFS= read -r line; do
+        slug="${line#- \*\*}"; slug="${slug%%\*\**}"
+        meta="${line#*\(}"; meta="${meta%%\)*}"; typ="${meta%%,*}"
+        msg+=$'\n'"• $(html_escape "$slug") [$(html_escape "$typ")]"
+      done <<<"$auto_lines"
+      msg+=$'\n'"revert lines: INBOX + review page"
+    fi
+  fi
+
+  # Redactions (act-and-report, 2026-08-20): the absolute taste classes are
+  # stripped from a card in place and the card keeps its gear, so there is
+  # nothing here to approve — it is a report. Classes and counts only; the
+  # matched text is never echoed to the phone any more than to the logs.
+  local red_lines cred_lines
+  red_lines="$(awk '/^## Redacted /{f=1;next} /^## /{f=0} f && /^- `/' "$LANE/INBOX.md" 2>/dev/null || true)"
+  if [[ -n "$red_lines" ]]; then
+    msg+=$'\n\n'"<b>Redacted</b>"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      msg+=$'\n'"• $(html_escape "${line#- }")"
+    done <<<"$red_lines"
+  fi
+
+  # The credential exception. The card is fine; the SOURCE still holds a live
+  # key and only Owner can rotate it, so this one goes to the phone by name.
+  cred_lines="$(awk '/^## ⚠ Live credential in a raw source/{f=1;next} /^## /{f=0} f && /^- `/' "$LANE/INBOX.md" 2>/dev/null || true)"
+  if [[ -n "$cred_lines" ]]; then
+    msg+=$'\n\n'"<b>⚠ LIVE CREDENTIAL IN A RAW SOURCE — rotate it</b>"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      msg+=$'\n'"• $(html_escape "${line#- }")"
+    done <<<"$cred_lines"
+  fi
+
+  # Pending: slug + one-line reason, oldest first, max 15 then "+N more".
+  if (( pending_n > 0 )); then
+    msg+=$'\n\n'"<b>Pending ($pending_n)</b>"
+    local shown=0 f slug inbox_line reason
+    while IFS= read -r f; do
+      [[ -n "$f" ]] || continue
+      if (( shown >= 15 )); then break; fi
+      slug="$(basename "$f" .md)"
+      inbox_line="$(grep -m1 "^- \*\*$slug\*\* " "$LANE/INBOX.md" 2>/dev/null || true)"
+      reason=""
+      if [[ -n "$inbox_line" ]]; then
+        reason="${inbox_line#*— }"
+        [[ "$reason" == "$inbox_line" ]] && reason=""
+      fi
+      [[ -n "$reason" ]] || reason="(pending from an earlier run)"
+      msg+=$'\n'"• $(html_escape "$slug"): $(html_escape "$reason")"
+      shown=$(( shown + 1 ))
+    done < <(ls -tr "$LANE/proposals"/*.md 2>/dev/null)
+    if (( pending_n > shown )); then
+      msg+=$'\n'"+$(( pending_n - shown )) more"
+    fi
+  fi
+
+  # Sovereign transition (2026-09-11): the digest notifies, it no longer
+  # decides. One line says where decisions happen; no decision buttons.
+  if (( pending_n > 0 )); then
+    if (( pending_n == 1 )); then
+      msg+=$'\n\n'"1 proposal needs review. Open Sovereign → Review to compare and decide."
+    else
+      msg+=$'\n\n'"$pending_n proposals need review. Open Sovereign → Review to compare and decide."
+    fi
+  fi
+
+  # Links at the bottom.
+  if [[ -n "$notion_url" ]]; then
+    msg+=$'\n\n'"<a href=\"$notion_url\">Notion review page</a>"
+  fi
+
+  if (( judged_n == 0 )) && [[ -n "$breaker_line" ]]; then
+    msg="BREAKER OPEN:
+$msg"
+  fi
+  MSG="$msg"
+
+  # Keyboard: only the review page link, when there is one. An empty KB
+  # makes tg-send.sh omit reply_markup entirely.
+  if [[ -n "$notion_url" ]]; then
+    KB='{"inline_keyboard":[[{"text":"Open review page","url":"'"$notion_url"'"}]]}'
+  else
+    KB=""
+  fi
+}
+
+# --- dry run: compose from the last run's captured output, print, send nothing ---
+if [[ "${1:-}" == "--compose-dry-run" ]]; then
+  LAST_OUT="$STATE/hub/nightly.last-output"
+  [[ -r "$LAST_OUT" ]] || { echo "no last-output at $LAST_OUT" >&2; exit 1; }
+  compose_digest "$LAST_OUT"
+  echo "== digest message (dry run, NOT sent) =="
+  printf '%s\n' "$MSG"
+  echo "== reply_markup (dry run, NOT sent) =="
+  printf '%s\n' "$KB"
+  exit 0
+fi
+
+# --- 1) nightly curation (breaker-guarded), output kept, fail-loud ---
+nightly_out=""
+nightly_rc=0
+if [[ "${ARCHIVIST_SKIP_NIGHTLY:-0}" != "1" ]]; then
+  # ARCHIVIST_RUNNER (2026-09-04): the burn-down schedule runs a different judge
+  # command through this same digest, so both land in one channel, same buttons.
+  RUNNER="${ARCHIVIST_RUNNER:-$HERE/curate}"
+  nightly_out="$("$RUNNER" 2>&1)" || nightly_rc=$?
+  printf '== archivist-nightly.sh (exit %d) ==\n%s\n' "$nightly_rc" "$nightly_out"
+  if (( nightly_rc != 0 )); then
+    echo "archivist-nightly-cron: archivist-nightly.sh failed (exit $nightly_rc); aborting before digest" >&2
+    exit "$nightly_rc"
+  fi
+fi
+
+# --- 2) Notion review page (stdout captured for parsing; stderr flows through) ---
+# ARCHIVIST_DIGEST_ONLY_IF_NEW=1 (2026-09-04): a burn-down pass that proposed nothing
+# sends no digest and creates no review page. The nightly keeps its unconditional one.
+if [[ "${ARCHIVIST_DIGEST_ONLY_IF_NEW:-0}" == "1" ]] \
+   && ! grep -qE 'proposed [1-9]|^NEW_COUNT: [1-9]|auto-promoted [1-9]|STOP kept' <<<"$nightly_out"; then
+  echo "archivist-nightly-cron: nothing new this run; digest skipped (ARCHIVIST_DIGEST_ONLY_IF_NEW=1)"
+  exit 0
+fi
+digest_out=""
+digest_rc=0
+# The review-page digest is an instance hook (hub.json digest_hook), optional.
+if [[ -n "${SOV_HUB_DIGEST:-}" && -x "${SOV_HUB_DIGEST:-}" ]]; then
+  digest_out="$("$SOV_HUB_DIGEST")" || digest_rc=$?
+else
+  digest_out=""; digest_rc=0
+fi
+printf '== archivist-notion-digest.py (exit %d) ==\n%s\n' "$digest_rc" "$digest_out"
+if (( digest_rc != 0 )); then
+  # The review page is a convenience; the buttons are the gate. Send the digest without it.
+  echo "archivist-nightly-cron: archivist-notion-digest.py failed (exit $digest_rc); sending the digest without a review page" >&2
+  digest_out=""
+fi
+
+# --- 3) compose the compact HTML digest + buttons and send it ---
+combined_tmp="$(mktemp "${TMPDIR:-/tmp}/archivist-digest.XXXXXX")"
+printf '%s\n%s\n' "$nightly_out" "$digest_out" >"$combined_tmp"
+compose_digest "$combined_tmp"
+rm -f "$combined_tmp"
+
+"$TG_SEND" --html --reply-markup "$KB" "$MSG"

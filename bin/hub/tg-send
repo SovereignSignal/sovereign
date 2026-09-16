@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# tg-send.sh — deliver one message to Owner's Telegram via the Bot API.
+#
+# Usage: tg-send.sh [--html] [--reply-markup JSON] "message"    (or pipe on stdin)
+#
+# Contract (hub launchd cutover 2026-08-01, pattern proven on node-17 2026-07-31):
+#   - NEVER fails the caller: always exits 0, even when the send fails.
+#   - Logs every outcome (incl. the HTTP code) to the hub state dir, notify.log.
+#   - Truncates to ~3900 chars keeping head and tail (Telegram hard cap 4096).
+#   - Retries the send exactly once, then gives up (logged).
+#   - Token lives in the selected env file (mode 600); it is never printed and
+#     curl stderr is discarded so the URL can never leak to logs.
+#   - Channel split 2026-08-01: TG_ENV_FILE selects which env file to read
+#     (default ~/.config/sovereign/telegram.env, the archive channel).
+#     Every log line records which env file was used.
+#   - Rerouted 2026-09-04: infrastructure alerts moved to
+#     the alerts channel file named in hub.json (notify.alerts) carries alerts,
+#     their own so they can be muted independently of archive content. That now
+#     carries fleet-watch, proxmox-monitor, pi-cluster-monitor, vault-autocommit
+#     and the infra half of the daily health check.
+#     and any other env file the caller names in TG_ENV_FILE.
+#     infra bot; nothing scheduled on the hub still uses it, only Hermes' own
+#     output, which Hermes manages through its own CLI.
+#   - Buttons build 2026-08-04: --html sends parse_mode=HTML (callers escape
+#     &, <, > in dynamic content themselves); --reply-markup attaches an
+#     inline keyboard (raw JSON for sendMessage reply_markup). Default stays
+#     plain text, fully backward compatible. When an HTML send fails twice
+#     (e.g. a tag broken by truncation), one final plain-text attempt is made
+#     so the message is delivered rather than dropped (logged as plain-fallback).
+set -u
+
+ENV_FILE="${TG_ENV_FILE:-$HOME/.config/sovereign/telegram.env}"
+ENV_NAME="$(basename "$ENV_FILE")"
+LOG_FILE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}/hub/notify.log"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+
+log() { printf '%s tg-send %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$LOG_FILE" 2>/dev/null; }
+
+PARSE_MODE=""
+REPLY_MARKUP=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --html) PARSE_MODE="HTML"; shift ;;
+    --reply-markup) REPLY_MARKUP="${2:-}"; shift 2 ;;
+    *) break ;;
+  esac
+done
+
+if [[ ! -r "$ENV_FILE" ]]; then
+  log "ERROR env=$ENV_NAME missing/unreadable at $ENV_FILE; message dropped"
+  exit 0
+fi
+TG_BOT_TOKEN=""
+TG_CHAT_ID=""
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+if [[ -z "${TG_BOT_TOKEN}" || -z "${TG_CHAT_ID}" ]]; then
+  log "ERROR TG_BOT_TOKEN/TG_CHAT_ID unset in env=$ENV_NAME; message dropped"
+  exit 0
+fi
+
+msg="${1:-}"
+if [[ -z "$msg" && ! -t 0 ]]; then
+  msg="$(cat 2>/dev/null || true)"
+fi
+if [[ -z "${msg//[[:space:]]/}" ]]; then
+  log "SKIP empty message"
+  exit 0
+fi
+
+orig_len=${#msg}
+if (( orig_len > 3900 )); then
+  msg="${msg:0:2500}
+
+...[tg-send: truncated, original ${orig_len} chars; full output in the hub state dir]...
+
+${msg: -1300}"
+fi
+
+MODE_TAG=""
+[[ -n "$PARSE_MODE" ]] && MODE_TAG=" mode=html"
+[[ -n "$REPLY_MARKUP" ]] && MODE_TAG="$MODE_TAG buttons=1"
+
+send_once() {
+  # $1 = "html"|"plain"; stdout: the HTTP status (000 when curl itself failed).
+  local http
+  local -a extra=()
+  [[ "$1" == "html" && -n "$PARSE_MODE" ]] && extra+=(--data-urlencode "parse_mode=${PARSE_MODE}")
+  [[ -n "$REPLY_MARKUP" ]] && extra+=(--data-urlencode "reply_markup=${REPLY_MARKUP}")
+  http="$(curl -sS -m 30 -o /dev/null -w '%{http_code}' \
+    --data-urlencode "chat_id=${TG_CHAT_ID}" \
+    --data-urlencode "text=${msg}" \
+    ${extra[@]+"${extra[@]}"} \
+    "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" 2>/dev/null)" || true
+  printf '%s' "${http:-000}"
+}
+
+http1="$(send_once html)"
+if [[ "$http1" == "200" ]]; then
+  log "OK http=200 env=$ENV_NAME chars=${#msg}$MODE_TAG"
+  exit 0
+fi
+sleep 5
+http2="$(send_once html)"
+if [[ "$http2" == "200" ]]; then
+  log "OK-retry http=200 env=$ENV_NAME chars=${#msg}$MODE_TAG first_attempt=$http1"
+  exit 0
+fi
+if [[ -n "$PARSE_MODE" ]]; then
+  http3="$(send_once plain)"
+  if [[ "$http3" == "200" ]]; then
+    log "OK-plainfallback http=200 env=$ENV_NAME chars=${#msg}$MODE_TAG html_attempts=$http1,$http2"
+    exit 0
+  fi
+  log "FAIL http=$http1 then http=$http2 then plain http=$http3 env=$ENV_NAME chars=${#msg}$MODE_TAG; message dropped"
+  exit 0
+fi
+log "FAIL http=$http1 then http=$http2 env=$ENV_NAME chars=${#msg}$MODE_TAG; message dropped"
+exit 0

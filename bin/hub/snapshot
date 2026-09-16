@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Daily snapshot of the vault using rsync --link-dest.
+# Each snapshot is a full tree at ~/Backups/vault-snapshots/<YYYY-MM-DD>/
+# Unchanged files are hardlinks to the prior snapshot — minimal disk use.
+# Keeps the last 30 snapshots; older ones get deleted.
+
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOV_TEMPLATE="${SOV_TEMPLATE:-$(cd "$HERE/../.." && pwd)}"; export SOV_TEMPLATE
+STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
+# Settings come from the instance file. The runner exports them; a hand run asks the front door.
+[ -n "${SOVS_VAULT:-}" ] || eval "$(/bin/bash "$SOV_TEMPLATE/bin/sov" hub env)"
+
+VAULT="$SOVS_VAULT"
+BACKUP_ROOT="$SOV_HUB_SNAPSHOT_DIR"
+TODAY="$(date +%Y-%m-%d)"
+DEST="${BACKUP_ROOT}/${TODAY}"
+TMP_DEST="${BACKUP_ROOT}/.${TODAY}.tmp.$$"
+COMPLETE_MARKER=".snapshot-complete"
+LOG="${BACKUP_ROOT}/snapshot.log"
+RSYNC_BIN="/opt/homebrew/bin/rsync"
+[ -x "${RSYNC_BIN}" ] || RSYNC_BIN="/usr/bin/rsync"
+
+mkdir -p "${BACKUP_ROOT}"
+
+log() {
+  printf '%s  %s\n' "$(date -Iseconds)" "$*" >> "${LOG}"
+}
+
+# macOS launchd sessions often default to 256 open files; openrsync +
+# --link-dest over a 50k-file vault can exceed that while comparing trees.
+# Raise the soft limit inside the script so manual and launchd runs behave
+# the same. Ignore failure on hosts with a lower hard limit.
+ulimit -n 8192 2>/dev/null || true
+
+log "snapshot start → ${DEST} (nofile=$(ulimit -n 2>/dev/null || printf unknown), rsync=${RSYNC_BIN})"
+
+# Never leave or build on partial snapshots. A snapshot is complete only after
+# rsync finishes and the marker is written. If today's directory exists without
+# the marker, it is a stale partial from a failed run and is replaced.
+if [ -d "${DEST}" ] && [ ! -f "${DEST}/${COMPLETE_MARKER}" ]; then
+  log "removing incomplete snapshot before retry: ${DEST}"
+  rm -rf "${DEST}"
+fi
+
+# Clean up orphaned temp/old snapshots from interrupted/crashed prior runs. The
+# current run's TMP_DEST/OLD_DEST names include this process id; only remove dirs
+# older than one day so we do not race another live snapshot process.
+find "${BACKUP_ROOT}" -maxdepth 1 -type d -name '.*.tmp.*' -mtime +1 -exec rm -rf {} +
+find "${BACKUP_ROOT}" -maxdepth 1 -type d -name '*.old.*' -mtime +1 -exec rm -rf {} +
+
+# Find the most recent prior *complete* snapshot to use as --link-dest source.
+# Fall back to unmarked pre-marker snapshots only if they look full-sized; this
+# keeps failed partials like 2026-05-09/10/11/15 out of the dedupe chain.
+LINK_DEST_ARG=""
+PRIOR="$(find "${BACKUP_ROOT}" -maxdepth 2 -name "${COMPLETE_MARKER}" -print 2>/dev/null \
+  | while IFS= read -r marker; do basename "$(dirname "${marker}")"; done \
+  | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
+  | sort -r \
+  | grep -v "^${TODAY}$" \
+  | head -1 \
+  || true)"
+if [ -z "${PRIOR}" ]; then
+  PRIOR="$(for d in "${BACKUP_ROOT}"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]; do
+      [ -d "${d}" ] || continue
+      base="$(basename "${d}")"
+      [ "${base}" = "${TODAY}" ] && continue
+      files="$(find "${d}" -type f 2>/dev/null | wc -l | tr -d ' ')"
+      [ "${files}" -gt 40000 ] && printf '%s\n' "${base}"
+    done | sort -r | head -1 || true)"
+fi
+if [ -n "${PRIOR}" ]; then
+  LINK_DEST_ARG="--link-dest=${BACKUP_ROOT}/${PRIOR}"
+  log "deduping against prior snapshot: ${PRIOR}"
+fi
+
+# rsync the whole vault into a temp dir, then atomically promote it. Exclude
+# Obsidian cache/workspace files which change constantly and aren't worth
+# versioning.
+"${RSYNC_BIN}" -a --delete \
+  --exclude='.obsidian/cache/' \
+  --exclude='.obsidian/workspace*' \
+  --exclude='.obsidian/.workspace*' \
+  ${LINK_DEST_ARG} \
+  "${VAULT}/" "${TMP_DEST}/" 2>>"${LOG}"
+
+date -Iseconds > "${TMP_DEST}/${COMPLETE_MARKER}"
+OLD_DEST="${DEST}.old.$$"
+if [ -d "${DEST}" ]; then
+  mv "${DEST}" "${OLD_DEST}"
+fi
+mv "${TMP_DEST}" "${DEST}"
+rm -rf "${OLD_DEST}"
+
+SIZE=$(du -sh "${DEST}" 2>/dev/null | awk '{print $1}')
+FILES=$(find "${DEST}" -type f 2>/dev/null | wc -l | tr -d ' ')
+log "snapshot done: ${SIZE} apparent, ${FILES} files"
+
+# Rotation: keep the last $SOV_HUB_SNAPSHOT_KEEP, delete older
+TOTAL=$(ls -1 "${BACKUP_ROOT}" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | wc -l | tr -d ' ')
+KEEP="${SOV_HUB_SNAPSHOT_KEEP:-30}"
+if [ "${TOTAL}" -gt "$KEEP" ]; then
+  TO_DELETE=$(ls -1 "${BACKUP_ROOT}" \
+    | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
+    | sort \
+    | head -n "$((TOTAL - 30))")
+  for d in ${TO_DELETE}; do
+    rm -rf "${BACKUP_ROOT:?}/${d}"
+    log "rotated out: ${d}"
+  done
+fi
+
+# Real disk use across all snapshots (after dedup)
+ACTUAL=$(du -sh "${BACKUP_ROOT}" 2>/dev/null | awk '{print $1}')
+log "total backup dir actual size: ${ACTUAL}"

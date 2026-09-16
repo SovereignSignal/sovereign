@@ -4,7 +4,7 @@
 
 **Goal:** Make the hub installable from the template: a manifest of jobs, an instance file for the owner's settings, a fail-loud runner, `sov hub jobs install`, a nightly encrypted rebuild kit pushed off-site, a runbook, and a Part 1 drift check.
 
-**Architecture:** New modules under `lib/sovereign_hub/` (manifest, instance, runner, jobs, kit) reached through a new `bin/sov-hub` entry that `bin/sov hub` dispatches to for the new subcommands while the existing managed-hub commands keep going to `bin/brain-hub`. Hub scripts move into `bin/hub/` unchanged in logic and read their settings from `sov hub env`. Everything is rendered from the manifest plus `~/.local/state/sovereign/hub.json`; nothing Owner-specific enters the template.
+**Architecture:** New modules under `lib/sovereign_hub/` (manifest, instance, runner, jobs, kit) reached through a new `bin/sov-hub` entry that `bin/sov hub` dispatches to for the new subcommands while the existing managed-hub commands keep going to `bin/brain-hub`. Hub scripts move into `bin/hub/` unchanged in logic and read their settings from `sov hub env`. Everything is rendered from the manifest plus `~/.local/state/sovereign/hub.json`; nothing owner-specific enters the template.
 
 **Tech Stack:** Python 3.9-compatible stdlib only (the system interpreter is 3.9.6), bash for the moved scripts, launchd plists via `plistlib`, the existing `hub-crypto` sealing tool, the existing test style (`unittest`, throwaway HOME, stub `launchctl` on PATH).
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Python code must run on 3.9.6 (no `match`, no `X | Y` types, no `str.removeprefix` reliance).
-- No name, domain, path or host of Owner's in any shipped file (`tests/test_template_is_general.py` enforces it).
+- No name, domain, path or host of the owner's in any shipped file (`tests/test_template_is_general.py` enforces it).
 - Every rendered job's interpreter comes from the resolver in `bin/_sov-python.sh`, never a literal `/usr/bin/python3`.
 - State lives under `$SOV_STATE_DIR` (default `~/.local/state/sovereign`); tests set it to a temp dir.
 - `launchctl` is reached through `$SOV_LAUNCHCTL` (default `/bin/launchctl`); tests point it at a stub.
@@ -267,7 +267,7 @@ GOOD = {
     "remotes": ["origin", "exchange"],
     "snapshot": {"folder": "/tmp/snaps", "keep": 30},
     "notify": {"archive": "/tmp/tg-archive.env", "alerts": "/tmp/tg-alerts.env"},
-    "kit": {"include": ["~/.hermes/.env"], "key_file": "/tmp/keys/hub.key", "targets": ["keep:git/hub-kit/"], "keep": 7},
+    "kit": {"include": ["~/.agent/.env"], "key_file": "/tmp/keys/hub.key", "targets": ["keep:git/hub-kit/"], "keep": 7},
     "offsite": {"vault": "keep:git/vault.git", "template": "keep:git/template.git"},
     "instance_jobs": {},
 }
@@ -308,8 +308,8 @@ class Instance(unittest.TestCase):
             s.write_text('#!/bin/bash\nexport SOVS_VAULT="$HOME/Vault"\nexport CURATOR_LANE=curator\n'
                          'export CURATOR_MODEL="m:1"\nexport CURATOR_ENDPOINT="http://localhost:11434/v1/chat/completions"\n'
                          'export CURATOR_EXCLUDE="a:b c"\n')
-            got = instance.from_scripts([s], home="/home/you")
-            self.assertEqual(got["vault"], "/home/you/Vault")
+            got = instance.from_scripts([s], home="/opt/owner")
+            self.assertEqual(got["vault"], "/opt/owner/Vault")
             self.assertEqual(got["exclude"], ["a", "b c"])
             self.assertEqual(got["model"], "m:1")
 
@@ -1104,20 +1104,20 @@ Expected: FAIL, `bin/hub/nightly` does not exist.
 
 - [ ] **Step 3: Bring the scripts over**
 
-From the client, copy the hub's current scripts into the worktree (read-only on the hub):
+From the working laptop, copy the hub's current scripts into the worktree (read-only on the hub):
 
 ```bash
-W=~/sovs-brain-template/.worktrees/hub-from-template/bin/hub; mkdir -p "$W"
-scp hub:brain-bin/cron-wrappers/archivist-nightly-cron.sh "$W/nightly"
-scp hub:brain-bin/archivist-burndown.sh "$W/burndown"
-scp hub:brain-bin/archivist-weekly.sh "$W/weekly-audit"
-scp hub:brain-bin/cron-wrappers/archivist-weekly-landed.py "$W/weekly-landed"
-scp hub:brain-bin/tg-verdict-poll.py "$W/verdict-poll"
-scp hub:brain-bin/cron-wrappers/vault-autocommit.sh "$W/autocommit"
-scp hub:brain-bin/cron-wrappers/vault-secret-scan.sh "$W/secret-scan"
-scp hub:bin/vault-snapshot.sh "$W/snapshot"
-scp hub:brain-bin/brain-exchange-sync.sh "$W/exchange-sync"
-scp hub:brain-bin/cron-wrappers/tg-send.sh "$W/tg-send"
+W=<worktree>/bin/hub; mkdir -p "$W"
+scp <hub>:brain-bin/cron-wrappers/archivist-nightly-cron.sh "$W/nightly"
+scp <hub>:brain-bin/archivist-burndown.sh "$W/burndown"
+scp <hub>:brain-bin/archivist-weekly.sh "$W/weekly-audit"
+scp <hub>:brain-bin/cron-wrappers/archivist-weekly-landed.py "$W/weekly-landed"
+scp <hub>:brain-bin/tg-verdict-poll.py "$W/verdict-poll"
+scp <hub>:brain-bin/cron-wrappers/vault-autocommit.sh "$W/autocommit"
+scp <hub>:brain-bin/cron-wrappers/vault-secret-scan.sh "$W/secret-scan"
+scp <hub>:bin/vault-snapshot.sh "$W/snapshot"
+scp <hub>:brain-bin/brain-exchange-sync.sh "$W/exchange-sync"
+scp <hub>:brain-bin/cron-wrappers/tg-send.sh "$W/tg-send"
 chmod +x "$W"/*
 ```
 
@@ -1193,7 +1193,7 @@ class Kit(unittest.TestCase):
 
     def test_inventory_is_exactly_the_declared_set_and_never_the_key_or_the_vault(self):
         names = [n for n, _ in kit.inventory(self.inst, self.state, self.home)]
-        self.assertIn("state/hub.json", names); self.assertIn("home/.brain-root", names)
+        self.assertIn("state/hub.json", names); self.assertIn("pointers/.brain-root", names)
         self.assertIn("notify/tg.env", names); self.assertIn("include/secret.env", names)
         self.assertFalse(any("hub.key" in n for n in names))
         bad = dict(self.inst); bad["kit"] = dict(self.inst["kit"], include=[str(self.key)])
@@ -1236,7 +1236,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd tests && /usr/bin/python3 -m pytest -q -p no:cacheprovider test_hub_kit.py`
-Expected: `ModuleNotFoundError: No module named 'sovereign_hub.kit'` (or skipped if the helper is absent: copy it from `~/sovs-brain-template-preview/apps/console/build/hub-crypto` into the worktree's gitignored `apps/console/build/` first).
+Expected: `ModuleNotFoundError: No module named 'sovereign_hub.kit'` (or skipped if the helper is absent: copy it from `<a built app checkout>/apps/console/build/hub-crypto` into the worktree's gitignored `apps/console/build/` first).
 
 - [ ] **Step 3: Write the module**
 
@@ -1292,7 +1292,7 @@ def inventory(inst, state, home):
         entries.append((name, raw))
     add("state/hub.json", state / "hub.json")
     for p in sorted(home.glob(".brain-*")):
-        if p.is_file(): add("home/" + p.name, p)
+        if p.is_file(): add("pointers/" + p.name, p)
     for label, envp in (inst.get("notify") or {}).items():
         if envp and Path(os.path.expanduser(envp)).is_file():
             add("notify/" + Path(envp).name, os.path.expanduser(envp))
@@ -1623,7 +1623,7 @@ One screen. Needs: a Mac with the Command Line Tools, the recovery key (kept out
 2. `git clone <vault remote> "<vault path>"` (any remote: the exchange, the canonical, the off-site mirror)
 3. Fetch the newest `*.kit` from a kit target, then
    `sov hub kit-restore --capsule <file>.kit --destination ~/hub-restore --key-file <key>`
-4. `mkdir -p ~/.local/state/sovereign && cp ~/hub-restore/state/hub.json ~/.local/state/sovereign/ && cp ~/hub-restore/home/you* ~/`
+4. `mkdir -p ~/.local/state/sovereign && cp ~/hub-restore/state/hub.json ~/.local/state/sovereign/ && cp ~/hub-restore/pointers/.brain-* ~/`
    Put each `~/hub-restore/notify/*` and `~/hub-restore/include/*` file back at the path hub.json names.
 5. `sov hub jobs install` (read the plan), then `sov hub jobs install --apply`
 6. `sov hub jobs status` shows every job; `sov status --json` shows the hub; the first nightly proves the model.
@@ -1636,7 +1636,7 @@ Rollback of a reinstall: `sov hub jobs uninstall --apply` parks the plists.
 Run from the worktree, both interpreters, as in the release checks:
 
 ```bash
-cd tests && SOV_PYTHON_RUNTIME=/Users/you/Applications/Sovereign.app/Contents/Resources/runtime /usr/bin/python3 -m pytest -q -p no:cacheprovider
+cd tests && SOV_PYTHON_RUNTIME=<the installed app>/Contents/Resources/runtime /usr/bin/python3 -m pytest -q -p no:cacheprovider
 PYTHONPATH=lib SOV_PYTHON_RUNTIME=... <venv312>/bin/python -m unittest discover -s tests
 ```
 
@@ -1644,12 +1644,12 @@ Expected: all pass (the previous baseline was 538; this plan adds about 25).
 
 - [ ] **Step 3: The hub dry run, read-only**
 
-On the hub, from a clone of the branch in a scratch directory (not the live checkout):
+On the hub machine, from a clone of the branch in a scratch directory (not the live checkout):
 
 ```bash
-git clone -b feat/hub-from-template node-12:git/sovs-brain-template.git /tmp/hub-branch
+git clone -b feat/hub-from-template <exchange>:git/<template>.git /tmp/hub-branch
 SOV_STATE_DIR=/tmp/hub-state /tmp/hub-branch/bin/sov hub init --from-scripts ~/brain-bin/archivist-nightly.sh ~/brain-bin/archivist-weekly.sh
-# edit /tmp/hub-state/hub.json by hand: remotes, snapshot, notify, kit, offsite, instance_jobs (the six Hermes-stack jobs from the plists)
+# edit /tmp/hub-state/hub.json by hand: remotes, snapshot, notify, kit, offsite, instance_jobs (the six agent-stack jobs from the plists)
 SOV_STATE_DIR=/tmp/hub-state /tmp/hub-branch/bin/sov hub jobs install --retire-legacy com.sov.cron.
 ```
 

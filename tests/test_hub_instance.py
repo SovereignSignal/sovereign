@@ -64,8 +64,8 @@ class Instance(unittest.TestCase):
             s.write_text('#!/bin/bash\nexport SOVS_VAULT="$HOME/Vault"\nexport CURATOR_LANE=curator\n'
                          'export CURATOR_MODEL="m:1"\nexport CURATOR_ENDPOINT="http://localhost:11434/v1/chat/completions"\n'
                          'export CURATOR_EXCLUDE="a:b c"\n')
-            got = instance.from_scripts([s], home="/home/you")
-            self.assertEqual(got["vault"], "/home/you/Vault")
+            got = instance.from_scripts([s], home="/opt/owner")
+            self.assertEqual(got["vault"], "/opt/owner/Vault")
             self.assertEqual(got["exclude"], ["a", "b c"])
             self.assertEqual(got["model"], "m:1")
 

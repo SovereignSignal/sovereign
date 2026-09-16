@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# archivist-burndown.sh — judge the backlog the nightly never reaches.
+#
+# The nightly judges 50 new items a day, forward from a watermark. Behind it sit a
+# backlog of roughly 3,900 documents that was never judged and ~700 mirrored files
+# that rsync -a delivered with their original mtimes, so they were behind the
+# watermark on arrival. --since-days overrides the watermark (curator-run never moves
+# it on an explicit-window run) and the content-hash store keeps already-judged files
+# from being judged twice, so repeat runs drain the tail. The hub exists for this work
+# (owner, 2026-09-04: "run the hub hard ... it is not my primary driver").
+#
+# Stops itself under the owner's kill criterion: a run that keeps fewer than
+# BURNDOWN_KEEP_FLOOR_PCT of at least 50 judged writes .burndown-stop, and every later
+# run exits until the owner removes that flag. Pauses, without stopping, while the
+# owner's gate holds BURNDOWN_PENDING_LIMIT proposals: with the gears reset to
+# ask-first that queue IS the review load, and the digest's "Approve all pending"
+# button is the release valve.
+#
+# Runs through archivist-nightly-cron.sh (ARCHIVIST_RUNNER) so its proposals ride the
+# same digest and the same buttons as the nightly.
+set -euo pipefail
+export PATH="/opt/homebrew/bin:$PATH"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOV_TEMPLATE="${SOV_TEMPLATE:-$(cd "$HERE/../.." && pwd)}"; export SOV_TEMPLATE
+STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
+# Settings come from the instance file. The runner exports them; a hand run asks the front door.
+[ -n "${SOVS_VAULT:-}" ] || eval "$(/bin/bash "$SOV_TEMPLATE/bin/sov" hub env)"
+
+LANE="$SOVS_VAULT/raw/workspaces/$CURATOR_LANE"
+STOP="$LANE/.burndown-stop"
+SINCE="${BURNDOWN_SINCE_DAYS:-400}"
+MAX="${BURNDOWN_MAX:-120}"
+LIMIT="${BURNDOWN_PENDING_LIMIT:-200}"
+FLOOR="${BURNDOWN_KEEP_FLOOR_PCT:-2}"
+
+if [[ -f "$STOP" ]]; then
+  echo "archivist-burndown: STOPPED since $(head -1 "$STOP"). Remove $STOP to resume."
+  exit 0
+fi
+shopt -s nullglob
+pending=("$LANE/proposals"/*.md)
+n=${#pending[@]}
+if (( n >= LIMIT )); then
+  echo "archivist-burndown: $n pending >= $LIMIT; paused for the owner's gate, nothing judged"
+  exit 0
+fi
+
+"$HERE/../curator-run" --since-days "$SINCE" --max "$MAX"
+
+verdict="$(/usr/bin/python3 - "$LANE/status.json" "$STOP" "$FLOOR" <<'PY'
+import json, sys, time
+st, stop, floor = sys.argv[1], sys.argv[2], float(sys.argv[3])
+try:
+    s = json.load(open(st))
+except Exception:
+    s = {}
+j = int(s.get("judged") or 0)
+n = int(s.get("new_proposals") or 0)
+pct = (100.0 * n / j) if j else 0.0
+if j >= 50 and pct < floor:
+    open(stop, "w").write("%s kept %d of %d (%.1f%%), under the %.0f%% floor\n"
+                          % (time.strftime("%F %T"), n, j, pct, floor))
+    print("STOP kept %d of %d (%.1f%%), under the %.0f%% floor; burn-down halted, "
+          "remove .burndown-stop to resume" % (n, j, pct, floor))
+else:
+    print("OK kept %d of %d (%.1f%%)" % (n, j, pct))
+PY
+)"
+echo "archivist-burndown: $verdict"
+if [[ "$verdict" == STOP* ]]; then
+  TG_ENV_FILE="$SOV_HUB_ALERTS_ENV" \
+    "$HERE/tg-send" "Archivist burn-down: $verdict" || true
+fi

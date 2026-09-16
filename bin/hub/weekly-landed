@@ -1,0 +1,750 @@
+#!/usr/bin/env python3
+"""archivist-weekly-landed.py -- the weekly "what landed on its own" review.
+
+Owner directive 2026-08-10: autonomy is being widened, so oversight moves from
+a per-item approval gate to a weekly retrospective with per-card revert. This
+job is that retrospective.
+
+It reads the archivist lane's decisions.log for the last 7 days and buckets
+every verdict by who made it:
+
+    auto-gear   -> promoted autonomously (a granted gear acted while Owner slept)
+    auto-taste  -> rejected autonomously (an owner-declared auto-reject class)
+    anyone else -> the owner's own hand, or a relay carrying his verdicts
+
+plus anything the screen or the taste flagged that QUEUED instead of acting.
+
+Output is two things:
+  1. a Notion page under the hub Archivist parent page, with a table of what
+     landed on its own (slug, type, why-this-matters, promotion commit, source)
+  2. a compact HTML Telegram message with the counts, the landed card names,
+     a URL button to the page, and the revert instruction
+
+Contract:
+  - Python 3 stdlib only (hub ships 3.9). No model calls. Deterministic.
+  - Read-only against the vault: it never writes knowledge/ or the lane.
+  - Exits nonzero ONLY on real failure (unreadable log, Notion refused), so
+    cron-run-hub.sh alerts. An empty week is a normal short message, exit 0.
+  - No em dashes anywhere in the Notion page or the Telegram message: any
+    that arrive inside quoted card text are normalized on the way through.
+
+Usage:
+    archivist-weekly-landed.py [--days N] [--dry-run] [--no-telegram]
+
+    --dry-run     build everything, print it, publish nothing, send nothing
+    --no-telegram publish the Notion page but skip the Telegram send
+
+Scheduled Sundays 17:00 PT by launchd job com.sov.cron.archivist-weekly-landed
+via cron-run-hub.sh (no --deliver: this script sends its own message).
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta
+
+HOME = os.path.expanduser("~")
+
+
+def _read_pointer(path, default):
+    try:
+        with open(path) as f:
+            return f.read().strip() or default
+    except OSError:
+        return default
+
+
+VAULT = _read_pointer(
+    os.path.join(HOME, ".brain-root"), os.environ.get("SOVS_VAULT", "")
+)
+LANE_NAME = _read_pointer(os.path.join(HOME, ".curator-lane"), "archivist")
+LANE_DIR = os.path.join(VAULT, "raw", "workspaces", LANE_NAME)
+DECISIONS = os.path.join(LANE_DIR, "decisions.log")
+PROPOSALS_DIR = os.path.join(LANE_DIR, "proposals")
+META_FILE = os.path.join(PROPOSALS_DIR, ".meta.json")
+INBOX_FILE = os.path.join(LANE_DIR, "INBOX.md")
+STATUS_FILE = os.path.join(LANE_DIR, "status.json")
+KNOWLEDGE = os.path.join(VAULT, "knowledge")
+KNOWLEDGE_SUBS = ("entities", "concepts", "syntheses")
+TG_SEND = os.path.join(HOME, "brain-bin", "cron-wrappers", "tg-send.sh")
+
+NOTION_VERSION = "2026-03-11"
+DEFAULT_PARENT_ID = "361000c0-d590-80e6-b6a2-e877fe87be23"  # Notion page: Archivist
+
+AUTO_PROMOTE_ACTOR = "auto-gear"
+AUTO_REJECT_ACTOR = "auto-taste"
+
+MAX_TG_CARDS = 15           # landed names listed in the Telegram message
+MAX_TABLE_ROWS = 60         # rows per Notion table block (request size guard)
+MAX_LIST_PER_GROUP = 40     # slugs listed inside one owner-actions toggle
+WHY_MAX = 240               # chars of "Why this matters" kept for the table
+
+
+# --------------------------------------------------------------------------
+# text hygiene
+# --------------------------------------------------------------------------
+
+def plain(text):
+    """Normalize quoted card text for the report.
+
+    Owner's rule: no em dashes anywhere. Card bodies (written by the judging
+    model) carry em dashes, en dashes, non-breaking hyphens and curly quotes,
+    so they are flattened here rather than trusted.
+    """
+    if not text:
+        return ""
+    out = str(text)
+    out = out.replace("—", ", ").replace("–", ", ")
+    out = out.replace("‑", "-").replace("‐", "-").replace("−", "-")
+    out = out.replace("‘", "'").replace("’", "'")
+    out = out.replace("“", '"').replace("”", '"')
+    out = out.replace("…", "...").replace(" ", " ")
+    out = re.sub(r"\s*,\s*,\s*", ", ", out)
+    return re.sub(r"[ \t]+", " ", out).strip()
+
+
+def html_escape(s):
+    """Escape &, <, > for Telegram parse_mode=HTML (order matters: & first)."""
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def clip(text, limit):
+    text = text or ""
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+
+# --------------------------------------------------------------------------
+# decisions.log
+# --------------------------------------------------------------------------
+
+def parse_ts(raw):
+    """Parse '2026-08-10T08:14:14-0700'. Python 3.9's fromisoformat wants the
+    offset punctuated, so the colon is inserted before handing it over."""
+    raw = (raw or "").strip()
+    m = re.match(r"^(.*[T ]\d{2}:\d{2}:\d{2})([+-]\d{2})(\d{2})$", raw)
+    if m:
+        raw = "%s%s:%s" % m.groups()
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def read_decisions(since):
+    """Rows at or after `since`, newest last. Raises OSError if unreadable.
+
+    Format (TSV, append-only): ts, verdict, file, actor, detail.
+    Rows written before the actor column existed have 4 fields; those predate
+    any 7-day window we report on, but they are handled rather than dropped.
+    """
+    rows = []
+    with open(DECISIONS, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            ts = parse_ts(parts[0])
+            if ts is None or ts < since:
+                continue
+            if len(parts) >= 5:
+                actor, detail = parts[3], parts[4]
+            else:
+                actor, detail = "owner-cli", parts[3] if len(parts) > 3 else ""
+            rows.append(
+                {
+                    "ts": ts,
+                    "verdict": parts[1].strip(),
+                    "file": parts[2].strip(),
+                    "slug": re.sub(r"\.md$", "", parts[2].strip()),
+                    "actor": actor.strip(),
+                    "detail": detail.strip(),
+                }
+            )
+    return rows
+
+
+# --------------------------------------------------------------------------
+# vault reads
+# --------------------------------------------------------------------------
+
+def card_path(slug):
+    """Path of the trusted card for a slug, or None when it is not (or no
+    longer) in knowledge/."""
+    for sub in KNOWLEDGE_SUBS:
+        p = os.path.join(KNOWLEDGE, sub, slug + ".md")
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def parse_frontmatter(text):
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---", 4)
+    if end == -1:
+        return {}, text
+    fm = {}
+    for line in text[4:end].splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            fm[k.strip()] = v.strip().strip('"')
+    return fm, text[end + 4 :].lstrip("\n")
+
+
+def read_card(slug):
+    """type, why-this-matters, source, path for a promoted slug."""
+    info = {"type": "", "why": "", "source": "", "path": ""}
+    p = card_path(slug)
+    if not p:
+        return info
+    info["path"] = os.path.relpath(p, VAULT)
+    try:
+        text = open(p, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return info
+    fm, body = parse_frontmatter(text)
+    info["type"] = fm.get("type", "")
+    info["source"] = fm.get("source", "")
+    why = ""
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("**why this matters:**"):
+            why = stripped.split("**", 2)[-1].lstrip(":").strip()
+            if not why:
+                why = re.sub(r"(?i)^\*\*why this matters:\*\*", "", stripped).strip()
+            break
+    if not why:
+        for chunk in body.split("\n\n"):
+            chunk = chunk.strip()
+            if chunk and not chunk.startswith("#"):
+                why = chunk.splitlines()[0].strip()
+                break
+    info["why"] = plain(why)
+    return info
+
+
+def type_from_detail(detail):
+    """'knowledge/concepts/x.md: ...' -> 'concept'."""
+    m = re.search(r"knowledge/(entities|concepts|syntheses)/", detail or "")
+    if not m:
+        return ""
+    return {"entities": "entity", "concepts": "concept", "syntheses": "synthesis"}[
+        m.group(1)
+    ]
+
+
+def git(*args):
+    try:
+        cp = subprocess.run(
+            ["git", "-C", VAULT] + list(args),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return cp.stdout if cp.returncode == 0 else ""
+
+
+def promotion_commit(relpath, when):
+    """Short hash of the commit that landed `relpath`.
+
+    Picks the commit touching the path whose author date sits closest to the
+    decision timestamp: correct for a brand new card AND for an update landing
+    over an existing one (where --diff-filter=A would return the original add).
+    Falls back to the first-add commit, then to empty.
+    """
+    if not relpath:
+        return ""
+    out = git("log", "--format=%h%x1f%aI", "--max-count=200", "--", relpath)
+    best, best_delta = "", None
+    for line in out.splitlines():
+        if "\x1f" not in line:
+            continue
+        h, iso = line.split("\x1f", 1)
+        ts = parse_ts(iso.strip())
+        if ts is None:
+            continue
+        delta = abs((ts - when).total_seconds())
+        if best_delta is None or delta < best_delta:
+            best, best_delta = h.strip(), delta
+    if best:
+        return best
+    return git(
+        "log", "-1", "--format=%h", "--diff-filter=A", "--", relpath
+    ).strip()
+
+
+def queued_flagged():
+    """Proposals the screen or the taste flagged that QUEUED instead of being
+    acted on: still sitting in proposals/, waiting for Owner."""
+    present = set()
+    try:
+        present = {
+            f[:-3] for f in os.listdir(PROPOSALS_DIR) if f.endswith(".md")
+        }
+    except OSError:
+        return []
+    flagged = {}
+    try:
+        meta = json.load(open(META_FILE, encoding="utf-8"))
+        if isinstance(meta, dict):
+            for slug, entry in meta.items():
+                if slug in present and isinstance(entry, dict) and entry.get(
+                    "screen_flagged"
+                ):
+                    flagged[slug] = plain(
+                        entry.get("screen_reason") or "source screen flagged"
+                    )
+    except (OSError, ValueError):
+        pass
+    try:
+        for line in open(INBOX_FILE, encoding="utf-8", errors="replace"):
+            if "SCREENED" not in line:
+                continue
+            m = re.match(r"^- \*\*(?P<slug>.+?)\*\*", line.strip())
+            if m and m.group("slug") in present:
+                flagged.setdefault(
+                    m.group("slug"), plain(line.split("SCREENED", 1)[-1].strip(" -—"))
+                    or "source screen flagged",
+                )
+    except OSError:
+        pass
+    return sorted(flagged.items())
+
+
+def pending_now():
+    try:
+        return int(json.load(open(STATUS_FILE, encoding="utf-8")).get("pending") or 0)
+    except (OSError, ValueError, TypeError):
+        return 0
+
+
+# --------------------------------------------------------------------------
+# Notion
+# --------------------------------------------------------------------------
+
+def load_dotenv():
+    env_path = os.path.join(HOME, ".hermes", ".env")
+    if not os.path.exists(env_path):
+        return
+    for raw in open(env_path, encoding="utf-8", errors="replace"):
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = k.strip(), v.strip().strip('"').strip("'")
+        if k and k not in os.environ:
+            os.environ[k] = v
+
+
+def notion(method, path, payload=None):
+    token = os.environ.get("NOTION_API_KEY")
+    if not token:
+        raise RuntimeError("NOTION_API_KEY is not set")
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.notion.com/v1" + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Notion-Version": NOTION_VERSION,
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:400]
+        raise RuntimeError(
+            "Notion %s %s failed: HTTP %s: %s" % (method, path, exc.code, body)
+        )
+
+
+def rt(text, code=False, bold=False):
+    text = plain(text) or " "
+    return [
+        {
+            "type": "text",
+            "text": {"content": text[i : i + 1900]},
+            "annotations": {"code": code, "bold": bold},
+        }
+        for i in range(0, len(text), 1900)
+    ] or [{"type": "text", "text": {"content": " "}}]
+
+
+def block(kind, text, **extra):
+    body = {"rich_text": rt(text)}
+    body.update(extra)
+    return {"object": "block", "type": kind, kind: body}
+
+
+def para(text):
+    return block("paragraph", text)
+
+
+def heading(level, text):
+    return block("heading_%d" % level, text)
+
+
+def bullet(text):
+    return block("bulleted_list_item", text)
+
+
+def divider():
+    return {"object": "block", "type": "divider", "divider": {}}
+
+
+def toggle(text, children):
+    return {
+        "object": "block",
+        "type": "toggle",
+        "toggle": {"rich_text": rt(text), "children": children},
+    }
+
+
+def table(headers, rows):
+    """One Notion table block. Cells are plain rich text."""
+    width = len(headers)
+
+    def row(cells, bold=False):
+        cells = list(cells) + [""] * (width - len(cells))
+        return {
+            "object": "block",
+            "type": "table_row",
+            "table_row": {"cells": [rt(c, bold=bold) for c in cells[:width]]},
+        }
+
+    return {
+        "object": "block",
+        "type": "table",
+        "table": {
+            "table_width": width,
+            "has_column_header": True,
+            "has_row_header": False,
+            "children": [row(headers, bold=True)] + [row(r) for r in rows],
+        },
+    }
+
+
+def create_page(title, blocks):
+    parent_id = os.environ.get("ARCHIVIST_NOTION_PARENT_ID", DEFAULT_PARENT_ID)
+    first, rest = blocks[:90], blocks[90:]
+    page = notion(
+        "POST",
+        "/pages",
+        {
+            "parent": {"type": "page_id", "page_id": parent_id},
+            "properties": {"title": [{"type": "text", "text": {"content": title}}]},
+            "children": first,
+        },
+    )
+    pid = page["id"]
+    for i in range(0, len(rest), 90):
+        notion("PATCH", "/blocks/%s/children" % pid, {"children": rest[i : i + 90]})
+    return page.get("url") or "https://www.notion.so/" + pid.replace("-", "")
+
+
+# --------------------------------------------------------------------------
+# report assembly
+# --------------------------------------------------------------------------
+
+def build_report(rows, window_start, window_end):
+    promoted, auto_rejected, owner = [], [], []
+    for r in rows:
+        if r["actor"] == AUTO_PROMOTE_ACTOR and r["verdict"] == "approved":
+            promoted.append(r)
+        elif r["actor"] == AUTO_REJECT_ACTOR:
+            auto_rejected.append(r)
+        elif r["actor"] in (AUTO_PROMOTE_ACTOR, AUTO_REJECT_ACTOR):
+            auto_rejected.append(r)  # any other autonomous verdict, still theirs
+        else:
+            owner.append(r)
+
+    landed = []
+    for r in promoted:
+        card = read_card(r["slug"])
+        kind = card["type"] or type_from_detail(r["detail"])
+        landed.append(
+            {
+                "slug": r["slug"],
+                "type": kind or "unknown",
+                "why": card["why"] or "(no why-this-matters line on the card)",
+                "commit": promotion_commit(card["path"], r["ts"]),
+                "source": card["source"] or "(card not in knowledge/ now)",
+                "path": card["path"],
+                "when": r["ts"],
+                "still_present": bool(card["path"]),
+            }
+        )
+    landed.sort(key=lambda d: d["when"])
+
+    return {
+        "window_start": window_start,
+        "window_end": window_end,
+        "landed": landed,
+        "auto_rejected": auto_rejected,
+        "owner": owner,
+        "flagged": queued_flagged(),
+        "pending": pending_now(),
+    }
+
+
+def notion_blocks(rep):
+    ws = rep["window_start"].strftime("%Y-%m-%d")
+    we = rep["window_end"].strftime("%Y-%m-%d")
+    landed, rejected, owner, flagged = (
+        rep["landed"],
+        rep["auto_rejected"],
+        rep["owner"],
+        rep["flagged"],
+    )
+
+    blocks = [
+        para(
+            "Window %s to %s. Generated %s."
+            % (ws, we, rep["window_end"].strftime("%Y-%m-%d %H:%M %Z").strip())
+        ),
+        para(
+            "Autonomy was widened on 2026-08-10, so oversight moved from a per item "
+            "approval gate to this weekly look back. Everything below has already "
+            "happened. The job here is to spot anything that should not have."
+        ),
+        heading(1, "Summary"),
+        bullet("%d landed on their own (actor auto-gear)" % len(landed)),
+        bullet("%d auto rejected (actor auto-taste)" % len(rejected)),
+        bullet("%d actions still went through you" % len(owner)),
+        bullet("%d flagged and queued instead of acted on" % len(flagged)),
+        bullet("%d proposals pending your gate right now" % rep["pending"]),
+        divider(),
+        heading(1, "What landed on its own"),
+    ]
+
+    if landed:
+        blocks.append(
+            para(
+                "Promoted by the curator under a gear you granted. No human touched "
+                "these before they became trusted knowledge."
+            )
+        )
+        headers = ["Card", "Type", "Why this matters", "Commit", "Source"]
+        rows = [
+            [
+                c["slug"] + ("" if c["still_present"] else " (no longer in knowledge/)"),
+                c["type"],
+                clip(c["why"], WHY_MAX),
+                c["commit"] or "(not found)",
+                clip(c["source"], 120),
+            ]
+            for c in landed
+        ]
+        for i in range(0, len(rows), MAX_TABLE_ROWS):
+            blocks.append(table(headers, rows[i : i + MAX_TABLE_ROWS]))
+    else:
+        blocks.append(para("Nothing landed on its own this week."))
+
+    blocks.append(divider())
+    blocks.append(heading(1, "What was auto rejected"))
+    if rejected:
+        blocks.append(
+            para(
+                "Rejects are non destructive. Every file below sits in "
+                "raw/workspaces/" + LANE_NAME + "/rejected/ with its verdict logged. "
+                "To resurrect one, move it back into proposals/ and approve it."
+            )
+        )
+        for r in rejected:
+            blocks.append(
+                bullet(
+                    "%s (%s) %s"
+                    % (r["slug"], r["ts"].strftime("%Y-%m-%d"), plain(r["detail"]))
+                )
+            )
+    else:
+        blocks.append(para("Nothing was auto rejected this week."))
+
+    blocks.append(divider())
+    blocks.append(heading(1, "What still needed you"))
+    if owner:
+        groups = {}
+        for r in owner:
+            groups.setdefault((r["actor"], r["verdict"]), []).append(r["slug"])
+        blocks.append(
+            para(
+                "%d actions carried an owner actor: your own hand at the CLI, your "
+                "Telegram taps, or a relay executing verdicts you gave." % len(owner)
+            )
+        )
+        for (actor, verdict), slugs in sorted(
+            groups.items(), key=lambda kv: -len(kv[1])
+        ):
+            shown = slugs[:MAX_LIST_PER_GROUP]
+            kids = [bullet(s) for s in shown]
+            if len(slugs) > len(shown):
+                kids.append(bullet("plus %d more" % (len(slugs) - len(shown))))
+            blocks.append(
+                toggle("%s %s by %s" % (len(slugs), verdict, actor), kids)
+            )
+    else:
+        blocks.append(para("Nothing needed you this week."))
+
+    blocks.append(divider())
+    blocks.append(heading(1, "Flagged and queued instead of acted on"))
+    if flagged:
+        blocks.append(
+            para(
+                "The screen or the taste rules flagged these, so the curator held "
+                "them for you rather than acting. They are still in proposals/."
+            )
+        )
+        for slug, reason in flagged:
+            blocks.append(bullet("%s: %s" % (slug, reason)))
+    else:
+        blocks.append(para("Nothing is held waiting on you."))
+
+    blocks.append(divider())
+    blocks.append(heading(1, "How to revert"))
+    blocks.append(
+        para(
+            "Reply in Telegram with: revert <slug> [reason]. The card moves out of "
+            "knowledge/ into the lane's rejected/ folder, the verdict is logged as "
+            "retired by telegram-owner, and the vault commits and pushes. Nothing is "
+            "deleted, git history keeps the full body, and you can move the file back "
+            "into proposals/ to land it again."
+        )
+    )
+    blocks.append(
+        para(
+            "If a card was edited after it landed, the bot refuses the revert and "
+            "says so, because your edit would go with it. Those need a look by hand."
+        )
+    )
+    return blocks
+
+
+def telegram_message(rep, url):
+    ws = rep["window_start"].strftime("%b %-d")
+    we = rep["window_end"].strftime("%b %-d")
+    landed = rep["landed"]
+    lines = [
+        "<b>Archivist weekly: what landed on its own</b>",
+        "%s to %s" % (ws, we),
+        "",
+        "<b>%d</b> landed on their own" % len(landed),
+        "<b>%d</b> auto rejected (kept in rejected/)" % len(rep["auto_rejected"]),
+        "<b>%d</b> still went through you" % len(rep["owner"]),
+        "<b>%d</b> flagged and queued" % len(rep["flagged"]),
+    ]
+    if landed:
+        lines.append("")
+        lines.append("<b>Landed:</b>")
+        for c in landed[:MAX_TG_CARDS]:
+            lines.append(
+                "• %s <i>(%s)</i>"
+                % (html_escape(c["slug"]), html_escape(c["type"]))
+            )
+        if len(landed) > MAX_TG_CARDS:
+            lines.append("+%d more" % (len(landed) - MAX_TG_CARDS))
+    else:
+        lines.append("")
+        lines.append("Quiet week, nothing promoted itself.")
+    lines.append("")
+    if url:
+        lines.append('<a href="%s">Notion review page</a>' % html_escape(url))
+    else:
+        lines.append("Notion page failed to publish, see the cron log.")
+    lines.append("")
+    lines.append("reply: revert &lt;slug&gt; to undo any of these")
+    return "\n".join(lines)
+
+
+def send_telegram(text, url):
+    cmd = [TG_SEND, "--html"]
+    if url:
+        kb = {
+            "inline_keyboard": [
+                [{"text": "Open the review page", "url": url}]
+            ]
+        }
+        cmd += ["--reply-markup", json.dumps(kb)]
+    cmd.append(text)
+    try:
+        subprocess.run(cmd, timeout=120, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print("telegram send failed: %s" % exc, file=sys.stderr)
+        return False
+    return True
+
+
+# --------------------------------------------------------------------------
+
+def main(argv):
+    days = 7
+    dry_run = "--dry-run" in argv
+    no_tg = "--no-telegram" in argv
+    if "--days" in argv:
+        try:
+            days = int(argv[argv.index("--days") + 1])
+        except (IndexError, ValueError):
+            print("bad --days value", file=sys.stderr)
+            return 2
+
+    now = datetime.now().astimezone()
+    # Anchor the window to local midnight so a weekly review always covers whole
+    # calendar days: the report reads "Aug 3 to Aug 10" and says the same thing
+    # whether the job fires at 17:00 or an hour late after a watchdog restart.
+    since = (now - timedelta(days=days)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+    try:
+        rows = read_decisions(since)
+    except OSError as exc:
+        print("cannot read decisions.log: %s" % exc, file=sys.stderr)
+        return 1
+
+    rep = build_report(rows, since, now)
+    title = "Archivist Weekly Landed Review, %s" % now.strftime("%Y-%m-%d")
+    blocks = notion_blocks(rep)
+
+    print("WINDOW: %s to %s" % (since.strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d")))
+    print("LANDED: %d" % len(rep["landed"]))
+    print("AUTO_REJECTED: %d" % len(rep["auto_rejected"]))
+    print("OWNER_ACTIONS: %d" % len(rep["owner"]))
+    print("FLAGGED_QUEUED: %d" % len(rep["flagged"]))
+    print("PENDING_NOW: %d" % rep["pending"])
+    for c in rep["landed"]:
+        print("  landed %s (%s) commit=%s src=%s" % (c["slug"], c["type"], c["commit"], c["source"]))
+
+    if dry_run:
+        print("DRY RUN: %d notion blocks, page NOT created" % len(blocks))
+        print("--- telegram message ---")
+        print(telegram_message(rep, "https://example.invalid/dry-run"))
+        return 0
+
+    url, notion_failed = "", ""
+    load_dotenv()
+    try:
+        url = create_page(title, blocks)
+        print("NOTION_URL: %s" % url)
+    except Exception as exc:  # publish failure is a real failure, but still report
+        notion_failed = str(exc)
+        print("notion publish failed: %s" % notion_failed, file=sys.stderr)
+
+    if not no_tg:
+        send_telegram(telegram_message(rep, url), url)
+
+    return 1 if notion_failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

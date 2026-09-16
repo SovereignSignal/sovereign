@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# vault-autocommit.sh — daily off-machine backup of the brain's working state.
+#
+# WHY: the vault's only durable copies are Gitea (origin) and node-12. Work
+# that is never committed is never mirrored. Before 2026-08-10, workstreams/
+# had been uncommitted for three weeks and existed on one disk only. This job
+# closes that gap by committing whatever is on disk once a day.
+#
+# WHAT IT DOES
+#   - stages modifications to tracked files and new content, honouring
+#     .gitignore (plain `git add -A`, so ignores are the only filter)
+#   - runs vault-secret-scan.sh over the staged set; ANY hit aborts loudly
+#     with the index reset and nothing committed
+#   - commits "vault: daily autocommit YYYY-MM-DD (N files)"
+#   - pushes main to every remote in SOV_HUB_REMOTES (never --force, never --mirror)
+#   - exits 0 silently when there is nothing to commit
+#
+# WHAT IT DOES NOT DO
+#   - never touches knowledge/ gate semantics: it only records what is already
+#     on disk. Promotion into knowledge/ stays curator-approve / curator-reject.
+#     If the owner's gate wrote a file, this job just backs it up.
+#   - never force-pushes, never rewrites history, never deletes anything.
+#   - never resolves a merge. If the repo is mid-merge/rebase/bisect it bails.
+#
+# CONCURRENCY: curator-run takes no lock, so this relies on its schedule slot
+# (04:30) sitting outside the 02:00 vzdump, 03:00 vault snapshot, 08:00
+# archivist-nightly and Fri 10:00 archivist-weekly windows. It additionally
+# refuses to run while a curator/audit process is live, and takes its own lock
+# so two copies of itself cannot overlap.
+#
+# Run via cron-run-hub.sh so a nonzero exit alerts on Telegram.
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOV_TEMPLATE="${SOV_TEMPLATE:-$(cd "$HERE/../.." && pwd)}"; export SOV_TEMPLATE
+STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
+# Settings come from the instance file. The runner exports them; a hand run asks the front door.
+[ -n "${SOVS_VAULT:-}" ] || eval "$(/bin/bash "$SOV_TEMPLATE/bin/sov" hub env)"
+
+VAULT="${VAULT:-$SOVS_VAULT}"
+SCAN="$HERE/secret-scan"
+LOCK="$STATE/hub/autocommit.lock"
+LIST="$(mktemp -t vault-autocommit)"
+trap 'rm -f "$LIST"; rmdir "$LOCK" 2>/dev/null || true' EXIT
+
+die() { echo "vault-autocommit: $*" >&2; exit 1; }
+
+mkdir -p "$(dirname "$LOCK")"
+mkdir "$LOCK" 2>/dev/null || die "another run holds $LOCK — refusing to overlap"
+
+cd "$VAULT" || die "vault not found at $VAULT"
+[ -x "$SCAN" ] || die "secret scanner missing or not executable: $SCAN"
+git rev-parse --git-dir >/dev/null 2>&1 || die "$VAULT is not a git repo"
+
+# --- refuse to run over an in-flight repo or an in-flight curator ---
+GD="$(git rev-parse --git-dir)"
+for f in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG rebase-merge rebase-apply; do
+  [ -e "$GD/$f" ] && die "repo is mid-operation ($f present) — resolve by hand, nothing committed"
+done
+# A curator or audit run in flight means the curator lane is mid-write; since the burn-down
+# runs around the clock (2026-09-05), skipping would mean never committing. Commit everything
+# except the lane instead; the lane's own files are committed by the gate scripts as they land.
+SCOPE=()
+if pgrep -qf 'bin/(curator-run|brain-audit)'; then
+  SCOPE=(-- . ':(exclude)raw/workspaces/archivist')
+  echo "vault-autocommit: a curator/audit run is in flight — committing everything except raw/workspaces/archivist"
+fi
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+[ "$branch" = "main" ] || die "on branch '$branch', expected main — nothing committed"
+
+# --- stage everything git is willing to see (.gitignore is the only filter) ---
+git add -A ${SCOPE[@]+"${SCOPE[@]}"} || die "git add failed"   # bash 3.2 + set -u: an empty array is "unbound"
+
+n="$(git diff --cached --name-only | wc -l | tr -d '[:space:]')"
+if [ "$n" -eq 0 ]; then
+  # Nothing to do. Still make sure the remotes are not behind (a manual commit
+  # or a failed push yesterday would otherwise sit unmirrored forever).
+  for r in $SOV_HUB_REMOTES; do
+    git push -q "$r" main 2>/dev/null || echo "vault-autocommit: push $r failed (nothing new to commit)" >&2
+  done
+  exit 0
+fi
+
+# --- the hard gate: no credential enters history ---
+# Scan the staged paths only. Deletions are skipped by the scanner (no file).
+# -z, not plain --name-only: the vault has paths with spaces and non-ASCII,
+# and git would C-quote them into names that no longer open.
+# Only what enters history gets scanned: a staged deletion carries no content, and the file
+# may still sit on disk (ignored) after being untracked.
+git diff --cached --name-only --diff-filter=AM -z | tr '\0' '\n' > "$LIST"
+# Redact first, the same rule the lanes apply at their tick (owner, 2026-09-06: identify
+# secrets naturally, system wide); the scan below is then the check, not the blocker.
+REDACT="$HERE/../brain-redact"
+if [ -x "$REDACT" ] && [ -s "$LIST" ]; then
+  if "$REDACT" --list "$LIST" 2>&1 | tail -1 | grep -qv "in 0 file"; then
+    git add -A ${SCOPE[@]+"${SCOPE[@]}"} || die "git add failed after redaction"
+    echo "vault-autocommit: redacted credential-shaped values before commit (see brain-redact output above)"
+  fi
+fi
+if ! "$SCAN" "$LIST"; then
+  git reset -q
+  die "SECRET SCAN FAILED over $n staged files — index reset, NOTHING committed.
+Fix by moving the credential out of the vault or adding a .gitignore entry,
+then re-run. This gate has no override."
+fi
+
+msg="vault: daily autocommit $(date +%F) ($n files)"
+git commit -q -m "$msg" || die "commit failed"
+
+head="$(git rev-parse --short HEAD)"
+echo "vault-autocommit: committed $head — $msg"
+
+rc=0
+for r in $SOV_HUB_REMOTES; do
+  if git push -q "$r" main --tags; then
+    echo "vault-autocommit: pushed to $r"
+  else
+    echo "vault-autocommit: PUSH FAILED to $r — commit $head is on hub disk only" >&2
+    rc=1
+  fi
+done
+exit "$rc"

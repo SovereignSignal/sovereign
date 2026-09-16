@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Weekly propose-only audit of the trusted layer on local inference. Prints a short
+# summary (the last three lines: counts and the report path); the runner delivers it.
+# A failed audit exits non-zero and the runner alerts.
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOV_TEMPLATE="${SOV_TEMPLATE:-$(cd "$HERE/../.." && pwd)}"; export SOV_TEMPLATE
+STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
+# Settings come from the instance file. The runner exports them; a hand run asks the front door.
+[ -n "${SOVS_VAULT:-}" ] || eval "$(/bin/bash "$SOV_TEMPLATE/bin/sov" hub env)"
+export PATH="/opt/homebrew/bin:$PATH"
+out="$("$HERE/../brain-audit" --max-screen 20 --max-skips 8 2>&1)"; rc=$?
+printf "Archivist weekly audit (local, no agent):\n%s\n" "$(printf "%s\n" "$out" | tail -3)"
+exit $rc
