@@ -647,3 +647,18 @@ exit 0
             d = b.status()
             self.assertFalse([n for n in d["needs_you"] if n.get("kind") == "xcode-license"])
             self.assertTrue([n for n in d["needs_you"] if n.get("kind") == "job" and RUNNER_LABEL in n.get("text", "")])
+
+
+class HubReceipts(unittest.TestCase):
+    """A hub job row reads the runner's receipts, so a job that has never exited in
+    launchd's eyes still shows its last run and last exit, and its log is the runner's."""
+
+    def test_a_hub_job_row_carries_the_runner_receipts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp); b.plist("com.sovereign.hub.nightly"); b.labels = "com.sovereign.hub.nightly"
+            hub = b.state / "hub"; hub.mkdir()
+            (hub / "nightly.last-run").write_text("1700000000\n"); (hub / "nightly.last-ok").write_text("1699990000\n"); (hub / "nightly.last-exit").write_text("2\n")
+            d = b.status()
+            row = next(j for j in d["jobs"] if j["label"] == "com.sovereign.hub.nightly")
+            self.assertEqual(row["last_exit"], 2); self.assertEqual(row["last_run"], 1700000000); self.assertEqual(row["last_ok"], 1699990000)
+            self.assertTrue(row["stderr"].endswith("hub/nightly.error.log"))

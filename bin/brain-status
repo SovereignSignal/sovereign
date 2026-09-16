@@ -1495,6 +1495,24 @@ def main():
     for label, r in sorted(rows.items()):
         info = plist_info(label) if sys.platform == "darwin" else unit_info(label, manifest)
         jobs.append({"label": label, **r, **info})
+        if label.startswith("com.sovereign.hub."):
+            # A template-run hub job runs through the hub runner, whose receipts outlive what
+            # launchd remembers: last run, last ok and last exit live in <state>/hub/, and so
+            # does the job's own error log. The row reads those, so a job launchd has never
+            # seen exit still shows when it ran and how it ended.
+            hub_state = os.path.join(_state_dir(), "hub"); jid = label[len("com.sovereign.hub."):]
+            def _receipt(name, _hub=hub_state, _jid=jid):
+                try:
+                    return int(open(os.path.join(_hub, "%s.%s" % (_jid, name))).read().strip())
+                except (OSError, ValueError):
+                    return None
+            row = jobs[-1]
+            row["last_run"], row["last_ok"] = _receipt("last-run"), _receipt("last-ok")
+            if _receipt("last-exit") is not None:
+                row["last_exit"] = _receipt("last-exit")
+            err = os.path.join(hub_state, jid + ".error.log")
+            n, a = _log_lines(err)
+            row["stderr"], row["stderr_lines"], row["stderr_age_h"] = err, n, a
     real = {j["label"] for j in jobs}
     for hid, ent in sorted(served.items()):
         lbl = ent.get("label") or (("com.sovereign.connector.%s" if sys.platform == "darwin" else "sovereign-connector-%s") % hid)
