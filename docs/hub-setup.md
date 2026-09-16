@@ -105,3 +105,7 @@ python3 apps/console/test-hub.py --evidence /path/to/private/evidence
 ```
 
 This is a locally signed pilot package. Clean-machine acceptance, migration of a real running Hub, recovery of its external dependencies and downloaded/notarized distribution remain separate release gates.
+
+## A hub run from a template checkout
+
+A hub that runs from a checkout of this template rather than from the app keeps its jobs in one manifest (`lib/sovereign_hub/manifest.py`) and its owner's settings in `~/.local/state/sovereign/hub.json`. `sov hub init` writes that file once; `sov hub jobs install` renders every job to the scheduler with a dry run first; `sov hub jobs status` reads the runner's receipts; the nightly `kit` job seals what only that machine has and copies it off-site. Rebuilding such a hub is one screen: [hub-rebuild.md](hub-rebuild.md).
