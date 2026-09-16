@@ -820,7 +820,15 @@ def fleet_view(root, contrib=None):
         for sub in sorted(os.listdir(d)):
             hd = os.path.join(d, sub)
             if os.path.isdir(hd) and (os.path.exists(os.path.join(hd, "HARNESS.md")) or os.path.exists(os.path.join(hd, "MANIFEST.md"))):
-                rec["harnesses"].append({**_harness_entry(hd, sub), "lane": name})
+                entry = {**_harness_entry(hd, sub), "lane": name}
+                # A box that stopped running this mirror leaves the folder behind (raw is
+                # provenance). HARNESS.md `status: retired` says so; the row moves out of the
+                # live mirrors, so it is never a mirror that is late.
+                hfm = frontmatter(os.path.join(hd, "HARNESS.md")) if os.path.exists(os.path.join(hd, "HARNESS.md")) else {}
+                if str(hfm.get("status") or "").strip().lower() == "retired":
+                    rec.setdefault("retired", []).append(entry)
+                else:
+                    rec["harnesses"].append(entry)
     # owner registry + live network state
     registry, registry_path = parse_hosts_md(root)
     peers = tailscale_peers()
