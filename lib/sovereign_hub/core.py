@@ -18,10 +18,12 @@ from brain_local import archive_root
 from sovereign_intake.common import directory, read_under, json_read, atomic, exclusive, locked
 
 ROOT = Path(__file__).resolve().parents[2]
+from .manifest import JOBS as _MANIFEST
+# The managed hub's three jobs are a view of the one manifest, so both hub flavours keep the same clock.
 JOBS = {
-    'nightly': {'hour': 6, 'minute': 0, 'description': 'Propose durable knowledge for owner review'},
-    'audit': {'hour': 10, 'minute': 0, 'weekday': 5, 'description': 'Report structural archive problems without model calls'},
-    'snapshot': {'hour': 3, 'minute': 0, 'description': 'Write an encrypted recovery capsule'},
+    'nightly': {'hour': _MANIFEST['nightly']['hour'], 'minute': _MANIFEST['nightly']['minute'], 'description': 'Propose durable knowledge for owner review'},
+    'audit': {'hour': _MANIFEST['weekly-audit']['hour'], 'minute': _MANIFEST['weekly-audit']['minute'], 'weekday': _MANIFEST['weekly-audit']['weekday'], 'description': 'Report structural archive problems without model calls'},
+    'snapshot': {'hour': _MANIFEST['snapshot']['hour'], 'minute': _MANIFEST['snapshot']['minute'], 'description': 'Write an encrypted recovery capsule'},
 }
 MAX_FILE = 128 * 1024 * 1024
 
