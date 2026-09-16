@@ -211,8 +211,9 @@ fi
 digest_out=""
 digest_rc=0
 # The review-page digest is an instance hook (hub.json digest_hook), optional.
-if [[ -n "${SOV_HUB_DIGEST:-}" && -x "${SOV_HUB_DIGEST:-}" ]]; then
-  digest_out="$("$SOV_HUB_DIGEST")" || digest_rc=$?
+if [[ -n "${SOV_HUB_DIGEST:-}" && -f "${SOV_HUB_DIGEST:-}" ]]; then
+  case "$SOV_HUB_DIGEST" in *.py) digest_out="$(python3 "$SOV_HUB_DIGEST")" || digest_rc=$?;;
+                            *) digest_out="$("$SOV_HUB_DIGEST")" || digest_rc=$?;; esac
 else
   digest_out=""; digest_rc=0
 fi

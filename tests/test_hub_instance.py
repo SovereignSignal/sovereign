@@ -52,6 +52,8 @@ class Instance(unittest.TestCase):
         self.assertIn("export ARCHIVIST_PENDING_LIMIT='50'", out)
         self.assertIn("export BURNDOWN_KEEP_FLOOR_PCT='2'", out)
         self.assertIn("export SOV_HUB_REMOTES='origin exchange'", out)
+        self.assertIn("export SOV_HUB_EXCHANGE='exchange'", out, "the exchange defaults to the last remote")
+        self.assertIn("export SOV_HUB_DIGEST=''", out)
         self.assertIn("export SOV_HUB_SNAPSHOT_DIR='/tmp/snaps'", out)
         self.assertIn("export TG_ENV_FILE='/tmp/tg-archive.env'", out)
         # a shell can eval it

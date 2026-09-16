@@ -22,6 +22,7 @@ DEFAULTS = {
     "notify": {"archive": None, "alerts": None},
     "kit": {"include": [], "key_file": None, "targets": [], "keep": 7},
     "offsite": {"vault": None, "template": None},
+    "exchange": None, "digest_hook": None,
     "instance_jobs": {},
 }
 # export NAME in the scripts  ->  field in hub.json
@@ -88,6 +89,8 @@ def env_exports(inst):
         ("BURNDOWN_SINCE_DAYS", b["since_days"]), ("BURNDOWN_MAX", b["max"]),
         ("BURNDOWN_PENDING_LIMIT", b["pending_limit"]), ("BURNDOWN_KEEP_FLOOR_PCT", b["keep_floor_pct"]),
         ("SOV_HUB_REMOTES", " ".join(inst["remotes"])),
+        ("SOV_HUB_EXCHANGE", inst.get("exchange") or (inst["remotes"][-1] if inst["remotes"] else "")),
+        ("SOV_HUB_DIGEST", inst.get("digest_hook") or ""),
         ("SOV_HUB_SNAPSHOT_DIR", s.get("folder") or ""), ("SOV_HUB_SNAPSHOT_KEEP", s.get("keep") or 30),
         ("TG_ENV_FILE", n.get("archive") or ""), ("SOV_HUB_ALERTS_ENV", n.get("alerts") or ""),
     ]
