@@ -15,13 +15,14 @@ def identity(item):
 def validate(item, client_id):
     if not isinstance(item, dict) or set(item) != KEYS:
         raise IntakeError("invalid_item_fields")
-    if item["schema_version"] != 1 or item["exporter_version"] != "1":
+    if item["schema_version"] != 1 or item["exporter_version"] not in ("1", "2"):
         raise IntakeError("unsupported_item_version")
     if slug(item["client_id"]) != slug(client_id):
         raise IntakeError("wrong_client")
     slug(item["source_id"])
     p = str(relative(item["source_path"]))
-    if not p.endswith(".md") or FORBIDDEN.search(p):
+    from .evidence import permitted
+    if (item["exporter_version"] == "1" and (not p.endswith(".md") or FORBIDDEN.search(p))) or (item["exporter_version"] == "2" and not permitted(p)):
         raise IntakeError("forbidden_source")
     if not isinstance(item["title"], str) or not 1 <= len(item["title"]) <= 200 or any(ord(c) < 32 for c in item["title"]):
         raise IntakeError("invalid_title")
@@ -38,7 +39,7 @@ def validate(item, client_id):
     content = json.dumps({k: item[k] for k in ("source_path", "title", "topics", "body")})
     if secret_hits(content):
         raise IntakeError("credential_shaped_content")
-    if ADDRESS.search(body) or MONEY.search(body) or FORENSIC.search(body):
+    if item["exporter_version"] == "1" and (ADDRESS.search(body) or MONEY.search(body) or FORENSIC.search(body)):
         raise IntakeError("method_boundary_failed")
     if item["capture_id"] != digest(identity(item)) or len(encoded(item)) > MAX_ITEM:
         raise IntakeError("invalid_capture_digest_or_size")
@@ -87,4 +88,9 @@ def assess(config):
             observation["reason"] = "source_missing"
         except (IntakeError, OSError, UnicodeError, KeyError, TypeError) as exc:
             observation["reason"] = str(exc) if isinstance(exc, IntakeError) else "source_unreadable_or_invalid"
+    if config.get("evidence_selectors"):
+        from .evidence import assess_evidence
+        extra, checks = assess_evidence(config, collected, validate, identity, digest)
+        items.extend(extra)
+        observations.extend(checks)
     return {"collected_at": collected, "items": items, "observations": observations, "ok": all(o["state"] != "error" for o in observations)}

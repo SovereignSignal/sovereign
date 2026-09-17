@@ -31,7 +31,9 @@ def inspect_repo(repo, client_id, sources):
             item = validate(json.loads(raw), client_id)
             if name != "items/" + item["capture_id"] + ".json":
                 raise IntakeError("item_filename_mismatch")
-            if sources.get(item["source_id"]) != item["source_path"]:
+            approval = sources.get(item["source_id"])
+            expected = {"path": approval, "exporter_version": "1"} if isinstance(approval, str) else approval
+            if expected != {"path": item["source_path"], "exporter_version": item["exporter_version"]}:
                 raise IntakeError("source_not_allowed_by_hub")
             accepted.append(item)
         except (IntakeError, ValueError, UnicodeError, KeyError, TypeError) as exc:
@@ -48,7 +50,14 @@ def note(item):
 def import_client(config, state_dir, root, apply=False, receive_only=False):
     client_id = slug(config["client_id"])
     lane_id = slug(config["lane"])
-    sources = {slug(key): str(relative(value)) for key, value in config["sources"].items()}
+    sources = {}
+    for key, value in config["sources"].items():
+        if isinstance(value, str):
+            sources[slug(key)] = str(relative(value))
+        elif isinstance(value, dict) and set(value) == {"path", "exporter_version"} and value["exporter_version"] == "2":
+            sources[slug(key)] = {"path": str(relative(value["path"])), "exporter_version": "2"}
+        else:
+            raise IntakeError("invalid_source_approval")
     if not sources:
         raise IntakeError("hub_source_allowlist_required")
     if not apply:
