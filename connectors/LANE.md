@@ -31,6 +31,11 @@ gear: ask-first                # ask-first | act-and-report | routine — mirror
 capture_window: 30d            # optional: how long this lane may be quiet before the hub's
                                # freshness check complains. Omit it and the default applies.
 
+# ---- source map (optional): what the producer looks at, in three classes ----
+sources_documents: 7 settled design documents, the allow-list in <collector script>
+sources_processes: <scheduled process whose outputs are captured as dated observations>
+sources_excluded: <what never enters the brain from this host, by rule>
+
 # ---- transport details (required for git transports) ----
 branch: lane/wire-ops          # the ONLY ref this producer may push
 remote: <the brain's reachable remote URL>
@@ -125,6 +130,20 @@ like, anything unusual about cadence or shape, and the standing rules restated o
     line, so a typo can never quietly widen a lane's alarm.
   - **It is not a fix for a broken producer.** Widening the window on a lane that has
     genuinely died hides the death. Remove the field when the sources come back.
+- **The source map** (`sources_documents`, `sources_processes`, `sources_excluded`, all
+  optional, all one line) answers "what does this producer look at, and what does it leave
+  alone?". Three classes: settled documents (an allow-list a collector distils), scheduled
+  process outputs (a monitor, an exporter, a job whose result is worth a dated observation
+  even when no interactive session happened), and what is excluded by rule. It exists because
+  a collector that succeeds every day can still be looking at the wrong things: the first
+  producer pilot found a lane green for a month while the workspace it excluded made fifty
+  commits. The map is a declaration, not enforcement; the collector's allow-list is the
+  enforcement. Producers with a source map should report what each run covered in the
+  heartbeat tag message, as one line the hub can parse: `coverage: {"documents": {"declared":
+  7, "captured": 0, "unchanged": 7, "skipped": 0}, "process_outputs": {"declared": 1,
+  "new_observations": 0, "qualifying": 0, "captured": 0}, "excluded": "..."}`. The hub's
+  daily health check prints the declaration and the report side by side on the lane's line;
+  no color depends on it.
 - **`gear`** governs how the producer's *own* actions escalate (e.g. whether it may
   restructure files inside its lane without asking). It never governs promotion — nothing
   a producer does graduates into writing trusted layers.
