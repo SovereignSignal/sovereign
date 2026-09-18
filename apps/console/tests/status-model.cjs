@@ -3,6 +3,12 @@ const fs = require('node:fs'), vm = require('node:vm'), path = require('node:pat
 const box = {window:{},URL}; vm.createContext(box);
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/status-model.js'),'utf8'),box);
 const assess = box.window.SovStatus.assess;
+// Runner receipts must use their declared cadence and surface failed/unknown reads.
+const oldRun = new Date(Date.now() - 3600000).toISOString();
+assert.equal(assess({hub:{jobs:{'fleet-watch':{ts:oldRun,exit:0,cadence_s:300}}}}).need[0].state,'down');
+assert.equal(assess({hub:{jobs:{autocommit:{ts:oldRun,exit:1,cadence_s:86400}}}}).need[0].cause,'job-failed');
+assert.equal(assess({hub:{jobs:{nightly:{ts:null,exit:null,cadence_s:86400}}}}).need.length,0);
+assert.equal(assess({hub:{jobs_error:'Receipts unavailable'}}).need[0].state,'warn');
 const lane = delivery => ({lane:'producer',pushed:'2000-01-01T00:00:00Z',...(delivery===undefined?{}:{delivery})});
 for(const delivery of [undefined,null,'','unrecognized']) {
  const a=assess({backups:{lanes:[lane(delivery)]}});

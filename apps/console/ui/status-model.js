@@ -33,6 +33,7 @@ window.SovStatus = (() => {
     (D.needs_you || []).forEach((n, i) => need.push({ state: "warn", name: n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: n.kind === "host" ? 0 : 1, cause: "need:" + n.kind, jump:n.host?{view:"hosts",id:n.host}:null }));
     (D.jobs || []).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
     Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k, j]) => need.push({ state: "down", name: k, detail: `exited ${j.exit} on the hub`, age_h: ago(j.ts), jump: { view: "jobs", id: "hub:job:" + k }, order: 0, cause: "job-failed" }));
+    if (h.jobs_error) need.push({ state: "warn", name: "Hub jobs", detail: h.jobs_error, jump: { view: "jobs" }, order: 0, cause: "hub-jobs-unknown" });
     hosts.filter(x => x.net && x.net.online === false && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Operations → Hosts.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
     const hubName = h.hub_host || (m.hub_pointer || '').split(':')[0];
     if (h.reachable === false && !(D.needs_you||[]).some(n=>n.kind==='hub') && !hosts.some(x => x.host === hubName && x.net?.online === false))
@@ -59,7 +60,7 @@ window.SovStatus = (() => {
         fresh.push({ state: "live", name: `lane ${l.lane}`, detail: `source from ${age(ah)} ago is included on the hub`, age_h: ah, jump });
       }
     });
-    Object.entries(h.jobs || {}).forEach(([k, j]) => { const cad = HUB_CADENCE_H[k]; if (!cad || j.exit) return; late(k, "last ran", ago(j.ts), cad, { view: "jobs", id: "hub:job:" + k }, "hub-job-late"); });
+    Object.entries(h.jobs || {}).forEach(([k, j]) => { const cad = j.cadence_s ? j.cadence_s / 3600 : HUB_CADENCE_H[k]; if (!cad || j.exit) return; late(k, "last completed", ago(j.ts), cad, { view: "jobs", id: "hub:job:" + k }, "hub-job-late"); });
     if (bk.snapshots) late("daily snapshot", "last taken", bk.snapshots.newest_age_h, 24, { view: "backups", id: "bk:snapshots" }, "snapshot-late");
     // fresh: events, not states
     const today = new Date().toISOString().slice(0, 10), a = arch(), landed = (a.cards || []).filter(c => c.created === today).length;

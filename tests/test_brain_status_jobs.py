@@ -653,6 +653,21 @@ class HubReceipts(unittest.TestCase):
     """A hub job row reads the runner's receipts, so a job that has never exited in
     launchd's eyes still shows its last run and last exit, and its log is the runner's."""
 
+    def test_hub_failure_points_at_the_captured_program_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp); label = "com.sovereign.hub.autocommit"
+            b.plist(label); b.labels = label
+            hub = b.state / "hub"; hub.mkdir()
+            (hub / "autocommit.last-run").write_text("1700000000\n")
+            (hub / "autocommit.last-exit").write_text("1\n")
+            output = hub / "autocommit.last-output"
+            output.write_text("Credential scan blocked the commit.\n")
+            (hub / "autocommit.error.log").write_text("")
+            row = next(j for j in b.status()["jobs"] if j["label"] == label)
+            self.assertEqual(row["last_exit"], 1)
+            self.assertEqual(row["stderr"], str(output))
+            self.assertEqual(row["stderr_lines"], 1)
+
     def test_a_hub_job_row_carries_the_runner_receipts(self):
         with tempfile.TemporaryDirectory() as tmp:
             b = Box(tmp); b.plist("com.sovereign.hub.nightly"); b.labels = "com.sovereign.hub.nightly"

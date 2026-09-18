@@ -19,7 +19,16 @@ const report=()=>post({cmd:'clientError',where:'transparency-qa',msg:JSON.string
 '''
 PROBE=r'''
 check('No horizontal overflow',document.documentElement.scrollWidth<=innerWidth);
-if(SCENE==='first-load'){
+if(SCENE==='hub-jobs'){
+ await wait(()=>document.querySelector('[data-id="hub:job:autocommit"]'));
+ const commit=document.querySelector('[data-id="hub:job:autocommit"]'),nightly=document.querySelector('[data-id="hub:job:nightly"]');
+ check('Current hub failure is visible',commit.textContent.includes('exit 1'));
+ check('Never completed nightly is unknown',nightly.textContent.includes('unknown')&&nightly.textContent.includes('No completed run recorded'));
+ check('No null exit or retired job shown',!text().includes('exit null')&&!document.querySelector('[data-id="hub:job:vault-autocommit"]'));
+ nightly.click();await pause(100);
+ check('Drawer names actual schedule',text().includes('06:00 daily'));
+ check('Receipt does not claim job is stopped',text().includes('a job may currently be running'));
+}else if(SCENE==='first-load'){
  check('First load states native budget',caption().includes('up to 6 seconds'));
  check('No false empty environment',!text().includes('0 devices')&&!text().includes('No matching connector environment'));
  await wait(()=>text().includes('worker'));
@@ -65,7 +74,7 @@ report();
 '''
 def main():
  p=argparse.ArgumentParser();p.add_argument('--evidence',required=True,type=Path);p.add_argument('--scenes',nargs='*');a=p.parse_args();a.evidence.mkdir(parents=True,exist_ok=True);results=[]
- cases=[('first-load','dark','900x600'),('home','dark','1200x800'),('home','light','720x460'),('to-operations','dark','900x600'),('to-home','light','900x600')]
+ cases=[('first-load','dark','900x600'),('home','dark','1200x800'),('home','light','720x460'),('to-operations','dark','900x600'),('to-home','light','900x600'),('hub-jobs','dark','900x600'),('hub-jobs','light','720x460')]
  for scene,theme,size in cases:
   if a.scenes and scene not in a.scenes:continue
   with tempfile.TemporaryDirectory(prefix='sovereign-transparency-') as folder:
@@ -76,12 +85,13 @@ def main():
    needs=service.hypervisor_needs(backups)+service.fleet_needs(fleet)
    needs[0]['why']+=' <img src=x onerror=alert(1)>'
    data={'generated_at':datetime.now(timezone.utc).isoformat(),'machine':{'connected':True,'host':'studio','vault':str(archive),'vault_name':'QA Archive'},'hub':{'reachable':True,'pending':0,'proposals':[]},'fleet':fleet,'backups':backups,'needs_you':needs,'harnesses':[],'archive':{'cards':[]}}
+   if scene=='hub-jobs':data['hub']['jobs']={'autocommit':{'ts':data['generated_at'],'exit':1,'source':'hub-runner','schedule':'04:30 daily','cadence_s':86400},'nightly':{'ts':None,'exit':None,'source':'hub-runner','schedule':'06:00 daily','cadence_s':86400}}
    (base/'status.json').write_text(json.dumps(data));(base/'count').write_text('0')
    command=base/'status'
    # A single process fixture, so timeout cleanup can be checked by PID.
    behavior="time.sleep(4)" if scene=='first-load' else "\nif n==2: time.sleep(1); sys.exit(7)\nif n==3: time.sleep(9)" if scene=='home' else "\nif n==2: time.sleep(4)"
    command.write_text('#!'+sys.executable+'\nimport os,json,time,sys\nfrom pathlib import Path\nb=Path(__file__).parent\nn=int((b/"count").read_text())+1\n(b/"count").write_text(str(n))\n(b/"pid").write_text(str(os.getpid()))\n'+behavior+'\nprint((b/"status.json").read_text())\n');command.chmod(0o700)
-   anchor='operations:view:glance' if scene=='to-operations' else 'home:view:system' if scene=='to-home' else ''
+   anchor='operations:view:jobs' if scene=='hub-jobs' else 'operations:view:glance' if scene=='to-operations' else 'home:view:system' if scene=='to-home' else ''
    before="document.getElementById('system-tab').click();" if scene=='first-load' else "document.getElementById('operations-tab').click();" if scene=='to-home' else "window.sovRefresh();" if scene=='to-operations' else 'void 0'
    name=scene+'-'+theme+'-'+size
    env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(command),SOV_QA_STATUS_BUDGET='6' if scene!='home' else '4',SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='3.2',SOV_SNAPSHOT_ANCHOR=anchor,SOV_QA_JS=before,SOV_QA_JS_AFTER_ANCHOR=COMMON+PROBE.replace('SCENE',json.dumps(scene)))

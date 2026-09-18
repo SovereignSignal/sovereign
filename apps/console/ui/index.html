@@ -470,7 +470,7 @@ window.onerror = function (msg, src, line, col) {
     $("#vault").textContent = view === "review" ? "Review" : "Operations";
     $("#archive-name").textContent = selectedRoot?.split("/").pop() || "Open an archive";
     $("#meta").textContent = `${m.host || ""}${obs.sync ? " · obsidian " + obs.sync : ""}`;
-    const hp = $("#hubpill"), j = h.jobs || {}, nightly = j["archivist-nightly"]; hp.style.opacity = "";
+    const hp = $("#hubpill"), j = h.jobs || {}, nightly = j.nightly || j["archivist-nightly"]; hp.style.opacity = "";
     if (h.reachable) hp.innerHTML = `${dot("live", "hub online")}hub ${esc(((h.via || "").startsWith("ssh ") ? h.via.slice(4) : (h.hub_host || "here")).toLowerCase())}${nightly ? " · nightly " + clock(nightly.ts) : ""}`;
     else if (h.reachable === false) hp.innerHTML = `${dot("down", "hub offline")}hub silent`;
     else hp.innerHTML = `${dot("", "hub unchecked")}hub unchecked`;
@@ -737,8 +737,9 @@ window.onerror = function (msg, src, line, col) {
         detail: [["lane", c.lane], ["job", c.label], ["last success", c.last_success || "never"], ["last status", c.last_status || "none yet"]], note: "A cloud pull runs on the hub; every console shows this same record." }));
       row("hub:audit", { label: "audit", desc: h.audit_latest ? "latest: " + h.audit_latest : "no audit yet", state: "", stateText: "weekly", age_h: null, detail: [["latest report", h.audit_latest || "none"]], note: "The Friday audit and the packets in between: findings become boxes you tick, the hub applies." });
       const hj = h.jobs || {};
-      Object.keys(hj).sort().forEach(k => { const j = hj[k]; row("hub:job:" + k, { label: k, desc: `last run ${j.ts || "?"}${j.dur_s != null ? " · " + j.dur_s + "s" : ""}`, state: j.exit === 0 ? "live" : j.exit == null ? "" : "down", stateText: j.exit === 0 ? "ok" : "exit " + j.exit, age_h: ago(j.ts),
-        detail: [["last run", j.ts], ["exit", j.exit], ["duration", j.dur_s != null ? j.dur_s + "s" : "?"]], note: "Scheduled on the hub through its cron wrapper, which alerts on failure." }); });
+      if (h.jobs_error) row("hub:jobs:unknown", { label: "Hub jobs", desc: h.jobs_error, state: "warn", stateText: "unknown" });
+      Object.keys(hj).sort().forEach(k => { const j = hj[k]; row("hub:job:" + k, { label: k, desc: j.ts ? `last completed ${j.ts}${j.dur_s != null ? " · " + j.dur_s + "s" : ""}` : "No completed run recorded", state: j.exit === 0 ? "live" : j.exit == null ? "" : "down", stateText: j.exit === 0 ? "ok" : j.exit == null ? "unknown" : "exit " + j.exit, age_h: ago(j.ts),
+        detail: [["last completed", j.ts], ["exit", j.exit], ["schedule", j.schedule || "unknown"], ["duration", j.dur_s != null ? j.dur_s + "s" : "?"]], note: j.source === "hub-runner" ? "Reported by the hub runner. These receipts describe completed runs; a job may currently be running." : "Reported by the hub's legacy cron wrapper." }); });
     }
     // What the operating system runs, then what runs inside it. A lane row carries the label of the
     // one job that kicks it, so counting the two apart is what keeps the header honest.

@@ -693,12 +693,40 @@ for e in contrib.values():
     e["recent"] = [x[1:] for x in sorted(e["recent"], reverse=True)[:6]]
 out["contrib"] = contrib
 out["origin"] = origin
-logp = os.path.expanduser(open(os.path.expanduser("~/.brain-cron-log")).read().strip()) if os.path.exists(os.path.expanduser("~/.brain-cron-log")) else os.path.expanduser("~/Library/Logs/sovs-cron.log")
-if os.path.exists(logp):
-    for line in open(logp, errors="ignore"):
-        m = re.match(r"^(\S+) run job=(\S+) exit=(\d+) dur=(\d+)s", line)
-        if m and m.group(2) != "tg-verdict-poll":
-            out["jobs"][m.group(2)] = {"ts": m.group(1), "exit": int(m.group(3)), "dur_s": int(m.group(4))}
+state = os.environ.get("SOV_STATE_DIR") or os.path.expanduser("~/.local/state/sovereign")
+if os.path.exists(os.path.join(state, "hub.json")):
+    # A migrated hub's receipts supersede the retired cron log, even when no run
+    # has completed yet. Reuse its own manifest, including instance jobs.
+    try:
+        tmpl = os.path.dirname(os.path.dirname(os.path.realpath(os.path.expanduser("~/brain-bin/sov"))))
+        sys.path.insert(0, os.path.join(tmpl, "lib"))
+        from sovereign_hub import instance, jobs, manifest
+        inst = instance.load(state)
+        if os.path.realpath(os.path.expanduser(inst["vault"])) != os.path.realpath(root):
+            raise ValueError("hub instance belongs to a different archive")
+        specs = manifest.all_jobs(inst)
+        for row in jobs.status(state, tmpl):
+            jid = row["job"]; spec = specs[jid]
+            if "hours" in spec:
+                hours = sorted(set(int(h) for h in spec["hours"]))
+                cadence = max(b - a for a, b in zip(hours, hours[1:] + [hours[0] + 24])) * 3600
+            else:
+                cadence = int(spec.get("interval_s") or (604800 if "weekday" in spec else 86400))
+            stamp = row["last_run"]
+            out["jobs"][jid] = {"ts": datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).isoformat() if stamp is not None else None,
+                                "exit": row["last_exit"] if stamp is not None else None, "last_ok": row["last_ok"],
+                                "schedule": row["schedule"], "cadence_s": cadence, "source": "hub-runner"}
+    except (ImportError, OSError, ValueError, KeyError, TypeError, OverflowError):
+        out["jobs"] = {}
+        out["jobs_error"] = "Hub job receipts could not be read; check the hub configuration and template."
+else:
+    # Older hubs have no instance file and still report through their cron wrapper.
+    logp = os.path.expanduser(open(os.path.expanduser("~/.brain-cron-log")).read().strip()) if os.path.exists(os.path.expanduser("~/.brain-cron-log")) else os.path.expanduser("~/Library/Logs/sovs-cron.log")
+    if os.path.exists(logp):
+        for line in open(logp, errors="ignore"):
+            m = re.match(r"^(\S+) run job=(\S+) exit=(\d+) dur=(\d+)s", line)
+            if m and m.group(2) != "tg-verdict-poll":
+                out["jobs"][m.group(2)] = {"ts": m.group(1), "exit": int(m.group(3)), "dur_s": int(m.group(4)), "source": "legacy-cron"}
 print(json.dumps(out))
 '''
 
@@ -1518,7 +1546,11 @@ def main():
             row["last_run"], row["last_ok"] = _receipt("last-run"), _receipt("last-ok")
             if _receipt("last-exit") is not None:
                 row["last_exit"] = _receipt("last-exit")
-            err = os.path.join(hub_state, jid + ".error.log")
+            # The runner captures the program's output here; launchd's stderr
+            # only contains failures outside the program (for example startup).
+            err = os.path.join(hub_state, jid + ".last-output")
+            if not os.path.exists(err):
+                err = os.path.join(hub_state, jid + ".error.log")
             n, a = _log_lines(err)
             row["stderr"], row["stderr_lines"], row["stderr_age_h"] = err, n, a
     real = {j["label"] for j in jobs}
