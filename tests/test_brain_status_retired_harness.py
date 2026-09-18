@@ -12,7 +12,7 @@ from pathlib import Path
 import tests.test_brain_status_jobs as base
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS = ROOT / "bin" / "brain-status"
+STATUS = ROOT / "bin" / "sov-status"
 
 
 def harness_md(status=None):

@@ -137,7 +137,7 @@ class Files(unittest.TestCase):
 
 class Cli(unittest.TestCase):
     def run_cli(self, *args, cwd=None):
-        return subprocess.run([sys.executable, str(ROOT / "bin" / "brain-redact"), *args], capture_output=True, text=True, cwd=cwd)
+        return subprocess.run([sys.executable, str(ROOT / "bin" / "sov-redact"), *args], capture_output=True, text=True, cwd=cwd)
 
     def test_check_reports_and_exits_1_then_redact_exits_0(self):
         with tempfile.TemporaryDirectory() as tmp:

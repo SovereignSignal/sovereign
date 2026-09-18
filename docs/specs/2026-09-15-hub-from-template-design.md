@@ -45,7 +45,7 @@ The fail-loud wrapper in Python, semantics copied exactly from `cron-run-hub.sh`
 
 ### 4. Install and status: `sov hub install|status|uninstall`
 
-`sov hub install` renders every manifest job and instance job to a launchd plist (systemd units on Linux, same shape as the connector runner), diffs against what is installed, and prints the plan: create, replace, unchanged, retire. `--apply` writes only what changed, bootstraps changed labels, and records a receipt. Labels are `com.sovereign.hub.<id>`; the old `com.sov.cron.*` labels are listed as retirable and parked to `~/Library/LaunchAgents/sovereign-retired/` only when `--retire-legacy` is passed, the way the connector migration retired per-tool jobs. `sov hub status` lists each job with its schedule, last run, last ok and last exit, from the runner's receipts, and `brain-status` reads the same receipts so the console and the health check see hub jobs without change.
+`sov hub install` renders every manifest job and instance job to a launchd plist (systemd units on Linux, same shape as the connector runner), diffs against what is installed, and prints the plan: create, replace, unchanged, retire. `--apply` writes only what changed, bootstraps changed labels, and records a receipt. Labels are `com.sovereign.hub.<id>`; the old `com.sov.cron.*` labels are listed as retirable and parked to `~/Library/LaunchAgents/sovereign-retired/` only when `--retire-legacy` is passed, the way the connector migration retired per-tool jobs. `sov hub status` lists each job with its schedule, last run, last ok and last exit, from the runner's receipts, and `sov-status` reads the same receipts so the console and the health check see hub jobs without change.
 
 ### 5. The scripts move, unchanged in logic
 
@@ -65,7 +65,7 @@ One screen: clone the template, restore the kit with the key, clone the vault fr
 
 ## Data flow
 
-Manifest and instance file → renderer → scheduler items → runner → receipts → status, brain-status, health check. Kit job → capsule → off-site targets → receipts → health check. Nothing in the template reads the owner's paths; nothing in `hub.json` is required to be general.
+Manifest and instance file → renderer → scheduler items → runner → receipts → status, sov-status, health check. Kit job → capsule → off-site targets → receipts → health check. Nothing in the template reads the owner's paths; nothing in `hub.json` is required to be general.
 
 ## Error handling
 

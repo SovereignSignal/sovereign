@@ -5,7 +5,7 @@
  "hook_file": "~/.cursor/hooks.json",
  "write": "mirror",
  "manual_step": null,
- "description": "sessionStart hook reads the brain; chats, transcripts, plans, skills, and config are mirrored.",
+ "description": "sessionStart hook reads the archive; chats, transcripts, plans, skills, and config are mirrored.",
  "detect": [
   "~/.cursor",
   "~/Library/Application Support/Cursor"

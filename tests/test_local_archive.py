@@ -49,7 +49,7 @@ class LocalArchive(unittest.TestCase):
         with self.assertRaises(ValueError):m.capture(self.root,'title\nsource: other','body')
     def test_cli_with_empty_home_and_minimal_path(self):
         home=self.base/'new-home';home.mkdir()
-        r=subprocess.run([sys.executable,str(ROOT/'bin/brain-local')],input=json.dumps({'action':'list','root':str(self.root)}),text=True,capture_output=True,env={'HOME':str(home),'PATH':'/usr/bin:/bin'})
+        r=subprocess.run([sys.executable,str(ROOT/'bin/sov-local')],input=json.dumps({'action':'list','root':str(self.root)}),text=True,capture_output=True,env={'HOME':str(home),'PATH':'/usr/bin:/bin'})
         self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout)['total'],0)
         self.assertEqual(list(home.glob('.brain*')),[])
 

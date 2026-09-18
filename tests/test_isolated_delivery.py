@@ -201,7 +201,7 @@ class IsolatedDelivery(LaneFixture, unittest.TestCase):
         def failing_receipt(root, report):
             if report['state'] == 'accepted': raise OSError('receipt write failed')
             return real_receipt(root, report)
-        argv = ['brain-merge-lane', '--root', str(self.p), '--ref', 'lane/fixture', '--lane', 'fixture', '--apply-isolated']
+        argv = ['sov-merge-lane', '--root', str(self.p), '--ref', 'lane/fixture', '--lane', 'fixture', '--apply-isolated']
         import contextlib
         import io
         output = io.StringIO()
@@ -223,7 +223,7 @@ class IsolatedDelivery(LaneFixture, unittest.TestCase):
         import contextlib
         import io
         output = io.StringIO()
-        argv = ['brain-merge-lane', '--root', str(self.p), '--ref', 'lane/fixture', '--lane', 'fixture', '--apply-isolated']
+        argv = ['sov-merge-lane', '--root', str(self.p), '--ref', 'lane/fixture', '--lane', 'fixture', '--apply-isolated']
         with mock.patch.object(sys, 'argv', argv), mock.patch.object(m, 'run', side_effect=late_error), contextlib.redirect_stdout(output):
             code = m.main()
         result = json.loads(output.getvalue())
@@ -240,7 +240,7 @@ class IsolatedDelivery(LaneFixture, unittest.TestCase):
 
     def test_cli_receipt_and_cleanup(self):
         source = self.capture(); self.owner_work(); before = self.fingerprints()
-        output = subprocess.check_output([sys.executable, str(ROOT/'bin/brain-merge-lane'), '--root', str(self.p),
+        output = subprocess.check_output([sys.executable, str(ROOT/'bin/sov-merge-lane'), '--root', str(self.p),
                                          '--ref', 'lane/fixture', '--lane', 'fixture', '--apply-isolated'], text=True)
         result = json.loads(output)
         self.assertEqual(result['state'], 'accepted')

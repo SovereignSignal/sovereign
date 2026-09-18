@@ -35,7 +35,7 @@ def create(value, template):
     (root / 'raw/workspaces').mkdir()
     (root / '.obsidian/templates').mkdir(parents=True)
     shutil.copyfile(template / 'templates/note.md', root / '.obsidian/templates/note.md')
-    law = (template / 'CLAUDE.md').read_text().replace('{{BRAIN_NAME}}', root.name)
+    law = (template / 'CLAUDE.md').read_text().replace('{{SOVEREIGN_NAME}}', root.name).replace('{{BRAIN_NAME}}', root.name)
     (root / 'CLAUDE.md').write_text(law)
     (root / '.gitignore').write_text('.DS_Store\n.obsidian/workspace*\narchive/\nrepos/\n')
     return {'root': str(root.resolve()), 'name': root.name}

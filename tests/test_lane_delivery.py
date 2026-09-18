@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-loader = importlib.machinery.SourceFileLoader('lane_delivery', str(ROOT / 'bin/brain-merge-lane'))
+loader = importlib.machinery.SourceFileLoader('lane_delivery', str(ROOT / 'bin/sov-merge-lane'))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 m = importlib.util.module_from_spec(spec); loader.exec_module(m)
 

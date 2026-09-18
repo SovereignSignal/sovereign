@@ -33,7 +33,7 @@ RUNNER_BIN = ti.ROOT / "bin" / "sov-connectors-run"
 CALENDAR = "notion"                  # the one harness whose single run can outlive a tick
 TICK_LANE = "windsurf"               # an ordinary lane beside it, so "declared" is never "the only one"
 RUNNER_LABEL = "com.sovereign.connector.runner"
-# What `brain-mirror-notion --check` would say. The same seam the Notion harness test
+# What `sov-mirror-notion --check` would say. The same seam the Notion harness test
 # uses, so no test here touches Notion.
 CHECK = ("bot: TestBot\nworkspace: Test WS\nitems: 1 (page 1)\nroots reachable:\n"
          "  %032x  Root A\nmissing roots: none\n" % 1)
@@ -296,7 +296,7 @@ class OneContractForTheTickFlag(unittest.TestCase):
         return b
 
     def status(self, b):
-        r = subprocess.run(["/usr/bin/python3", str(ti.ROOT / "bin" / "brain-status"),
+        r = subprocess.run(["/usr/bin/python3", str(ti.ROOT / "bin" / "sov-status"),
                             "--json", "--no-hub"],
                            capture_output=True, text=True, env=b.env(), timeout=180)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -449,7 +449,7 @@ class ConsoleShowsItOnce(unittest.TestCase):
     one is built from a run record the runner never writes for it."""
 
     def status(self, b):
-        r = subprocess.run(["/usr/bin/python3", str(ti.ROOT / "bin" / "brain-status"),
+        r = subprocess.run(["/usr/bin/python3", str(ti.ROOT / "bin" / "sov-status"),
                             "--json", "--no-hub"],
                            capture_output=True, text=True, env=b.env(), timeout=180)
         assert r.returncode == 0, r.stdout + r.stderr
@@ -569,7 +569,7 @@ class TheCalendarLaneStagesLikeAnyOther(unittest.TestCase):
     def brain_inside_documents(self, b):
         """What puts a Mac behind the staging hop: a vault under ~/Documents, a
         TCC-protected folder where a job whose program is a script host is denied."""
-        v = b.home / "Documents" / "brain"
+        v = b.home / "Documents" / "archive"
         (v / "knowledge" / "entities").mkdir(parents=True)
         (v / "raw" / "tools").mkdir(parents=True)
         (v / "knowledge" / "entities" / "me.md").write_text(

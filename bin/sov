@@ -1,8 +1,9 @@
 #!/bin/bash
-# sov: one front door for the brain tools.
+# sov: one front door for the archive tools.
 #
-#   sov load <topic>              print the context pack for a topic (brain-load)
-#   sov capture <slug> ...        stage a capture into your lane (brain-capture)
+#   sov init <path> [name]      create a new Sovereign instance
+#   sov load <topic>              print the context pack for a topic (sov-load)
+#   sov capture <slug> ...        stage a capture into your lane (sov-capture)
 #   sov connect <harness>|all    install a connector on this machine, both wires (all = every tool found)
 #                                 (see connectors/harness/<harness>/install.sh; dry run
 #                                 without --apply)
@@ -20,7 +21,7 @@
 #   sov about [--json]          explain this installation, offline and read-only
 #   sov contribute <command>    assess, collect, deliver, or import selected work
 #   sov status                    pointers, lanes on this machine, and their freshness
-#   sov check                     validate the vault (brain-check)
+#   sov check                     validate the vault (sov-check)
 #
 # It routes; it does not reimplement. Instance data lives in pointer files
 # (~/.brain-root, ~/.brain-core, ~/.brain-host, ~/.brain-lane), never here.
@@ -37,6 +38,7 @@ BIN="$(cd "$(dirname "$SELF")" && pwd -P)"
 SELF="$BIN/$(basename "$SELF")"
 TEMPLATE="$(dirname "$BIN")"
 . "$BIN/_sov-python.sh"
+. "$BIN/_sov-config.sh"
 PYTHON="$(sov_python "$TEMPLATE")"
 export SOV_PYTHON="$PYTHON"
 HARNESS_DIR="$TEMPLATE/connectors/harness"
@@ -59,18 +61,19 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   hub)
     # The template-run hub (instance file, runner, jobs, kit, law) lives in sov-hub; the
-    # app-installed managed hub keeps its commands on brain-hub.
+    # app-installed managed hub keeps its commands on sov-managed-hub.
     case "${1:-}" in
       init|env|tick|jobs|kit|kit-restore|law) exec "$PYTHON" "$BIN/sov-hub" "$@";;
-      *) exec "$PYTHON" "$BIN/brain-hub" "$@";;
+      *) exec "$PYTHON" "$BIN/sov-managed-hub" "$@";;
     esac;;
-  about)    exec "$PYTHON" "$BIN/brain-about" "$@";;
-  contribute) exec "$PYTHON" "$BIN/brain-contribute" "$@";;
-  load)     "$PYTHON" "$BIN/brain-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/brain-load" "$@";;
-  capture)  exec "$PYTHON" "$BIN/brain-capture" "$@";;
+  init) exec /bin/bash "$BIN/sov-init" "$@";;
+  about)    exec "$PYTHON" "$BIN/sov-about" "$@";;
+  contribute) exec "$PYTHON" "$BIN/sov-contribute" "$@";;
+  load)     "$PYTHON" "$BIN/sov-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/sov-load" "$@";;
+  capture)  exec "$PYTHON" "$BIN/sov-capture" "$@";;
   check)
     # The label check, then Part 1 drift when this machine runs a template hub (warns only).
-    /bin/bash "$BIN/brain-check.sh" "$@"; rc=$?
+    /bin/bash "$BIN/sov-check" "$@"; rc=$?
     if [ -f "${SOV_STATE_DIR:-$HOME/.local/state/sovereign}/hub.json" ]; then "$PYTHON" "$BIN/sov-hub" law || true; fi
     exit $rc;;
   connect)
@@ -83,8 +86,8 @@ case "$cmd" in
     # A declared secret travels on stdin, never on the remote command line.
     if [ -f "$HARNESS_DIR/$h/harness.json" ]; then
       cloud="$("$PYTHON" -c 'import json,sys; m=json.load(open(sys.argv[1])); print("cloud" if not m.get("detect") else "local"); print((m.get("secret") or {}).get("env") or "")' "$HARNESS_DIR/$h/harness.json" 2>/dev/null)"
-      hub="$(cat "$HOME/.brain-hub" 2>/dev/null || true)"; hub_alias="${hub%%:*}"
-      if [ "${cloud%%$'\n'*}" = "cloud" ] && [ -n "$hub_alias" ] && [ "$(cat "$HOME/.brain-host" 2>/dev/null)" != "$hub_alias" ]; then
+      hub="$(_sov_pointer "$HOME/.brain-hub")"; hub_alias="${hub%%:*}"
+      if [ "${cloud%%$'\n'*}" = "cloud" ] && [ -n "$hub_alias" ] && [ "$(_sov_pointer "$HOME/.brain-host")" != "$hub_alias" ]; then
         senv="${cloud#*$'\n'}"
         echo "routing to the hub ($hub_alias): $h is a cloud pull and runs there"
         if [ -n "$senv" ] && [ -n "${!senv:-}" ]; then
@@ -125,7 +128,7 @@ case "$cmd" in
     . "$HARNESS_DIR/_lib/install-common.sh"
     VAULT="$(_pointer "$HOME/.brain-root")"; VAULT="${VAULT/#\~/$HOME}"
     [ -n "$VAULT" ] || { echo "no vault here: connect a tool first (sov connect <harness> --vault PATH --apply)"; exit 64; }
-    [ -d "$VAULT/knowledge" ] || { echo "not a brain: $VAULT has no knowledge/ folder"; exit 66; }
+    [ -d "$VAULT/knowledge" ] || { echo "not an archive: $VAULT has no knowledge/ folder"; exit 66; }
     sov_resolve_state
     case "$sub" in
       add)
@@ -154,15 +157,15 @@ case "$cmd" in
     hook="$(ls "$HARNESS_DIR/$h"/session-start.* 2>/dev/null | head -1)"
     [ -n "$hook" ] || { echo "no session-start hook for $h"; exit 66; }
     printf '{"cwd":"%s","session_id":"manual","source":"startup"}' "$PWD" | "$PYTHON" "$hook";;
-  status)   exec "$PYTHON" "$BIN/brain-status" "$@";;
+  status)   exec "$PYTHON" "$BIN/sov-status" "$@";;
   host)     # sov host add NAME ... : runs on the hub; from any other machine it is routed there
     sub="${1:-}"; shift || true
     [ "$sub" = "add" ] || { echo "sov host add NAME --user U --addr IP[,IP] [--identity I] [--workstreams a,b] [--apply]"; exit 64; }
-    hub="$(cat "$HOME/.brain-hub" 2>/dev/null || true)"; hub_alias="${hub%%:*}"
-    if [ -n "$hub_alias" ] && [ "$hub_alias" != "$(hostname -s)" ] && [ ! -f "$HOME/.brain-root" -o "$(cat "$HOME/.brain-host" 2>/dev/null)" != "$hub_alias" ]; then
+    hub="$(_sov_pointer "$HOME/.brain-hub")"; hub_alias="${hub%%:*}"
+    if [ -n "$hub_alias" ] && [ "$hub_alias" != "$(hostname -s)" ] && [ ! -f "$HOME/.brain-root" -o "$(_sov_pointer "$HOME/.brain-host")" != "$hub_alias" ]; then
       exec ssh -o BatchMode=yes "$hub_alias" "~/brain-bin/sov host add $(printf '%q ' "$@")"
     fi
-    exec "$PYTHON" "$BIN/brain-host-add" "$@";;
+    exec "$PYTHON" "$BIN/sov-host-add" "$@";;
   gate)
     # The owner's gate from a console or a shell: sov gate approve|reject <slug> [reason].
     # Runs the same deterministic scripts the Telegram poller and the gears use, as a
@@ -170,9 +173,9 @@ case "$cmd" in
     verb="${1:-}"; shift || true
     if [ -f "$HOME/.sovereign-hub" ] && { [ "$verb" = "approve" ] || [ "$verb" = "reject" ]; }; then
       proposal="${1:-}"; shift || true
-      exec "$PYTHON" "$BIN/brain-hub" run "$verb" --proposal "$proposal" --reason "$*" --apply
+      exec "$PYTHON" "$BIN/sov-managed-hub" run "$verb" --proposal "$proposal" --reason "$*" --apply
     fi
-    export SOVS_VAULT="${SOVS_VAULT:-$(cat "$HOME/.brain-root" 2>/dev/null)}"
+    export SOVS_VAULT="${SOVS_VAULT:-$(_sov_pointer "$HOME/.brain-root")}"
     if [ -z "${CURATOR_LANE:-}" ]; then
       st="$(ls "$SOVS_VAULT"/raw/workspaces/*/status.json 2>/dev/null | head -1)"
       CURATOR_LANE="$(basename "$(dirname "$st")")"

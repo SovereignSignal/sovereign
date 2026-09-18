@@ -13,7 +13,7 @@ CARD = b"---\nsource: owner\n---\n# Test Card\n\nPrivate trusted statement.\n"
 
 class CliTests(unittest.TestCase):
     def test_project_wrapper_exposes_isolated_help(self):
-        wrapper = Path(__file__).parents[1] / "bin" / "brain-evidence"
+        wrapper = Path(__file__).parents[1] / "bin" / "sov-evidence"
 
         proc = subprocess.run([str(wrapper), "--help"], capture_output=True, text=True)
 
@@ -21,9 +21,9 @@ class CliTests(unittest.TestCase):
         self.assertIn("--project-root", proc.stdout)
 
     def test_project_wrapper_resolves_when_invoked_through_symlink(self):
-        wrapper = Path(__file__).parents[1] / "bin" / "brain-evidence"
+        wrapper = Path(__file__).parents[1] / "bin" / "sov-evidence"
         with tempfile.TemporaryDirectory() as tmp:
-            linked = Path(tmp) / "brain-evidence"
+            linked = Path(tmp) / "sov-evidence"
             linked.symlink_to(wrapper)
 
             proc = subprocess.run([str(linked), "--help"], capture_output=True, text=True)

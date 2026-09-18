@@ -1,8 +1,8 @@
-"""Part 1 of the law is the standard any brain copies. When the vault's and the template's
+"""Part 1 of the law is the standard any instance copies. When the vault's and the template's
 Part 1 differ, one of them is behind; say which lines.
 
 Rules are compared, examples are not: fenced code blocks (the label example) may carry a
-brain's own values, and a heading's parenthetical aside ("copy this into any brain") is
+archive's own values, and a heading's parenthetical aside ("copy this into any instance") is
 commentary. Everything else in Part 1 must match line for line.
 """
 import difflib

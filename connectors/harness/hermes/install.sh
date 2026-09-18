@@ -23,7 +23,7 @@ sov_link_bins
 chmod +x "$HERE/session-start.py" "$HERE/hooks.py"
 /usr/bin/python3 "$HERE/hooks.py"
 sov_register_connector "$HERE/mirror.sh"
-sov_lane_contract "$HERE/LANE.md.tmpl" "brain-load (pre_llm_call hook, first turn of a conversation)"
+sov_lane_contract "$HERE/LANE.md.tmpl" "sov-load (pre_llm_call hook, first turn of a conversation)"
 sov_smoke_mirror "$HERE/mirror.sh"
 sov_smoke_runner "$HARNESS"
 out="$(cd "$VAULT" && printf '{"session_id":"install-smoke","extra":{"user_message":"hello","conversation_history":[]}}' | /usr/bin/python3 "$HERE/session-start.py")"

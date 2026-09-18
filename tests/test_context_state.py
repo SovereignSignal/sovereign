@@ -67,7 +67,7 @@ class ContextEvidence(unittest.TestCase):
 
     def test_cli_exposes_evidence_without_other_tools(self):
         self.receipt()
-        result = subprocess.run([sys.executable, str(ROOT / 'bin/brain-local')], input=json.dumps({'action': 'context', 'root': str(self.root)}), capture_output=True, text=True, env={'PATH': '/usr/bin:/bin', 'HOME': str(self.base)})
+        result = subprocess.run([sys.executable, str(ROOT / 'bin/sov-local')], input=json.dumps({'action': 'context', 'root': str(self.root)}), capture_output=True, text=True, env={'PATH': '/usr/bin:/bin', 'HOME': str(self.base)})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['total'], 1)
 

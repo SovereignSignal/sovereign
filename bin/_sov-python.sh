@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# _sov-python.sh — the one answer to "which python3 runs the brain's tools and its jobs".
+# _sov-python.sh — the one answer to "which python3 runs the archive's tools and its jobs".
 # Sourced by bin/sov (its own tools) and connectors/harness/_lib/install-common.sh (the
 # program a scheduled job names), so the two never disagree.
 #

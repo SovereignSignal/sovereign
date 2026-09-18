@@ -4,12 +4,13 @@ import os
 from pathlib import Path
 import sys
 
+from sovereign_config import pointer
 from . import client, collector, importer, server
 from .common import IntakeError, json_read
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Selected contribution intake. No brain read wire.")
+    parser = argparse.ArgumentParser(description="Selected contribution intake. No archive read wire.")
     parser.add_argument("command", choices=["assess", "init", "run", "status", "import", "init-server", "serve"])
     parser.add_argument("--config", default=str(Path(os.environ.get("SOV_STATE_DIR", "~/.local/state/sovereign")).expanduser() / "connectors.json"))
     parser.add_argument("--client")
@@ -36,7 +37,9 @@ def main():
                 if (manifest.get("machine") or {}).get("role") != "hub":
                     raise IntakeError("explicit_hub_role_required")
                 config = dict(manifest["intakes"][args.client], client_id=args.client)
-                root = args.root or (Path.home() / ".brain-root").read_text().strip()
+                root = args.root or pointer(Path.home() / ".brain-root")
+                if not root:
+                    raise IntakeError("archive_root_required")
                 result = importer.import_client(config, state_dir, root, args.apply, args.receive_only)
             else:
                 if (manifest.get("machine") or {}).get("role") != "client" or (manifest.get("machine") or {}).get("mode") != "contribute-only":

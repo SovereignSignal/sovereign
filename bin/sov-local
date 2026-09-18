@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""The app's local archive API. One JSON request on stdin, one result on stdout."""
+import json
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
+import brain_local as local
+
+
+def main():
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("Usage: sov-local < request.json\n" + __doc__)
+        return 0
+    try:
+        request = json.loads(sys.stdin.read(2 * 1024 * 1024))
+        action = request.get('action')
+        if action == 'create':
+            out = local.create(request['root'], Path(__file__).resolve().parents[1])
+        else:
+            root = local.archive_root(request['root'])
+            if action in ('list', 'open'):
+                out = local.listing(root, request.get('query', ''))
+            elif action == 'context':
+                out = local.context_state(root)
+            elif action == 'read':
+                out = local.read(root, request['path'])
+            elif action == 'capture':
+                out = local.capture(root, request['title'], request['body'])
+            else:
+                raise ValueError('Unknown archive action.')
+        print(json.dumps(out)); return 0
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        message = str(e) if isinstance(e, ValueError) else 'The archive could not be read or written. Check its folder and permissions.'
+        print(json.dumps({'error': message})); return 1
+
+if __name__ == '__main__':
+    sys.exit(main())

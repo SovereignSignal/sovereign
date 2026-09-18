@@ -26,7 +26,7 @@ def run(args, home, vault, env_extra=None):
                           capture_output=True, text=True, env=env, cwd=str(ROOT))
 
 
-def brain(tmp):
+def archive(tmp):
     home = Path(tmp) / "home"
     vault = Path(tmp) / "vault"
     (home / "Library" / "LaunchAgents").mkdir(parents=True)
@@ -54,7 +54,7 @@ class Harness(unittest.TestCase):
 
     def test_dry_run_prints_plan_and_writes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home, vault = brain(tmp)
+            home, vault = archive(tmp)
             r = run([], home, vault)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertIn("dry run", r.stdout)
@@ -65,7 +65,7 @@ class Harness(unittest.TestCase):
 
     def test_apply_without_token_stops_with_the_manual_step(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home, vault = brain(tmp)
+            home, vault = archive(tmp)
             r = run(["--apply", "--no-launchd"], home, vault)
             self.assertEqual(r.returncode, 65)
             self.assertIn("mirror.env", r.stdout + r.stderr)
@@ -73,7 +73,7 @@ class Harness(unittest.TestCase):
 
     def test_apply_writes_instance_files_roots_lane_and_plist(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home, vault = brain(tmp)
+            home, vault = archive(tmp)
             r = run(["--apply", "--no-launchd", "--secret", "ntn_test_token", "--at", "04:10"], home, vault)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             env_path = home / ".notion-mirror" / "mirror.env"
@@ -90,7 +90,7 @@ class Harness(unittest.TestCase):
             self.assertIn("lane: Notion\n", lane_md)
             self.assertIn("write: pull", lane_md)
             self.assertIn("read: none", lane_md)
-            self.assertTrue((home / "brain-bin" / "brain-mirror-notion").is_symlink())
+            self.assertTrue((home / "brain-bin" / "sov-mirror-notion").is_symlink())
             # Notion is the ONE harness that still owns a launchd job. Its run is measured in
             # hours and neither launchd StartInterval nor systemd Type=oneshot starts a second
             # run while one is in flight, so folding it into the 15-minute shared runner would
@@ -107,7 +107,7 @@ class Harness(unittest.TestCase):
 
     def test_apply_preserves_other_env_keys_and_existing_lane_and_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home, vault = brain(tmp)
+            home, vault = archive(tmp)
             (home / ".notion-mirror").mkdir()
             (home / ".notion-mirror" / "mirror.env").write_text("NOTION_SHRINK_FLOOR=80\nNOTION_API_KEY=old\n")
             (home / ".notion-mirror" / "roots.json").write_text('{"default": "Private & Shared", "required": {"%s": "Team"}}' % (HID % 9))
@@ -124,7 +124,7 @@ class Harness(unittest.TestCase):
 
     def test_lane_cannot_escape_the_vault(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home, vault = brain(tmp)
+            home, vault = archive(tmp)
             for bad in ("../../etc/foo", "raw/../../x", "/abs/path"):
                 r = run(["--lane", bad], home, vault)
                 self.assertEqual(r.returncode, 64, bad)
@@ -133,7 +133,7 @@ class Harness(unittest.TestCase):
 
     def test_stale_status_from_previous_importer_is_parked_when_never_run(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home, vault = brain(tmp)
+            home, vault = archive(tmp)
             (home / ".notion-mirror").mkdir()
             (home / ".notion-mirror" / "last-status").write_text("OK 2026-01-01 00:00:00 old importer")
             (home / ".notion-mirror" / "last-success").write_text("2026-01-01T00:00:00Z")
@@ -147,7 +147,7 @@ class Harness(unittest.TestCase):
 
     def test_stale_status_left_alone_when_cursor_exists(self):
         with tempfile.TemporaryDirectory() as tmp:
-            home, vault = brain(tmp)
+            home, vault = archive(tmp)
             (home / ".notion-mirror").mkdir()
             (home / ".notion-mirror" / "last-status").write_text("OK 2026-01-01 00:00:00 old importer")
             (home / ".notion-mirror" / "last-success").write_text("2026-01-01T00:00:00Z")

@@ -16,14 +16,14 @@ Config: ~/.brain-root (or $BRAIN_ROOT) fills {{VAULT}} in INSTRUCTION.md.
 import os, sys, json, glob, datetime, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 SENTINEL = "[Sovereign]"
 
 
 def pointer(p):
-    try:
-        return open(os.path.expanduser(p), encoding="utf-8").read().strip() or None
-    except OSError:
-        return None
+    from sovereign_config import pointer as instance_pointer
+    return instance_pointer(p)
 
 
 def main():

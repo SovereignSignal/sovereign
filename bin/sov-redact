@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""sov-redact: credentials never enter the archive.
+
+  sov-redact <path>...            redact credential-shaped values in place, files or whole folders
+  sov-redact --check <path>...    report only, exit 1 when anything would be redacted (a scanner)
+  sov-redact --list FILE ...      paths come from FILE, one per line, relative to the cwd
+
+Prints one line per file touched: `<path>: N value(s) redacted (<kinds>)`, then a total.
+Exit 0 after redacting (a fix, not a failure); with --check, 1 when hits exist.
+Library: lib/brain_redact.py, the same rules every producer uses at its write boundary.
+"""
+import sys
+from pathlib import Path
+
+repository = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(repository / "lib"))
+
+from brain_redact import redact_paths, redact_text, walk_files, TEXT_MAX  # noqa: E402
+
+
+def main(argv):
+    if "--help" in argv or "-h" in argv:
+        print(__doc__)
+        return 0
+    check = "--check" in argv
+    strict = "--strict" in argv
+    args = [a for a in argv if a not in ("--check", "--strict")]
+    paths = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--list":
+            i += 1
+            for line in Path(args[i]).read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    paths.append(Path(line.strip()))
+        else:
+            paths.append(Path(args[i]))
+        i += 1
+    if not paths:
+        print(__doc__.strip(), file=sys.stderr)
+        return 64
+    total_values = total_files = 0
+    if strict:
+        candidates = []
+        # Validate every supplied byte before any rewrite. Never silently skip an
+        # unreadable, linked, binary or oversized member of a publish candidate.
+        try:
+            for p in paths:
+                for f in (p.rglob("*") if p.is_dir() else [p]):
+                    if f.is_symlink(): raise ValueError()
+                    if f.is_dir(): continue
+                    if not f.is_file() or f.stat().st_size > TEXT_MAX: raise ValueError()
+                    body = f.read_bytes().decode("utf-8")
+                    if "\x00" in body: raise ValueError()
+                    candidates.append(f)
+        except (OSError, ValueError):
+            print("strict scan refused: unreadable or unsupported content", file=sys.stderr)
+            return 1
+        paths = candidates
+    if check:
+        for p in paths:
+            for f in (walk_files(p) if p.is_dir() else [p]):
+                try:
+                    from brain_redact import is_text_file
+                    if not is_text_file(f):
+                        continue
+                    _new, hits = redact_text(f.read_bytes().decode("utf-8", errors="surrogateescape"))
+                except OSError:
+                    continue
+                if hits:
+                    total_files += 1; total_values += len(hits)
+                    print("%s: %d value(s) would be redacted (%s)" % (f, len(hits), ", ".join(sorted(set(hits)))))
+        print("check: %d value(s) in %d file(s)" % (total_values, total_files))
+        return 1 if total_files else 0
+    for f, hits in redact_paths(paths):
+        total_files += 1; total_values += len(hits)
+        print("%s: %d value(s) redacted (%s)" % (f, len(hits), ", ".join(sorted(set(hits)))))
+    print("redacted: %d value(s) in %d file(s)" % (total_values, total_files))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

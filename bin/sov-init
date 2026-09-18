@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# sov-init — stand up a fresh, empty archive from this template.
+#
+#   sov-init <target-dir> [instance-name]
+#
+# Lays down the five-folder skeleton, the rules (CLAUDE.md), and the note template,
+# then git-inits it. Running it in an empty dir yields a clean, fork-ready archive.
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  sed -n '2,/^set -/{ /^set -/d; /^if /,$d; p; }' "$0"
+  exit 0
+fi
+
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+TARGET="${1:?usage: sov-init <target-dir> [instance-name]}"
+NAME="${2:-$(basename "$TARGET")}"
+
+mkdir -p "$TARGET"
+rsync -a "$HERE/skeleton/" "$TARGET/"
+mkdir -p "$TARGET/.obsidian/templates"
+cp "$HERE/templates/note.md" "$TARGET/.obsidian/templates/note.md"
+# drop the rules in, stamped with the archive's name
+sed "s/{{SOVEREIGN_NAME}}/$NAME/g; s/{{BRAIN_NAME}}/$NAME/g" "$HERE/CLAUDE.md" > "$TARGET/CLAUDE.md"
+
+cat > "$TARGET/.gitignore" <<'EOF'
+.DS_Store
+.obsidian/workspace*
+archive/
+repos/
+EOF
+
+( cd "$TARGET" && git init -q && git add -A && git commit -q -m "new instance: $NAME (from Sovereign)" )
+
+echo "Archive '$NAME' created at $TARGET"
+echo "Next: open it in Obsidian, set the Templates folder to .obsidian/templates, write your first note, then run:"
+echo "  $HERE/bin/sov-check \"$TARGET\""

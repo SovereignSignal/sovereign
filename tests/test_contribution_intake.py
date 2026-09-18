@@ -25,12 +25,12 @@ class Intake(unittest.TestCase):
         client.init_spool(self.config, "Fixture Operator", "fixture@example.invalid")
         self.state = self.base / "client-state"
         self.hubstate = self.base / "hub-state"
-        self.root = self.base / "brain"
+        self.root = self.base / "archive"
         self.lane = self.root / "raw/workspaces/worker-a"
         self.lane.mkdir(parents=True)
         (self.lane / "LANE.md").write_text("---\nproducer: worker-a\n---\nOwner-owned contract.\n")
         (self.root / "knowledge").mkdir()
-        (self.root / "knowledge/private.md").write_text("Private brain fixture.\n")
+        (self.root / "knowledge/private.md").write_text("Private archive fixture.\n")
         self.hubcfg = dict(client_id="worker-a", lane="worker-a", remote=self.config["remote"], sources={"method": "method.md"})
 
     def tearDown(self):
@@ -137,7 +137,7 @@ class Intake(unittest.TestCase):
                 self.assertEqual(result["ok"], kind == "empty")
 
     def test_traversal_and_directory_links_are_rejected(self):
-        for name in ("../brain/knowledge/private.md", "/etc/passwd", "a/../../private.md"):
+        for name in ("../archive/knowledge/private.md", "/etc/passwd", "a/../../private.md"):
             self.config["selectors"][0]["path"] = name
             self.assertFalse(collector.assess(self.config)["ok"])
         (self.source / "linked").symlink_to(self.root / "knowledge", target_is_directory=True)
@@ -162,7 +162,7 @@ class Intake(unittest.TestCase):
         with self.assertRaises(IntakeError): self.import_items()
         state = (self.hubstate / "intake-worker-a.json").read_text()
         self.assertNotIn(bad["body"], state)
-        self.assertNotIn("Private brain fixture", state)
+        self.assertNotIn("Private archive fixture", state)
         self.assertEqual(len(json.loads(state)["rejections"]), 3)
         self.assertEqual(len(list(self.lane.glob("method-*.md"))), 1)
 
@@ -184,7 +184,7 @@ class Intake(unittest.TestCase):
         p.unlink()
         p.symlink_to(self.root / "knowledge/private.md")
         with self.assertRaises(OSError): self.import_items()
-        self.assertEqual((self.root / "knowledge/private.md").read_text(), "Private brain fixture.\n")
+        self.assertEqual((self.root / "knowledge/private.md").read_text(), "Private archive fixture.\n")
 
     def test_one_writer_lock_and_explicit_git_identity(self):
         self.state.mkdir()

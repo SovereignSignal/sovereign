@@ -4,7 +4,7 @@
 Registered as a `sessionStart` hook in ~/.cursor/hooks.json. Cursor hands it JSON
 on stdin (session_id, is_background_agent, composer_mode) and the project directory
 in $CURSOR_PROJECT_DIR. The shared library maps that directory to a topic, runs
-brain-load, and this adapter returns the pack in Cursor's shape:
+sov-load, and this adapter returns the pack in Cursor's shape:
 
   {"additional_context": "..."}
 

@@ -4,7 +4,7 @@
 
 **Goal:** Ship the reviewed archive-evidence core as a separate opt-in command, enroll a small private prospective sidecar, observe report-only freshness for 30 days, and preserve default retrieval and trusted content unchanged.
 
-**Architecture:** Product code lives in `lib/archive_evidence/` with a symlink-safe Python entry point at `bin/brain-evidence`. Detailed outputs and the enrollment sidecar live in a private state directory outside the brain. Observation and finalization are deployment scripts outside the repository; they emit sanitized receipts only.
+**Architecture:** Product code lives in `lib/archive_evidence/` with a symlink-safe Python entry point at `bin/sov-evidence`. Detailed outputs and the enrollment sidecar live in a private state directory outside the archive. Observation and finalization are deployment scripts outside the repository; they emit sanitized receipts only.
 
 **Tech Stack:** Python 3.9, PyYAML, unittest, Ruff, Git, local Ollama, Hermes cron, Notion API.
 
@@ -60,7 +60,7 @@
 **Files:**
 - Create: `lib/archive_evidence/freshness.py`
 - Create: `lib/archive_evidence/cli.py`
-- Create: `bin/brain-evidence`
+- Create: `bin/sov-evidence`
 - Create: `tests/test_archive_evidence_freshness.py`
 - Create: `tests/test_archive_evidence_cli.py`
 
@@ -86,7 +86,7 @@
 
 **Steps:**
 1. Capture private pre-install manifests for protected content, Git state, production retrieval, controls, and target state.
-2. Install `brain-evidence` as a symlink into the existing command lane.
+2. Install `sov-evidence` as a symlink into the existing command lane.
 3. Run synthetic smoke tests.
 4. Remove it and prove the command lane matches the pre-install snapshot.
 5. Reinstall the exact reviewed target and rerun smoke tests.

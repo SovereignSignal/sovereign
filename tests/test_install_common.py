@@ -365,7 +365,7 @@ class MoverDestination(unittest.TestCase):
     Behind a staging hop the destination is re-declared on every connect. Off that path
     it is declared once, by `sov relay add`, and never again -- while the sentence the
     install prints is built from the vault THIS run was given. Move the vault and the two
-    part company: the line says the new brain, the argv still carries into the old one,
+    part company: the line says the new instance, the argv still carries into the old one,
     and a person reading the install has no way to tell.
     """
 
@@ -417,7 +417,7 @@ class MoverDestination(unittest.TestCase):
                              "the mover carries into %s, which is not a lane root" % dest)
             self.assertTrue(dest.is_dir(), "the mover carries into %s, which is not there" % dest)
             self.assertTrue((dest.parent.parent / "knowledge").is_dir(),
-                            "the mover carries into %s, which is not inside a brain" % dest)
+                            "the mover carries into %s, which is not inside an archive" % dest)
 
 
 class MoverBootstrapFailure(unittest.TestCase):
@@ -553,7 +553,7 @@ class StagingTreeAndWhatCarriesIt(unittest.TestCase):
         """What puts a Mac behind the staging hop: a vault under ~/Documents. The folder
         is TCC-protected, a job whose program is a script host cannot write there, and
         the denial is silent."""
-        v = b.home / "Documents" / "brain"
+        v = b.home / "Documents" / "archive"
         (v / "knowledge" / "entities").mkdir(parents=True)
         (v / "raw" / "tools").mkdir(parents=True)
         (v / "knowledge" / "entities" / "me.md").write_text(

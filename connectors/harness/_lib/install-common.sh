@@ -20,7 +20,7 @@
 #                             RUNNER_LABEL RELAY_LABEL STATE_DIR LANES_DIR MANIFEST_JSON
 #   sov_plan <line>...        print the dry-run summary (always)
 #   sov_write_pointers        ~/.brain-root ~/.brain-core ~/.brain-host
-#   sov_link_bins             ~/brain-bin/{brain-load,brain-capture,brain-lane-scope,sov,sov-connectors-run}
+#   sov_link_bins             ~/brain-bin/{sov-load,sov-capture,sov-lane-scope,sov,sov-connectors-run}
 #   sov_merge_hook_claude_style <json> <hook> <matcher>   Claude Code settings.json / Codex hooks.json
 #   sov_merge_hook_cursor <json> <hook>                   Cursor ~/.cursor/hooks.json (version 1)
 #   sov_register_connector <mirror.sh>                    declare this lane, ensure the shared job
@@ -45,7 +45,8 @@ TIMEOUT=300; TIMEOUT_SET=0; NO_LAUNCHD=0; DISCONNECT=0
 CALENDAR_CADENCE_S=86400               # a wall-clock job runs once a day, whatever the tick is
 RUNNER_JOB_LOADED=0                    # set only where the shared job was really loaded
 STAGING_MADE_HERE=0                    # a staging tree THIS run made, nothing carrying it yet
-_pointer() { [ -f "$1" ] && tr -d '\n' < "$1" || true; }
+. "$(dirname "${BASH_SOURCE[0]}")/../../../bin/_sov-config.sh"
+_pointer() { _sov_pointer "$1"; }
 say() { printf '%s\n' "$*"; }
 
 # Test seams. Nothing here is instance data: a stub launchctl/systemctl lets the
@@ -98,7 +99,7 @@ sov_resolve_state() {
     RETIRED_DIR="$HOME/Library/LaunchAgents/sovereign-retired"
     SCHEDULER="launchd"
   else
-    # The suffix is load bearing: brain-status matches sovereign-connector-<name>.timer,
+    # The suffix is load bearing: sov-status matches sovereign-connector-<name>.timer,
     # so a bare "sovereign-connector.timer" would make every Linux console report no jobs.
     RUNNER_LABEL="sovereign-connector-runner"
     # No TCC and no staging hop here, so no lane stages; a declared directory pipe still
@@ -121,7 +122,7 @@ _sov_vault_is_protected() {
 }
 
 sov_resolve() {
-  /usr/bin/python3 "$TEMPLATE/bin/brain-about" --read-enabled || { echo "Use the selected contribution installer for a contribute-only client; read-wire connector setup is disabled." >&2; exit 65; }
+  /usr/bin/python3 "$TEMPLATE/bin/sov-about" --read-enabled || { echo "Use the selected contribution installer for a contribute-only client; read-wire connector setup is disabled." >&2; exit 65; }
   case "${HARNESS:-}" in
     runner|relay) echo "harness id '$HARNESS' is reserved for the shared connector job" >&2; exit 64;;
   esac
@@ -131,7 +132,7 @@ sov_resolve() {
   HOST="${HOST:-$(hostname -s | tr '[:upper:]' '[:lower:]')}"
   VAULT="${VAULT/#\~/$HOME}"
   [ -n "$VAULT" ] || { echo "need --vault PATH (or ~/.brain-root)"; exit 64; }
-  [ -d "$VAULT/knowledge" ] || { echo "not a brain: $VAULT has no knowledge/ folder"; exit 66; }
+  [ -d "$VAULT/knowledge" ] || { echo "not an archive: $VAULT has no knowledge/ folder"; exit 66; }
   [ -n "$CORE" ] || echo "note: no always-on core (--core a,b,c or ~/.brain-core); packs will be topic-only"
   sov_resolve_state
   NEED_STAGING=0
@@ -194,7 +195,7 @@ sov_write_pointers() {
 
 sov_link_bins() {
   mkdir -p "$HOME/brain-bin"
-  for b in brain-load brain-capture brain-lane-scope brain-about brain-contribute sov sov-connectors-run; do
+  for b in sov-load sov-capture sov-lane-scope sov-about sov-contribute brain-load brain-capture brain-lane-scope brain-about brain-contribute sov sov-connectors-run; do
     [ -e "$TEMPLATE/bin/$b" ] && ln -sfn "$TEMPLATE/bin/$b" "$HOME/brain-bin/$b"
   done
   chmod +x "$TEMPLATE/bin/sov" 2>/dev/null || true
@@ -219,7 +220,7 @@ if any(h.get("command") == hook for g in groups for h in g.get("hooks", [])):
 else:
     groups.append({"matcher": matcher,
                    "hooks": [{"type": "command", "command": hook, "timeout": 30,
-                              "statusMessage": "Sovereign: loading brain context"}]})
+                              "statusMessage": "Sovereign: loading archive context"}]})
     json.dump(d, open(path, "w"), indent=2)
     print("[hook] SessionStart added to", path)
 EOF
@@ -562,7 +563,7 @@ sov_register_connector() {
   chmod +x "$mirror" 2>/dev/null || true
   mkdir -p "$LANES_DIR"; chmod 700 "$STATE_DIR" 2>/dev/null || true
   # a freshly connected lane must read "0 err", never "no log": a missing error log
-  # makes brain-status report null, which the console renders as "never ran".
+  # makes sov-status report null, which the console renders as "never ran".
   : >> "$LANES_DIR/$HARNESS.log"; : >> "$LANES_DIR/$HARNESS.error.log"
   _sov_manifest_py upsert-harness "id=$HARNESS" "label=$LABEL" "mirror=$mirror" \
     "lane=$LANE" "lane_dir=$LANE_DIR" "cadence_s=$INTERVAL" "timeout_s=$TIMEOUT" \
@@ -679,7 +680,7 @@ EOF
   fi
 }
 
-# USER is not exported by every login: `brain-host-add` runs `sov connect all --apply`
+# USER is not exported by every login: `sov-host-add` runs `sov connect all --apply`
 # over ssh, and there it is often unset. Unguarded under `set -u` this aborted the whole
 # Linux branch before a single unit was written, so no lane ran at all.
 _sov_linger_note() {
@@ -1422,6 +1423,6 @@ sov_smoke_hook() {
   if [ "$style" = "cursor" ]; then
     printf '%s' "$out" | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); c=d.get("additional_context",""); print("[smoke] hook ok: %d chars of context" % len(c) if c else "[smoke] hook produced no context")'
   else
-    printf '%s' "$out" | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); print("[smoke] hook ok:", d.get("systemMessage"))' || say "[smoke] hook produced no context (check ~/.brain-core and brain-load)"
+    printf '%s' "$out" | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); print("[smoke] hook ok:", d.get("systemMessage"))' || say "[smoke] hook produced no context (check ~/.brain-core and sov-load)"
   fi
 }

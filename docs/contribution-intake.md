@@ -6,7 +6,7 @@ This is a manually configured pilot. It does not provision a Hub, declare anothe
 
 ## Machine roles and discovery
 
-The existing connector manifest can declare `machine.role` as `hub` or `client`. Clients declare `machine.mode` as `read-and-contribute` or `contribute-only`. Missing declarations remain visibly unknown. A contribute-only declaration suppresses shared context hooks, cached Hermes packs and `sov load`; it does not revoke a credential or erase a previously retained brain copy.
+The existing connector manifest can declare `machine.role` as `hub` or `client`. Clients declare `machine.mode` as `read-and-contribute` or `contribute-only`. Missing declarations remain visibly unknown. A contribute-only declaration suppresses shared context hooks, cached Hermes packs and `sov load`; it does not revoke a credential or erase a previously retained archive copy.
 
 `sov about --json` is local and read-only. The app also contains `Sovereign.app/Contents/MacOS/sov about --json`, backed by its bundled Python. About Sovereign uses the same introduction. Updated session-start hooks provide an executable discovery pointer. Receiving that hook output and using the context still require evidence from the actual harness.
 
@@ -67,13 +67,13 @@ sov contribute import --client worker-a --root "$BRAIN_ROOT" --apply
 
 Assessment reads the declared files and prints selection metadata, without bodies, logging, network or state writes. Commands that initialize, upload or import require `--apply`. Spool identity must be explicit and repository-local. Initialization refuses existing paths.
 
-Initialize a fresh bare repository on the relay with `brain-contribute init-server --repo /srv/intakes/worker-a.git --apply`. Do not derive it from a brain repository, use alternates, or add the brain as another remote. Configure a dedicated producer key with `restrict` and a forced command equivalent to:
+Initialize a fresh bare repository on the relay with `sov-contribute init-server --repo /srv/intakes/worker-a.git --apply`. Do not derive it from an archive repository, use alternates, or add the archive as another remote. Configure a dedicated producer key with `restrict` and a forced command equivalent to:
 
 ```sh
-/path/to/brain-contribute serve --repo /srv/intakes/worker-a.git --name worker-a.git
+/path/to/sov-contribute serve --repo /srv/intakes/worker-a.git --name worker-a.git
 ```
 
-The SSH original command can invoke only upload-pack or receive-pack for that exact public repository name. The server rejects other repositories, shell commands, tags, deletion and rewritten history. Uploads are capped at 32 MiB per push. The dedicated key must also pass real SSH denial tests; checking command parsing alone is insufficient. Revoke superseded grants and remove retained brain clones/context caches before declaring migration complete.
+The SSH original command can invoke only upload-pack or receive-pack for that exact public repository name. The server rejects other repositories, shell commands, tags, deletion and rewritten history. Uploads are capped at 32 MiB per push. The dedicated key must also pass real SSH denial tests; checking command parsing alone is insufficient. Revoke superseded grants and remove retained archive clones/context caches before declaring migration complete.
 
 ## Evidence and recovery
 

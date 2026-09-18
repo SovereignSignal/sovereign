@@ -9,7 +9,7 @@ import tempfile
 import unittest
 import tests.test_lane_delivery as lanes
 ROOT=Path(__file__).resolve().parents[1]
-loader=importlib.machinery.SourceFileLoader('status_delivery',str(ROOT/'bin/brain-status'))
+loader=importlib.machinery.SourceFileLoader('status_delivery',str(ROOT/'bin/sov-status'))
 spec=importlib.util.spec_from_loader(loader.name,loader);m=importlib.util.module_from_spec(spec);loader.exec_module(m)
 
 class DeliveryStatus(unittest.TestCase):

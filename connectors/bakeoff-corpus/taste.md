@@ -10,7 +10,7 @@ Learned from the owner's verdicts at the gate. These override general judgment.
 - A reusable method, calibration playbook, or measurement technique the owner
   could apply on a later engagement, even when it arrives inside an article
   about something else.
-- A material status change to something the brain already holds a card on:
+- A material status change to something the archive already holds a card on:
   a new spec revision, a leadership change, a program ending.
 
 ## Skip

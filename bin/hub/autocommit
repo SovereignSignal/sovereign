@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vault-autocommit.sh — daily off-machine backup of the brain's working state.
+# vault-autocommit.sh — daily off-machine backup of the archive's working state.
 #
 # WHY: the vault's only durable copies are Gitea (origin) and node-12. Work
 # that is never committed is never mirrored. Before 2026-08-10, workstreams/
@@ -60,7 +60,7 @@ done
 # runs around the clock (2026-09-05), skipping would mean never committing. Commit everything
 # except the lane instead; the lane's own files are committed by the gate scripts as they land.
 SCOPE=()
-if pgrep -qf 'bin/(curator-run|brain-audit)'; then
+if pgrep -qf 'bin/(curator-run|sov-audit)'; then
   SCOPE=(-- . ':(exclude)raw/workspaces/archivist')
   echo "vault-autocommit: a curator/audit run is in flight — committing everything except raw/workspaces/archivist"
 fi
@@ -90,11 +90,11 @@ fi
 git diff --cached --name-only --diff-filter=AM -z | tr '\0' '\n' > "$LIST"
 # Redact first, the same rule the lanes apply at their tick (owner, 2026-09-06: identify
 # secrets naturally, system wide); the scan below is then the check, not the blocker.
-REDACT="$HERE/../brain-redact"
+REDACT="$HERE/../sov-redact"
 if [ -x "$REDACT" ] && [ -s "$LIST" ]; then
   if "$REDACT" --list "$LIST" 2>&1 | tail -1 | grep -qv "in 0 file"; then
     git add -A ${SCOPE[@]+"${SCOPE[@]}"} || die "git add failed after redaction"
-    echo "vault-autocommit: redacted credential-shaped values before commit (see brain-redact output above)"
+    echo "vault-autocommit: redacted credential-shaped values before commit (see sov-redact output above)"
   fi
 fi
 if ! "$SCAN" "$LIST"; then

@@ -1,11 +1,11 @@
 # bakeoff-corpus — the judge calibration corpus
 
-Fixture material for `bin/brain-judge-bakeoff`. Everything here is **fictional**:
+Fixture material for `bin/sov-judge-bakeoff`. Everything here is **fictional**:
 invented people, invented orgs, invented numbers. Nothing in this directory is
 owner data, so the harness and its corpus can ship in public.
 
 The fictional owner is a systems researcher working on municipal water telemetry.
-That domain was picked because it is far from anything a real brain is likely to
+That domain was picked because it is far from anything a real archive is likely to
 hold, so a model cannot score well by recognising the subject.
 
 ## What this corpus is for, and what saturation means
@@ -22,7 +22,7 @@ skipping a config file are all decisions a competent model makes on general
 priors, with no calibration required.
 
 The cases added afterwards target the failure modes that have actually cost a
-production brain something: near-miss update detection, over- and under-applying
+production archive something: near-miss update detection, over- and under-applying
 the sensitive-data rule, carding the wrapper instead of the substance, and both
 directions of injection error. Those are decisions where general competence is
 not enough and the model has to be right about *this* pipeline's conventions.

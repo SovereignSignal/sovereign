@@ -6,7 +6,7 @@ a JSON payload on stdin before every model turn and reads JSON back; `{"context"
 "..."}` is prepended to the user message. This adapter injects the pack only at
 the start of a conversation (empty or one-message history), so a long chat is not
 re-briefed on every turn, and keeps a short-lived cache so a busy session does not
-rerun brain-load.
+rerun sov-load.
 
 Hermes chats have no working directory, so the pack is the always-on core plus the
 identity line; a message that names a workstream in [brackets] or as `sov load x`
@@ -31,7 +31,7 @@ def topic_from(message):
 
 def main():
     if not brainhook.read_enabled("hermes"):
-        print("{}"); return  # Check before reading a cached pack or a brain pointer.
+        print("{}"); return  # Check before reading a cached pack or an archive pointer.
     try:
         inp = json.load(sys.stdin) if not sys.stdin.isatty() else {}
     except Exception:

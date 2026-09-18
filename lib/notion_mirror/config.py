@@ -1,4 +1,4 @@
-"""Instance configuration. Everything specific to one brain lives outside the template.
+"""Instance configuration. Everything specific to one archive lives outside the template.
 
 Reads <state_dir>/mirror.env (KEY=VALUE lines) and <state_dir>/roots.json.
 The environment wins over the file so tests and one-off runs can override.
@@ -16,7 +16,7 @@ DEFAULT_LANE = "raw/tools/Notion"
 DEFAULT_ROOT_FOLDER = "Private & Shared"
 DEFAULT_SHRINK_FLOOR = 90
 DEFAULT_MIN_INTERVAL = 0.34
-SCANNER_REL = "cron-wrappers/vault-secret-scan.sh"  # beside the mirror's own bin, when the brain ships one
+SCANNER_REL = "cron-wrappers/vault-secret-scan.sh"  # beside the mirror's own bin, when the archive ships one
 
 
 class ConfigError(RuntimeError):
@@ -90,9 +90,9 @@ def load_config(state_dir=None, env=None, bin_dir=None) -> Config:
     token = get("NOTION_API_KEY")
     if not token:
         raise ConfigError("NOTION_API_KEY is not set (put it in %s or the environment)" % (state_dir / "mirror.env"))
-    brain_root = get("BRAIN_ROOT") or read_pointer(Path.home() / ".brain-root")
+    brain_root = get("BRAIN_ROOT") or get("SOVS_VAULT") or read_pointer(Path.home() / ".brain-root") or get("SOVEREIGN_ROOT") or get("SOVEREIGN_VAULT")
     if not brain_root:
-        raise ConfigError("BRAIN_ROOT is not set and ~/.brain-root is missing")
+        raise ConfigError("Set SOVEREIGN_ROOT (legacy BRAIN_ROOT or ~/.brain-root also works)")
     files = get("NOTION_FILES", "fetch")
     if files not in ("fetch", "skip"):
         raise ConfigError("NOTION_FILES must be fetch or skip, not %r" % files)

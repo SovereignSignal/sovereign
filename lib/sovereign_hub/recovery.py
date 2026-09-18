@@ -159,9 +159,11 @@ def validated_members(tar):
         if m.isfile() and m.name != 'manifest.json':
             if hashlib.sha256(tar.extractfile(m).read()).hexdigest() != hashes[m.name]:
                 raise ValueError('Recovery file failed verification.')
-    for required in ('hub/config.json', 'hub/bin/sov', 'hub/python/bin/python3', 'hub/engine/bin/brain-hub', 'archive/CLAUDE.md'):
+    for required in ('hub/config.json', 'hub/bin/sov', 'hub/python/bin/python3', 'archive/CLAUDE.md'):
         if required not in hashes:
             raise ValueError('Recovery capsule is incomplete: ' + required)
+    if not any(name in hashes for name in ('hub/engine/bin/sov-managed-hub', 'hub/engine/bin/brain-hub')):
+        raise ValueError('Recovery capsule is incomplete: managed hub command')
     return members
 
 

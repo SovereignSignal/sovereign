@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""sov-lane-scope — hold only the slice of the archive this lane needs.
+
+Run ON a producer. Reads the lane's `LANE.md` from the clone, resolves its
+`read_scope` (or the contract's default), and applies it with git sparse-checkout
+in cone mode. The producer's working tree then shows the law, the trusted layer,
+and its own lane — not the whole archive.
+
+Honest about what this is: sparse-checkout scopes the WORKING TREE. The full
+history is still in `.git`, one `git sparse-checkout disable` away. This is
+clarity and hygiene, not isolation from a determined reader on the box. The hub
+and the owner's own machines are not producers and are never scoped.
+
+Config resolution (the same pointer files the other archive tools use):
+  vault: $BRAIN_ROOT, $SOVS_VAULT, ~/.brain-root, else walk up for a knowledge/ dir
+  lane:  --lane, $BRAIN_LANE, ~/.brain-lane
+
+Refuses to act when the clone is dirty, is not on the lane's declared branch, or
+the resolved scope would drop the lane's own folder. Idempotent: re-running with
+an unchanged `read_scope` is a no-op.
+
+Usage:
+  sov-lane-scope [--dry] [--lane SLUG] [--root PATH]
+"""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import argparse
+import os
+import re
+import subprocess
+import sys
+
+MIN_GIT = (2, 27)  # `sparse-checkout set --cone`
+
+
+# ---------------------------------------------------------------- resolution
+
+def _pointer(path):
+    from sovereign_config import pointer as instance_pointer
+    return instance_pointer(path)
+
+
+def _resolve_vault():
+    v = (os.environ.get("BRAIN_ROOT") or os.environ.get("SOVS_VAULT")
+         or _pointer("~/.brain-root"))
+    if v:
+        return os.path.expanduser(v)
+    d = os.getcwd()
+    while True:
+        if os.path.isdir(os.path.join(d, "knowledge")):
+            return d
+        nd = os.path.dirname(d)
+        if nd == d:
+            return os.getcwd()
+        d = nd
+
+
+def die(msg):
+    sys.exit(f"sov-lane-scope: {msg}")
+
+
+# ---------------------------------------------------------------------- git
+
+def git(vault, *args):
+    return subprocess.run(["git", "-C", vault] + list(args),
+                          capture_output=True, text=True)
+
+
+def git_version():
+    out = subprocess.run(["git", "--version"], capture_output=True, text=True).stdout
+    m = re.search(r"(\d+)\.(\d+)", out)
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
+# ------------------------------------------------------------------ LANE.md
+
+def lane_dir_rel(vault, lane):
+    """The lane's folder, vault-relative. Prefers what the repo actually tracks,
+    so a lane already scoped out of the tree still resolves."""
+    for parent in ("raw/workspaces", "raw/tools"):
+        rel = f"{parent}/{lane}"
+        if os.path.isdir(os.path.join(vault, rel)):
+            return rel
+    for parent in ("raw/workspaces", "raw/tools"):
+        rel = f"{parent}/{lane}"
+        if git(vault, "ls-tree", "-d", "--name-only", "HEAD", rel).stdout.strip():
+            return rel
+    return None
+
+
+def read_lane_md(vault, rel_dir):
+    """Filesystem first, then the index — the file may be out of the current cone."""
+    path = os.path.join(vault, rel_dir, "LANE.md")
+    try:
+        return open(path, encoding="utf-8").read()
+    except OSError:
+        pass
+    r = git(vault, "show", f"HEAD:{rel_dir}/LANE.md")
+    return r.stdout if r.returncode == 0 else None
+
+
+def parse_frontmatter(text):
+    """Enough YAML for this contract: scalars, and block lists under a key.
+
+    Kept deliberately small (no PyYAML on a producer). Values are stripped of
+    trailing `# comments`, which is how the shipped LANE.md annotates fields.
+    """
+    if not text or not text.startswith("---"):
+        return {}
+    end = text.find("\n---", 3)
+    block = text[3:end] if end != -1 else text[3:]
+    out, list_key = {}, None
+    for line in block.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        item = re.match(r"^\s+-\s+(.*)$", line)
+        if item and list_key:
+            v = item.group(1).split("#")[0].strip().strip("'\"")
+            if v:
+                if not isinstance(out.get(list_key), list):
+                    out[list_key] = []
+                out[list_key].append(v)
+            continue
+        kv = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", line)
+        if kv:
+            key = kv.group(1)
+            val = kv.group(2).split("#")[0].strip()
+            list_key = None
+            if val.startswith("[") and val.endswith("]"):        # inline flow list
+                out[key] = [x.strip().strip("'\"") for x in val[1:-1].split(",") if x.strip()]
+            elif val in (">", "|", ">-", "|-"):                  # folded scalar: skip body
+                out[key] = ""
+            elif val == "":                                      # empty, or a block list follows
+                out[key] = ""
+                list_key = key
+            else:
+                out[key] = val
+        # anything else (a folded scalar's continuation) is ignored on purpose
+    return out
+
+
+# ------------------------------------------------------------------ measure
+
+def measure(vault):
+    """Working-tree file count and bytes, .git excluded."""
+    files = nbytes = 0
+    for root, dirs, names in os.walk(vault):
+        if ".git" in dirs:
+            dirs.remove(".git")
+        for n in names:
+            p = os.path.join(root, n)
+            if os.path.islink(p):
+                continue
+            try:
+                nbytes += os.path.getsize(p)
+            except OSError:
+                continue
+            files += 1
+    return files, nbytes
+
+
+def human(n):
+    for unit in ("B", "K", "M", "G"):
+        if n < 1024 or unit == "G":
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024.0
+
+
+# --------------------------------------------------------------------- main
+
+def main():
+    ap = argparse.ArgumentParser(prog="sov-lane-scope")
+    ap.add_argument("--lane", default=os.environ.get("BRAIN_LANE") or _pointer("~/.brain-lane"))
+    ap.add_argument("--root", default=None)
+    ap.add_argument("--dry", action="store_true", help="print the plan, change nothing")
+    a = ap.parse_args()
+
+    vault = os.path.expanduser(a.root) if a.root else _resolve_vault()
+    if not a.lane:
+        die("no lane (--lane, $BRAIN_LANE, or ~/.brain-lane)")
+    lane = a.lane.strip().strip("/")
+
+    if git_version() < MIN_GIT:
+        die(f"git {'.'.join(map(str, git_version()))} is too old for cone-mode "
+            f"sparse-checkout (need {'.'.join(map(str, MIN_GIT))}+)")
+    if git(vault, "rev-parse", "--git-dir").returncode != 0:
+        die(f"{vault} is not a git clone — scoping is a git-transport feature")
+
+    rel_dir = lane_dir_rel(vault, lane)
+    if not rel_dir:
+        die(f"no folder for lane '{lane}' under raw/workspaces/ or raw/tools/")
+    fm = parse_frontmatter(read_lane_md(vault, rel_dir))
+    if not fm:
+        die(f"no readable LANE.md frontmatter at {rel_dir}/LANE.md — the contract is "
+            f"what declares the scope")
+
+    # ---- refuse unless the clone is exactly where it should be ----
+    branch = fm.get("branch") or f"lane/{lane}"
+    head = git(vault, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if head != branch:
+        die(f"clone is on '{head}', its lane branch is '{branch}' — refusing to reshape "
+            f"someone else's checkout")
+    dirty = git(vault, "status", "--porcelain").stdout.strip()
+    if dirty:
+        die("working tree is dirty — commit or clean first, then re-run:\n  "
+            + "\n  ".join(dirty.splitlines()[:10]))
+
+    # ---- the scope ----
+    declared = fm.get("read_scope")
+    if isinstance(declared, str):
+        declared = [declared] if declared else None
+    if declared:
+        scope, origin = list(declared), "declared in LANE.md"
+    else:
+        scope, origin = ["CLAUDE.md", "knowledge/", f"{rel_dir}/"], "contract default"
+
+    norm = [s.strip().strip("/") for s in scope if s.strip().strip("/")]
+    if rel_dir not in norm:
+        die(f"read_scope does not include the lane's own folder ({rel_dir}/) — a producer "
+            f"that cannot see its lane cannot capture")
+
+    # Cone mode is directory-granular and always keeps the repository's root files,
+    # so a root-level file in the scope needs no argument; a nested file contributes
+    # its parent directory, which is the closest cone can express.
+    cones, notes = [], []
+    for p in norm:
+        is_dir = bool(git(vault, "ls-tree", "-d", "--name-only", "HEAD", p).stdout.strip())
+        if is_dir:
+            if p not in cones:
+                cones.append(p)
+        elif "/" not in p:
+            notes.append(f"{p}: root file, always materialised by cone mode")
+        else:
+            parent = os.path.dirname(p)
+            notes.append(f"{p}: file — cone is directory-granular, adding {parent}/")
+            if parent not in cones:
+                cones.append(parent)
+    if not cones:
+        die("resolved scope has no directories to cone")
+
+    before = measure(vault)
+    current = git(vault, "sparse-checkout", "list").stdout.split()
+    already = git(vault, "config", "--get", "core.sparseCheckout").stdout.strip() == "true"
+
+    print(f"lane      : {lane}  ({rel_dir}/)")
+    print(f"branch    : {branch}")
+    print(f"scope     : {origin}")
+    for p in norm:
+        print(f"            {p}{'/' if p in cones else ''}")
+    for n in notes:
+        print(f"note      : {n}")
+    print(f"command   : git sparse-checkout set --cone {' '.join(cones)}")
+    print(f"before    : {before[0]} files, {human(before[1])}"
+          + ("  (sparse already on)" if already else "  (full checkout)"))
+
+    if already and sorted(current) == sorted(cones):
+        print("after     : unchanged — the clone already holds exactly this scope")
+        return 0
+    if a.dry:
+        print("after     : [DRY] nothing changed")
+        return 0
+
+    r = git(vault, "sparse-checkout", "set", "--cone", *cones)
+    if r.returncode != 0:
+        die(f"sparse-checkout failed:\n{r.stderr.strip()}")
+
+    after = measure(vault)
+    print(f"after     : {after[0]} files, {human(after[1])}")
+    dropped = before[0] - after[0]
+    if dropped > 0:
+        print(f"dropped   : {dropped} files, {human(before[1] - after[1])} "
+              f"({100.0 * (before[1] - after[1]) / before[1]:.1f}% of the tree)")
+    print("note      : the working tree is scoped; full history stays in .git. "
+          "Hygiene, not isolation.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,4 +1,4 @@
-"""brain-status and the two jobs that are NOT the shared runner: the mover, and a lane that
+"""sov-status and the two jobs that are NOT the shared runner: the mover, and a lane that
 keeps a calendar job of its own.
 
 Both are read here through the same lens the console uses, because both fail the same silent
@@ -30,7 +30,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS = ROOT / "bin" / "brain-status"
+STATUS = ROOT / "bin" / "sov-status"
 RUNNER = "com.sovereign.connector.runner"
 RELAY = "com.sovereign.connector.relay"
 NOTION = "com.sovereign.connector.notion"
@@ -183,7 +183,7 @@ class Box:
         mod = load_status_module()
         buf = io.StringIO()
         with mock.patch.object(sys, "platform", "linux"), \
-             mock.patch.object(sys, "argv", ["brain-status", "--json", "--no-hub"]), \
+             mock.patch.object(sys, "argv", ["sov-status", "--json", "--no-hub"]), \
              mock.patch.dict(os.environ, self.env(), clear=True), \
              contextlib.redirect_stdout(buf):
             mod.main()

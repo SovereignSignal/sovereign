@@ -8,7 +8,7 @@
 #            --lane PATH      lane under the vault, default raw/tools/Notion (one workspace, one lane, no host suffix)
 #            --no-launchd     write the plist, do not load it (tests; or load it later from a GUI Terminal)
 #
-# Write wire only: a daily scheduled job runs bin/brain-mirror-notion (delta; a full walk when
+# Write wire only: a daily scheduled job runs bin/sov-mirror-notion (delta; a full walk when
 # the last one is older than six days). No read wire: Notion is a source, not an agent.
 # The token is written to ~/.notion-mirror/mirror.env (mode 600) and never to the vault or a log.
 set -euo pipefail
@@ -55,7 +55,7 @@ case "$AT" in [0-9][0-9]:[0-9][0-9]) ;; *) echo "--at wants HH:MM, got $AT" >&2;
 
 token_line="MISSING: pass --secret TOKEN, or put NOTION_API_KEY in $NOTION_DIR/mirror.env"
 [ -n "$SECRET" ] && token_line="provided (goes to $NOTION_DIR/mirror.env, never to the vault)"
-sov_plan "write      bin/brain-mirror-notion daily at $AT as $LABEL (delta; full walk when the last one is older than six days)" \
+sov_plan "write      bin/sov-mirror-notion daily at $AT as $LABEL (delta; full walk when the last one is older than six days)" \
          "read       none (Notion is a source, not an agent)" \
          "token      $token_line" \
          "state      $NOTION_DIR"
@@ -67,8 +67,8 @@ fi
 
 sov_write_pointers
 sov_link_bins
-ln -sfn "$TEMPLATE/bin/brain-mirror-notion" "$HOME/brain-bin/brain-mirror-notion"
-say "[bins] ~/brain-bin/brain-mirror-notion"
+ln -sfn "$TEMPLATE/bin/sov-mirror-notion" "$HOME/brain-bin/sov-mirror-notion"
+say "[bins] ~/brain-bin/sov-mirror-notion"
 
 # instance env: merge, never clobber; the token line is rewritten, everything else kept
 mkdir -p "$NOTION_DIR"; chmod 700 "$NOTION_DIR"
@@ -113,7 +113,7 @@ if [ -n "${SOV_TEST_CHECK_OUTPUT:-}" ]; then
   check_out="$SOV_TEST_CHECK_OUTPUT"; check_rc=0
 else
   check_rc=0
-  check_out="$("$HOME/brain-bin/brain-mirror-notion" --check --state-dir "$NOTION_DIR" 2>&1)" || check_rc=$?
+  check_out="$("$HOME/brain-bin/sov-mirror-notion" --check --state-dir "$NOTION_DIR" 2>&1)" || check_rc=$?
 fi
 printf '%s\n' "$check_out" | sed 's/^/  /'
 if [ "$check_rc" -ne 0 ] && [ "$check_rc" -ne 2 ]; then
@@ -168,5 +168,5 @@ else
   say "[lane] LANE.md written in $LANE_DIR"
 fi
 
-say; say "done. first run is yours to start: brain-mirror-notion --full --dry-run, then --full (hours on a large workspace)."
+say; say "done. first run is yours to start: sov-mirror-notion --full --dry-run, then --full (hours on a large workspace)."
 say "the job runs a delta every day at $AT and a full walk weekly. status: $NOTION_DIR/last-status"

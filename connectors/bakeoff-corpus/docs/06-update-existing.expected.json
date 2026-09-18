@@ -1,6 +1,6 @@
 {
   "class": "update-existing",
-  "why": "A material status change to a subject the brain already holds a card on. Must extend the card, not duplicate it.",
+  "why": "A material status change to a subject the archive already holds a card on. Must extend the card, not duplicate it.",
   "adversarial": false,
   "accept": [
     {

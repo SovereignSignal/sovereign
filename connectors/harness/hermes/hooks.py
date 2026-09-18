@@ -31,7 +31,7 @@ def register(config_path, cmd):
     entry = '    - command: "%s"\n      timeout: 30\n' % cmd
     m = re.search(r"(?m)^hooks:\s*$", text)
     if not m:
-        text = text.rstrip("\n") + "\n\n# Sovereign: the brain's read wire (sov connect hermes)\nhooks:\n  %s:\n%s" % (EVENT, entry)
+        text = text.rstrip("\n") + "\n\n# Sovereign: the archive's read wire (sov connect hermes)\nhooks:\n  %s:\n%s" % (EVENT, entry)
     else:
         # find the hooks block; add or extend the event list inside it
         start = m.end()

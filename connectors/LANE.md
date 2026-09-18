@@ -1,7 +1,7 @@
 # LANE.md — the producer lane contract
 
 Every lane in `raw/` may carry a `LANE.md` at its root: the producer's contract with this
-brain. The **owner writes it at onboarding**; the producer reads it and follows it; machines
+archive. The **owner writes it at onboarding**; the producer reads it and follows it; machines
 parse the frontmatter. One file makes "in the loop" a checkable property instead of a hope.
 
 The curator never judges `LANE.md` itself (config is not knowledge) — it is the contract
@@ -34,11 +34,11 @@ capture_window: 30d            # optional: how long this lane may be quiet befor
 # ---- source map (optional): what the producer looks at, in three classes ----
 sources_documents: 7 settled design documents, the allow-list in <collector script>
 sources_processes: <scheduled process whose outputs are captured as dated observations>
-sources_excluded: <what never enters the brain from this host, by rule>
+sources_excluded: <what never enters the archive from this host, by rule>
 
 # ---- transport details (required for git transports) ----
 branch: lane/wire-ops          # the ONLY ref this producer may push
-remote: <the brain's reachable remote URL>
+remote: <the archive's reachable remote URL>
 auth: deploy-key wire-ops@buildbox      # the credential's identity — never the credential itself
                                # git producers also end every run with a heartbeat push to
                                # refs/heartbeats/<lane> — not a field, a fixed behavior;
@@ -55,10 +55,10 @@ like, anything unusual about cadence or shape, and the standing rules restated o
 
 ## The three wires (what every producer holds)
 
-1. **Read first.** Load the brain's relevant slice (`brain-load <topic>`) before working on
+1. **Read first.** Load the archive's relevant slice (`sov-load <topic>`) before working on
    its subject matter. Work from current truth, never a stale copy. What the producer holds
-   locally is its `read_scope` (see below), not the whole brain.
-2. **Write your lane only.** Captures go to `raw/…/<lane>/` via `brain-capture` (git
+   locally is its `read_scope` (see below), not the whole archive.
+2. **Write your lane only.** Captures go to `raw/…/<lane>/` via `sov-capture` (git
    producers: committed on `lane/<slug>`, pushed, owner merges). Valid capture = markdown
    with `type: capture`, `source`, `created` frontmatter. No secrets, ever; no binaries;
    the pipe or CLI enforces the excludes.
@@ -71,7 +71,7 @@ like, anything unusual about cadence or shape, and the standing rules restated o
   (works on a LAN, across the internet, behind NAT) and every write arrives as a reviewable
   commit with an author, a diff, and a revert. `rsync` is the right adapter for same-machine
   or LAN file-drops (see `generic-dir/`); `local` is a producer that lives on the hub itself.
-- **`read_scope`** answers "how much of the brain does this producer hold?". A producer is a
+- **`read_scope`** answers "how much of the archive does this producer hold?". A producer is a
   specialist: it needs the trusted layer, the law, and its own lane, and holding the rest is
   clutter. The hub and the owner's own machines are **not producers** and are never scoped —
   they read everything.
@@ -81,8 +81,8 @@ like, anything unusual about cadence or shape, and the standing rules restated o
     write the field at all.
   - **Declared scope replaces the default, it does not extend it.** Write the whole list.
     A producer that genuinely needs a workstream adds it (`workstreams/grant-wire/`); one
-    that needs nothing but its own lane can drop `knowledge/`, at the cost of `brain-load`.
-  - **How it is applied.** `brain-lane-scope` on the producer reads this field and runs
+    that needs nothing but its own lane can drop `knowledge/`, at the cost of `sov-load`.
+  - **How it is applied.** `sov-lane-scope` on the producer reads this field and runs
     `git sparse-checkout set --cone <paths>`. Cone mode is directory-granular and always
     materialises files in the repository root, so `CLAUDE.md` costs nothing to list and is
     listed for clarity. Re-running is idempotent; the helper refuses a dirty tree or a clone
@@ -155,10 +155,10 @@ like, anything unusual about cadence or shape, and the standing rules restated o
 ## Onboarding checklist (owner runs this)
 
 1. Create the lane folder; write `LANE.md` (`status: proposed`).
-2. Clone the brain on the producer, check out `lane/<slug>`, then run `brain-lane-scope` so
+2. Clone the archive on the producer, check out `lane/<slug>`, then run `sov-lane-scope` so
    the clone holds its `read_scope` and nothing else. Do this before the first capture: a
    scoped clone is the normal shape, not a later cleanup.
-3. Producer proves the wires: `brain-load` returns the core; `brain-capture` lands a test
+3. Producer proves the wires: `sov-load` returns the core; `sov-capture` lands a test
    capture; the capture reaches the hub and the curator's next run judges it.
 4. Owner sets `status: onboarded` + the date. From here the producer follows the connector
    skill; nothing is re-explained.

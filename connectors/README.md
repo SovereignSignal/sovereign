@@ -1,6 +1,6 @@
-# Connectors: piping your tools into the brain
+# Connectors: piping your tools into the archive
 
-Every AI tool you use hoards your context somewhere — a documents folder, an application-support directory, a per-project "memory" store. A **connector pipe** is the small, dumb, one-way job that copies the durable layer of that hoard into the brain's loading dock, where the curator can judge it.
+Every AI tool you use hoards your context somewhere — a documents folder, an application-support directory, a per-project "memory" store. A **connector pipe** is the small, dumb, one-way job that copies the durable layer of that hoard into the archive's loading dock, where the curator can judge it.
 
 The pattern is always the same, and it is deliberately boring:
 
@@ -28,7 +28,7 @@ A quick way to find a suspected store: pick one distinctive artifact you know th
 
 - `cowork-project-memory/` — mirrors every Claude Desktop project's memory store into a machine-scoped lane. This is the recipe that motivated the pattern: project memory files (`feedback_*.md`, `project_*.md`, `reference_*.md`) are pre-distilled knowledge your curator will love.
 - `generic-dir/` — mirror any directory into any lane; copy it and set two paths. The Claude/Codex documents-folder pipes are just this recipe with the paths filled in.
-- `harness/notion/`: the official-API Notion mirror as a connector. Connect it from the app's Tools view or with `sov connect notion`; one integration token, every connected page and database, daily, in the export's own folder layout. The script is `bin/brain-mirror-notion`.
+- `harness/notion/`: the official-API Notion mirror as a connector. Connect it from the app's Tools view or with `sov connect notion`; one integration token, every connected page and database, daily, in the export's own folder layout. The script is `bin/sov-mirror-notion`.
 
 Each recipe is a ~15-line shell script. No daemons, no dependencies beyond `rsync`, and no schedule file of its own: the shared connector job runs them all.
 
@@ -53,4 +53,4 @@ sov disconnect <tool> --apply       # undeclare a lane; the folder in raw/ stays
 
 ## The contract
 
-A pipe is a **producer** in the standard's terms: it writes only its own lane, it never touches `knowledge/`, and promotion always goes through the curator and the owner's gate. If a pipe dies, the brain loses freshness, never truth.
+A pipe is a **producer** in the standard's terms: it writes only its own lane, it never touches `knowledge/`, and promotion always goes through the curator and the owner's gate. If a pipe dies, the archive loses freshness, never truth.

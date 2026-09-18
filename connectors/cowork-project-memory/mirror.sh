@@ -1,9 +1,9 @@
 #!/bin/bash
-# Connector: Claude Desktop (Cowork) project memory -> the brain's loading dock.
+# Connector: Claude Desktop (Cowork) project memory -> the archive's loading dock.
 # One-way. Machine-scoped lane. Secrets never travel (memory dirs hold only md).
 # Set BRAIN_ROOT and MACHINE, test once by hand, then schedule every ~15 min.
 
-BRAIN_ROOT="${BRAIN_ROOT:-$HOME/brain}"          # path to your brain vault
+BRAIN_ROOT="${BRAIN_ROOT:-${SOVEREIGN_ROOT:-${SOVEREIGN_VAULT:-$HOME/brain}}}"          # path to your archive vault
 MACHINE="${MACHINE:-$(hostname -s | tr 'A-Z' 'a-z')}"
 SRC="$HOME/Library/Application Support/Claude/local-agent-mode-sessions"
 DST="$BRAIN_ROOT/raw/tools/cowork-$MACHINE"

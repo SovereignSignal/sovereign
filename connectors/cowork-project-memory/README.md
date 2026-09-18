@@ -1,4 +1,4 @@
-# Cowork project memory → brain
+# Cowork project memory → archive
 
 Claude Desktop keeps a per-project memory store on disk: distilled `feedback_*.md`, `project_*.md`, and `reference_*.md` files it maintains as you work. That store is often the richest un-piped knowledge on the machine — it is literally your tool's own curation of your working style and projects.
 

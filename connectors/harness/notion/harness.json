@@ -6,7 +6,7 @@
  "hook_file": null,
  "write": "pull",
  "manual_step": "In Notion: create an internal integration (Settings, Connections, Develop or manage integrations; read content is enough), then open each top-level page to back up and add the integration under Connections. Paste the token when you Connect, or put NOTION_API_KEY in ~/.notion-mirror/mirror.env and Connect again.",
- "description": "Pulls every page and database the integration can see into one lane, daily, in the layout Notion's own export uses. No read wire: Notion is a source the brain backs up, not an agent that consults it.",
+ "description": "Pulls every page and database the integration can see into one lane, daily, in the layout Notion's own export uses. No read wire: Notion is a source the archive backs up, not an agent that consults it.",
  "secret": {
   "env": "NOTION_API_KEY",
   "label": "Notion integration token",

@@ -9,7 +9,7 @@
   sov hub kit-restore --capsule F --destination DIR --key-file KEY
   sov hub law                       Part 1 of the vault's law against the template's
 The managed-hub commands (install, key, recovery, snapshot, restore, activate, run, doctor,
-status) stay on brain-hub; bin/sov routes by the first word.
+status) stay on sov-managed-hub; bin/sov routes by the first word.
 """
 import argparse
 import json

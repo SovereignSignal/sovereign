@@ -5,7 +5,7 @@
  "hook_file": "~/.claude/settings.json",
  "write": "mirror",
  "manual_step": null,
- "description": "SessionStart hook reads the brain; every project's memory folder is mirrored, never transcripts.",
+ "description": "SessionStart hook reads the archive; every project's memory folder is mirrored, never transcripts.",
  "detect": [
   "~/.claude"
  ]

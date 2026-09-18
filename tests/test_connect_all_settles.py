@@ -27,7 +27,7 @@ from pathlib import Path
 from tests.test_connectors_install import ROOT, Box
 
 SOV = ROOT / "bin" / "sov"
-# What `brain-mirror-notion --check` would say, so no test reaches Notion. Same seam the
+# What `sov-mirror-notion --check` would say, so no test reaches Notion. Same seam the
 # Notion harness test uses.
 CHECK = ("bot: TestBot\nworkspace: Test WS\nitems: 1 (page 1)\nroots reachable:\n"
          "  %032x  Root A\nmissing roots: none\n" % 1)

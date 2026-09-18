@@ -10,7 +10,8 @@
 #        layer carries it (dotfiles and .json do not cross Obsidian Sync).
 #
 # Config, all instance-level: ~/.brain-root (or $BRAIN_ROOT), ~/.brain-host (or $BRAIN_HOST).
-_pointer() { [ -f "$1" ] && tr -d '\n' < "$1" || true; }
+. "$(dirname "${BASH_SOURCE[0]}")/../../../bin/_sov-config.sh"
+_pointer() { _sov_pointer "$1"; }
 BRAIN_ROOT_RESOLVED="${BRAIN_ROOT:-$(_pointer "$HOME/.brain-root")}"
 BRAIN_HOST_RESOLVED="${BRAIN_HOST:-$(_pointer "$HOME/.brain-host")}"
 BRAIN_HOST_RESOLVED="${BRAIN_HOST_RESOLVED:-$(hostname -s | tr '[:upper:]' '[:lower:]')}"
@@ -30,7 +31,7 @@ sov_git_lane_dir() {
 sov_dest() {
   local lane="$1" prefix="${2:-$1}" gl
   if gl="$(sov_git_lane_dir)"; then printf '%s' "$gl/$prefix"
-  elif [ -n "${BRAIN_STAGE:-}" ]; then printf '%s' "$BRAIN_STAGE/raw/tools/$lane"
+  elif [ -n "${BRAIN_STAGE:-${SOVEREIGN_STAGE:-}}" ]; then BRAIN_STAGE="${BRAIN_STAGE:-$SOVEREIGN_STAGE}"; printf '%s' "$BRAIN_STAGE/raw/tools/$lane"
   elif [ -d "$HOME/.vault-staging" ]; then printf '%s' "$HOME/.vault-staging/raw/tools/$lane"
   elif [ -n "$BRAIN_ROOT_RESOLVED" ] && [ -d "$BRAIN_ROOT_RESOLVED/raw/tools" ]; then printf '%s' "$BRAIN_ROOT_RESOLVED/raw/tools/$lane"
   else echo "mirror: no destination (set ~/.brain-root, or create ~/.vault-staging)" >&2; return 1; fi
@@ -94,16 +95,16 @@ sov_git_lock() {
   return 0
 }
 
-# Credentials never enter the brain. Every write wire ends in sov_git_publish, so the
+# Credentials never enter the archive. Every write wire ends in sov_git_publish, so the
 # redaction pass sits at its top and covers every lane on every host without a per-lane
 # line: credential-shaped values in what the mirror just wrote become [redacted <kind>]
 # before the bytes are committed, relayed or synced anywhere. Same rules as
 # lib/brain_redact.py; the vault's commit-time scan is the check behind it.
 sov_redact() {
   local dest="$1" bin out n
-  bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/bin/brain-redact"
-  [ -x "$bin" ] || { echo "mirror: brain-redact not found; publish refused" >&2; return 1; }
-  out="$("$bin" --strict "$dest" 2>&1)" || { echo "mirror: brain-redact failed; publish refused" >&2; return 1; }
+  bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/bin/sov-redact"
+  [ -x "$bin" ] || { echo "mirror: sov-redact not found; publish refused" >&2; return 1; }
+  out="$("$bin" --strict "$dest" 2>&1)" || { echo "mirror: sov-redact failed; publish refused" >&2; return 1; }
   n="$(printf '%s\n' "$out" | sed -n 's/^redacted: \([0-9]*\) value(s) in \([0-9]*\) file(s)$/\1 in \2/p')"
   case "$n" in ""|"0 in 0") return 0;; esac
   # Routine reporting goes to stdout: the fence working is not a job failure, and a
@@ -111,14 +112,14 @@ sov_redact() {
   # two failure paths above stay on stderr.
   echo "mirror: redacted $n file(s) under $dest"
   printf '%s\n' "$out" | grep -v '^redacted: ' | sed 's/^/mirror:   /' 
-  [ -f "$dest/MANIFEST.md" ] && printf '\nRedacted on this run: %s file(s); the values never entered the brain.\n' "$n" >> "$dest/MANIFEST.md"
+  [ -f "$dest/MANIFEST.md" ] && printf '\nRedacted on this run: %s file(s); the values never entered the archive.\n' "$n" >> "$dest/MANIFEST.md"
   return 0
 }
 
 # On a git lane: commit what the mirror wrote and push the lane branch. Best effort,
-# same rules as brain-capture: only the declared lane branch, never another ref.
+# same rules as sov-capture: only the declared lane branch, never another ref.
 # Never silent: a connector that cannot commit leaves the working tree dirty, and a
-# dirty tree makes brain-capture abort, which stops the lane heartbeat. That failure
+# dirty tree makes sov-capture abort, which stops the lane heartbeat. That failure
 # has to reach the log or it costs days.
 sov_git_publish() {
   local dest="$1" what="$2" gl branch cur lock rc

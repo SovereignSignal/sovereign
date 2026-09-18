@@ -28,11 +28,9 @@ def manifest():
 
 
 def pointer(name):
-    try:
-        path = Path.home() / name
-        return path.read_text()[:4096].strip() or None
-    except OSError:
-        return None
+    from sovereign_config import pointer as instance_pointer
+    value = instance_pointer(Path.home() / name)
+    return value[:4096] if value else None
 
 
 def describe():
@@ -49,12 +47,12 @@ def describe():
     if role == "client" and not mode:
         warnings.append("Client mode has not been declared; existing connector observations remain separate.")
     if mode == "contribute-only" and root:
-        warnings.append("A legacy brain pointer remains. Contribute-only migration is incomplete until access and retained copies are checked.")
+        warnings.append("A legacy archive pointer remains. Contribute-only migration is incomplete until access and retained copies are checked.")
     rules = str(Path(root) / "CLAUDE.md") if root and mode != "contribute-only" else None
     installed = next((str(p) for p in (Path.home() / "Applications/Sovereign.app", Path("/Applications/Sovereign.app")) if p.is_dir()), None)
     cli = Path.home() / "brain-bin/sov"
     next_commands = [shlex.quote(str(cli)) + " status --json"] if cli.exists() else []
-    return {"product": "Sovereign", "description": "Your owned brain and archive: selected work becomes reusable context through a hub and its review gate.", "roles": {"hub": "One active authority maintains the brain, imports contributions, curates and records decisions.", "client": "A connected machine contributes selected work. Read-and-contribute clients also receive trusted context."}, "machine": {"host": os.environ.get("BRAIN_HOST") or pointer(".brain-host") or socket.gethostname().split(".")[0], "role": role, "client_mode": mode, "role_basis": "declared" if machine.get("role") else "hub-pointer" if hub else "unassigned", "vault": root, "hub_pointer": hub}, "rules": rules, "installed_app": installed, "next_commands": next_commands, "warnings": warnings, "health": "Not probed. Request status separately for timestamped observations.", "writes": False, "network": False}
+    return {"product": "Sovereign", "description": "Your owned archive: selected work becomes reusable context through a hub and its review gate.", "roles": {"hub": "One active authority maintains the archive, imports contributions, curates and records decisions.", "client": "A connected machine contributes selected work. Read-and-contribute clients also receive trusted context."}, "machine": {"host": os.environ.get("BRAIN_HOST") or pointer(".brain-host") or socket.gethostname().split(".")[0], "role": role, "client_mode": mode, "role_basis": "declared" if machine.get("role") else "hub-pointer" if hub else "unassigned", "vault": root, "hub_pointer": hub}, "rules": rules, "installed_app": installed, "next_commands": next_commands, "warnings": warnings, "health": "Not probed. Request status separately for timestamped observations.", "writes": False, "network": False}
 
 
 def read_enabled():
@@ -75,12 +73,15 @@ def bootstrap():
     candidates.append(Path(__file__).resolve().parents[1] / "bin/sov")
     cli = next((p for p in candidates if p.is_file()), candidates[0])
     command = shlex.quote(str(cli)) + " about --json"
-    return "[Sovereign discovery] Sovereign is the installed brain/archive system. For local-system, brain or archive questions, start with " + command + ". It explains this installation and safe status entry points without GUI or network access. Context below may be dated; current operational status and source timestamps govern health claims."
+    return "[Sovereign discovery] Sovereign is the installed archive system. For questions about this installation or archive, start with " + command + ". It explains this installation and safe status entry points without GUI or network access. Context below may be dated; current operational status and source timestamps govern health claims."
 
 
 def main():
     import sys
     try:
+        if "--help" in sys.argv or "-h" in sys.argv:
+            print("Usage: sov-about [--json | --read-enabled]\nRead-only local installation information.")
+            return 0
         if "--read-enabled" in sys.argv:
             return 0 if read_enabled() else 1
         value = describe()
@@ -90,7 +91,7 @@ def main():
             m = value["machine"]
             print("Sovereign\n" + value["description"])
             print("Machine: " + m["host"] + " | " + (m["role"] or "role unassigned") + " | " + (m["client_mode"] or "no client mode"))
-            print("Instance: " + (m["vault"] or "no local brain configured"))
+            print("Instance: " + (m["vault"] or "no local archive configured"))
             print("Rules: " + (value["rules"] or "not configured for local reading"))
             print(value["health"])
             for line in value["warnings"] + value["next_commands"]:

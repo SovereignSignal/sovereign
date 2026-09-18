@@ -22,7 +22,7 @@ sov_write_pointers
 sov_link_bins
 sov_merge_hook_claude_style "$HOME/.claude/settings.json" "$HERE/session-start.py" "startup|resume|clear|compact"
 sov_register_connector "$HERE/mirror.sh"
-sov_lane_contract "$HERE/LANE.md.tmpl" "brain-load (session-start hook)"
+sov_lane_contract "$HERE/LANE.md.tmpl" "sov-load (session-start hook)"
 sov_smoke_mirror "$HERE/mirror.sh"
 sov_smoke_runner "$HARNESS"
 sov_smoke_hook "$HERE/session-start.py" claude

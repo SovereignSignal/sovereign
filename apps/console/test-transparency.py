@@ -7,7 +7,7 @@ HERE=Path(__file__).resolve().parent
 ROOT=HERE.parents[1]
 sys.path.insert(0,str(ROOT/'lib'))
 import brain_local
-loader=importlib.machinery.SourceFileLoader('status_fixture',str(ROOT/'bin/brain-status'))
+loader=importlib.machinery.SourceFileLoader('status_fixture',str(ROOT/'bin/sov-status'))
 service=importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name,loader));loader.exec_module(service)
 COMMON=r'''
 const checks={},post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));

@@ -37,10 +37,8 @@ import _curator_brief as _brief
 from datetime import datetime, timezone
 
 def _pointer(path):
-    try:
-        return open(os.path.expanduser(path), encoding="utf-8").read().strip() or None
-    except OSError:
-        return None
+    from sovereign_config import pointer as instance_pointer
+    return instance_pointer(path)
 
 VAULT = os.environ.get("SOVS_VAULT") or _pointer("~/.brain-root") or os.getcwd()
 LANE_NAME = os.environ.get("CURATOR_LANE") or _pointer("~/.curator-lane") or "curator"
@@ -52,10 +50,10 @@ JUDGMENTS = os.path.join(LANE, "judgments.jsonl")
 GEARS = os.path.join(LANE, "gears.json")
 META = os.path.join(PROP, ".meta.json")
 K = os.path.join(VAULT, "knowledge")
-# The brain's top-level folders that are not the trusted layer. A [[link]] whose
+# The archive's top-level folders that are not the trusted layer. A [[link]] whose
 # target is a path rooted in one of these points at the loading dock, the desk, or
 # cold storage - never at a card - so it is a phantom node in the graph. Folder
-# names come from the standard's own layout, so this stays general to any brain.
+# names come from the standard's own layout, so this stays general to any instance.
 NON_KNOWLEDGE_DIRS = ("workstreams", "raw", "archive", "repos")
 # Local by default — the law: machine writers to knowledge/ run on owner-controlled
 # compute. Cloud is an explicit opt-in via CURATOR_ENDPOINT, never the shipped default.
@@ -172,7 +170,7 @@ _TASTE_AMOUNT = re.compile(
 # compensation rather than a public figure. This narrowness is deliberate and
 # evidence-based, not a softening: the taste rule it encodes is scoped to the
 # owner ("the owner's own engagements and deals: never put payment amounts or
-# raw financial figures on the card"), and a brain whose subject matter IS
+# raw financial figures on the card"), and an archive whose subject matter IS
 # public capital is full of legitimate program sizes. Measured on this vault's
 # 517 approved cards, an unconditional money rule fired on 29% of them — a veto
 # that demotes a third of a night's landings is alarm fatigue, and an ignored
@@ -788,7 +786,7 @@ def _self_test():
     ]
     # Deterministic taste rule. Bodies are synthetic and generic on purpose —
     # nothing here is real owner data, and nothing owner-specific belongs in a
-    # test for a mechanism the template ships to every brain.
+    # test for a mechanism the template ships to every instance.
     #
     # ABSOLUTE classes -> _taste_redact strips them in place and the card carries
     # on. Tuple: (name, expected {class: count}, does the VETO still flag the
@@ -857,7 +855,7 @@ def _self_test():
          "A durable playbook for reviewing infrastructure partners, written up after the Q3 2026 cycle."),
         ("quarters and years stay clean",      False, "Ran in Q3 2026 and again in Q1 2027, per the schedule."),
         ("bare magnitude out of context",      False, "The clip renders at 4k and the archive holds 30M rows."),
-        # the deliberate line: PUBLIC capital figures are this brain's subject
+        # the deliberate line: PUBLIC capital figures are this instance's subject
         # matter and stay clean; only the owner's own money trips the veto
         ("public grant figure stays clean",    False,
          "A separate $850,000 grant went to a security library in the 2025 cycle."),
@@ -1339,7 +1337,7 @@ def _card_body(path):
 
 def _house_exemplars(max_n=2, lo=300, hi=1700):
     """Recent owner-approved cards, used as house-style few-shot examples.
-    The style is learned from THIS brain's knowledge/ - nothing is hardcoded."""
+    The style is learned from THIS archive's knowledge/ - nothing is hardcoded."""
     scored = []
     for p in glob.glob(K + "/**/*.md", recursive=True):
         body = _card_body(p)
@@ -1352,7 +1350,7 @@ def _house_exemplars(max_n=2, lo=300, hi=1700):
     return [b for _, b in scored[:max_n]]
 
 
-# neutral fallback for a fresh brain with no approved cards yet
+# neutral fallback for a fresh instance with no approved cards yet
 _FALLBACK_EXEMPLAR = (
     "**Why this matters:** The owner sits on its protocol working group, so its decisions "
     "shape the owner's compliance work.\n\n"
@@ -1532,7 +1530,7 @@ def _auto_promote(props, meta):
     return out
 
 _SYS_HEAD = (
- "You are the curator of a plain-text knowledge brain. "
+ "You are the curator of a plain-text knowledge archive. "
  "Your job: decide whether ONE piece of raw material holds DURABLE, REUSABLE knowledge "
  "worth a one-screen card. Write clear, factual card bodies.\n\n"
  + (f"WHO THE OWNER IS: {_profile}\n\n" if _profile else "")
@@ -1581,7 +1579,7 @@ _SYS_HEAD = (
      "curator-run then rejects the drafted proposal at the gate itself (non-destructive, "
      "owner-reversible). The classes:\n" + _autoreject + "\n\n") if _autoreject else "")
  + "CARD SHAPE: open with ONE sentence saying what the thing is. Then 3-6 short key-fact bullets "
- "(amounts, dates, people, status - bold the labels). Link related brain topics with [[slug]]. "
+ "(amounts, dates, people, status - bold the labels). Link related archive topics with [[slug]]. "
  "Close with where living detail sits (a workstreams/ path) when relevant. Dense, scannable, one screen.\n\n"
  "HOUSE STYLE - recent cards the owner approved; match this voice and shape:\n\n"
  + "\n\n=====\n\n".join(_exemplars) + "\n\n"
@@ -1614,8 +1612,8 @@ _SYS_TAIL = (""
  '"confidence":"high|med|low","update_of":"existing-slug or null"'
  + (',"auto_reject_class":"declared class slug or null"' if _autoreject else '') + '}. '
  "If promote is false the other fields may be empty. "
- 'IMPORTANT: in body text, link brain topics with [[slug]] but NEVER wrap a URL in [[...]] '
- '\u2014 use plain URLs (e.g. https://example.com) and reserve [[...]] only for internal brain slugs. '
+ 'IMPORTANT: in body text, link archive topics with [[slug]] but NEVER wrap a URL in [[...]] '
+ '\u2014 use plain URLs (e.g. https://example.com) and reserve [[...]] only for internal archive slugs. '
  'ONLY link to kebab-case card slugs (hyphens). NEVER [[link]] to a raw source filename: anything '
  'with underscores, or a reference_/feedback_/project_/date prefix, is a file in the loading dock, '
  'not a card \u2014 name it in plain text if needed, never in [[...]]. If unsure a slug is a real card, omit the link.'
@@ -1703,7 +1701,7 @@ def judge_update(path, target, target_path):
     txt = open(path, encoding="utf-8", errors="ignore").read()[:12000]
     card = _card_body(target_path)[:4000]
     name = os.path.relpath(path, VAULT)
-    user = (f"UPDATE TASK. The brain already holds this card ({target}):\n\n{card}\n\n"
+    user = (f"UPDATE TASK. The archive already holds this card ({target}):\n\n{card}\n\n"
             f"NEW SOURCE: {name}\n\n{txt}\n\n"
             "Return the same JSON shape with body = the FULL merged replacement body "
             "(integrate the new facts, keep everything that is still true, follow the "
@@ -1864,7 +1862,7 @@ for p in cands:
         print(f"curator-run: CREDENTIAL IN SOURCE — {redactions[_TASTE_CREDENTIAL_CLASS]} "
               f"'{_TASTE_CREDENTIAL_CLASS}' value(s) redacted from {slug}; the live value "
               f"is still in the source file {src} — rotate it and clean the source, the "
-              "brain cannot do either for you", file=sys.stderr)
+              "archive cannot do either for you", file=sys.stderr)
     # Preserve created on updates (2026-09-04): a card's birthday is the day it first
     # landed, not the day a merge rewrote it. Git already tracks the change dates.
     _upd = v.get("update_of")
@@ -2086,7 +2084,7 @@ if not a.dry:
         lines += ["", "## ⚠ Live credential in a raw source",
                   "_A key-shaped value was redacted from the card, but the value itself is still "
                   "sitting in the source file named below. The card is fine; the SOURCE is not. "
-                  "Rotate the credential and clean the file — the brain cannot do either for you._"]
+                  "Rotate the credential and clean the file — the archive cannot do either for you._"]
         for pr in cred_cards:
             lines.append(f"- `{pr['slug']}` — {pr['redactions'][_TASTE_CREDENTIAL_CLASS]}x "
                          f"`{_TASTE_CREDENTIAL_CLASS}` in source `{pr['src']}`")

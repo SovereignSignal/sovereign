@@ -38,7 +38,7 @@ class Discovery(unittest.TestCase):
    self.assertNotIn('OLD PRIVATE',result.stdout);self.assertNotIn('Sovereign discovery',result.stdout);self.assertEqual(json.loads(result.stdout or "{}"),{})
  def test_status_stops_before_hub_or_brain_probes(self):
   self.config({'machine':{'role':'client','mode':'contribute-only'}});(self.home/'.brain-root').write_text('/private/old-vault')
-  loader=importlib.machinery.SourceFileLoader('contribute_status',str(ROOT/'bin/brain-status'));m=importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name,loader));loader.exec_module(m)
-  with patch.object(m,'fetch_hub',side_effect=AssertionError('No hub read')),patch.object(m,'frontmatter',side_effect=AssertionError('No brain read')),contextlib.redirect_stdout(io.StringIO()) as output:m.main()
+  loader=importlib.machinery.SourceFileLoader('contribute_status',str(ROOT/'bin/sov-status'));m=importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name,loader));loader.exec_module(m)
+  with patch.object(m,'fetch_hub',side_effect=AssertionError('No hub read')),patch.object(m,'frontmatter',side_effect=AssertionError('No archive read')),contextlib.redirect_stdout(io.StringIO()) as output:m.main()
   v=json.loads(output.getvalue());self.assertEqual(v['machine']['client_mode'],'contribute-only');self.assertIsNone(v['hub']['reachable'])
 if __name__=='__main__':unittest.main()

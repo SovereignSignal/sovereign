@@ -4,7 +4,7 @@
 # Mirrors Claude Code's distilled memory into this machine's lane: every project's
 # memory folder (~/.claude/projects/<key>/memory/) lands under memory/<key>/, so
 # nothing a session learned stays behind on one machine. Never the transcripts
-# (*.jsonl): cold-storage material, not brain material.
+# (*.jsonl): cold-storage material, not archive material.
 #
 # Destination and config: see _lib/mirror-common.sh (pointer files, staging rule).
 # Failures return nonzero and preserve the previous published capture; diagnostics go to stderr,

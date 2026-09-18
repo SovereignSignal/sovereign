@@ -9,6 +9,6 @@ STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
 # Settings come from the instance file. The runner exports them; a hand run asks the front door.
 [ -n "${SOVS_VAULT:-}" ] || eval "$(/bin/bash "$SOV_TEMPLATE/bin/sov" hub env)"
 export PATH="/opt/homebrew/bin:$PATH"
-out="$("$HERE/../brain-audit" --max-screen 20 --max-skips 8 2>&1)"; rc=$?
+out="$("$HERE/../sov-audit" --max-screen 20 --max-skips 8 2>&1)"; rc=$?
 printf "Archivist weekly audit (local, no agent):\n%s\n" "$(printf "%s\n" "$out" | tail -3)"
 exit $rc

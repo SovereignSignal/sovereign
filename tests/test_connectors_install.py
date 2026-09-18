@@ -96,7 +96,7 @@ class Box:
         return {k: v for k, v in e.items() if v is not None}
 
     def connect(self, harness, args=(), vault=None, **envx):
-        """`vault` names a DIFFERENT brain for this one call: the machine's vault moved
+        """`vault` names a DIFFERENT archive for this one call: the machine's vault moved
         and the same tool is connected again against the new one."""
         return subprocess.run(
             ["/bin/bash", str(H / harness / "install.sh"), "--vault", str(vault or self.vault),
@@ -470,7 +470,7 @@ class LaneContract(unittest.TestCase):
     LABEL = "com.sovereign.connector.windsurf"
     RUNNER = "com.sovereign.connector.runner"
     HEAD = ("---\ntype: capture\nsource: sov\ncreated: 2026-01-01\n---\n\n"
-            "# windsurf-testbox\n\nread: brain-load (session-start hook)\n\n")
+            "# windsurf-testbox\n\nread: sov-load (session-start hook)\n\n")
     SHAPES = {
         "as-label": "Rewired 2026-09-02 by `sov connect windsurf`: write wire "
                     "`connectors/harness/windsurf/mirror.sh` every 900s as `%s`. `MANIFEST.md` is the heartbeat.\n",
@@ -640,7 +640,7 @@ class Linux(unittest.TestCase):
 class Environment(unittest.TestCase):
     """What the installer may assume about the environment it lands in.
 
-    `brain-host-add` runs `sov connect all --apply` over ssh, and a non-interactive ssh
+    `sov-host-add` runs `sov connect all --apply` over ssh, and a non-interactive ssh
     shell often has no USER at all. Under `set -euo pipefail` an unguarded $USER aborts
     the run, and the linger note is the first statement of the Linux branch, so it
     aborts before a single unit is written and no lane on that box ever runs."""

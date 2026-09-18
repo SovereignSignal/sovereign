@@ -29,7 +29,7 @@ import os, sys, json, glob, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 args = sys.argv[1:]
-status = json.loads(subprocess.run([sys.executable, os.path.join(TEMPLATE, "bin", "brain-status"), "--json", "--no-hub"],
+status = json.loads(subprocess.run([sys.executable, os.path.join(TEMPLATE, "bin", "sov-status"), "--json", "--no-hub"],
                                    capture_output=True, text=True).stdout or "{}")
 catalog = status.get("harnesses")
 if not catalog:  # not connected yet: build the catalog from detect paths alone
@@ -48,7 +48,7 @@ if not catalog:  # not connected yet: build the catalog from detect paths alone
 
 
 def _manifest():
-    """The connector manifest, read exactly where brain-status and the installer read it."""
+    """The connector manifest, read exactly where sov-status and the installer read it."""
     sd = os.environ.get("SOV_STATE_DIR") or os.path.expanduser("~/.local/state/sovereign")
     try:
         m = json.load(open(os.environ.get("SOV_MANIFEST") or os.path.join(sd, "connectors.json"), encoding="utf-8"))
@@ -95,11 +95,11 @@ DECLARED = MANIFEST.get("harnesses") or {}
 PLATFORM = os.environ.get("SOV_PLATFORM") or ("Darwin" if sys.platform == "darwin" else "Linux")
 RUNNER_LABEL = ((MANIFEST.get("runner") or {}).get("label")
                 or ("com.sovereign.connector.runner" if PLATFORM == "Darwin" else "sovereign-connector-runner"))
-# brain-status already probes the jobs this user's OS really carries (and over ssh,
+# sov-status already probes the jobs this user's OS really carries (and over ssh,
 # where `launchctl list` sees nothing, it falls back to `launchctl print`), so ask it
 # rather than probing again here.
 RUNNER_LOADED = any(j.get("label") == RUNNER_LABEL for j in (status.get("jobs") or []))
-# Which machine is the hub. brain-status is asked with --no-hub here on purpose: a
+# Which machine is the hub. sov-status is asked with --no-hub here on purpose: a
 # migration must not depend on the hub being reachable, and re-walking a live API on
 # every pass is exactly what makes one never settle. So the hub is read the same way
 # `bin/sov connect <tool>` reads it - the pointer this machine carries (or the one this
@@ -111,7 +111,7 @@ HUB_IS_ELSEWHERE = bool(HUB_ALIAS) and HUB_ALIAS != HOST
 
 def hub_carries(h):
     """A cloud pull runs where the hub is, and installing it here would give one account
-    two pullers writing one lane. brain-status can say so outright (`runs_on`), but only
+    two pullers writing one lane. sov-status can say so outright (`runs_on`), but only
     when it reached the hub, which this command does not ask it to do; the harness's own
     declaration and the hub pointer say the same thing without leaving the machine."""
     return HUB_IS_ELSEWHERE and is_cloud_pull(h)

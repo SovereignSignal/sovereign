@@ -23,7 +23,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS = ROOT / "bin" / "brain-status"
+STATUS = ROOT / "bin" / "sov-status"
 
 
 def reader():

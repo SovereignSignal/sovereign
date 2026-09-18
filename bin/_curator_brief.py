@@ -140,7 +140,7 @@ def rejected_clause(slugs):
 if __name__ == "__main__":  # tiny self-check, no vault needed
     # The fixtures are deliberately nobody's subject matter. This file ships to every
     # reader of the template, and an owner's own topics standing in it read as the shape a
-    # brain is supposed to have. Each one still exercises a branch of `rank`: the first is
+    # archive is supposed to have. Each one still exercises a branch of `rank`: the first is
     # found by shared words alone, the second only by its slug written out literally, and
     # the third is the neighbour that must not be dragged in with them.
     T = {"quarterly-budget-review": {"quarterly", "budget", "review"},

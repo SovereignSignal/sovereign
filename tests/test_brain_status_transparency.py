@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 class Transparency(unittest.TestCase):
  def setUp(self):
-  loader=importlib.machinery.SourceFileLoader('status_transparency',str(ROOT/'bin/brain-status'))
+  loader=importlib.machinery.SourceFileLoader('status_transparency',str(ROOT/'bin/sov-status'))
   self.m=importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name,loader));loader.exec_module(self.m)
  def complete(self,row):
   self.assertNotIn('legacy',row)
@@ -28,7 +28,7 @@ class Transparency(unittest.TestCase):
   for state in ('accepted','waiting'):self.assertEqual(self.m.contribution_issues({'lanes':[{'lane':'writer','delivery':state}]}),[])
  def test_existing_needs_kinds_have_guidance_and_unknown_kinds_are_flagged(self):
   # Extract constant producer kinds so adding a text-only producer fails this contract.
-  tree=ast.parse((ROOT/'bin/brain-status').read_text());kinds=set()
+  tree=ast.parse((ROOT/'bin/sov-status').read_text());kinds=set()
   for node in ast.walk(tree):
    if isinstance(node,ast.Dict):
     for key,value in zip(node.keys,node.values):
@@ -42,6 +42,6 @@ class Transparency(unittest.TestCase):
   row={'kind':'job','text':'failed','why':'Exact cause','action':'Exact next step','verify':'Exact confirmation'}
   self.assertEqual(self.m.explain_needs([dict(row)]),[row])
  def test_gate_copy_has_one_decision_surface(self):
-  self.assertNotIn('Approve or reject them on Telegram',(ROOT/'bin/brain-status').read_text())
+  self.assertNotIn('Approve or reject them on Telegram',(ROOT/'bin/sov-status').read_text())
   self.assertIn('Sovereign → Review',self.m.explain_needs([{'kind':'gate','text':'waiting'}])[0]['action'])
 if __name__=='__main__':unittest.main()

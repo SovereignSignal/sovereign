@@ -167,15 +167,15 @@ class ScannerBesideTheLink(unittest.TestCase):
             state, client, vault = setup(tmp)
             real = Path(tmp) / "template" / "bin"
             real.mkdir(parents=True)
-            (real / "brain-mirror-notion").write_text("#!/usr/bin/env python3\n")
+            (real / "sov-mirror-notion").write_text("#!/usr/bin/env python3\n")
             links = Path(tmp) / "brain-bin"
             (links / "cron-wrappers").mkdir(parents=True)
-            (links / "brain-mirror-notion").symlink_to(real / "brain-mirror-notion")
+            (links / "sov-mirror-notion").symlink_to(real / "sov-mirror-notion")
             scanner = links / "cron-wrappers" / "vault-secret-scan.sh"
             scanner.write_text("#!/bin/sh\nexit 0\n")
             scanner.chmod(0o755)
             saved = sys.argv[0]
-            sys.argv[0] = str(links / "brain-mirror-notion")
+            sys.argv[0] = str(links / "sov-mirror-notion")
             try:
                 code, out, err = run(["--status", "--state-dir", str(state)], client)
             finally:

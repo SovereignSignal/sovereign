@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Mirror connected Notion pages into an archive lane. Product code lives in lib/notion_mirror/."""
+from pathlib import Path
+import sys
+
+repository = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(repository / "lib"))
+
+from notion_mirror.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

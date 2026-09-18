@@ -1,9 +1,9 @@
-"""Credentials never enter the brain: recognise them by shape in any text and redact them.
+"""Credentials never enter the archive: recognise them by shape in any text and redact them.
 
-The brain is plain text under git, mirrored off-machine and synced to every device. A
+The archive is plain text under git, mirrored off-machine and synced to every device. A
 secret that lands in a lane is copied everywhere before anyone reads it, so the fence
 sits at the write boundary: every producer runs its output through redact_text (or the
-brain-redact command over its lane) before the bytes exist in the vault. The vault's
+sov-redact command over its lane) before the bytes exist in the vault. The vault's
 own commit-time scan remains the check behind it.
 
 What is recognised: the fixed-shape credentials (vendor API keys, cloud and VCS tokens,

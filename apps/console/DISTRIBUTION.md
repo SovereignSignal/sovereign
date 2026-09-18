@@ -11,7 +11,7 @@ connected setup, statistics and diagnostics in the same window. Home reads statu
 existing installed `sov` command; it does not bundle or install fleet connectors.
 
 The preview has a separate bundle identifier and preferences. Building or opening
-it does not replace the installed app, change brain pointer files, connect tools,
+it does not replace the installed app, change archive pointer files, connect tools,
 install background jobs, or publish files. Local archive selection does not change
 the archive configured for connected tools; Home names any mismatch.
 

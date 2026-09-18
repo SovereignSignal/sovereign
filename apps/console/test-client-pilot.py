@@ -35,10 +35,10 @@ def main():
  cases=[('imported','dark','1200x800'),('received','light','720x460'),('error','dark','720x460'),('imported','light','1000x700')]
  for scene,theme,size in cases:
   with tempfile.TemporaryDirectory(prefix='sovereign-client-ui-') as tmp:
-   b=Path(tmp);archive=b/'QA Brain';brain_local.create(archive,ROOT);archive=archive.resolve();now=datetime.now(timezone.utc).isoformat();suite='com.sovereign.qa.clients.'+uuid.uuid4().hex
+   b=Path(tmp);archive=b/'QA Archive';brain_local.create(archive,ROOT);archive=archive.resolve();now=datetime.now(timezone.utc).isoformat();suite='com.sovereign.qa.clients.'+uuid.uuid4().hex
    c={'client_id':'Worker-QA','client_mode':'contribute-only','collected_at':now,'received_at':now,'imported_at':now if scene=='imported' else None,'state':scene,'promotion':'not-evaluated'}
    if scene=='error':c['reason']='git_fetch_failed'
-   data={'generated_at':now,'machine':{'host':'Desk-QA','vault':str(archive),'vault_name':'QA Brain','role':'hub','connected':True},'hub':{'reachable':True,'via':'local','hub_host':'Desk-QA','pending':0},'clients':[c],'harnesses':[],'needs_you':[]}
+   data={'generated_at':now,'machine':{'host':'Desk-QA','vault':str(archive),'vault_name':'QA Archive','role':'hub','connected':True},'hub':{'reachable':True,'via':'local','hub_host':'Desk-QA','pending':0},'clients':[c],'harnesses':[],'needs_you':[]}
    payload=b/'status.json';payload.write_text(json.dumps(data));command=b/'status';command.write_text('#!/bin/sh\nexec /bin/cat '+"'"+str(payload)+"'\n");command.chmod(0o700)
    name=scene+'-'+theme+'-'+size
    env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(command),SOV_QA_JS='(async()=>{'+PROBE.replace('SCENE',json.dumps(scene))+'})().catch(e=>window.webkit.messageHandlers.sov.postMessage({cmd:"clientError",where:"client-pilot-qa",msg:JSON.stringify({checks:{},failures:[String(e)]})}));',SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='5')

@@ -1,9 +1,9 @@
 """The template ships to other people, so nothing in it may name the machine it was
 written on.
 
-Four rounds of review found the author's own machine name and brain name sitting in
+Four rounds of review found the author's own machine name and archive name sitting in
 seven harness usage comments: `sov connect <tool> --host <their machine> --vault
-"<their brain>" --apply`. A guard that greps for those two literal strings would keep
+"<their archive>" --apply`. A guard that greps for those two literal strings would keep
 exactly that pair out and let the next one in -- and it would have to carry them, so the
 guard itself would ship the leak it exists to stop.
 
@@ -33,11 +33,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 # A probe built from one of these would search for an ordinary English word, or for one of
-# the template's own. A machine whose owner called it "brain" cannot be looked for -- and
+# the template's own. A machine whose owner called it "archive" cannot be looked for -- and
 # does not need to be, because that name gives nothing away. Everything else is fair game.
 GENERIC = {
-    "", "admin", "box", "brain", "default", "desktop", "example", "home", "host", "hub",
-    "laptop", "local", "localhost", "machine", "main", "me", "my brain", "name", "notes",
+    "", "admin", "box", "archive", "default", "desktop", "example", "home", "host", "hub",
+    "laptop", "local", "localhost", "machine", "main", "me", "my archive", "name", "notes",
     "obsidian", "owner", "raw", "relay", "root", "runner", "sample", "sov", "sovereign",
     "test", "tests", "tools", "user", "username", "users", "vault", "you", "your",
 }
@@ -149,14 +149,14 @@ class NothingNamesThisMachine(unittest.TestCase):
     def test_no_shipped_file_names_this_machines_brain(self):
         root = pointer(".brain-root")
         if not root:
-            self.skipTest("this machine points at no brain (~/.brain-root)")
+            self.skipTest("this machine points at no archive (~/.brain-root)")
         probes = [os.path.expanduser(root)]
         if probeable(Path(root).name):
             probes.append(Path(root).name)
         for probe in probes:
-            with self.subTest(brain=probe):
+            with self.subTest(archive=probe):
                 self.assertEqual(self.hits(re.escape(probe)), [],
-                                 "a shipped file names this machine's brain (%r). A vault "
+                                 "a shipped file names this machine's archive (%r). A vault "
                                  "name is the owner's, never the template's." % probe)
 
 
@@ -181,12 +181,12 @@ class SelfCheckFixturesAreNobodysSubjectMatter(unittest.TestCase):
     """A worked example is instance data too.
 
     The judge-brief module carries its own self-check, and its fixture slugs were the
-    author's real card names. Shipped, they read as the shape a brain is supposed to have
+    author's real card names. Shipped, they read as the shape an archive is supposed to have
     -- and a reader can tell from them what the machine that wrote the template works on,
     which is the leak this file exists to stop, one layer in.
 
     It is checked the same way round as everything else here: against the cards on THIS
-    machine, so whoever edits it next is measured against their own brain and the guard
+    machine, so whoever edits it next is measured against their own archive and the guard
     names nobody. The self-check is run too, because a fixture nobody exercises drifts.
     """
 
@@ -205,15 +205,15 @@ class SelfCheckFixturesAreNobodysSubjectMatter(unittest.TestCase):
     def test_no_fixture_slug_is_a_card_in_this_machines_brain(self):
         root = pointer(".brain-root")
         if not root:
-            self.skipTest("this machine points at no brain (~/.brain-root)")
+            self.skipTest("this machine points at no archive (~/.brain-root)")
         cards = {p.stem for p in Path(os.path.expanduser(root)).glob("knowledge/**/*.md")}
         if not cards:
-            self.skipTest("this machine's brain has no cards to check against")
+            self.skipTest("this machine's archive has no cards to check against")
         hits = sorted(set(self.KEBAB.findall(self.MODULE.read_text(encoding="utf-8"))) & cards)
         self.assertEqual(hits, [],
                          "%s uses this machine's own cards as worked examples (%s). A fixture "
-                         "reads as the shape a brain should have, and it tells every reader "
-                         "what this machine works on: use a subject nobody's brain holds."
+                         "reads as the shape an archive should have, and it tells every reader "
+                         "what this machine works on: use a subject nobody's archive holds."
                          % (self.MODULE.relative_to(ROOT), ", ".join(hits)))
 
 
@@ -222,7 +222,7 @@ class UsageExamplesArePlaceholders(unittest.TestCase):
 
     An example that passes a real host or a real vault is the whole defect -- it reads as
     an instruction, and the reader who copies it is connecting a machine that is not
-    theirs to a brain that is not theirs.
+    theirs to an archive that is not theirs.
     """
 
     def installers(self):
@@ -242,7 +242,7 @@ class UsageExamplesArePlaceholders(unittest.TestCase):
                 self.assertRegex(
                     value, PLACEHOLDER_ARG,
                     "%s: the usage example passes --%s %s. Every reader of this file is on "
-                    "a different machine with a differently named brain; the example has to "
+                    "a different machine with a differently named archive; the example has to "
                     "be a placeholder." % (install.relative_to(ROOT), flag, value))
         self.assertGreaterEqual(checked, 2 * len(self.installers()),
                                 "the usage lines were not read: each installer names both "

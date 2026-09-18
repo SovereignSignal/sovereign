@@ -313,7 +313,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                   let input = try? JSONSerialization.data(withJSONObject: request) else { return }
             let p = Process(), stdin = Pipe(), output = Pipe()
             p.executableURL = resources.appendingPathComponent("runtime/bin/python3")
-            p.arguments = ["-I", "-B", resources.appendingPathComponent("backend/bin/brain-local").path]
+            p.arguments = ["-I", "-B", resources.appendingPathComponent("backend/bin/sov-local").path]
             p.standardInput = stdin; p.standardOutput = output; p.standardError = output
             p.environment = ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"]
             do { try p.run() } catch {
@@ -414,7 +414,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                   Settings.archiveKey(archive) == Settings.archiveKey(root) else { fail("Choose the Hub configuration for the open archive."); return }
         }
         let fields: [String: [String]] = ["install": ["destination", "model", "endpoint"], "key": ["output"], "recovery": ["config", "folder", "key-file"], "snapshot": ["config", "output", "key-file"], "restore": ["capsule", "destination", "key-file"], "status": ["config"], "doctor": ["config"], "activate": ["config"], "run": ["config"]]
-        var args = [resources.appendingPathComponent("runtime/bin/python3").path, "-I", "-B", resources.appendingPathComponent("backend/bin/brain-hub").path, command]
+        var args = [resources.appendingPathComponent("runtime/bin/python3").path, "-I", "-B", resources.appendingPathComponent("backend/bin/sov-managed-hub").path, command]
         if command == "install" { args += ["--archive", root] }
         if command == "run" {
             guard let job = request["job"] as? String, ["nightly", "audit"].contains(job) else { fail("Choose curation or audit."); return }
@@ -448,7 +448,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         guard !discoveryBusy, let resources = Bundle.main.resourceURL else { return }
         discoveryBusy = true
         var args = [resources.appendingPathComponent("runtime/bin/python3").path, "-I", "-B",
-                    resources.appendingPathComponent("backend/bin/brain-discover").path]
+                    resources.appendingPathComponent("backend/bin/sov-discover").path]
         if App.shared.snapshotting, let home = ProcessInfo.processInfo.environment["SOV_QA_DISCOVERY_HOME"] {
             args += ["--home", home, "--applications", home + "/Applications", "--path", home + "/bin"]
         }
@@ -489,7 +489,10 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         let env = ProcessInfo.processInfo.environment
         let qa = App.shared.snapshotting ? env["SOV_QA_PRODUCER_COMMAND"] : nil
         let pointer = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".brain-root")
-        guard qa != nil || (try? String(contentsOf: pointer, encoding: .utf8)).map({ Settings.archiveKey($0.trimmingCharacters(in: .whitespacesAndNewlines)) }) == Settings.archiveKey(root) else {
+        let configuredPointer = (try? String(contentsOf: pointer, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let legacyRoot = env["BRAIN_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? env["SOVS_VAULT"].flatMap { $0.isEmpty ? nil : $0 }
+        let configuredRoot = legacyRoot ?? configuredPointer.flatMap { $0.isEmpty ? nil : $0 } ?? env["SOVEREIGN_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? env["SOVEREIGN_VAULT"].flatMap { $0.isEmpty ? nil : $0 }
+        guard qa != nil || configuredRoot.map({ Settings.archiveKey($0) }) == Settings.archiveKey(root) else {
             fail("The connector service uses a different archive. Refresh before making changes."); return
         }
         var secret: [String: String] = [:]
@@ -1141,12 +1144,12 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     @objc func showIntroduction() {
         guard let resources = Bundle.main.resourceURL else { return }
         let executable = resources.appendingPathComponent("runtime/bin/python3").path
-        let script = resources.appendingPathComponent("backend/bin/brain-about").path
+        let script = resources.appendingPathComponent("backend/bin/sov-about").path
         bridge.run([executable, script], timeLimit: 5) { out, _, code in
             DispatchQueue.main.async {
                 let alert = NSAlert()
                 alert.messageText = "Sovereign"
-                alert.informativeText = code == 0 ? out : "Your owned brain and archive. Local setup could not be read. Open Settings to inspect this installation."
+                alert.informativeText = code == 0 ? out : "Your owned archive. Local setup could not be read. Open Settings to inspect this installation."
                 alert.addButton(withTitle: "Done")
                 alert.runModal()
             }

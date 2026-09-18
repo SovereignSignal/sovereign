@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Brain exchange sync: hub <-> node-12. Scheduled via launchd (every 30 min).
+# Archive exchange sync: hub <-> node-12. Scheduled via launchd (every 30 min).
 #
 # OUT: push main + tags (vault + template repos) to the node-12 bare repos —
 #      the standing off-machine mirror (architecture review finding #1).

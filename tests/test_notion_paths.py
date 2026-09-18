@@ -21,7 +21,7 @@ def item(n, kind, title, parent_kind, parent_id, **extra):
 
 class Names(unittest.TestCase):
     def test_sanitize_drops_colon_and_collapses_spaces(self):
-        self.assertEqual(sanitize("Company Brain: Archive"), "Company Brain Archive")
+        self.assertEqual(sanitize("Company Archive: Archive"), "Company Archive Archive")
         self.assertEqual(sanitize("Hygiene 2026-08-24 19:00"), "Hygiene 2026-08-24 19 00")
         self.assertEqual(sanitize("a/b\\c?d*e\"f<g>h|i"), "a b c d e f g h i")
         self.assertEqual(sanitize("  padded  "), "padded")
@@ -31,8 +31,8 @@ class Names(unittest.TestCase):
 
     def test_stem_untitled_and_truncation(self):
         self.assertEqual(stem("", "1b0000c0d5908025871fd52d5773e2ae"), "Untitled 1b00-e2ae")
-        long = "Company Brain: Machine Sync Plan (Producer Read/Write Wire)"
-        self.assertEqual(stem(long, hid(1)), "Company Brain Machine Sync Plan (Producer Read Wri")
+        long = "Company Archive: Machine Sync Plan (Producer Read/Write Wire)"
+        self.assertEqual(stem(long, hid(1)), "Company Archive Machine Sync Plan (Producer Read W")
         self.assertEqual(len(stem(long, hid(1))), MAX_STEM)
         self.assertEqual(stem("x" * 49 + " y", hid(1)), "x" * 49 + " ")  # the export keeps the cut space
 

@@ -1,4 +1,4 @@
-"""Run the brain's own credential scanner over what the mirror wrote, so a secret that
+"""Run the archive's own credential scanner over what the mirror wrote, so a secret that
 slipped past the excludes is reported by the run itself, not discovered later by the
 vault's autocommit.
 

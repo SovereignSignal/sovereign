@@ -24,7 +24,7 @@ from pathlib import Path
 from tests.test_connectors_install import ROOT, Box, scheduled_tick_all
 
 SOV = ROOT / "bin" / "sov"
-# A stub that answers `launchctl list` as well as logging, so brain-status sees the
+# A stub that answers `launchctl list` as well as logging, so sov-status sees the
 # machine this migration actually targets: every tool connected under its own old job.
 LAUNCHCTL = """#!/bin/bash
 printf "%s %s\\n" "$(basename "$0")" "$*" >> "$SOV_STUB_LOG"
@@ -338,7 +338,7 @@ class ConnectAll(unittest.TestCase):
         (b.home / ".brain-root").write_text(str(b.vault))
         (b.home / ".brain-host").write_text("testbox")
         (b.home / ".brain-core").write_text("me")
-        # the read wires, so brain-status can reach "connected" rather than "partial"
+        # the read wires, so sov-status can reach "connected" rather than "partial"
         (b.home / ".claude").mkdir()
         (b.home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [
             {"matcher": "startup", "hooks": [{"type": "command", "command": str(
@@ -393,7 +393,7 @@ class ConnectAll(unittest.TestCase):
             b = self.box(tmp)
             self.assertFalse((b.state / "connectors.json").exists(), "the box has not migrated yet")
             state = json.loads(subprocess.run(
-                ["/usr/bin/python3", str(ROOT / "bin" / "brain-status"), "--json", "--no-hub"],
+                ["/usr/bin/python3", str(ROOT / "bin" / "sov-status"), "--json", "--no-hub"],
                 capture_output=True, text=True, env=self.env(b), timeout=180).stdout)
             by_id = {h["id"]: h for h in state["harnesses"]}
             self.assertEqual(by_id["claude-code"]["state"], "connected",
@@ -533,7 +533,7 @@ if __name__ == "__main__":
 
 class Interpreter(unittest.TestCase):
     """bin/sov and the job it installs answer "which python" the same way. The front door
-    runs the brain's own tools on its choice and hands it down, so on a Mac whose shim an
+    runs the archive's own tools on its choice and hands it down, so on a Mac whose shim an
     Xcode update just revoked (exit 69) the status probe and the connector job survive
     together, or the console reads "not connected" with the tick still failing behind it."""
 

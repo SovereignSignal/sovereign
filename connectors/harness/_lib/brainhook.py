@@ -24,11 +24,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 
 
+sys.path.insert(0, os.path.join(TEMPLATE_ROOT, "lib"))
+
+
 def pointer(path):
-    try:
-        return open(os.path.expanduser(path), encoding="utf-8").read().strip() or None
-    except OSError:
-        return None
+    from sovereign_config import pointer as instance_pointer
+    return instance_pointer(path)
 
 
 def read_enabled(harness=None):
@@ -57,9 +58,9 @@ def core_slugs():
 
 
 def find_brain_load():
-    for cand in (os.path.join(TEMPLATE_ROOT, "bin", "brain-load"),
-                 os.path.expanduser("~/brain-bin/brain-load"),
-                 shutil.which("brain-load")):
+    for cand in (os.path.join(TEMPLATE_ROOT, "bin", "sov-load"),
+                 os.path.expanduser("~/brain-bin/sov-load"),
+                 shutil.which("sov-load")):
         if cand and os.path.exists(cand):
             return cand
     return None
@@ -75,7 +76,7 @@ def lane_dir(root, lane):
         host = host_name()
         prefix = lane[:-(len(host) + 1)] if lane.endswith("-" + host) else lane
         return os.path.join(root, "raw", "workspaces", git_lane, prefix)
-    stage = os.environ.get("BRAIN_STAGE")
+    stage = (os.environ.get("BRAIN_STAGE") or os.environ.get("SOVEREIGN_STAGE"))
     if stage:
         return os.path.join(stage, "raw", "tools", lane)
     vs = os.path.expanduser("~/.vault-staging")
@@ -125,14 +126,14 @@ def build_pack(cwd, harness):
     topic, scope = topic_for(cwd, root)
     bl = find_brain_load()
     if not bl:
-        sys.stderr.write("sovereign hook: brain-load not found\n")
+        sys.stderr.write("sovereign hook: sov-load not found\n")
         return discovery_only
     first_core = next((s.strip() for s in core.split(",") if s.strip()), None)
     entry = topic or first_core
     if not entry:
         return discovery_only
     args = [sys.executable, bl, entry, "--root", root,
-            "--max", os.environ.get("BRAIN_HOOK_MAX_CARDS", "6")]
+            "--max", (os.environ.get("BRAIN_HOOK_MAX_CARDS") or os.environ.get("SOVEREIGN_HOOK_MAX_CARDS") or "6")]
     if core:
         args += ["--core", core]
     if not topic:
@@ -143,14 +144,14 @@ def build_pack(cwd, harness):
         return discovery_only
     m = re.search(r"_(\d+) cards from the knowledge layer", pack)
     cards = m.group(1) if m else ("core" if not topic else "0")
-    limit = int(os.environ.get("BRAIN_HOOK_MAX_CHARS", "40000"))
+    limit = int((os.environ.get("BRAIN_HOOK_MAX_CHARS") or os.environ.get("SOVEREIGN_HOOK_MAX_CHARS") or "40000"))
     if len(pack) > limit:
         pack = pack[:limit] + "\n\n[pack truncated at %d chars; run `sov load %s` for the rest]" % (limit, entry)
     label = topic or "core"
     ident = identity_for(root, topic, scope)
     ident_line = ("Identity for this workstream: %s (the identities card in this pack says which name applies where)."
                   % ident) if ident else "Identity for this context: the default in the identities card, unless the workstream front door says otherwise."
-    header = ("[Sovereign] Brain context for '%s' loaded from the owner's vault (%s). %s "
+    header = ("[Sovereign] Archive context for '%s' loaded from the owner's vault (%s). %s "
               "Treat the pack as current truth about the owner and his contexts and prefer it over guesses; "
               "where a tool's own memory disagrees, the pack wins and the disagreement is worth telling the owner. "
               "Do not copy it into memory files: it reloads every session. For more: `sov load <topic>`."
@@ -170,7 +171,7 @@ def receipt(root, lane, label, scope, cards, session_id=None, source=None):
         if not os.path.exists(p):
             with open(p, "w", encoding="utf-8") as f:
                 f.write("---\ntype: capture\nsource: %s\ncreated: %s\n"
-                        "title: brain-load usage receipts\n---\n\n"
+                        "title: sov-load usage receipts\n---\n\n"
                         "One line per session start: time, topic, scope, cards loaded.\n\n"
                         % (lane, datetime.date.today().isoformat()))
         with open(p, "a", encoding="utf-8") as f:

@@ -128,7 +128,7 @@ def job_definition(config, job):
     if 'weekday' in spec:
         schedule['Weekday'] = spec['weekday']
     return {'Label': 'com.sovereign.hub.' + job,
-            'ProgramArguments': [str(d / 'python/bin/python3'), '-I', '-B', str(d / 'engine/bin/brain-hub'),
+            'ProgramArguments': [str(d / 'python/bin/python3'), '-I', '-B', str(d / 'engine/bin/sov-managed-hub'),
                                  'run', job, '--config', str(d / 'config.json'), '--apply'],
             'StartCalendarInterval': schedule, 'RunAtLoad': False,
             'EnvironmentVariables': {'HOME': str(Path.home()), 'PATH': str(d / 'python/bin') + ':/usr/bin:/bin:/usr/sbin:/sbin'},
@@ -198,7 +198,7 @@ def install(plan, apply=False):
 def clean_environment(config):
     d = Path(config['destination'])
     # No inherited model, auto-promotion, credential or scope overrides.
-    env = {k: v for k, v in os.environ.items() if not k.startswith(('CURATOR_', 'ARCHIVIST_', 'SOVS_')) and k not in ('BRAIN_ROOT', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy')}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('CURATOR_', 'ARCHIVIST_', 'SOVS_', 'SOVEREIGN_', 'BRAIN_')) and k not in ('BRAIN_ROOT', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy')}
     env.update(HOME=str(Path.home()), PATH=str(d / 'python/bin') + ':/usr/bin:/bin:/usr/sbin:/sbin',
                SOVS_VAULT=config['archive'], CURATOR_LANE=config['lane'], CURATOR_MODEL=config['model'],
                CURATOR_ENDPOINT=config['endpoint'], CURATOR_SCREEN='on', CURATOR_LOCAL_ONLY='1', ARCHIVIST_AUTO_PROMOTE_MAX='0', ARCHIVIST_AUTO_REJECT_MAX='0')
@@ -222,7 +222,7 @@ def run(config, job, apply=False, proposal=None, reason=''):
             raise ValueError('Choose a proposal by its simple slug.')
         args = ['/bin/bash', str(b / ('curator-' + job + '.sh')), proposal, reason]
     else:
-        args = [str(d / 'python/bin/python3'), '-B', str(b / ('curator-run' if job == 'nightly' else 'brain-audit'))]
+        args = [str(d / 'python/bin/python3'), '-B', str(b / ('curator-run' if job == 'nightly' else 'sov-audit'))]
         args += ['--max', str(config['max_items'])] if job == 'nightly' else ['--no-llm']
     if not apply:
         return {'job': job, 'applied': False, 'command': args, 'archive': config['archive']}

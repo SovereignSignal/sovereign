@@ -23,6 +23,20 @@ class GateCheckTests(unittest.TestCase):
  def fake(self,script):
   p=self.base/'command';p.write_text('#!/bin/sh\n'+script+'\n');p.chmod(0o700);return p
  def execute(self,command,verb='approve',fingerprint=None):return gate.execute(self.root,self.lane,self.slug,verb,fingerprint or self.check()['fingerprint'],command)
+ def test_gate_configuration_keeps_legacy_root_precedence(self):
+  import contextlib, io
+  other=self.base/'other';(other/'knowledge').mkdir(parents=True)
+  pointer=self.base/'.brain-root'
+  env={'HOME':str(self.base),'SOVEREIGN_ROOT':str(self.root)}
+  cases=[(None,None,self.root),(str(other),None,other),(str(other),str(self.root),self.root)]
+  for old_pointer,old_env,expected in cases:
+   with self.subTest(pointer=old_pointer,environment=old_env):
+    if old_pointer:pointer.write_text(old_pointer)
+    if old_env:env['BRAIN_ROOT']=old_env
+    with patch.dict(os.environ,env,clear=True),patch.object(gate.sys,'argv',['gate_check','check',self.slug]),patch.object(gate,'operation_busy',return_value=False),patch.object(gate,'check',return_value={'state':'ready'}) as check,contextlib.redirect_stdout(io.StringIO()) as output:
+     gate.main()
+    check.assert_called_once_with(expected,'curator',self.slug)
+    self.assertEqual(json.loads(output.getvalue())['state'],'ready')
  def test_new_card_ready(self):self.assertEqual(self.check()['state'],'ready')
  def test_type_conflict_preserves_both_cards(self):
   a=self.existing();b=self.existing('concepts','concept');before=(a.read_bytes(),b.read_bytes());c=self.check();self.assertEqual(c['state'],'type_conflict');self.assertEqual(len(c['existing']),2);self.assertEqual((a.read_bytes(),b.read_bytes()),before)

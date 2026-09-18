@@ -52,7 +52,7 @@ EXIT_CONFIG = 78
 ISO = "%Y-%m-%dT%H:%M:%SZ"
 # The two reasons this script refuses a lane outright. A refusal is structural: unlike
 # "not due" it holds on EVERY tick until the declaration or the disk changes, so it gets
-# its own field in the record and brain-status reads it as a lane that has stopped writing.
+# its own field in the record and sov-status reads it as a lane that has stopped writing.
 REFUSED_MIRROR = "mirror missing"
 REFUSED_OVER_TICK = "timeout exceeds interval"
 
@@ -216,7 +216,7 @@ def rotate(path):
 
 def ensure_logs(paths, lane_id):
     """Both files exist on every tick, clean or not. A missing error log makes
-    brain-status report stderr_lines = null, which a reader takes as "never ran"."""
+    sov-status report stderr_lines = null, which a reader takes as "never ran"."""
     for p in (paths.log(lane_id), paths.error_log(lane_id)):
         rotate(p)
         try:

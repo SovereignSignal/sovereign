@@ -763,7 +763,7 @@ window.onerror = function (msg, src, line, col) {
       const a = ageOf(r.remote_head), ex = ((b.exchange || {})[r.name] || (b.exchange || {})[r.host] || {});
       const local = r.host === "localhost" || r.host === "127.0.0.1";
       const state = ex.fail && (!ex.ok || ex.fail > ex.ok) ? "down" : (r.ahead === 0 || (a != null && a < 3)) ? "live" : "warn";
-      row("bk:remote:" + r.name, { label: "brain · " + (local ? "canonical git on the hub" : "mirror on " + r.host),
+      row("bk:remote:" + r.name, { label: "archive · " + (local ? "canonical git on the hub" : "mirror on " + r.host),
         desc: r.ahead === 0 ? "every commit is there" : `${r.ahead} commit${r.ahead === 1 ? "" : "s"} not there yet`,
         state, stateText: state === "down" ? "push failing" : state === "live" ? "current" : "behind", tag: local ? "same machine" : "off-machine", age_h: a,
         detail: [["remote", r.name + " (" + r.host + ")"], ["last commit there", r.remote_head], ["commits ahead", r.ahead], ["last push ok", ex.ok || "unknown"], ["last push failed", ex.fail || "never"]],
@@ -771,14 +771,14 @@ window.onerror = function (msg, src, line, col) {
     });
     if (b.snapshots) {
       const sn = b.snapshots, state = sn.newest_age_h == null ? "down" : sn.newest_age_h < 30 ? "live" : "warn";
-      row("bk:snapshots", { label: "brain · daily snapshot", desc: sn.count + " days kept on the hub's disk", state, stateText: state === "live" ? "current" : state === "warn" ? "stale" : "none", tag: "same disk", age_h: sn.newest_age_h,
+      row("bk:snapshots", { label: "archive · daily snapshot", desc: sn.count + " days kept on the hub's disk", state, stateText: state === "live" ? "current" : state === "warn" ? "stale" : "none", tag: "same disk", age_h: sn.newest_age_h,
         detail: [["folder", sn.dir], ["newest", sn.newest], ["days kept", sn.count], ["archive tarballs", b.archive ? b.archive.count + ", newest " + age(b.archive.newest_age_h) + " ago" : "none"]],
         note: "Rsync snapshots with hard links, one per day, on the same disk as the vault: a fast restore of yesterday, no protection if the disk dies. A target on another machine is what track 8 adds." });
     }
     const ob = D.obsidian;
-    if (ob) row("bk:obsidian", { label: "brain · other devices", desc: "Obsidian Sync carries the notes to every signed-in device", state: ob.sync === "synced" ? "live" : ob.sync ? "warn" : "", stateText: ob.sync || "unknown", tag: "notes only", age_h: null,
+    if (ob) row("bk:obsidian", { label: "archive · other devices", desc: "Obsidian Sync carries the notes to every signed-in device", state: ob.sync === "synced" ? "live" : ob.sync ? "warn" : "", stateText: ob.sync || "unknown", tag: "notes only", age_h: null,
       detail: [["state", ob.sync], ["vault", ob.vault_name], ["carries", "markdown only: no git history, no lane state, no spreadsheets or code"]],
-      note: "A live copy of the notes, not of the brain: governance files and anything that is not markdown never cross it." });
+      note: "A live copy of the notes, not of the archive: governance files and anything that is not markdown never cross it." });
     (b.lanes || []).forEach(l => {
       const p = ageOf(l.pushed), accepted = l.delivery === "accepted", state = accepted ? (p != null && p < 48 ? "live" : "warn") : l.delivery === "waiting" ? "warn" : "idle";
       row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : SovStatus.contributionIssue(l).text+" "+SovStatus.contributionIssue(l).why+" "+SovStatus.contributionIssue(l).action+" "+SovStatus.contributionIssue(l).verify, state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
@@ -1139,7 +1139,7 @@ window.onerror = function (msg, src, line, col) {
           ["state", o.associated===false ? "Disassociated; excluded from active monitoring" : `${dot(net.online == null ? "" : net.online ? "live" : "down", "")} ${net.online == null ? "unknown" : net.online ? "online" : "offline"}`, "raw"],
           ["address", net.ip ? `<span class="mono">${esc(net.ip)}</span>` : null, "raw"],
           ["seen via", net.via], ["reach", m.reach]])}</div>
-        <div class="sect"><h2>Reaches the brain</h2><div class="prose">${esc(m.transport || "no transport recorded")}
+        <div class="sect"><h2>Reaches the archive</h2><div class="prose">${esc(m.transport || "no transport recorded")}
           ${m.notes ? `<div style="color:var(--muted);margin-top:4px">${esc(m.notes)}</div>` : ""}</div></div>
         ${o.associated!==false && !isMe && !hs.length ? connectMachineSect(o) : ""}
         <div class="sect"><h2>Tools deployed · ${hs.length}</h2>
@@ -1198,7 +1198,7 @@ window.onerror = function (msg, src, line, col) {
             ...(h.last_status ? [["status", h.last_status]] : []),
             ["pulls", t.pulls]])}</div>`
           : `<div class="sect"><h2>State</h2><div class="prose">${o.detected
-              ? "Found on this machine. No connector exists for it yet, so it neither reads the brain nor writes a lane."
+              ? "Found on this machine. No connector exists for it yet, so it neither reads the archive nor writes a lane."
               : o.detected === null ? "A cloud service: there is nothing to find on this machine. Connect installs the scheduled pull."
               : "Not installed on this machine."}</div></div>`}
         ${h && h.secret && h.secret.env ? `<div class="sect"><h2>${esc(h.secret.label || h.secret.env)}</h2>
@@ -1702,17 +1702,17 @@ window.onerror = function (msg, src, line, col) {
   function renderSetup(d) {
     D = d;
     $("#vault").textContent = "Sovereign";
-    $("#meta").textContent = "this machine is not connected to a brain yet";
+    $("#meta").textContent = "this machine is not connected to an archive yet";
     $("#hubpill").innerHTML = `${dot("", "not connected")}not connected`;
     $("#verdict").className = "idle"; $("#vtext").textContent = "Connect tools when you are ready.";
     $("#rows").innerHTML = `<div class="empty">No lanes yet.<p><button class="brass" data-goto-view="setup">Hub setup and recovery…</button></p></div>`;
     $("#insp").innerHTML = `<div class="insp-title">Connect this machine</div>
-      <div class="insp-sub">Point it at a brain once. Every tool found here gets both wires: it reads the brain when a session starts, and its notes flow back to its own lane.</div>
+      <div class="insp-sub">Point it at an archive once. Every tool found here gets both wires: it reads the archive when a session starts, and its notes flow back to its own lane.</div>
       <div class="sect"><h2>Setup</h2>
-        <label for="f-vault">Vault folder<input id="f-vault" name="vault" autocomplete="off" spellcheck="false" placeholder="/Users/you/Documents/My Brain…"></label>
+        <label for="f-vault">Vault folder<input id="f-vault" name="vault" autocomplete="off" spellcheck="false" placeholder="/Users/you/Documents/My Archive…"></label>
         <label for="f-host">This machine's short name<input id="f-host" name="host" autocomplete="off" spellcheck="false" value="${esc((d.machine || {}).host || "")}"></label>
         <label for="f-core">Always-on cards<input id="f-core" name="core" autocomplete="off" spellcheck="false" placeholder="me,how-to-work-with-me…"></label>
-        <label for="f-hub">Hub, if the vault lives on another machine<input id="f-hub" name="hub" autocomplete="off" spellcheck="false" placeholder="hub:/Users/you/Brain…"></label>
+        <label for="f-hub">Hub, if the vault lives on another machine<input id="f-hub" name="hub" autocomplete="off" spellcheck="false" placeholder="hub:/Users/you/Archive…"></label>
         <button class="brass" id="setup-dry">See the dry run</button></div>`;
     openInspector();
     $("#setup-dry").onclick = () => {

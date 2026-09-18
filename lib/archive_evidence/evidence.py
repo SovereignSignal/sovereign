@@ -1,8 +1,6 @@
 import re
 from typing import Any, Dict, List, Tuple
 
-import yaml
-
 from .cards import BoundCard
 
 
@@ -11,6 +9,7 @@ class EvidenceError(RuntimeError):
 
 
 def _frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
+    import yaml  # Optional evidence dependency; --help needs only the standard library.
     if not text.startswith("---\n"):
         return {}, text
     end = text.find("\n---\n", 4)

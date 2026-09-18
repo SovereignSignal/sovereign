@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-loader = importlib.machinery.SourceFileLoader("hub_job_status", str(ROOT / "bin/brain-status"))
+loader = importlib.machinery.SourceFileLoader("hub_job_status", str(ROOT / "bin/sov-status"))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 status = importlib.util.module_from_spec(spec)
 loader.exec_module(status)

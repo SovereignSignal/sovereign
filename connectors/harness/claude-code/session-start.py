@@ -3,7 +3,7 @@
 
 Registered as a SessionStart hook (matcher: startup|resume|clear|compact). Claude
 Code hands it JSON on stdin (cwd, session_id, source). The shared library maps
-the working directory to a topic, runs brain-load, and this adapter returns the
+the working directory to a topic, runs sov-load, and this adapter returns the
 pack in Claude Code's shape:
 
   {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ...},

@@ -197,7 +197,7 @@ class CodexTrust(unittest.TestCase):
             home = Path(tmp) / ".codex"; home.mkdir()
             hook = str(H / "codex" / "session-start.py")
             (home / "hooks.json").write_text(json.dumps({"hooks": {"SessionStart": [
-                {"matcher": "startup|resume", "hooks": [{"type": "command", "command": hook, "timeout": 30, "statusMessage": "Sovereign: loading brain context"}]}]}}))
+                {"matcher": "startup|resume", "hooks": [{"type": "command", "command": hook, "timeout": 30, "statusMessage": "Sovereign: loading archive context"}]}]}}))
             (home / "config.toml").write_text('model = "x"\n\n[hooks.state]\n')
             env = dict(os.environ); env.update({"CODEX_HOME": str(home)})
             script = str(H / "codex" / "trust.py")
@@ -207,7 +207,7 @@ class CodexTrust(unittest.TestCase):
             self.assertIn("written", r1.stdout)
             expected = "sha256:" + hashlib.sha256(json.dumps(
                 {"event_name": "session_start", "matcher": "startup|resume",
-                 "hooks": [{"type": "command", "command": hook, "timeout": 30, "async": False, "statusMessage": "Sovereign: loading brain context"}]},
+                 "hooks": [{"type": "command", "command": hook, "timeout": 30, "async": False, "statusMessage": "Sovereign: loading archive context"}]},
                 sort_keys=True, separators=(",", ":")).encode()).hexdigest()
             text = (home / "config.toml").read_text()
             self.assertIn('[hooks.state."%s/hooks.json:session_start:0:0"]' % home, text)

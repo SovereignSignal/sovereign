@@ -4,7 +4,7 @@
 
 **Goal:** Make the hub installable from the template: a manifest of jobs, an instance file for the owner's settings, a fail-loud runner, `sov hub jobs install`, a nightly encrypted rebuild kit pushed off-site, a runbook, and a Part 1 drift check.
 
-**Architecture:** New modules under `lib/sovereign_hub/` (manifest, instance, runner, jobs, kit) reached through a new `bin/sov-hub` entry that `bin/sov hub` dispatches to for the new subcommands while the existing managed-hub commands keep going to `bin/brain-hub`. Hub scripts move into `bin/hub/` unchanged in logic and read their settings from `sov hub env`. Everything is rendered from the manifest plus `~/.local/state/sovereign/hub.json`; nothing owner-specific enters the template.
+**Architecture:** New modules under `lib/sovereign_hub/` (manifest, instance, runner, jobs, kit) reached through a new `bin/sov-hub` entry that `bin/sov hub` dispatches to for the new subcommands while the existing managed-hub commands keep going to `bin/sov-managed-hub`. Hub scripts move into `bin/hub/` unchanged in logic and read their settings from `sov hub env`. Everything is rendered from the manifest plus `~/.local/state/sovereign/hub.json`; nothing owner-specific enters the template.
 
 **Tech Stack:** Python 3.9-compatible stdlib only (the system interpreter is 3.9.6), bash for the moved scripts, launchd plists via `plistlib`, the existing `hub-crypto` sealing tool, the existing test style (`unittest`, throwaway HOME, stub `launchctl` on PATH).
 
@@ -474,7 +474,7 @@ git commit -m "Hub instance file: the owner's settings in one place, printed as 
 
 **Files:**
 - Create: `lib/sovereign_hub/runner.py`, `bin/sov-hub`
-- Modify: `bin/sov` (line 57: route `hub init|env|tick|jobs|kit|law` to `sov-hub`, everything else to `brain-hub`)
+- Modify: `bin/sov` (line 57: route `hub init|env|tick|jobs|kit|law` to `sov-hub`, everything else to `sov-managed-hub`)
 - Test: `tests/test_hub_runner.py`
 
 **Interfaces:**
@@ -686,7 +686,7 @@ def tick(job_id, state=None, template=None, notify=None):
   sov hub jobs status | uninstall [--apply]
   sov hub kit [--apply]             encrypt the rebuild kit, copy it off-site, mirror-push
   sov hub law                       Part 1 of the vault's law against the template's
-The managed-hub commands (install, key, recovery, snapshot, restore, activate, run, doctor, status) stay on brain-hub.
+The managed-hub commands (install, key, recovery, snapshot, restore, activate, run, doctor, status) stay on sov-managed-hub.
 """
 import argparse
 import os
@@ -729,7 +729,7 @@ In `bin/sov` replace line 57 with:
   hub)
     case "${1:-}" in
       init|env|tick|jobs|kit|law) exec "$PYTHON" "$BIN/sov-hub" "$@";;
-      *) exec "$PYTHON" "$BIN/brain-hub" "$@";;
+      *) exec "$PYTHON" "$BIN/sov-managed-hub" "$@";;
     esac;;
 ```
 
@@ -1121,7 +1121,7 @@ scp <hub>:brain-bin/cron-wrappers/tg-send.sh "$W/tg-send"
 chmod +x "$W"/*
 ```
 
-Then, in each bash script: delete every `export SOVS_VAULT=`, `export CURATOR_*=`, `V="$HOME/Obsidian/..."`, `VAULT="${VAULT:-$HOME/Obsidian/...}"`, `LANE=`, `BACKUP_ROOT=` assignment that names the owner's paths and replace with the header block above plus reads of the exported names: `V="$SOVS_VAULT"`, `VAULT="$SOVS_VAULT"`, `LANE="$SOVS_VAULT/raw/workspaces/$CURATOR_LANE"`, `BACKUP_ROOT="$SOV_HUB_SNAPSHOT_DIR"`, `KEEP="$SOV_HUB_SNAPSHOT_KEEP"`. In `exchange-sync` and `autocommit` replace the literal `for r in origin node-12` with `for r in $SOV_HUB_REMOTES`, and the template push line with `git -C "$SOV_TEMPLATE" push -q "${SOV_HUB_REMOTES##* }" main`. `nightly` calls `"$HERE/burndown"`'s sibling `curator-run` as `"$HERE/../curator-run"`; `weekly-audit` calls `"$HERE/../brain-audit"`; the nightly's `TG_SEND` becomes `"$HERE/tg-send"`. For the two Python scripts, replace any `os.path.expanduser("~/Obsidian/...")` with `os.environ["SOVS_VAULT"]` and any lane path with `os.path.join(os.environ["SOVS_VAULT"], "raw/workspaces", os.environ["CURATOR_LANE"])`; both begin with the exports already in the environment because the runner sets them, so they need no eval. Grep each file after editing:
+Then, in each bash script: delete every `export SOVS_VAULT=`, `export CURATOR_*=`, `V="$HOME/Obsidian/..."`, `VAULT="${VAULT:-$HOME/Obsidian/...}"`, `LANE=`, `BACKUP_ROOT=` assignment that names the owner's paths and replace with the header block above plus reads of the exported names: `V="$SOVS_VAULT"`, `VAULT="$SOVS_VAULT"`, `LANE="$SOVS_VAULT/raw/workspaces/$CURATOR_LANE"`, `BACKUP_ROOT="$SOV_HUB_SNAPSHOT_DIR"`, `KEEP="$SOV_HUB_SNAPSHOT_KEEP"`. In `exchange-sync` and `autocommit` replace the literal `for r in origin node-12` with `for r in $SOV_HUB_REMOTES`, and the template push line with `git -C "$SOV_TEMPLATE" push -q "${SOV_HUB_REMOTES##* }" main`. `nightly` calls `"$HERE/burndown"`'s sibling `curator-run` as `"$HERE/../curator-run"`; `weekly-audit` calls `"$HERE/../sov-audit"`; the nightly's `TG_SEND` becomes `"$HERE/tg-send"`. For the two Python scripts, replace any `os.path.expanduser("~/Obsidian/...")` with `os.environ["SOVS_VAULT"]` and any lane path with `os.path.join(os.environ["SOVS_VAULT"], "raw/workspaces", os.environ["CURATOR_LANE"])`; both begin with the exports already in the environment because the runner sets them, so they need no eval. Grep each file after editing:
 
 ```bash
 grep -nE 'Obsidian/|/Users/|node-12|qwen|sovsarchive' "$W"/* && echo "STILL SPECIFIC" || echo clean
@@ -1431,7 +1431,7 @@ git commit -m "Hub kit: seal what only the hub machine has, copy it off-site, mi
 ### Task 7: Status and the app read hub receipts
 
 **Files:**
-- Modify: `bin/brain-status` (the local jobs loop near line 1470: for a label with the `com.sovereign.hub.` prefix, add `last_run`, `last_ok` and `last_exit` from `<state>/hub/<job>.*` when launchd has no exit yet, and point `stderr` at `<state>/hub/<job>.error.log`)
+- Modify: `bin/sov-status` (the local jobs loop near line 1470: for a label with the `com.sovereign.hub.` prefix, add `last_run`, `last_ok` and `last_exit` from `<state>/hub/<job>.*` when launchd has no exit yet, and point `stderr` at `<state>/hub/<job>.error.log`)
 - Test: extend `tests/test_brain_status_jobs.py` with one test.
 
 - [ ] **Step 1: Write the failing test** (append to `tests/test_brain_status_jobs.py`)
@@ -1457,7 +1457,7 @@ class HubReceipts(unittest.TestCase):
 Run: `cd tests && /usr/bin/python3 -m pytest -q -p no:cacheprovider test_brain_status_jobs.py::HubReceipts`
 Expected: FAIL on `last_run` (KeyError or None).
 
-- [ ] **Step 3: Implement** in `bin/brain-status`, right after `jobs.append({"label": label, **r, **info})` in the local jobs loop:
+- [ ] **Step 3: Implement** in `bin/sov-status`, right after `jobs.append({"label": label, **r, **info})` in the local jobs loop:
 
 ```python
         if label.startswith("com.sovereign.hub."):
@@ -1481,8 +1481,8 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add bin/brain-status tests/test_brain_status_jobs.py
-git commit -m "brain-status: hub job rows read the runner's receipts"
+git add bin/sov-status tests/test_brain_status_jobs.py
+git commit -m "sov-status: hub job rows read the runner's receipts"
 ```
 
 ---
@@ -1546,7 +1546,7 @@ Expected: `ModuleNotFoundError: No module named 'sovereign_hub.law'`
 
 ```python
 # lib/sovereign_hub/law.py
-"""Part 1 of the law is the standard any brain copies. When the vault's and the template's
+"""Part 1 of the law is the standard any instance copies. When the vault's and the template's
 Part 1 differ, one of them is behind; say which lines."""
 import difflib
 import re
@@ -1585,7 +1585,7 @@ In `bin/sov-hub` add `sub.add_parser("law")` and:
 In `bin/sov`, the `check)` branch becomes:
 
 ```bash
-  check)    /bin/bash "$BIN/brain-check.sh" "$@"; rc=$?
+  check)    /bin/bash "$BIN/sov-check" "$@"; rc=$?
             [ -f "${SOV_STATE_DIR:-$HOME/.local/state/sovereign}/hub.json" ] && "$PYTHON" "$BIN/sov-hub" law || true
             exit $rc;;
 ```

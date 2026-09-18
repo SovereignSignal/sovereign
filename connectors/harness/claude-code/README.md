@@ -12,7 +12,7 @@ Leave off `--apply` to see what it would do first.
 
 A SessionStart hook. Claude Code passes it the session's working directory; it
 maps that to a topic (`workstreams/<name>` or `repos/<name>` under the vault,
-otherwise the always-on core), runs `brain-load`, and hands the pack back as
+otherwise the always-on core), runs `sov-load`, and hands the pack back as
 `additionalContext`. The session starts knowing the trusted slice. A one-line
 receipt lands in the lane's `brain-load-usage.md` so reads can be counted.
 

@@ -1,12 +1,1 @@
-#!/usr/bin/env python3
-"""Symlink-safe entry point for the isolated archive-evidence helper."""
-from pathlib import Path
-import sys
-
-repository = Path(__file__).resolve().parent.parent
-lib = repository / "lib"
-sys.path.insert(0, str(lib))
-
-from archive_evidence.cli import main  # noqa: E402
-
-raise SystemExit(main())
+sov-evidence

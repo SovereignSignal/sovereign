@@ -282,7 +282,13 @@ def main():
         if mode not in ('check','approve','reject','resolve'):
             raise ValueError('Unsupported gate operation')
         home = Path.home()
-        root = Path((home/'.brain-root').read_text().strip()).expanduser()
+        pointer = home / '.brain-root'
+        legacy_pointer = pointer.read_text().strip() if pointer.exists() else ''
+        configured_root = (os.environ.get('BRAIN_ROOT') or os.environ.get('SOVS_VAULT') or legacy_pointer
+                           or os.environ.get('SOVEREIGN_ROOT') or os.environ.get('SOVEREIGN_VAULT'))
+        if not configured_root:
+            raise ValueError('Archive configuration is unavailable')
+        root = Path(configured_root).expanduser()
         lane = (home/'.curator-lane').read_text().strip() if (home/'.curator-lane').exists() else 'curator'
         if not root.is_absolute() or not (root/'knowledge').is_dir() or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]*',lane):
             raise ValueError('Archive configuration is unavailable')

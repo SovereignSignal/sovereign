@@ -1,6 +1,6 @@
 # Harness connectors
 
-A tool is *in the loop* when it reads the brain before it works and writes its
+A tool is *in the loop* when it reads the archive before it works and writes its
 distilled output to its own lane. Each folder here packages both wires for one
 tool, installed on one machine with one command:
 
@@ -20,7 +20,7 @@ sov connect <harness> ... --apply                                               
 
 - `brainhook.py`: the one read-wire implementation. Working directory to topic
   (`workstreams/<name>` or `repos/<name>` under the vault, else the always-on core),
-  brain-load, size caps, the receipt line. Adapters only shape the output.
+  sov-load, size caps, the receipt line. Adapters only shape the output.
 - `install-common.sh`: pointer files, `~/brain-bin` symlinks, hook merge (Claude Code
   and Codex share one JSON shape, Cursor has its own), the lane's entry in the machine's
   connector manifest, LANE.md render or patch, smoke runs of both wires and of the
@@ -42,8 +42,8 @@ sov connect <harness> ... --apply                                               
 - A hook never fails the session: any error is one stderr line and exit 0.
 - Instance data (vault path, core cards, host name, aliases) lives in pointer files
   under `~`, never in this repo.
-- Secrets never enter the brain. Every write wire ends in `sov_git_publish`, which first
-  runs `brain-redact` over what the mirror wrote: credential-shaped values (vendor keys,
+- Secrets never enter the archive. Every write wire ends in `sov_git_publish`, which first
+  runs `sov-redact` over what the mirror wrote: credential-shaped values (vendor keys,
   tokens, private keys, passwords in URLs, a value after `password:`) become
   `[redacted <kind>]` before the bytes are committed, relayed or synced. The rules are
   `lib/brain_redact.py`, shared with the Notion mirror; a lane that renders its own text

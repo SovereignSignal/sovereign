@@ -78,7 +78,7 @@ class HubTests(unittest.TestCase):
         self.assertFalse((restored/'hub/receipts/activation.json').exists())
         cp=subprocess.run([str(restored/'hub/bin/sov'),'hub','status','--config',str(restored/'hub/config.json')],env=dict(os.environ,PATH='/usr/bin:/bin'),capture_output=True,text=True)
         self.assertEqual(cp.returncode,0,cp.stderr+cp.stdout)
-        cp=subprocess.run([str(restored/'hub/python/bin/python3'),str(restored/'hub/engine/bin/brain-load'),'recovery-drill','--root',str(restored/'archive')],env=dict(os.environ,PATH='/usr/bin:/bin'),capture_output=True,text=True)
+        cp=subprocess.run([str(restored/'hub/python/bin/python3'),str(restored/'hub/engine/bin/sov-load'),'recovery-drill','--root',str(restored/'archive')],env=dict(os.environ,PATH='/usr/bin:/bin'),capture_output=True,text=True)
         self.assertEqual(cp.returncode,0,cp.stderr);self.assertIn('Rebuilds must be demonstrated',cp.stdout)
         self.assertFalse((self.home/'.brain-root').exists())
         # Existing bytes never overwritten, even by a valid capsule.

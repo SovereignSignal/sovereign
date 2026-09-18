@@ -1,4 +1,4 @@
-"""A single writer and an independent Git spool. Never fetches brain context."""
+"""A single writer and an independent Git spool. Never fetches archive context."""
 from pathlib import Path
 
 from .collector import assess, identity, validate

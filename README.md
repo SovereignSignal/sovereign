@@ -1,6 +1,6 @@
-# sovs-brain-template
+# Sovereign
 
-A dead-simple, owned, plain-text **brain** any person or organization can run, and any AI tool can read and write — under a handful of rules that fit on one page.
+A dead-simple, owned, plain-text **archive** any person or organization can run, and any AI tool can read and write — under a handful of rules that fit on one page.
 
 The bet: as models commoditize, the edge is **context** — what you know, who you know, what worked last time. This is the durable place to keep it. Not an app, not a SaaS you rent: Markdown files in folders, versioned in git, that outlive any tool or model. Fork it and it is yours.
 
@@ -9,9 +9,9 @@ The bet: as models commoditize, the edge is **context** — what you know, who y
 ```
 CLAUDE.md          the law — the whole standard, ~2 minutes to read
 templates/note.md  the new-note template (labels fill themselves in)
-bin/new-brain.sh   scaffold a fresh brain into a target folder
-bin/brain-check.sh the label-checker — keeps the brain from drifting
-skeleton/          the empty five-folder brain that ships into a new brain
+bin/sov-init   scaffold a fresh instance into a target folder
+bin/sov-check the label-checker — keeps the archive from drifting
+skeleton/          the empty five-folder archive that ships into a new instance
 ```
 
 ## The shape, in one breath
@@ -21,34 +21,34 @@ Five folders, each with one job: **raw/** (loading dock, where tools drop things
 ## Quick start (under five minutes)
 
 ```bash
-# 1. stand up a fresh brain
-bin/new-brain.sh ~/my-brain "My Brain"
+# 1. stand up a fresh instance
+bin/sov-init ~/my-archive "My Archive"
 
-# 2. open ~/my-brain in Obsidian; point the Templates plugin at .obsidian/templates
+# 2. open ~/my-archive in Obsidian; point the Templates plugin at .obsidian/templates
 # 3. write your first note from the template (labels are pre-filled)
 # 4. confirm it's clean
-bin/brain-check.sh ~/my-brain
+bin/sov-check ~/my-archive
 ```
 
 ## Principles (why it stays simple)
 
 - **Dead simple.** If it needs a manual, it waits. A new person or agent is productive in minutes.
 - **Owned by default.** You hold the storage, keys, and history. No vendor sits inside your memory.
-- **Plays well with others.** The brain never replaces the systems around it (Notion, Salesforce, whatever). A small connector carries data in; each tool stays authoritative for its own records.
-- **Context follows its owner.** A person's brain follows the person; an org's brain stays with the org. Same shape for both, owned separately, connected through explicit doors — never merged.
+- **Plays well with others.** The archive never replaces the systems around it (Notion, Salesforce, whatever). A small connector carries data in; each tool stays authoritative for its own records.
+- **Context follows its owner.** A person's archive follows the person; an org's archive stays with the org. Same shape for both, owned separately, connected through explicit doors — never merged.
 
 ## The next layer (not required to start)
 
-A **curator** — an agent (a local model works well) that reads the raw loading dock and proposes promotions into the trusted `knowledge/` layer. It starts as a proposer: it drafts, you approve, and it earns more autonomy as its track record proves out. The brain works as plain files long before any agent touches it; the curator just makes it tend itself.
+A **curator** — an agent (a local model works well) that reads the raw loading dock and proposes promotions into the trusted `knowledge/` layer. It starts as a proposer: it drafts, you approve, and it earns more autonomy as its track record proves out. The archive works as plain files long before any agent touches it; the curator just makes it tend itself.
 
 ## Connect a tool (both wires, one command)
 
-A tool is *in the loop* when it reads the brain before it works and writes its distilled
+A tool is *in the loop* when it reads the archive before it works and writes its distilled
 output to its own lane. `connectors/harness/<name>/` packages both wires per tool, and
 `bin/sov` is the front door:
 
 ```
-sov connect claude-code --host laptop --vault ~/my-brain --core me,how-to-work-with-me   # dry run
+sov connect claude-code --host laptop --vault ~/my-archive --core me,how-to-work-with-me   # dry run
 sov connect claude-code ... --apply                                                      # install
 sov relay add ~/Documents/MyTool   # a plain watch folder: one more source on the mover
 sov disconnect claude-code --apply # undeclare the lane; the folder in raw/ stays
@@ -77,12 +77,12 @@ for requirements, the recovery drill and the limits of this clean-install pilot.
 
 ## Archive evidence (optional)
 
-`bin/brain-evidence` is a separate, opt-in helper for exact trusted-card evidence and report-only freshness checks. It does not change `brain-load` or write to the brain.
+`bin/sov-evidence` is a separate, opt-in helper for exact trusted-card evidence and report-only freshness checks. It does not change `sov-load` or write to the archive.
 
-The helper requires an opaque sidecar and a private output directory outside the brain:
+The helper requires an opaque sidecar and a private output directory outside the archive:
 
 ```bash
-brain-evidence \
+sov-evidence \
   --root "$BRAIN_ROOT" \
   --project-root "$BRAIN_EVIDENCE_STATE" \
   --overlay "$BRAIN_EVIDENCE_STATE/enrollment.json" \
@@ -94,10 +94,10 @@ Use `--audit-overlay` in place of `--ref` for a report-only aggregate freshness 
 
 ## Picking a judge (optional)
 
-`bin/brain-judge-bakeoff` scores candidate judge models against the **real** `curator-run` judging path, so a judge is chosen on calibration rather than on benchmarks. Benchmark strength does not predict judge calibration: a strong model can promote everything (useless, since the curator's whole value is default-NO) or promote nothing (equally useless). Both failure modes have been observed on models that benchmark well.
+`bin/sov-judge-bakeoff` scores candidate judge models against the **real** `curator-run` judging path, so a judge is chosen on calibration rather than on benchmarks. Benchmark strength does not predict judge calibration: a strong model can promote everything (useless, since the curator's whole value is default-NO) or promote nothing (equally useless). Both failure modes have been observed on models that benchmark well.
 
 ```bash
-bin/brain-judge-bakeoff qwen3.8:27b qwen3.6:35b --runs 3 --json bakeoff.json
+bin/sov-judge-bakeoff qwen3.8:27b qwen3.6:35b --runs 3 --json bakeoff.json
 ```
 
 It builds a throwaway vault in a temp dir, seeds it with the bundled synthetic corpus in `connectors/bakeoff-corpus/` (entirely fictional, so the harness is publishable), runs the real curator against it, and prints a scorecard: accuracy, false-promote rate (the dangerous one), false-skip rate, update detection, containment of adversarial documents, and median and p90 latency. Model calls are timed through a loopback proxy, so nothing in `curator-run` is patched to measure it.
@@ -107,3 +107,13 @@ It refuses to run if the vault it resolved is inside a real one, caps the act-an
 ## License
 
 MIT (intended). Fork freely.
+
+## Command and configuration compatibility
+
+The product is Sovereign. Your copy is an instance, its plain-text folder is the archive, and the machine that curates is the hub.
+
+Use `sov` for the front door or `sov-*` for individual commands. Every former `brain-*` command remains a symlink to its `sov-*` replacement. The two exceptions in spelling are `brain-check.sh` → `sov-check` and `brain-hub` → `sov-managed-hub`; `sov-hub` continues to carry the template runner. `new-brain.sh` points to `sov-init`, also available as `sov init`.
+
+Configuration resolves in this order: existing `BRAIN_*` variables (`SOVS_VAULT` also sets the root), existing `~/.brain-*` pointer files, then `SOVEREIGN_ROOT`, `SOVEREIGN_LANE`, `SOVEREIGN_CORE`, and `SOVEREIGN_HOST`. `SOVEREIGN_VAULT` is also accepted for the root. Existing settings win when both generations are present. `SOVEREIGN_STAGE` and `SOVEREIGN_HOOK_MAX_CARDS` / `SOVEREIGN_HOOK_MAX_CHARS` have equivalent legacy-first fallbacks.
+
+This release keeps the checkout folders, `~/brain-bin`, existing remote paths, Python module imports, and stored receipt filenames compatible. It does not migrate producer configuration. Folder and remote-path moves belong to the separate recovery drill.

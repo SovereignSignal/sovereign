@@ -1,4 +1,4 @@
-"""brain-status after the connector jobs collapse into one.
+"""sov-status after the connector jobs collapse into one.
 
 The danger in this change is not the data path, it is the monitoring. Every tool used
 to be "connected" because a launchd job carried its name; now one job carries them all.
@@ -30,7 +30,7 @@ import tests.test_connectors_install as ti
 
 ROOT = Path(__file__).resolve().parents[1]
 H = ROOT / "connectors" / "harness"
-STATUS = ROOT / "bin" / "brain-status"
+STATUS = ROOT / "bin" / "sov-status"
 RUNNER_LABEL = "com.sovereign.connector.runner"
 
 LAUNCHCTL = """#!/bin/bash

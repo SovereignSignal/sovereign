@@ -3,18 +3,18 @@
 # _curator-lib.sh — shared helpers for the curator action scripts.
 # Sourced by curator-approve.sh / curator-reject.sh / curator-status.sh.
 #
-# The curator (each brain names its own; e.g. "the Archivist") drafts candidate notes into
+# The curator (each instance names its own; e.g. "the Archivist") drafts candidate notes into
 # its own raw lane; these scripts are the DETERMINISTIC safety layer the model never bypasses:
 # validate the labels, move on approval, log every verdict, keep the trusted layer clean.
 #
-# Config via env, with the same pointer-file fallbacks brain-load uses, so a bare
+# Config via env, with the same pointer-file fallbacks sov-load uses, so a bare
 # `curator-approve <slug>` works from anywhere once the pointers exist:
 #   SOVS_VAULT     vault root     (fallback: ~/.brain-root, then current dir)
 #   CURATOR_LANE   curator's lane (fallback: ~/.curator-lane, then "curator")
 
 VAULT="${SOVS_VAULT:-}"
 [ -z "$VAULT" ] && [ -f "$HOME/.brain-root" ] && VAULT="$(cat "$HOME/.brain-root")"
-[ -n "$VAULT" ] || VAULT="$(pwd)"
+[ -n "$VAULT" ] || VAULT="${SOVEREIGN_ROOT:-${SOVEREIGN_VAULT:-$(pwd)}}"
 LANE_NAME="${CURATOR_LANE:-}"
 [ -z "$LANE_NAME" ] && [ -f "$HOME/.curator-lane" ] && LANE_NAME="$(cat "$HOME/.curator-lane")"
 [ -n "$LANE_NAME" ] || LANE_NAME="curator"

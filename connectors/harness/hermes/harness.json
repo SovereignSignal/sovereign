@@ -1,4 +1,4 @@
 {"name": "Hermes agent", "lane_prefix": "hermes", "read": "hook", "hook_file": "~/.hermes/config.yaml", "write": "mirror", "manual_step": null,
  "detect": ["~/.hermes/config.yaml"],
  "trust_check": "hooks.py",
- "description": "A pre_llm_call shell hook injects the brain pack at the start of each conversation (consent written to the documented allowlist); built-in memory (MEMORY.md, USER.md) is mirrored."}
+ "description": "A pre_llm_call shell hook injects the archive pack at the start of each conversation (consent written to the documented allowlist); built-in memory (MEMORY.md, USER.md) is mirrored."}

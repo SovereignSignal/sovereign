@@ -1,4 +1,4 @@
-"""Front door for bin/brain-mirror-notion.
+"""Front door for bin/sov-mirror-notion.
 
   --check      prove the token, list reachable roots against roots.json, count items; writes nothing
   --full       walk everything and reconcile moves and deletions
@@ -23,7 +23,7 @@ LIST_LIMIT = 50
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="brain-mirror-notion", description="Mirror connected Notion pages into a brain lane.")
+    ap = argparse.ArgumentParser(prog="sov-mirror-notion", description="Mirror connected Notion pages into an archive lane.")
     ap.add_argument("--state-dir", help="instance state directory (default ~/.notion-mirror)")
     ap.add_argument("--check", action="store_true", help="prove the token and list roots, write nothing")
     ap.add_argument("--full", action="store_true", help="walk everything, reconcile moves and deletions")
@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _bin_dir() -> Path:
-    """Where the mirror was invoked from, symlink kept: a brain's bin is often a folder of
+    """Where the mirror was invoked from, symlink kept: an archive's bin is often a folder of
     links into the template with its own extras (the secret scanner) beside them, so the
     unresolved parent is checked first and the template's own bin second."""
     invoked = Path(sys.argv[0]).absolute().parent
@@ -95,7 +95,7 @@ def main(argv=None, client_factory=None) -> int:
     try:
         cfg = load_config(args.state_dir, bin_dir=_bin_dir())
     except ConfigError as exc:
-        print("brain-mirror-notion: %s" % exc, file=sys.stderr)
+        print("sov-mirror-notion: %s" % exc, file=sys.stderr)
         return 64
     if args.status:
         _print_status(cfg)
@@ -110,7 +110,7 @@ def main(argv=None, client_factory=None) -> int:
         try:
             state.fail(reason)
         except Exception:
-            print("brain-mirror-notion: " + reason, file=sys.stderr)
+            print("sov-mirror-notion: " + reason, file=sys.stderr)
         return 1
 
 

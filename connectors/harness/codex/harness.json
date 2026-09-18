@@ -5,7 +5,7 @@
  "hook_file": "~/.codex/hooks.json",
  "write": "mirror",
  "manual_step": null,
- "description": "SessionStart hook reads the brain (trusted automatically at install); ~/.codex/memories is mirrored.",
+ "description": "SessionStart hook reads the archive (trusted automatically at install); ~/.codex/memories is mirrored.",
  "detect": [
   "~/.codex"
  ],

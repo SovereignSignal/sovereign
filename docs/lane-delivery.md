@@ -5,13 +5,13 @@ A recent source commit is not proof that the hub accepted it. Status now reports
 ## Inspect and accept
 
 ```sh
-bin/brain-merge-lane --root "$BRAIN_ROOT" --ref exchange/lane/example --lane example
+bin/sov-merge-lane --root "$BRAIN_ROOT" --ref exchange/lane/example --lane example
 ```
 
 The default is a dry run. It checks the owner-written git-branch contract, every introduced commit, credential patterns, unsupported content, and Git's actual merge result. Multiple merge bases are handled by `git merge-tree`, rather than choosing a convenient ancestor. Temporary merge objects are discarded after inspection. Git 2.38 or newer is required.
 
 ```sh
-bin/brain-merge-lane --root "$BRAIN_ROOT" --ref exchange/lane/example --lane example --apply
+bin/sov-merge-lane --root "$BRAIN_ROOT" --ref exchange/lane/example --lane example --apply
 ```
 
 Apply requires a clean checkout on the target branch, a configured Git identity, and the unchanged target head from preview. It merges the inspected source commit, checks the exact resulting tree, commits, and records a receipt under `.git/sovereign-delivery.json`. It never pushes. Run it while other writers are idle; it does not coordinate with unrelated legacy writers. A conflict, dirty checkout, changed target, or failed check leaves acceptance refused. Review histories beyond 2,000 introduced commits or blobs beyond 2 MiB separately.
@@ -19,7 +19,7 @@ Apply requires a clean checkout on the target branch, a configured Git identity,
 ## Accept while unrelated drafts remain open
 
 ```sh
-bin/brain-merge-lane --root "$BRAIN_ROOT" --ref exchange/lane/example --lane example --apply-isolated
+bin/sov-merge-lane --root "$BRAIN_ROOT" --ref exchange/lane/example --lane example --apply-isolated
 ```
 
 This opt-in path uses the same history, contract, credential and exact-tree checks. It builds the merge commit in a private detached Git worktree with its own index. The live vault's files are never staged to prepare this commit. The original `--apply` retains its whole-checkout clean gate.
@@ -36,7 +36,7 @@ Acceptance and receipt writing are separate events. If recording the receipt fai
 
 Harness mirrors collect in a private temporary directory, retain earlier provenance, sanitize before publication, then transfer only inspected files to the watched destination. Failed collection or inspection preserves the previous published capture. Files are renamed into place during transfer; this is not an atomic switch of the whole directory. A partial transfer can contain files from two clean generations.
 
-Collection, inspection, commit and push errors return failure. A retry attempts the push even when no new diff exists. Shared redaction code comes from the same template version as the connector. `brain-redact --strict` refuses unreadable, linked, binary or oversized content instead of silently skipping it.
+Collection, inspection, commit and push errors return failure. A retry attempts the push even when no new diff exists. Shared redaction code comes from the same template version as the connector. `sov-redact --strict` refuses unreadable, linked, binary or oversized content instead of silently skipping it.
 
 Producer contracts require an explicit inline list of permitted mirror prefixes:
 
