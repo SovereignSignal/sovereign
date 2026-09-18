@@ -20,7 +20,7 @@ DEFAULTS = {
     "burndown": {"since_days": 400, "max": 120, "pending_limit": 200, "keep_floor_pct": 2},
     "remotes": [], "snapshot": {"folder": None, "keep": 30},
     "notify": {"archive": None, "alerts": None},
-    "kit": {"include": [], "key_file": None, "targets": [], "keep": 7},
+    "kit": {"include": [], "key_file": None, "targets": [], "keep": 7, "template_publications": []},
     "offsite": {"vault": None, "template": None},
     "exchange": None, "digest_hook": None,
     "instance_jobs": {},

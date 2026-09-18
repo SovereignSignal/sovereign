@@ -94,10 +94,21 @@ def config_path(value=None):
     return Path.home() / '.local/share/sovereign/hub/config.json'
 
 
+def client_hub():
+    """Resolve the client role with legacy-first aliases and a bounded pointer read."""
+    if os.environ.get('BRAIN_HUB'):
+        return os.environ['BRAIN_HUB']
+    remote = Path.home() / '.brain-hub'
+    if remote.exists():
+        value = read_under(remote.parent, remote.name, 4096)[0].decode().strip()
+        if value:
+            return value
+    return os.environ.get('SOVEREIGN_HUB')
+
+
 def install_plan(archive, destination, model, endpoint='http://127.0.0.1:11434/v1/chat/completions', lane='curator', max_items=40):
     archive = archive_root(archive)
-    remote = Path.home() / '.brain-hub'
-    if remote.exists() and read_under(remote.parent, remote.name, 4096)[0].strip():
+    if client_hub():
         raise ValueError('This Mac is a Client. Existing roles require a reviewed migration.')
     destination = absolute(destination)
     if destination.exists() or archive == destination or archive in destination.parents:
@@ -122,13 +133,19 @@ def launcher(config):
     return body.encode()
 
 
+def engine_command(destination, current, legacy):
+    """Restored capsules keep their original engine; select the command they carry."""
+    base = Path(destination) / 'engine/bin'
+    return base / (legacy if not (base / current).is_file() and (base / legacy).is_file() else current)
+
+
 def job_definition(config, job):
     d = Path(config['destination']); spec = JOBS[job]
     schedule = {'Hour': spec['hour'], 'Minute': spec['minute']}
     if 'weekday' in spec:
         schedule['Weekday'] = spec['weekday']
     return {'Label': 'com.sovereign.hub.' + job,
-            'ProgramArguments': [str(d / 'python/bin/python3'), '-I', '-B', str(d / 'engine/bin/sov-managed-hub'),
+            'ProgramArguments': [str(d / 'python/bin/python3'), '-I', '-B', str(engine_command(d, 'sov-managed-hub', 'brain-hub')),
                                  'run', job, '--config', str(d / 'config.json'), '--apply'],
             'StartCalendarInterval': schedule, 'RunAtLoad': False,
             'EnvironmentVariables': {'HOME': str(Path.home()), 'PATH': str(d / 'python/bin') + ':/usr/bin:/bin:/usr/sbin:/sbin'},
@@ -222,7 +239,8 @@ def run(config, job, apply=False, proposal=None, reason=''):
             raise ValueError('Choose a proposal by its simple slug.')
         args = ['/bin/bash', str(b / ('curator-' + job + '.sh')), proposal, reason]
     else:
-        args = [str(d / 'python/bin/python3'), '-B', str(b / ('curator-run' if job == 'nightly' else 'sov-audit'))]
+        program = b / 'curator-run' if job == 'nightly' else engine_command(d, 'sov-audit', 'brain-audit')
+        args = [str(d / 'python/bin/python3'), '-B', str(program)]
         args += ['--max', str(config['max_items'])] if job == 'nightly' else ['--no-llm']
     if not apply:
         return {'job': job, 'applied': False, 'command': args, 'archive': config['archive']}
@@ -257,15 +275,14 @@ def run(config, job, apply=False, proposal=None, reason=''):
 
 def activation_plan(config):
     d = Path(config['destination']); home = Path.home()
+    if client_hub():
+        raise ValueError('This Mac is a Client. Do not activate a second Hub here.')
     if not config.get('snapshot_folder') or not config.get('recovery_key'):
         raise ValueError('Configure encrypted recovery before enabling scheduled Hub jobs.')
     from .recovery import check_key
     check_key(Path(config['recovery_key']), Path(config['archive']), d)
     directory(config['snapshot_folder'])
     pointers = {'.brain-root': config['archive'], '.curator-lane': config['lane'], '.brain-host': socket.gethostname().split('.')[0], '.sovereign-hub': str(d / 'config.json')}
-    remote = home / '.brain-hub'
-    if remote.exists() and read_under(home, remote.name, 4096)[0].strip():
-        raise ValueError('This Mac is a Client. Do not activate a second Hub here.')
     for name, value in pointers.items():
         p = home / name
         if p.exists() and read_under(home, name, 4096)[0].decode().strip() != value:

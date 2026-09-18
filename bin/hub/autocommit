@@ -60,7 +60,7 @@ done
 # runs around the clock (2026-09-05), skipping would mean never committing. Commit everything
 # except the lane instead; the lane's own files are committed by the gate scripts as they land.
 SCOPE=()
-if pgrep -qf 'bin/(curator-run|sov-audit)'; then
+if pgrep -qf 'bin/(curator-run|sov-audit|brain-audit)'; then
   SCOPE=(-- . ':(exclude)raw/workspaces/archivist')
   echo "vault-autocommit: a curator/audit run is in flight — committing everything except raw/workspaces/archivist"
 fi

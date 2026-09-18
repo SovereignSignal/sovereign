@@ -219,17 +219,17 @@ touch ~/.ssh/config; chmod 600 ~/.ssh/config
 grep -q '^Host {alias}$' ~/.ssh/config || printf 'Host {alias}\\n  HostName {keep_host}\\n  User {keep_user}\\n  IdentityFile ~/.ssh/keep_ed25519\\n  IdentitiesOnly yes\\n  StrictHostKeyChecking accept-new\\n' >> ~/.ssh/config
 [ -d ~/sovs-brain-template/.git ] || git clone -q {alias}:{tmpl_path} ~/sovs-brain-template
 git -C ~/sovs-brain-template pull -q --ff-only || true
-if [ ! -d ~/archive/.git ]; then
-  git clone -q --branch lane/{name} --no-checkout {keep_url} ~/archive
-  git -C ~/archive sparse-checkout init --cone
-  git -C ~/archive sparse-checkout set CLAUDE.md knowledge raw/workspaces/{name}
-  git -C ~/archive checkout -q lane/{name}
+if [ ! -d ~/brain/.git ]; then
+  git clone -q --branch lane/{name} --no-checkout {keep_url} ~/brain
+  git -C ~/brain sparse-checkout init --cone
+  git -C ~/brain sparse-checkout set CLAUDE.md knowledge raw/workspaces/{name}
+  git -C ~/brain checkout -q lane/{name}
 fi
-git -C ~/archive config user.name '{name} lane'; git -C ~/archive config user.email '{name}-lane@{name}'
-printf '%s' "$HOME/archive" > ~/.brain-root; printf '{name}' > ~/.brain-lane; printf '{name}' > ~/.brain-host; printf '{core}' > ~/.brain-core
-mkdir -p ~/brain-bin; for b in sov-load sov-capture sov-lane-scope sov; do ln -sf ~/sovs-brain-template/bin/$b ~/brain-bin/$b; done
+git -C ~/brain config user.name '{name} lane'; git -C ~/brain config user.email '{name}-lane@{name}'
+printf '%s' "$HOME/brain" > ~/.brain-root; printf '{name}' > ~/.brain-lane; printf '{name}' > ~/.brain-host; printf '{core}' > ~/.brain-core
+mkdir -p ~/brain-bin; for b in sov-load sov-capture sov-lane-scope brain-load brain-capture brain-lane-scope sov; do ln -sf ~/sovs-brain-template/bin/$b ~/brain-bin/$b; done
 ~/sovs-brain-template/bin/sov-lane-scope >/dev/null 2>&1 || true
-echo "clone ok: $(git -C ~/archive branch --show-current), scope: $(git -C ~/archive sparse-checkout list | tr '\\n' ' ')"
+echo "clone ok: $(git -C ~/brain branch --show-current), scope: $(git -C ~/brain sparse-checkout list | tr '\\n' ' ')"
 """.format(alias=keep_alias, keep_host=keep_host, keep_user=keep_user, tmpl_path=tmpl_path, name=a.name, keep_url=KEEP_URL, core=CORE)
 if a.apply:
     print("  machine: " + ssh(target, remote_script))

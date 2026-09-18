@@ -120,6 +120,40 @@ def _mirror(repo, remote):
     return {"state": "pushed" if r.returncode == 0 else "failed", "head": head, "detail": (r.stderr or "").strip()[:200]}
 
 
+def publication_plan(template, targets):
+    """Opt-in source publication, separate from complete disaster-recovery mirrors."""
+    if not isinstance(targets, list) or any(
+        not isinstance(t, str) or not t.strip() or t.startswith("-") or any(c in t for c in "\n\r\x00")
+        for t in targets
+    ):
+        raise ValueError("kit.template_publications must be a list of remote names or URLs")
+    if not targets:
+        return {}
+    refs = {}
+    for ref in ("refs/heads/main", "refs/heads/docs/lane-source-map"):
+        r = subprocess.run(["git", "-C", str(template), "rev-parse", "--verify", ref], capture_output=True, text=True, timeout=30)
+        if r.returncode:
+            raise ValueError("template publication requires " + ref)
+        refs[ref] = r.stdout.strip()
+    r = subprocess.run(["git", "-C", str(template), "for-each-ref", "--format=%(refname) %(objectname)", "refs/tags/"],
+                       check=True, capture_output=True, text=True, timeout=30)
+    for line in r.stdout.splitlines():
+        ref, oid = line.split(); refs[ref] = oid
+    return {target: {"state": "planned", "refs": dict(refs)} for target in targets}
+
+
+def _publish(template, target, planned):
+    # Explicit object IDs freeze the reviewed ref set. No force, pruning, recovery
+    # refs, remote-tracking refs, or automatic extra tags enter this destination.
+    specs = [oid + ":" + ref for ref, oid in planned["refs"].items()]
+    try:
+        r = subprocess.run(["git", "-C", str(template), "push", "--atomic", "--no-follow-tags", "--porcelain", "--", target] + specs,
+                           capture_output=True, text=True, timeout=600)
+        return dict(planned, state="pushed" if r.returncode == 0 else "failed", detail=(r.stderr or "").strip()[:200])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return dict(planned, state="failed", detail=str(exc)[:200])
+
+
 def build(inst, state, home, template, apply=False):
     state = Path(state); k = inst.get("kit") or {}; snap = (inst.get("snapshot") or {}).get("folder")
     if not snap or not k.get("key_file"):
@@ -131,7 +165,8 @@ def build(inst, state, home, template, apply=False):
     n = 0
     while out.exists():
         n += 1; out = folder / ("%s-%d.kit" % (stamp, n))
-    result = {"applied": apply, "output": str(out), "files": [name for name, _ in entries], "targets": {}, "offsite": {}}
+    publications = publication_plan(template, k.get("template_publications", []))
+    result = {"applied": apply, "output": str(out), "files": [name for name, _ in entries], "targets": {}, "offsite": {}, "publications": publications}
     if not apply:
         return result
     folder.mkdir(parents=True, exist_ok=True)
@@ -146,9 +181,12 @@ def build(inst, state, home, template, apply=False):
         result["offsite"]["vault"] = _mirror(inst["vault"], off["vault"])
     if off.get("template"):
         result["offsite"]["template"] = _mirror(template, off["template"])
+    for target, planned in publications.items():
+        publications[target] = _publish(template, target, planned)
     result["finished"] = time.time()
     (state / "hub").mkdir(parents=True, exist_ok=True); atomic(state / "hub" / "kit.json", result)
     failed = [t for t, r in result["targets"].items() if r["state"] != "copied"] + [n for n, r in result["offsite"].items() if r["state"] != "pushed"]
+    failed += [t for t, r in publications.items() if r["state"] != "pushed"]
     if failed:
         raise ValueError("kit built locally but these targets failed: " + ", ".join(failed))
     return result

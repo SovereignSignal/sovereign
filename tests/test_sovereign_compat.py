@@ -11,6 +11,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
 from sovereign_config import pointer
+from sovereign_hub import core
 
 
 class Compatibility(unittest.TestCase):
@@ -76,5 +77,75 @@ class Compatibility(unittest.TestCase):
 
     def test_skeleton_and_template_law_match(self):
         self.assertEqual((ROOT / 'CLAUDE.md').read_bytes(), (ROOT / 'skeleton/CLAUDE.md').read_bytes())
+
+    def test_gate_and_curator_root_resolution_agree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / '.brain-root'; p.write_text('/pointer-archive\n')
+            for extra, expected in (({'BRAIN_ROOT': '/env-archive'}, '/env-archive'),
+                                    ({'BRAIN_ROOT': '/env-archive', 'SOVS_VAULT': '/explicit-archive'}, '/explicit-archive'),
+                                    ({'SOVEREIGN_ROOT': '/new-archive'}, '/pointer-archive')):
+                env = dict(HOME=tmp, PATH='/usr/bin:/bin', **extra)
+                cp = subprocess.run(['/bin/bash', '-c', '. "$1"; printf "%s" "$VAULT"', '_', str(ROOT / 'bin/_curator-lib.sh')], env=env, capture_output=True, text=True, check=True)
+                self.assertEqual(cp.stdout, expected)
+                self.assertEqual(cp.stdout, env.get('SOVS_VAULT') or pointer(p, env))
+
+    def test_recovered_legacy_engine_gets_runnable_jobs_and_audit_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp); b = d / 'engine/bin'; b.mkdir(parents=True)
+            for name in ('brain-hub', 'brain-audit'):
+                (b / name).write_text('# fixture command\n')
+            (d / 'jobs').mkdir(); (d / 'bin').mkdir()
+            config = {'destination': tmp, 'archive': str(d / 'archive'), 'max_items': 1}
+            core.write_jobs(config)
+            for job in core.JOBS:
+                self.assertEqual(Path(core.job_definition(config, job)['ProgramArguments'][3]), b / 'brain-hub')
+            self.assertEqual(core.run(config, 'audit')['command'][2], str(b / 'brain-audit'))
+            (b / 'sov-managed-hub').write_text('# current\n'); (b / 'sov-audit').write_text('# current\n')
+            self.assertEqual(Path(core.job_definition(config, 'nightly')['ProgramArguments'][3]), b / 'sov-managed-hub')
+            self.assertEqual(core.run(config, 'audit')['command'][2], str(b / 'sov-audit'))
+
+    def test_autocommit_detects_both_supported_audit_names(self):
+        import re
+        script = (ROOT / 'bin/hub/autocommit').read_text()
+        matcher = re.search(r"pgrep -qf '([^']+)'", script).group(1)
+        for name in ('curator-run', 'brain-audit', 'sov-audit'):
+            self.assertRegex('python3 /fixture/bin/' + name + ' --no-llm', matcher)
+
+    def test_client_aliases_block_local_hub_setup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve(); tmp = str(home)
+            for alias in ('BRAIN_HUB', 'SOVEREIGN_HUB'):
+                with patch.dict(os.environ, {'HOME': tmp, alias: 'remote-fixture:/archive'}, clear=True), patch.object(core, 'archive_root', return_value=home / 'archive'):
+                    with self.assertRaisesRegex(ValueError, 'Client'):
+                        core.install_plan(home / 'archive', home / 'hub', 'fixture-model')
+                    with self.assertRaisesRegex(ValueError, 'Client'):
+                        core.activation_plan({'destination': str(home / 'hub')})
+            with patch.dict(os.environ, {'HOME': tmp, 'SOVEREIGN_HUB': 'new', 'BRAIN_HUB': 'old'}, clear=True):
+                (home / '.brain-hub').write_text('pointer')
+                self.assertEqual(core.client_hub(), 'old')
+                del os.environ['BRAIN_HUB']; self.assertEqual(core.client_hub(), 'pointer')
+                (home / '.brain-hub').unlink(); self.assertEqual(core.client_hub(), 'new')
+
+    def test_host_rejoin_preserves_existing_clone_and_legacy_commands(self):
+        import ast
+        tree = ast.parse((ROOT / 'bin/sov-host-add').read_text())
+        node = next(n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'remote_script' for t in n.targets))
+        script = ast.literal_eval(node.value.func.value).format(alias='fixture', keep_host='fixture.invalid', keep_user='git', tmpl_path='template.git', name='fixture', keep_url='fixture:archive.git', core='topic')
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            for directory in ('.ssh', 'brain/.git', 'sovs-brain-template/.git', 'commands'):
+                (home / directory).mkdir(parents=True)
+            (home / 'sovs-brain-template/bin').symlink_to(ROOT / 'bin')
+            (home / '.brain-root').write_text(str(home / 'brain'))
+            stub = home / 'commands/git'
+            stub.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/git-calls"\n')
+            stub.chmod(0o700)
+            env = {'HOME': str(home), 'PATH': str(home / 'commands') + ':/usr/bin:/bin', 'PYTHONDONTWRITEBYTECODE': '1'}
+            subprocess.run(['/bin/bash', '-c', script], env=env, capture_output=True, text=True, check=True)
+            self.assertEqual((home / '.brain-root').read_text(), str(home / 'brain'))
+            self.assertNotIn('clone', (home / 'git-calls').read_text())
+            self.assertFalse((home / 'archive').exists())
+            for command in ('brain-load', 'brain-capture', 'brain-lane-scope', 'sov-load', 'sov-capture', 'sov-lane-scope'):
+                self.assertTrue((home / 'brain-bin' / command).resolve().is_file())
 
 if __name__ == '__main__': unittest.main()

@@ -12,9 +12,9 @@
 #   SOVS_VAULT     vault root     (fallback: ~/.brain-root, then current dir)
 #   CURATOR_LANE   curator's lane (fallback: ~/.curator-lane, then "curator")
 
-VAULT="${SOVS_VAULT:-}"
-[ -z "$VAULT" ] && [ -f "$HOME/.brain-root" ] && VAULT="$(cat "$HOME/.brain-root")"
-[ -n "$VAULT" ] || VAULT="${SOVEREIGN_ROOT:-${SOVEREIGN_VAULT:-$(pwd)}}"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_sov-config.sh"
+VAULT="${SOVS_VAULT:-$(_sov_pointer "$HOME/.brain-root")}"
+[ -n "$VAULT" ] || VAULT="$(pwd)"
 LANE_NAME="${CURATOR_LANE:-}"
 [ -z "$LANE_NAME" ] && [ -f "$HOME/.curator-lane" ] && LANE_NAME="$(cat "$HOME/.curator-lane")"
 [ -n "$LANE_NAME" ] || LANE_NAME="curator"
