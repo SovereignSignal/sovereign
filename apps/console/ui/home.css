@@ -24,6 +24,7 @@ body .layout{height:auto;grid-template-columns:230px minmax(0,1fr)}body .layout>
 
 .home-attention{grid-column:1/-1}.home-issue{padding:0 12px 16px;font-size:12px;line-height:1.6;overflow-wrap:anywhere;user-select:text}.home-issue p{margin:6px 0}.home-issue strong{font-weight:500}.home-issue a{color:var(--cyan);display:inline-block;margin:6px 16px 6px 0}.home-issue button{font-size:11px}.home-observation{font:11px/1.6 var(--mono);color:var(--muted);margin:-12px 0 20px}
 .home-node-toggle{grid-column:1/-1;justify-self:end;border:0;background:transparent;color:var(--muted);font:11px var(--mono);padding:5px 0}.home-nodes .home-row small{font-size:11px}
+.home-action{flex:none;max-width:35%;font-size:11px;color:var(--muted);padding-top:1px}.home-issue{padding:6px 12px 12px}.home-issue summary{cursor:pointer;width:fit-content;font-size:11px;color:var(--muted)}.home-issue[open] summary{margin-bottom:8px}
 
 .home-intake { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .home-intake h3 { font-size: 13px; margin: 0 0 10px; }

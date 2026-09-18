@@ -6,10 +6,10 @@ window.Home = (() => {
   const validTime=value=>{const n=Date.parse(value);return Number.isFinite(n)?n:null};
   const ago=value=>{const n=validTime(value);if(n===null)return 'time unknown';const min=Math.max(0,Math.round((Date.now()-n)/60000));return min<60?min+'m ago':min<1440?Math.floor(min/60)+'h ago':Math.floor(min/1440)+'d ago'};
   const operations=(view,id,section)=>api.send({cmd:'navigate',page:'operations',place:{view,...(section?{section}:{}),...(id?{sel:{id}}:{})}});
-  function row(title,detail,state,click){const e=element(click?'button':'div',null,'home-row');e.append(element('i',null,'health-dot '+(state||'')));const body=element('span',null,'text');body.append(element('strong',title),element('small',detail));e.append(body);if(click){e.append(element('span','›','chevron'));e.onclick=click}return e}
+  function row(title,detail,state,click,action){const e=element(click?'button':'div',null,'home-row');e.append(element('i',null,'health-dot '+(state||'')));const body=element('span',null,'text');body.append(element('strong',title));if(detail)body.append(element('small',detail));e.append(body);if(click){e.append(element('span',action||'›',action?'home-action':'chevron'));e.onclick=click}return e}
   function details(issue){
-    const box=element('div',null,'home-issue');
-    for(const[key,label]of[['why','Why'],['action','Next step'],['verify','Confirm']])if(issue?.[key]){const p=element('p');p.append(element('strong',label+': '),document.createTextNode(issue[key]));box.append(p)}
+    const box=element('details',null,'home-issue');box.append(element('summary','Details'));
+    for(const key of ['detail','why','action','verify'])if(issue?.[key])box.append(element('p',issue[key]));
     const url=SovStatus.safeURL(issue?.url);if(url){const link=element('a','Open verification link');link.href=url;link.onclick=e=>{e.preventDefault();api.send({cmd:'openurl',url})};box.append(link)}
     if(issue?.action){const copy=element('button','Copy next step');copy.onclick=()=>{api.send({cmd:'copyText',text:issue.action});copy.textContent='Copied'};box.append(copy)}
     return box;
@@ -47,9 +47,13 @@ window.Home = (() => {
     for(const need of needs){
       const source=need.need!=null?status.needs_you[need.need]:null;
       const gate=source?.kind==='gate';
-      const title=gate?`${hub.pending||'New'} proposals ready for your review`:need.name;
-      const jump=need.jump||{view:source?.harness?'tools':source?.kind==='job'?'jobs':'glance',id:source?.harness};
-      attention.append(row(title,gate?'Review proposals':need.detail,need.state,()=>gate?api.review():operations(jump.view,jump.id)),details(need));
+      const cause=need.cause||need.group;
+      const title=gate?`${hub.pending||'New'} proposals`:cause==='job-failed'?`${need.name} failed`:cause==='no-backup'?`${need.name}: no backup recorded`:need.name;
+      const groupViews=[...new Set((need.members||[]).map(member=>member.jump?.view))];
+      const jump=need.jump||(groupViews.length===1&&groupViews[0]?{view:groupViews[0]}:null)||{view:source?.harness?'tools':source?.kind==='job'?'jobs':'glance',id:source?.harness};
+      const action=gate?'Review':jump.view==='jobs'?(jump.id?'View job':'View jobs'):jump.view==='backups'?'View backups':jump.view==='hosts'?(jump.id?'View device':'View devices'):jump.view==='tools'?'View tools':'Open details';
+      attention.append(row(title,gate||['job-failed','no-backup'].includes(cause)?'':need.detail,need.state,()=>gate?api.review():operations(jump.view,jump.id),action));
+      if(!gate)attention.append(details(need));
     }
     if(!needs.length)message(attention,!status||status.error?'Waiting for a successful status check.':hub.reachable===true?'No attention items reported by the connected system.':'No local attention items reported. Hub review status is unverified.');
 

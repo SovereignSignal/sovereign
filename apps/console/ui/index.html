@@ -880,8 +880,10 @@ window.onerror = function (msg, src, line, col) {
       <span class="chev">›</span>`;
   }
   function issueHTML(n) {
+    if(GLANCE)return ''; // The compact menu opens the console for troubleshooting.
     const url=SovStatus.safeURL(n.url);
-    return `<div class="issue-details">${[['why','Why'],['action','Next step'],['verify','Confirm']].filter(([k])=>n[k]).map(([k,label])=>`<p><strong>${label}:</strong> ${esc(n[k])}</p>`).join('')}${url?`<a href="${esc(url)}" data-status-url="${esc(url)}">Open verification link</a>`:''}${n.action?` <button data-copy-step="${esc(n.action)}">Copy next step</button>`:''}</div>`;
+    if(!['why','action','verify'].some(k=>n[k])&&!url)return '';
+    return `<details class="issue-details"><summary>Details</summary>${['why','action','verify'].filter(k=>n[k]).map(k=>`<p>${esc(n[k])}</p>`).join('')}${url?`<a href="${esc(url)}" data-status-url="${esc(url)}">Open verification link</a>`:''}${n.action?` <button data-copy-step="${esc(n.action)}">Copy next step</button>`:''}</details>`;
   }
   function glanceHome() {
     const A = assess();
