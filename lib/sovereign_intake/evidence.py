@@ -49,6 +49,9 @@ def projection(raw, kind):
         if kind=='maintenance-history':
             if set(r)-allowed_maintenance:raise IntakeError('receipt_schema_review_required')
             row={k:r[k] for k in ['timestamp','status','operation','error','rollback','rollback_error','recovery','gateway_restarted','restart_required'] if k in r}
+            for key, fields in [('rollback', ['status','baseline','error']), ('recovery', ['diagnosis','candidate_fast_forwarded_without_additional_restart','controller_changed'])]:
+                if isinstance(row.get(key), dict):
+                    row[key] = {k:row[key][k] for k in fields if k in row[key]}
         elif kind=='health-history':
             if set(r)-{'checks','sent','timestamp'}:raise IntakeError('receipt_schema_review_required')
             checks=r.get('checks',[])
@@ -58,6 +61,7 @@ def projection(raw, kind):
         else:raise IntakeError('unsupported_evidence_kind')
         rows.append((line,row))
     if not rows:raise IntakeError('empty_receipt_history')
+    if len(rows)>1000:raise IntakeError('receipt_history_bound_requires_review')
     out=[]
     for start in range(0,len(rows),20):
         batch=rows[start:start+20]

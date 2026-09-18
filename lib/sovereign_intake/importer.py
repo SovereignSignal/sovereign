@@ -8,6 +8,26 @@ from .collector import validate
 from .common import IntakeError, MAX_ITEM, MAX_ITEMS, atomic, directory, exclusive, git, json_read, locked, now, read_under, remote, relative, slug
 
 
+def source_approved(item, sources):
+    approval = sources.get(item["source_id"])
+    expected = {"path": approval, "exporter_version": "1"} if isinstance(approval, str) else approval
+    if expected == {"path": item["source_path"], "exporter_version": item["exporter_version"]}:
+        return True
+    if item["exporter_version"] != "2":
+        return False
+    match = re.fullmatch(r"(.+?)(?:-b([0-9]{3}))?-p([0-9]{2})", item["source_id"])
+    if not match:
+        return False
+    base, block, part = match.groups()
+    approval = sources.get(base)
+    if not isinstance(approval, dict) or set(approval) != {"path", "exporter_version", "max_parts", "max_blocks"}:
+        return False
+    return (approval["path"] == item["source_path"] and approval["exporter_version"] == "2"
+            and 1 <= int(part) <= approval["max_parts"] <= 32
+            and ((block is None and approval["max_blocks"] == 0)
+                 or (block is not None and 1 <= int(block) <= approval["max_blocks"] <= 50)))
+
+
 def inspect_repo(repo, client_id, sources):
     head = git(repo, "rev-parse", "--verify", "FETCH_HEAD").stdout.strip()
     if not re.fullmatch(r"[a-f0-9]{40,64}", head):
@@ -31,9 +51,7 @@ def inspect_repo(repo, client_id, sources):
             item = validate(json.loads(raw), client_id)
             if name != "items/" + item["capture_id"] + ".json":
                 raise IntakeError("item_filename_mismatch")
-            approval = sources.get(item["source_id"])
-            expected = {"path": approval, "exporter_version": "1"} if isinstance(approval, str) else approval
-            if expected != {"path": item["source_path"], "exporter_version": item["exporter_version"]}:
+            if not source_approved(item, sources):
                 raise IntakeError("source_not_allowed_by_hub")
             accepted.append(item)
         except (IntakeError, ValueError, UnicodeError, KeyError, TypeError) as exc:
@@ -54,8 +72,12 @@ def import_client(config, state_dir, root, apply=False, receive_only=False):
     for key, value in config["sources"].items():
         if isinstance(value, str):
             sources[slug(key)] = str(relative(value))
-        elif isinstance(value, dict) and set(value) == {"path", "exporter_version"} and value["exporter_version"] == "2":
-            sources[slug(key)] = {"path": str(relative(value["path"])), "exporter_version": "2"}
+        elif isinstance(value, dict) and value.get("exporter_version") == "2":
+            if set(value) not in ({"path", "exporter_version"}, {"path", "exporter_version", "max_parts", "max_blocks"}):
+                raise IntakeError("invalid_source_approval")
+            if "max_parts" in value and (type(value["max_parts"]) is not int or type(value["max_blocks"]) is not int or not 1 <= value["max_parts"] <= 32 or not 0 <= value["max_blocks"] <= 50):
+                raise IntakeError("invalid_source_approval_bounds")
+            sources[slug(key)] = dict(value, path=str(relative(value["path"])))
         else:
             raise IntakeError("invalid_source_approval")
     if not sources:

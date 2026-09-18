@@ -35,9 +35,9 @@ class Evidence(unittest.TestCase):
   self.config['evidence_watch_roots']=['docs'];(self.source/'docs').mkdir();(self.source/'docs/new.md').write_text('New source')
   x=collector.assess(self.config);self.assertFalse(x['ok']);self.assertEqual(x['observations'][-1]['reason'],'new_sources_require_discovery')
  def test_series_stable_blocks_and_schema(self):
-  rows=[dict(timestamp=f'2026-08-{i%28+1:02d}T00:00:00Z',status='blocked',error='boundary failed',plan={'private':'not retained'}) for i in range(21)]
+  rows=[dict(timestamp=f'2026-08-{i%28+1:02d}T00:00:00Z',status='blocked',error='boundary failed',plan={'private':'not retained'},rollback={'status':'rolled_back','gateway_pid':12345},recovery={'diagnosis':'reason preserved','old_pid':54321}) for i in range(21)]
   a=projection(('\n'.join(map(json.dumps,rows))+'\n').encode(),'maintenance-history');rows.append(rows[-1]);b=projection(('\n'.join(map(json.dumps,rows))+'\n').encode(),'maintenance-history')
-  self.assertEqual(a[0],b[0]);self.assertNotIn('private',a[0][2]);self.assertIn('boundary failed',a[0][2])
+  self.assertEqual(a[0],b[0]);self.assertNotIn('private',a[0][2]);self.assertNotIn('gateway_pid',a[0][2]);self.assertNotIn('old_pid',a[0][2]);self.assertIn('reason preserved',a[0][2]);self.assertIn('boundary failed',a[0][2])
   with self.assertRaises(IntakeError):projection(b'{"unexpected":1}\n','maintenance-history')
  def test_health_projection_no_details(self):
   raw=json.dumps({'timestamp':'2026-09-17','sent':True,'checks':[{'name':'gateway','status':'ok','detail':'private diagnostic'}]}).encode()
@@ -49,3 +49,15 @@ class Evidence(unittest.TestCase):
    return real(repo,*a,**kw)
   with patch.object(client,'git',fail),self.assertRaises(IntakeError):self.run_client()
   head=git(self.config['spool'],'rev-parse','HEAD').stdout;self.run_client();self.assertEqual(head,git(self.config['spool'],'rev-parse','HEAD').stdout);self.import_items();before={p.name:p.read_bytes() for p in self.lane.glob('*.md')};self.run_client();self.import_items();self.assertEqual(before,{p.name:p.read_bytes() for p in self.lane.glob('*.md')})
+ def test_compact_approval_bounds_and_path(self):
+  from sovereign_intake.importer import source_approved
+  s={'proof':{'path':'evidence.md','exporter_version':'2','max_parts':32,'max_blocks':0}}
+  item={'source_id':'proof-p01','source_path':'evidence.md','exporter_version':'2'}
+  self.assertTrue(source_approved(item,s))
+  for delta in [{'source_id':'proof-p00'},{'source_id':'proof-p33'},{'source_id':'proof-b001-p01'},{'source_path':'another.md'},{'exporter_version':'1'}]:self.assertFalse(source_approved(dict(item,**delta),s))
+  s['proof']['max_blocks']=50
+  self.assertTrue(source_approved(dict(item,source_id='proof-b050-p32'),s))
+  self.assertFalse(source_approved(dict(item,source_id='proof-b051-p01'),s))
+ def test_compact_approval_roundtrip(self):
+  self.hubcfg['sources']={'method':'method.md','proof':{'path':'evidence.md','exporter_version':'2','max_parts':32,'max_blocks':0}}
+  self.run_client();self.import_items()
