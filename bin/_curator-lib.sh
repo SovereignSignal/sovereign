@@ -12,7 +12,15 @@
 #   SOVS_VAULT     vault root     (fallback: ~/.brain-root, then current dir)
 #   CURATOR_LANE   curator's lane (fallback: ~/.curator-lane, then "curator")
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_sov-config.sh"
+_CURATOR_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$_CURATOR_SOURCE" ]; do
+  _CURATOR_DIR="$(cd "$(dirname "$_CURATOR_SOURCE")" && pwd -P)" || exit 1
+  _CURATOR_SOURCE="$(readlink "$_CURATOR_SOURCE")" || exit 1
+  case "$_CURATOR_SOURCE" in /*) ;; *) _CURATOR_SOURCE="$_CURATOR_DIR/$_CURATOR_SOURCE";; esac
+done
+_CURATOR_DIR="$(cd "$(dirname "$_CURATOR_SOURCE")" && pwd -P)" || exit 1
+source "$_CURATOR_DIR/_sov-config.sh" || exit 1
+unset _CURATOR_SOURCE _CURATOR_DIR
 VAULT="${SOVS_VAULT:-$(_sov_pointer "$HOME/.brain-root")}"
 [ -n "$VAULT" ] || VAULT="$(pwd)"
 LANE_NAME="${CURATOR_LANE:-}"

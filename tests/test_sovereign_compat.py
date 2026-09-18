@@ -88,6 +88,11 @@ class Compatibility(unittest.TestCase):
                 cp = subprocess.run(['/bin/bash', '-c', '. "$1"; printf "%s" "$VAULT"', '_', str(ROOT / 'bin/_curator-lib.sh')], env=env, capture_output=True, text=True, check=True)
                 self.assertEqual(cp.stdout, expected)
                 self.assertEqual(cp.stdout, env.get('SOVS_VAULT') or pointer(p, env))
+            legacy = Path(tmp) / 'brain-bin'; legacy.mkdir()
+            (legacy / '_curator-lib.sh').symlink_to(ROOT / 'bin/_curator-lib.sh')
+            cp = subprocess.run(['/bin/bash', '-c', '. "$1"; printf "%s" "$VAULT"', '_', str(legacy / '_curator-lib.sh')], env={'HOME': tmp, 'PATH': '/usr/bin:/bin'}, capture_output=True, text=True, check=True)
+            self.assertEqual(cp.stdout, '/pointer-archive')
+            self.assertEqual(cp.stderr, '')
 
     def test_recovered_legacy_engine_gets_runnable_jobs_and_audit_command(self):
         with tempfile.TemporaryDirectory() as tmp:
