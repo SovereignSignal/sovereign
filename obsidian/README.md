@@ -1,6 +1,6 @@
-# Viewing the brain in Obsidian (optional)
+# Viewing the archive in Obsidian (optional)
 
-The brain is plain Markdown in folders — that is the whole truth of it. You can read and write it with any editor, and every mechanism in this template works with zero plugins installed. **Obsidian is not a requirement.** It is, however, a very good *interface*: local-first, plain-file-native, and its graph view turns the brain's trust model into something you can see.
+The archive is plain Markdown in folders — that is the whole truth of it. You can read and write it with any editor, and every mechanism in this template works with zero plugins installed. **Obsidian is not a requirement.** It is, however, a very good *interface*: local-first, plain-file-native, and its graph view turns the archive's trust model into something you can see.
 
 ## The graph shows the trust model
 
@@ -45,4 +45,4 @@ A related style rule that keeps the graph honest: **link only to knowledge.** `[
 
 ## Sync
 
-Obsidian Sync is one fine way to move the vault between machines — as the standard says, sync is visibility, not durability. The brain's durability lives in its git history, wherever you host it.
+Obsidian Sync is one fine way to move the vault between machines — as the standard says, sync is visibility, not durability. The archive's durability lives in its git history, wherever you host it.
