@@ -679,7 +679,7 @@ if not a.no_llm:
         + (f"OWNER TASTE RULES:\n{_taste}\n\n" if _taste else "")
         + "Also apply the standing defaults: config is not knowledge; news/events/deadline-bound "
         "opportunities are not durable cards; no sensitive figures (PII, wallets, retainer amounts) on cards; "
-        "the org is the entity, the model is the concept, the opportunity lives outside the archive.\n"
+        "the org is the entity, the model is the concept, the opportunity lives outside the brain.\n"
         'Respond with ONE JSON object: {"violates":true|false,"rule":"which rule, briefly",'
         '"action":"keep|trim|merge|historicize|retire","note":"<=25 words, concrete"}. '
         "historicize = the card's facts are time-bound and should be rewritten as dated history, "

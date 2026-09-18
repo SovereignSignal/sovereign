@@ -116,6 +116,8 @@ Use `sov` for the front door or `sov-*` for individual commands. Every former `b
 
 Configuration resolves in this order: existing `BRAIN_*` variables (`SOVS_VAULT` also sets the root), existing `~/.brain-*` pointer files, then `SOVEREIGN_ROOT`, `SOVEREIGN_LANE`, `SOVEREIGN_CORE`, and `SOVEREIGN_HOST`. `SOVEREIGN_VAULT` is also accepted for the root. Existing settings win when both generations are present. `SOVEREIGN_STAGE` and `SOVEREIGN_HOOK_MAX_CARDS` / `SOVEREIGN_HOOK_MAX_CHARS` have equivalent legacy-first fallbacks.
 
+The curator's model-facing prompt wording is preserved from the evaluated pipeline. Its remaining legacy terminology will be renamed only after a separate curator evaluation; this release does not change the model or its granted permissions.
+
 For an approved source publication destination, the hub owner can set `kit.template_publications` in `hub.json` to a list of template remote names or URLs. The nightly kit publishes only `main`, `docs/lane-source-map`, and tags, atomically without force or deletion, and records each destination's result. Both branches must exist in the hub's template checkout. `sov hub kit` previews the exact destination and ref set; `--apply` executes it. This list is empty by default. Keep complete recovery mirrors in `offsite.template`; never add the archive repository or its data to a source publication destination.
 
 This release keeps the checkout folders, `~/brain-bin`, existing remote paths, Python module imports, and stored receipt filenames compatible. It does not migrate producer configuration. Folder and remote-path moves belong to the separate recovery drill.

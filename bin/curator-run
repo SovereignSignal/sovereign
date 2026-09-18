@@ -1529,8 +1529,9 @@ def _auto_promote(props, meta):
                   file=sys.stderr)
     return out
 
+# Model-facing wording stays at the evaluated version until a separate curator review.
 _SYS_HEAD = (
- "You are the curator of a plain-text knowledge archive. "
+ "You are the curator of a plain-text knowledge brain. "
  "Your job: decide whether ONE piece of raw material holds DURABLE, REUSABLE knowledge "
  "worth a one-screen card. Write clear, factual card bodies.\n\n"
  + (f"WHO THE OWNER IS: {_profile}\n\n" if _profile else "")
@@ -1579,7 +1580,7 @@ _SYS_HEAD = (
      "curator-run then rejects the drafted proposal at the gate itself (non-destructive, "
      "owner-reversible). The classes:\n" + _autoreject + "\n\n") if _autoreject else "")
  + "CARD SHAPE: open with ONE sentence saying what the thing is. Then 3-6 short key-fact bullets "
- "(amounts, dates, people, status - bold the labels). Link related archive topics with [[slug]]. "
+ "(amounts, dates, people, status - bold the labels). Link related brain topics with [[slug]]. "
  "Close with where living detail sits (a workstreams/ path) when relevant. Dense, scannable, one screen.\n\n"
  "HOUSE STYLE - recent cards the owner approved; match this voice and shape:\n\n"
  + "\n\n=====\n\n".join(_exemplars) + "\n\n"
@@ -1612,8 +1613,8 @@ _SYS_TAIL = (""
  '"confidence":"high|med|low","update_of":"existing-slug or null"'
  + (',"auto_reject_class":"declared class slug or null"' if _autoreject else '') + '}. '
  "If promote is false the other fields may be empty. "
- 'IMPORTANT: in body text, link archive topics with [[slug]] but NEVER wrap a URL in [[...]] '
- '\u2014 use plain URLs (e.g. https://example.com) and reserve [[...]] only for internal archive slugs. '
+ 'IMPORTANT: in body text, link brain topics with [[slug]] but NEVER wrap a URL in [[...]] '
+ '\u2014 use plain URLs (e.g. https://example.com) and reserve [[...]] only for internal brain slugs. '
  'ONLY link to kebab-case card slugs (hyphens). NEVER [[link]] to a raw source filename: anything '
  'with underscores, or a reference_/feedback_/project_/date prefix, is a file in the loading dock, '
  'not a card \u2014 name it in plain text if needed, never in [[...]]. If unsure a slug is a real card, omit the link.'
@@ -1701,7 +1702,7 @@ def judge_update(path, target, target_path):
     txt = open(path, encoding="utf-8", errors="ignore").read()[:12000]
     card = _card_body(target_path)[:4000]
     name = os.path.relpath(path, VAULT)
-    user = (f"UPDATE TASK. The archive already holds this card ({target}):\n\n{card}\n\n"
+    user = (f"UPDATE TASK. The brain already holds this card ({target}):\n\n{card}\n\n"
             f"NEW SOURCE: {name}\n\n{txt}\n\n"
             "Return the same JSON shape with body = the FULL merged replacement body "
             "(integrate the new facts, keep everything that is still true, follow the "
