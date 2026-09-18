@@ -677,6 +677,7 @@ window.onerror = function (msg, src, line, col) {
     let state, text;
     if (down.length) { state = "down"; const f = down[0]; text = `Attention: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.name + " " + f.detail}${down.length > 1 ? `, and ${down.length - 1} more` : ""}.`; }
     else if (A.need.length) { state = "warn"; const f = A.need[0]; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.need != null ? f.detail : f.name + " " + f.detail}.`; }
+    else if (A.waiting.length) { state = "idle"; text = `${A.waiting.length} awaiting verification. No action required while the next run is pending.`; }
     else if (A.stale.length) { state = "warn"; text = `Stale: ${A.stale[0].name} ${A.stale[0].detail}.`; }
     else {
       state = "live";
@@ -738,8 +739,8 @@ window.onerror = function (msg, src, line, col) {
       row("hub:audit", { label: "audit", desc: h.audit_latest ? "latest: " + h.audit_latest : "no audit yet", state: "", stateText: "weekly", age_h: null, detail: [["latest report", h.audit_latest || "none"]], note: "The Friday audit and the packets in between: findings become boxes you tick, the hub applies." });
       const hj = h.jobs || {};
       if (h.jobs_error) row("hub:jobs:unknown", { label: "Hub jobs", desc: h.jobs_error, state: "warn", stateText: "unknown" });
-      Object.keys(hj).sort().forEach(k => { const j = hj[k]; row("hub:job:" + k, { label: k, desc: j.ts ? `last completed ${j.ts}${j.dur_s != null ? " · " + j.dur_s + "s" : ""}` : "No completed run recorded", state: j.exit === 0 ? "live" : j.exit == null ? "" : "down", stateText: j.exit === 0 ? "ok" : j.exit == null ? "unknown" : "exit " + j.exit, age_h: ago(j.ts),
-        detail: [["last completed", j.ts], ["exit", j.exit], ["schedule", j.schedule || "unknown"], ["duration", j.dur_s != null ? j.dur_s + "s" : "?"]], note: j.source === "hub-runner" ? "Reported by the hub runner. These receipts describe completed runs; a job may currently be running." : "Reported by the hub's legacy cron wrapper." }); });
+      Object.keys(hj).sort().forEach(k => { const j = hj[k],health=SovStatus.hubJob(j,D); row("hub:job:" + k, { label: k, desc: health.summary, state: health.tone, stateText: health.label, age_h: ago(j.ts), job:k,health,
+        detail: [["last completed", j.ts], ["exit", j.exit], ["schedule", j.schedule || "unknown"], ["next verification", health.next_due ? new Date(health.next_due*1000).toLocaleString() : null]], note: health.why || (j.source === "hub-runner" ? "These receipts describe completed runs; a job may currently be running." : "Reported by the hub's legacy cron wrapper.") }); });
     }
     // What the operating system runs, then what runs inside it. A lane row carries the label of the
     // one job that kicks it, so counting the two apart is what keeps the header honest.
@@ -890,7 +891,7 @@ window.onerror = function (msg, src, line, col) {
     if (window.__qaEmpty === "needs") A.need = [];                    // design QA: the empty state
     const rowHTML = (r) => `<div class="row" role="option" tabindex="0" ${r.need != null ? `data-need="${r.need}"` : r.group ? `data-group="${esc(r.group)}"` : `data-jump="${esc(JSON.stringify(r.jump))}"`}>${dot(r.state, r.state)}<span class="name">${esc(r.name)}</span><span class="num">${r.age_h != null ? age(r.age_h) : ""}</span><span class="chev">›</span><span class="desc">${esc(r.detail)}</span></div>${issueHTML(r)}`;
     const col = (title, rows, empty) => `<section class="gcol${rows.length ? "" : " bare"}"><div class="gh">${title}<span class="n">${rows.length}</span></div><div class="gb">${rows.length ? rows.map(rowHTML).join("") : `<div class="empty">${empty}</div>`}</div></section>`;
-    return `<div class="glance-home">${col("Needs you", A.need, "nothing waiting")}${col("Fresh", A.fresh, "nothing new since your last look")}${col("Stale", A.stale, "nothing stale")}</div>`;
+    return `<div class="glance-home">${col("Needs you", A.need, "nothing waiting")}${A.waiting.length?col("Awaiting verification",A.waiting,""):""}${col("Fresh", A.fresh, "nothing new since your last look")}${col("Stale", A.stale, "nothing stale")}</div>`;
   }
   function renderGroupDrawer(g) {
     settingsOpen = false; sel = null;
@@ -1080,6 +1081,15 @@ window.onerror = function (msg, src, line, col) {
     showGateNotice('running');return false;
   };
   const splitReview=()=>view==="review"&&matchMedia("(min-width:1100px)").matches;
+  let backupPending=false,backupResult=null;
+  function backupActions(o){
+    if(!o.job)return '';
+    const health=o.health||{},fresh=!D?._status?.stale&&!D?._status?.error&&hub().reachable===true&&selectedRoot===D?.machine?.vault;
+    return `<div class="sect"><h2>${esc(health.label)}</h2>${health.action?`<p class="prose">${esc(health.action)}</p>`:''}
+      ${health.retry_supported?`<button class="brass" data-act="retry-backup" ${!fresh||backupPending?'disabled':''}>${backupPending?'Checking backup…':'Run backup now'}</button>${!fresh?'<p class="prose">Refresh the configured archive before retrying.</p>':''}`:''}
+      ${backupResult&&o.job==='autocommit'?`<p role="status" class="prose">${esc(backupResult)}</p>`:''}
+      ${health.failure_output?`<details><summary>View failure details</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(health.failure_output)}</pre></details>`:''}</div>`;
+  }
   function renderInspector() {
     if(view==='setup')return;
     if(!settingsOpen&&view!=="review"&&view!=="tools"&&D?.machine?.connected===false){renderSetup(D);return;}
@@ -1152,10 +1162,15 @@ window.onerror = function (msg, src, line, col) {
         ${m.identity ? `<div class="sect"><h2>Identity</h2><div class="prose">Sessions here default to <span class="mono">${esc(m.identity)}</span>.</div></div>` : ""}`;
       return;
     }
+    if (it.kind === "hub" && o.job) {
+      box.innerHTML=head(esc(o.label),esc(o.desc))+`<div class="sect"><p class="prose">${esc(o.note)}</p></div>`+backupActions(o)+
+        `<details class="sect"><summary>Run record</summary>${kv(o.detail.map(([k,v])=>[k,v==null?'–':String(v)]))}${o.health?.verify?`<p class="prose">${esc(o.health.verify)}</p>`:''}</details>`;
+      return;
+    }
     if (it.kind === "backup" || it.kind === "hub") {
       box.innerHTML = head(esc(o.label), esc(o.desc), o.tag) + `
         <div class="sect"><h2>Where it stands</h2>${kv(o.detail.map(([k, v]) => [k, v == null ? "–" : String(v)]))}</div>
-        <div class="sect"><h2>What it means</h2><div class="prose">${esc(o.note)}</div></div>
+        <div class="sect"><h2>What it means</h2><div class="prose">${esc(o.note)}</div></div>${backupActions(o)}
         ${o.gate || o.goto ? `<div class="acts">${o.gate ? `<button class="brass" data-act="gotogate">Open the gate</button>` : ""}${o.goto ? `<button data-goto-view="${o.goto === "backups" ? "backups" : "archive"}" data-goto-sec="${esc(o.goto)}">${o.goto === "backups" ? "Backups view" : "Archive view"}</button>` : ""}</div>` : ""}`;
       return;
     }
@@ -1287,7 +1302,7 @@ window.onerror = function (msg, src, line, col) {
     const weeks = ((h.judge || {}).weeks) || [], rates = weeks.map(w => w.judged ? 100 * w.kept / w.judged : 0), last = weeks[weeks.length - 1];
     const online = fleet.filter(x => (x.net || {}).online).length, offline = fleet.filter(x => (x.net || {}).online === false).length;
     const unknown = fleet.length - online - offline;
-    const pending = reviewQueue().count, needs = D.needs_you || [];
+    const pending = reviewQueue().count, assessment = assess(), needs = assessment.need;
     const hubTxt = h.reachable ? `${dot("live", "hub online")}hub ${esc(((h.via || "").startsWith("ssh ") ? h.via.slice(4) : (h.hub_host || "here")).toLowerCase())}`
       : h.reachable === false ? `${dot("down", "hub offline")}hub silent` : `${dot("", "hub unchecked")}hub unchecked`;
     const row = (pl, label, value, sub, cls) => `<button class="g-row ${cls || ""}" data-place="${esc(JSON.stringify(pl))}"><span class="l">${esc(label)}</span><b>${value}</b><span class="s">${sub || ""}</span><span class="chev">›</span></button>`;
@@ -1303,7 +1318,8 @@ window.onerror = function (msg, src, line, col) {
         ${row({ view: "archive", section: "judge" }, "unjudged", num(st.deferred ?? cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
         ${row({ view: "archive", section: "composition" }, "cards", num(a.total), a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : "")}
         ${row({ view: "hosts" }, "fleet", `${online} of ${fleet.length} up`, offline ? offline + " offline" : unknown ? unknown + " not probed" : "all reachable", offline ? "hot" : "")}
-        ${needs.filter(n => n.kind !== "gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.harness ? { view: "tools", sel: { kind: "tool", id: n.harness } } : n.kind === "gate" ? { view: "review" } : { view: "jobs" }))}"><span class="l">${esc(n.kind)}</span><span class="s wrap">${esc(n.text)}</span><span class="chev">›</span></button>${issueHTML(n)}`).join("")}
+        ${needs.filter(n => n.cause !== "need:gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.jump ? {view:n.jump.view,sel:{id:n.jump.id}} : {view:'glance'}))}"><span class="l">${esc(n.name)}</span><span class="s wrap">${esc(n.detail)}</span><span class="chev">›</span></button>`).join("")}
+        ${assessment.waiting.map(n => row({view:'jobs',sel:{id:n.jump.id}},n.name,'Awaiting verification','')).join('')}
       </div>
       <div class="g-foot"><span class="meta">${esc(m.host || "")} · ${esc(SovStatus.caption(D))}</span><span class="sp"></span><button class="brass" id="g-console">Open console</button></div>`;
     requestAnimationFrame(() => bridge({ cmd: "glanceSize", h: Math.ceil(g.scrollHeight) }));
@@ -1518,6 +1534,11 @@ window.onerror = function (msg, src, line, col) {
         if (f && f.value) { extra.secret = f.value; extra.secretEnv = f.dataset.env; }
         return connect(b.dataset.harness, false, extra);
       }
+      if (act === 'retry-backup') {
+        if(backupPending||!selectedRoot)return;
+        backupPending=true;backupResult=null;renderInspector();
+        return bridge({cmd:'retryBackup',root:selectedRoot});
+      }
       if (act === "kickstart") {   // data-lane: one lane inside a job that carries many, run by name
         const m = { cmd: "kickstart", label: b.dataset.label };
         if (b.dataset.lane) m.lane = b.dataset.lane;
@@ -1661,6 +1682,10 @@ window.onerror = function (msg, src, line, col) {
       render(payload);
       if(resumeReview&&view==='review'&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
+    } else if (kind === "backupResult") {
+      backupPending=false;
+      backupResult=payload.error||(payload.state==='cancelled'?'Cancelled. No backup was started.':payload.verification||'Refresh to inspect the backup result.');
+      renderInspector();if(payload.state==='requested')setTimeout(refresh,4000);
     } else if (kind === "vmstart") {
       setTimeout(refresh, 3000);
     } else if (kind === "log") {

@@ -63,7 +63,7 @@ case "$cmd" in
     # The template-run hub (instance file, runner, jobs, kit, law) lives in sov-hub; the
     # app-installed managed hub keeps its commands on sov-managed-hub.
     case "${1:-}" in
-      init|env|tick|jobs|kit|kit-restore|law) exec "$PYTHON" "$BIN/sov-hub" "$@";;
+      init|env|tick|jobs|kit|kit-restore|law|retry) exec "$PYTHON" "$BIN/sov-hub" "$@";;
       *) exec "$PYTHON" "$BIN/sov-managed-hub" "$@";;
     esac;;
   init) exec /bin/bash "$BIN/sov-init" "$@";;

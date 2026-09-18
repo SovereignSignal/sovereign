@@ -52,3 +52,12 @@ for (const file of fs.readdirSync(path.join(__dirname,'../ui')).filter(f=>/\.(ht
  assert.doesNotMatch(content,/\b(?:approve|reject)\b[^"\n]*\b(?:digest buttons|on Telegram|Archive view)\b/i,`${file}: retired decision instructions`);
 }
 console.log('Decision guidance: no retired digest, Telegram or Archive-view approval instructions in app UI.');
+
+const recovering={ts:new Date().toISOString(),exit:1,health:{state:'awaiting_verification',summary:'Previous blocker cleared; awaiting backup',checked_at:Date.now()/1000,verification_deadline:Date.now()/1000+3600}};
+const snapshot={hub:{reachable:true,jobs:{autocommit:recovering}},jobs:[{label:'com.sovereign.hub.autocommit',last_exit:1}],needs_you:[{kind:'job',text:'com.sovereign.hub.autocommit failed'}]};
+assert.equal(assess(snapshot).need.length,0);assert.equal(assess(snapshot).waiting.length,1);
+assert.equal(assess({...snapshot,_status:{stale:true}}).need.length,1);
+assert.equal(assess({hub:{jobs:{autocommit:{...recovering,health:{...recovering.health,verification_deadline:1}}}}}).need.length,1);
+assert.equal(assess({hub:{jobs:{autocommit:{...recovering,exit:0}}}}).waiting.length,0);
+assert.equal(assess({hub:{jobs:{autocommit:{...recovering,health:{state:'needs_attention'}}}}}).need.length,1);
+console.log('Alert lifecycle: verified blocker, stale observations, missed verification, deduplicated local jobs, successful recovery and new failures passed.');

@@ -28,3 +28,5 @@ body .layout{height:auto;grid-template-columns:230px minmax(0,1fr)}body .layout>
 
 .home-intake { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .home-intake h3 { font-size: 13px; margin: 0 0 10px; }
+
+.home-waiting{grid-column:1/-1;border-top:1px solid var(--rule);padding-top:16px}.home-waiting h2{color:var(--muted)}

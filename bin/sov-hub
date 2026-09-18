@@ -33,10 +33,18 @@ def main(argv=None):
     p = sub.add_parser("kit"); p.add_argument("--apply", action="store_true")
     p = sub.add_parser("kit-restore"); p.add_argument("--capsule", required=True); p.add_argument("--destination", required=True); p.add_argument("--key-file", required=True)
     sub.add_parser("law")
+    p = sub.add_parser("retry"); p.add_argument("--vault", required=True); p.add_argument("--token"); p.add_argument("--apply", action="store_true")
     args = ap.parse_args(argv)
     if not args.cmd:
         ap.print_help(); return 64
     state = runner.state_dir()
+    if args.cmd == "retry":
+        from sovereign_hub.job_action import retry
+        import subprocess
+        try:
+            print(json.dumps(retry(args.vault, args.token, args.apply))); return 0
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            print(json.dumps({"error": str(e)})); return 1
     if args.cmd == "env":
         sys.stdout.write(instance.env_exports(instance.load(state))); return 0
     if args.cmd == "tick":

@@ -75,10 +75,14 @@ n="$(git diff --cached --name-only | wc -l | tr -d '[:space:]')"
 if [ "$n" -eq 0 ]; then
   # Nothing to do. Still make sure the remotes are not behind (a manual commit
   # or a failed push yesterday would otherwise sit unmirrored forever).
+  rc=0
   for r in $SOV_HUB_REMOTES; do
-    git push -q "$r" main 2>/dev/null || echo "vault-autocommit: push $r failed (nothing new to commit)" >&2
+    if ! git push -q "$r" main; then
+      echo "vault-autocommit: push $r failed (nothing new to commit)" >&2
+      rc=1
+    fi
   done
-  exit 0
+  exit "$rc"
 fi
 
 # --- the hard gate: no credential enters history ---

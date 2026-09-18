@@ -698,7 +698,7 @@ if os.path.exists(os.path.join(state, "hub.json")):
     try:
         tmpl = os.path.dirname(os.path.dirname(os.path.realpath(os.path.expanduser("~/brain-bin/sov"))))
         sys.path.insert(0, os.path.join(tmpl, "lib"))
-        from sovereign_hub import instance, jobs, manifest
+        from sovereign_hub import instance, jobs, manifest, job_health
         inst = instance.load(state)
         if os.path.realpath(os.path.expanduser(inst["vault"])) != os.path.realpath(root):
             raise ValueError("hub instance belongs to a different archive")
@@ -713,7 +713,8 @@ if os.path.exists(os.path.join(state, "hub.json")):
             stamp = row["last_run"]
             out["jobs"][jid] = {"ts": datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).isoformat() if stamp is not None else None,
                                 "exit": row["last_exit"] if stamp is not None else None, "last_ok": row["last_ok"],
-                                "schedule": row["schedule"], "cadence_s": cadence, "source": "hub-runner"}
+                                "schedule": row["schedule"], "cadence_s": cadence, "source": "hub-runner",
+                                "health": job_health.describe(jid, row, spec, state, tmpl, root)}
     except (ImportError, OSError, ValueError, KeyError, TypeError, OverflowError):
         out["jobs"] = {}
         out["jobs_error"] = "Hub job receipts could not be read; check the hub configuration and template."

@@ -18,11 +18,24 @@ window.SovStatus = (() => {
   const HUB_CADENCE_H = { "archivist-nightly": 24, "archivist-weekly": 168, "archivist-weekly-landed": 168, "daily-health-check": 24,
     "vault-autocommit": 24, "fleet-watch": 1, "fleet-watch-drill": 168, "proxmox-monitor": 24, "pi-cluster-monitor": 24 };
   const shortLabel = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
+  function hubJob(job, status = {}) {
+    const health = job.health || {}, now = Date.now()/1000;
+    let state = job.exit === 0 ? 'healthy' : job.exit == null ? 'unknown' : 'needs_attention';
+    let action=health.action;
+    let summary = health.summary || (state === 'healthy' ? 'Last run succeeded' : state === 'unknown' ? 'No completed run recorded' : 'Last run failed');
+    if (state === 'needs_attention' && health.state === 'awaiting_verification') {
+      if (!Number.isFinite(health.verification_deadline) || now > health.verification_deadline) {summary = 'Backup verification is overdue';action='Refresh the job record and check the scheduler; run the backup again if no newer success is recorded.';}
+      else if (status._status?.stale || !Number.isFinite(health.checked_at) || now-health.checked_at > 300) {summary = 'Refresh to check backup recovery';action='Refresh status to verify the current blocker and hub connection before retrying.';}
+      else state = 'awaiting_verification';
+    }
+    return {...health, state, summary, action, tone:state === 'healthy' ? 'live' : state === 'needs_attention' ? 'down' : '',
+      label:state === 'awaiting_verification' ? 'Awaiting verification' : state === 'needs_attention' ? 'Needs attention' : state === 'healthy' ? 'Succeeded' : 'Unknown'};
+  }
   function assess(D, storage) {
     const hub = () => D.hub || {}, arch = () => D.archive || {};
     const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
     const ago = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
-    const need = [], fresh = [], stale = []; let cad;
+    const need = [], fresh = [], stale = [], waiting = []; let cad;
     const late = (name, detail, ageH, cad, jump, cause) => {   // one thing against its cadence
       if (ageH == null || cad == null) return;
       if (ageH > 2 * cad) need.push({ state: "down", name, detail: `${detail} ${age(ageH)} ago, expected every ${age(cad)}`, age_h: ageH, jump, cause, order: 0 });
@@ -30,9 +43,13 @@ window.SovStatus = (() => {
       else return true;
     };
     // needs: failures, unreachable, the gate, unprotected machines
-    (D.needs_you || []).forEach((n, i) => need.push({ state: "warn", name: n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: n.kind === "host" ? 0 : 1, cause: "need:" + n.kind, jump:n.host?{view:"hosts",id:n.host}:null }));
-    (D.jobs || []).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
-    Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k, j]) => need.push({ state: "down", name: k, detail: `exited ${j.exit} on the hub`, age_h: ago(j.ts), jump: { view: "jobs", id: "hub:job:" + k }, order: 0, cause: "job-failed" }));
+    (D.needs_you || []).forEach((n, i) => { if(n.kind === "job" && Object.keys(h.jobs||{}).some(k => n.text?.includes("com.sovereign.hub."+k)))return; need.push({ state: "warn", name: n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: n.kind === "host" ? 0 : 1, cause: "need:" + n.kind, jump:n.host?{view:"hosts",id:n.host}:null }); });
+    (D.jobs || []).filter(j => !Object.keys(h.jobs||{}).some(k => j.label === "com.sovereign.hub."+k)).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
+    Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k,j]) => {
+      const health = hubJob(j,D), pending = health.state === 'awaiting_verification';
+      (pending ? waiting : need).push({state:health.tone,name:k,detail:j.health ? health.summary : `exited ${j.exit} on the hub`,
+        why:health.why,action:health.action,verify:health.verify,age_h:ago(j.ts),jump:{view:'jobs',id:'hub:job:'+k},order:0,cause:pending?'job-verifying':'job-failed'});
+    });
     if (h.jobs_error) need.push({ state: "warn", name: "Hub jobs", detail: h.jobs_error, jump: { view: "jobs" }, order: 0, cause: "hub-jobs-unknown" });
     hosts.filter(x => x.net && x.net.online === false && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Operations → Hosts.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
     const hubName = h.hub_host || (m.hub_pointer || '').split(':')[0];
@@ -101,7 +118,7 @@ window.SovStatus = (() => {
     const freshG = collapse(fresh, (cause, rows) => { const newest = Math.min(...rows.map(r => r.age_h == null ? Infinity : r.age_h));
       return { state: "live", name: `${rows.length} mirrors`, detail: `pulled on ${rows[0].host}, newest ${age(newest)} ago`, age_h: isFinite(newest) ? newest : null, order: 1 }; });
     freshG.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
-    return { need: needG, fresh: freshG, stale };
+    return { need: needG, fresh: freshG, stale, waiting };
   }
   const safeURL=value=>{try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)&&u.hostname?u.href:null}catch(_){return null}};
   function caption(status) {
@@ -155,5 +172,5 @@ window.SovStatus = (() => {
       action:'Open Operations → Backups and inspect this lane’s source commit and hub connection. If the service is older, ask its maintainer to update it, then refresh.',
       verify:'The lane reports accepted or waiting after refresh. Only accepted confirms inclusion on the hub.'};
   }
-  return {assess, shortLabel, safeURL, caption, retain, contributionIssue, associations};
+  return {assess, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations};
 })();

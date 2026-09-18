@@ -42,7 +42,7 @@ window.Home = (() => {
     if(!root&&!machine.connected&&!status?.error)return;
     const grid=element('div',null,'home-grid');host.append(grid);
     const nodes=status?.fleet?.hosts||[],tools=(status?.harnesses||[]).filter(h=>h.detected||h.state==='connected'||h.state==='partial'||h.runs_on||h.hub_installed);
-    const needs=SovStatus.assess(status||{},localStorage).need,deliveries=status?.backups?.lanes||[];
+    const assessment=SovStatus.assess(status||{},localStorage),needs=assessment.need,deliveries=status?.backups?.lanes||[];
     const attention=panel('Needs your attention',needs.length||null);
     for(const need of needs){
       const source=need.need!=null?status.needs_you[need.need]:null;
@@ -57,6 +57,11 @@ window.Home = (() => {
     }
     if(!needs.length)message(attention,!status||status.error?'Waiting for a successful status check.':hub.reachable===true?'No attention items reported by the connected system.':'No local attention items reported. Hub review status is unverified.');
 
+    if(assessment.waiting.length){
+      const watching=panel('Awaiting verification',assessment.waiting.length);watching.classList.add('home-waiting');
+      for(const issue of assessment.waiting){watching.append(row(issue.name,issue.detail,'',()=>operations(issue.jump.view,issue.jump.id),'View job'));watching.append(details(issue))}
+      grid.append(watching);
+    }
     const clients=status?.clients||hub.clients||[];
     const incoming=panel('Contributions',(deliveries.length+clients.length)||null);
     for(const c of clients){const record=element('div',null,'home-intake');record.append(element('h3',c.client_id+' · Client / Contribute only'));for(const [label,value] of [['Collection (client reported)',c.collected_at],['Received by hub',c.received_at],['Imported into raw',c.imported_at]]){const stage=element('div',label,'home-stage');stage.append(element('small',value?ago(value):'Not reported'));record.append(stage)}record.append(element('p',c.state==='error'||c.state==='rejected'?'Intake needs attention: '+(c.reason||'See rejected items in the hub receipt.'):'Intake: '+(c.state||'not reported')+'. Promotion requires curation and review.'));incoming.append(record)}
@@ -83,7 +88,7 @@ window.Home = (() => {
     const list=element('div',null,'home-context');
     for(const r of receipts)list.append(row(r.topic,`${r.producer} · ${r.cards} cards · ${ago(r.prepared_at)}${r.test?' · test receipt':''}`,null,()=>api.openNote(r.path)));
     packs.append(list);if(!receipts.length)message(packs,context?.error||(!root?'Open an archive to inspect its context receipts.':'No readable preparation receipts in this archive. Delivery and loading remain unverified.'));
-    if(context?.skipped)message(packs,`${context.skipped} receipt file(s) could not be read safely.`);if(context?.limited)message(packs,'Showing the latest 100 producer receipts.');grid.append(packs,incoming);grid.prepend(attention);
+    if(context?.skipped)message(packs,`${context.skipped} receipt file(s) could not be read safely.`);if(context?.limited)message(packs,'Showing the latest 100 producer receipts.');grid.append(packs,incoming);grid.prepend(attention);const waitingPanel=grid.querySelector(".home-waiting");if(waitingPanel)attention.after(waitingPanel);
     if(root){const local=element('div',null,'home-local');local.append(element('span','Your notes remain plain Markdown.'));const b=element('button','Browse & inspect');b.onclick=api.browse;local.append(b);host.append(local)}
   }
   return {init(options){api=options;render()},view(value){view=value;render()},archive(value){root=value;context=null;selected=null;render()},context(value){context=value;render()},status(value){if(value.request!==request)return;pending=value._status?.pending===true;status=SovStatus.retain(status,value);render()},refresh(){if(pending)return;pending=true;if(status)status={...status,_status:{...status._status,pending:true,stale:true}};render();api.send({cmd:'status',request:++request})}};

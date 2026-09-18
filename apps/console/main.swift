@@ -82,6 +82,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     var gateBusy = false
     var hubBusy = false
     var hubReview: String?
+    var backupBusy = false
     var discoveryBusy = false
     var producerBusy = false
     var producerReview: String?
@@ -136,6 +137,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             panel.canChooseFiles = !panel.canChooseDirectories
             panel.allowsMultipleSelection = false
             if panel.runModal() == .OK, let url = panel.url { deliver("hubPicked", ["field": field, "path": url.path]) }
+        case "retryBackup":
+            retryBackup(d, generation: generation)
         case "hubOperation":
             hubOperation(d, generation: generation)
         case "discover":
@@ -388,6 +391,44 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         value["device_associations"] = deviceAssociationState()
         if statusCache == nil, let error = error { value["error"] = error }
         deliver("status", value, generation: waiter.generation)
+    }
+
+    private func retryBackup(_ request: [String: Any], generation: UUID) {
+        func fail(_ message: String) { deliver("backupResult", ["error": message], generation: generation) }
+        guard !backupBusy, let resources = Bundle.main.resourceURL,
+              let root = Settings.archive, let requested = request["root"] as? String,
+              Settings.archiveKey(root) == Settings.archiveKey(requested) else {
+            fail("Open the configured archive and wait for any backup request to finish."); return
+        }
+        let qa = App.shared.snapshotting ? ProcessInfo.processInfo.environment["SOV_QA_BACKUP_COMMAND"] : nil
+        guard !App.shared.snapshotting || qa != nil else { fail("Live backup actions are disabled during QA."); return }
+        let args = qa.map { [$0, "--root", root] } ?? [resources.appendingPathComponent("runtime/bin/python3").path, "-I", "-B", resources.appendingPathComponent("backend/bin/sov-job-action").path, "--root", root]
+        backupBusy = true
+        run(args, timeLimit: 15) { out, _, code in
+            DispatchQueue.main.async {
+                guard self.generation == generation, Settings.archive == root else { self.backupBusy = false; return }
+                let plan = (out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any] ?? [:]
+                guard code == 0, plan["state"] as? String == "preview", let token = plan["token"] as? String else {
+                    self.backupBusy = false; fail(plan["error"] as? String ?? "The backup could not be previewed. Refresh the hub before retrying."); return
+                }
+                let alert = NSAlert(); alert.messageText = "Run archive backup now?"
+                alert.informativeText = [plan["summary"] as? String, plan["effects"] as? String, plan["hub"] as? String, plan["vault"] as? String].compactMap { $0 }.joined(separator: "\n\n")
+                alert.addButton(withTitle: "Run backup now"); alert.addButton(withTitle: "Cancel")
+                let confirmed: Bool
+                if App.shared.snapshotting { confirmed = ProcessInfo.processInfo.environment["SOV_QA_BACKUP_CONFIRM"] == "1" }
+                else { confirmed = alert.runModal() == .alertFirstButtonReturn }
+                guard confirmed else { self.backupBusy = false; self.deliver("backupResult", ["state": "cancelled"], generation: generation); return }
+                guard self.generation == generation, Settings.archive == root else { self.backupBusy = false; return }
+                self.run(args + ["--apply", "--token", token], timeLimit: 15) { out, _, code in
+                    DispatchQueue.main.async {
+                        self.backupBusy = false
+                        var result = (out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any] ?? ["error": "No result returned. Refresh before retrying; the request may have reached the hub."]
+                        if code != 0 && result["error"] == nil { result["error"] = "The backup request failed. Refresh before retrying." }
+                        self.deliver("backupResult", result, generation: generation)
+                    }
+                }
+            }
+        }
     }
 
     private func hubOperation(_ request: [String: Any], generation: UUID) {
