@@ -28,6 +28,28 @@ check('Direct decision available',true);
 const rect=button().getBoundingClientRect();
 check('Decision button visible',rect.width>0&&rect.left>=0&&rect.right<=innerWidth&&rect.top>=0&&rect.bottom<=innerHeight);
 check('Inspector exposed to accessibility',document.getElementById('inspector').getAttribute('aria-hidden')!=='true');
+if(scene==='layout'){
+ // Reproduce a long proposal after the previous decision left a receipt banner.
+ const notice=document.getElementById('gate-notice');notice.hidden=false;notice.className='gate-feedback approved';
+ notice.innerHTML='<strong>Previous proposal · Approved</strong><p>The card is now in your trusted archive.</p><button>Refresh queue</button><button>Dismiss</button>';
+ const inspector=document.getElementById('inspector');
+ check('Approve, Reject and Open source are all present',['Approve','Reject','Open source'].every(label=>[...inspector.querySelectorAll('.acts button')].some(b=>b.textContent.trim()===label)));
+ const visibleActions=()=>{
+  const bounds=inspector.getBoundingClientRect(),footer=document.getElementById('switch').getBoundingClientRect();
+  return [...inspector.querySelectorAll('.acts button')].every(b=>{
+   const r=b.getBoundingClientRect();
+   return r.width>0&&r.top>=bounds.top&&r.bottom<=Math.min(bounds.bottom,footer.top)&&r.left>=bounds.left&&r.right<=bounds.right&&
+    [r.top+2,r.bottom-2].every(y=>b.contains(document.elementFromPoint(r.left+r.width/2,y)));
+  });
+ };
+ for(const position of [0,.5,1]){
+  inspector.scrollTop=(inspector.scrollHeight-inspector.clientHeight)*position;await pause(100);
+  check('All actions fully visible and hittable at scroll '+position,visibleActions());
+ }
+ notice.hidden=true;inspector.scrollTop=0;await pause(100);
+ check('Actions remain visible after dismissing receipt',visibleActions());
+ notice.hidden=false;await pause(100);
+}
 if(scene==='states'){
  const receive=window.sovDeliver;let checkedAway=false;window.sovDeliver=(kind,payload)=>{if(kind==='gateCheck')checkedAway=true;receive(kind,payload)};
  document.querySelector('[data-act="gate-check"]').click();document.getElementById('operations-tab').click();await wait(()=>checkedAway);window.sovDeliver=receive;document.getElementById('review-tab').click();await wait(()=>button()&&!button().disabled);
@@ -68,14 +90,16 @@ document.getElementById('body').value='';document.getElementById('title').value=
 '''
 def main():
  p=argparse.ArgumentParser();p.add_argument('--evidence',required=True,type=Path);p.add_argument('--scenes',nargs='*');a=p.parse_args();a.evidence.mkdir(parents=True,exist_ok=True);reports=[]
- cases=[('home','dark','1200x800'),('system','light','900x600'),('menu','dark','720x460'),('draft','dark','900x600'),('states','dark','1200x800'),('states','light','720x460')]
+ cases=[('home','dark','1200x800'),('system','light','900x600'),('menu','dark','720x460'),('draft','dark','900x600'),('states','dark','1200x800'),('states','light','720x460')]+[('layout',theme,size) for theme in ('light','dark') for size in ('1210x890','1100x600','1099x600','900x600','720x460')]
  for scene,theme,size in cases:
   if a.scenes and scene not in a.scenes:continue
   t=fixture.GateCheckTests();t.setUp();suite='com.sovereign.qa.review.'+uuid.uuid4().hex
   try:
    command=t.setup_real_gate();home=t.base;(home/'.brain-root').write_text(str(t.root));(home/'.curator-lane').write_text('curator');(home/'brain-bin').mkdir();(home/'brain-bin/sov').write_bytes(command.read_bytes());(home/'brain-bin/sov').chmod(0o700)
+   if scene=='layout':t.card(t.proposals/(t.slug+'.md'),body=('A long proposal must keep every decision button reachable while the card and inspector scroll.\n\n'*60))
    prop={'slug':t.slug,'title':'A useful decision','type':'entity','body':'Reviewed content','source':'owner','confidence':'high','age_h':1}
    data={'machine':{'connected':True,'host':'Review QA','vault':str(t.root),'vault_name':'Review QA'},'hub':{'reachable':True,'via':'local','pending':1,'proposals':[prop]},'archive':{'total':1,'by_type':{'concept':1},'cards':[]},'needs_you':[{'kind':'gate','text':'One proposal. Approve on Telegram.'}]}
+   if scene=='layout':data['obsidian']={'vault_name':'Review QA'}
    status=home/'status';status.write_text('#!/bin/sh\ncat <<\'DATA\'\n'+json.dumps(data)+'\nDATA\n');status.chmod(0o700)
    before=(t.proposals/(t.slug+'.md')).read_bytes()
    first="document.getElementById('review-tab').click();"
