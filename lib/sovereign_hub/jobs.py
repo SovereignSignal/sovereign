@@ -7,6 +7,7 @@ hub's activation does.
 """
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -117,6 +118,78 @@ def status(state, template):
                      "last_run": _read_int(hub / (job_id + ".last-run")), "last_ok": _read_int(hub / (job_id + ".last-ok")),
                      "last_exit": _read_int(hub / (job_id + ".last-exit"))})
     return rows
+
+
+def verified_loaded_job(job_id, state, template, launchctl='/bin/launchctl', timeout=4):
+    """Fail closed unless launchd's active target agrees with its saved manifest.
+
+    launchctl's diagnostic format is not an API. Unknown formats keep an alert
+    actionable and prevent retry; a saved plist alone cannot prove what is loaded.
+    """
+    state, template = Path(state), Path(template)
+    spec = manifest.all_jobs(instance.load(state))[job_id]
+    plist = agents_dir(Path.home()) / (manifest.label(job_id) + '.plist')
+    raw = plist.read_bytes(); installed = plistlib.loads(raw)
+    args = installed.get('ProgramArguments', [])
+    if not isinstance(args, list) or len(args) != 5 or not all(isinstance(x, str) for x in args):
+        raise ValueError('The installed backup job differs from this hub. Review its setup before retrying.')
+    expected = manifest.render(job_id, spec, template, args[0], state, Path.home())
+    if args != expected['ProgramArguments'] or installed.get('Program', args[0]) != args[0]:
+        raise ValueError('The installed backup job differs from this hub. Review its setup before retrying.')
+    if installed.get('EnvironmentVariables') != expected['EnvironmentVariables']:
+        raise ValueError('The installed backup points at a different hub state or environment.')
+    schedule_keys = ('StartInterval', 'StartCalendarInterval')
+    if any(installed.get(k) != expected.get(k) for k in schedule_keys):
+        raise ValueError('The saved backup schedule differs from the hub manifest.')
+    target = 'gui/%d/%s' % (os.getuid(), manifest.label(job_id))
+    result = subprocess.run([launchctl, 'print', target], capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise ValueError('The backup schedule is not loaded. Restore it on the hub before retrying.')
+    output = result.stdout
+
+    def field(name):
+        values = re.findall(r'^\t' + re.escape(name) + r' = (.+)$', output, re.M)
+        return values[0] if len(values) == 1 else None
+
+    def block(name):
+        values = re.findall(r'^\t' + re.escape(name) + r' = \{\n((?:\t\t[^\n]*\n)*)\t\}', output, re.M)
+        return [line[2:] for line in values[0].splitlines()] if len(values) == 1 else []
+
+    if (not output.startswith(target + ' = {\n') or field('path') != str(plist)
+            or field('program') != args[0] or block('arguments') != args):
+        raise ValueError('The loaded backup target differs from its saved setup. Reload the hub schedule before retrying.')
+    env = {}
+    for name in ('default environment', 'inherited environment', 'environment'):
+        for line in block(name):
+            key, sep, value = line.partition(' => ')
+            if not sep:
+                raise ValueError('The loaded backup environment could not be verified.')
+            env[key] = value
+    if (any(env.get(k) != v for k, v in expected['EnvironmentVariables'].items())
+            or any((k.startswith(('SOV_', 'GIT_', 'PYTHON')) or k in ('VAULT', 'BASH_ENV', 'ENV', 'XDG_CONFIG_HOME'))
+                   and k not in expected['EnvironmentVariables'] for k in env)):
+        raise ValueError('The loaded backup uses a different hub state or environment. Reload its schedule before retrying.')
+    calendar = []
+    for descriptor in re.findall(r'^\t{3}descriptor = \{\n((?:\t{4}[^\n]*\n)*)\t{3}\}', output, re.M):
+        values = {}
+        for line in descriptor.splitlines():
+            match = re.fullmatch(r'\t{4}"(\w+)" => (\d+)', line)
+            if not match or match[1] in values:
+                raise ValueError('The loaded backup calendar could not be verified.')
+            values[match[1]] = int(match[2])
+        calendar.append(values)
+    wanted = expected.get('StartCalendarInterval', [])
+    if isinstance(wanted, dict):
+        wanted = [wanted]
+    normalize = lambda rows: sorted(tuple(sorted(row.items())) for row in rows)
+    interval = field('run interval')
+    expected_interval = '%s seconds' % expected['StartInterval'] if 'StartInterval' in expected else None
+    streams = re.findall(r'^\t{3}stream = com\.apple\.launchd\.calendarinterval$', output, re.M)
+    if normalize(calendar) != normalize(wanted) or len(streams) != len(calendar) or interval != expected_interval:
+        raise ValueError('The loaded backup schedule differs from the expected follow-up. Reload the hub schedule.')
+    identity = {'program': args[0], 'arguments': args, 'environment': expected['EnvironmentVariables'],
+                'calendar': calendar, 'interval': interval, 'plist': str(plist)}
+    return {'target': target, 'output': output, 'plist': raw, 'identity': identity}
 
 
 def uninstall(state, template, home, launchctl, apply_=False):

@@ -3,6 +3,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -93,6 +94,18 @@ class HubJobStatus(unittest.TestCase):
         row = self.read()["jobs"]["vault-autocommit"]
         self.assertEqual(row["exit"], 0)
         self.assertEqual(row["source"], "legacy-cron")
+
+    def test_older_template_preserves_failure_without_health_module(self):
+        older=self.home/'older-template'
+        shutil.copytree(ROOT/'lib',older/'lib',ignore=shutil.ignore_patterns('job_health.py','__pycache__'))
+        (older/'bin').mkdir();(older/'bin/sov').write_text('fixture')
+        (self.home/'brain-bin/sov').unlink();(self.home/'brain-bin/sov').symlink_to(older/'bin/sov')
+        self.receipt('autocommit.last-run',1700000000)
+        self.receipt('autocommit.last-exit',1)
+        result=self.read()
+        self.assertNotIn('jobs_error',result)
+        self.assertEqual(result['jobs']['autocommit']['exit'],1)
+        self.assertEqual(result['jobs']['autocommit']['health'],{})
 
 
 if __name__ == "__main__":

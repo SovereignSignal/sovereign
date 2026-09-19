@@ -1,15 +1,36 @@
 """Preview and request the installed backup job; never interrupt or run arbitrary jobs."""
 import hashlib
 import json
-import os
 from pathlib import Path
-import plistlib
 import re
 import shlex
 import subprocess
+import urllib.parse
 
 from sovereign_config import pointer
 from . import instance, jobs, manifest, runner
+
+
+def push_destinations(vault, names):
+    """Resolve all effective push URLs without contacting a remote or exposing credentials."""
+    if not isinstance(names, list) or any(not isinstance(n, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]*', n) for n in names):
+        raise ValueError('The backup destinations must be configured Git remote names.')
+    destinations, labels = {}, []
+    for name in names:
+        result = subprocess.run(['git', '-C', str(vault), 'remote', 'get-url', '--push', '--all', name],
+                                capture_output=True, text=True, timeout=2)
+        urls = result.stdout.splitlines()
+        if result.returncode or not urls:
+            raise ValueError('A configured backup destination could not be resolved. Review the hub Git remotes.')
+        destinations[name] = urls
+        for url in urls:
+            if '://' in url:
+                host = urllib.parse.urlsplit(url).hostname or 'configured server'
+            else:
+                match = re.fullmatch(r'(?:[^/@:]+@)?([^/:]+):.+', url)
+                host = match[1] if match else 'local repository'
+            labels.append('%s (%s)' % (name, host))
+    return destinations, labels
 
 
 def retry(vault, token=None, apply=False, state=None, template=None, ctl='/bin/launchctl'):
@@ -21,32 +42,24 @@ def retry(vault, token=None, apply=False, state=None, template=None, ctl='/bin/l
     spec = manifest.all_jobs(inst).get('autocommit', {})
     if spec.get('program') != 'hub/autocommit':
         raise ValueError('This backup uses a custom program. Review it on the hub before running it.')
-    plist = Path.home() / 'Library/LaunchAgents' / (manifest.label('autocommit') + '.plist')
-    raw = plist.read_bytes()
-    installed = plistlib.loads(raw)
-    args = installed.get('ProgramArguments', [])
-    if len(args) < 3 or args[-2:] != ['tick', 'autocommit'] or Path(args[-3]).resolve() != (template / 'bin/sov-hub').resolve():
-        raise ValueError('The installed backup job differs from this hub. Review its setup before retrying.')
-    if Path(installed.get('EnvironmentVariables', {}).get('SOV_STATE_DIR', '')).resolve() != state.resolve():
-        raise ValueError('The installed backup points at a different hub state directory.')
-    target = 'gui/%d/%s' % (os.getuid(), manifest.label('autocommit'))
-    result = subprocess.run([ctl, 'print', target], capture_output=True, text=True, timeout=4)
-    if result.returncode:
-        raise ValueError('The backup schedule is not loaded. Restore it on the hub before retrying.')
-    if re.search(r'^\s*pid\s*=\s*\d+', result.stdout, re.M) or (state / 'hub/autocommit.lock').exists():
+    loaded = jobs.verified_loaded_job('autocommit', state, template, ctl)
+    if re.search(r'^\s*pid\s*=\s*\d+', loaded['output'], re.M) or (state / 'hub/autocommit.lock').exists():
         raise ValueError('A backup is already running or holds its lock. Wait for completion, then refresh.')
+    destinations, labels = push_destinations(vault, inst['remotes'])
     receipt = next(x for x in jobs.status(state, template) if x['job'] == 'autocommit')
-    contents = [(state / 'hub.json').read_bytes(), raw, json.dumps(receipt, sort_keys=True).encode()]
-    contents += [(template / name).read_bytes() for name in ('bin/hub/autocommit', 'bin/hub/secret-scan', 'bin/sov-redact')]
+    contents = [(state / 'hub.json').read_bytes(), loaded['plist'], json.dumps(receipt, sort_keys=True).encode(),
+                json.dumps(loaded['identity'], sort_keys=True).encode(), json.dumps(destinations, sort_keys=True).encode()]
+    contents += [(template / name).read_bytes() for name in ('bin/hub/autocommit', 'bin/hub/secret-scan', 'bin/sov-redact',
+                 'bin/sov-hub', 'lib/sovereign_hub/runner.py', 'lib/sovereign_hub/manifest.py', 'lib/sovereign_hub/instance.py')]
     fingerprint = hashlib.sha256(b'\0'.join(contents)).hexdigest()
     if apply:
         if not token or token != fingerprint:
-            raise ValueError('The job or its last run changed. Preview this backup again before confirming.')
-        result = subprocess.run([ctl, 'kickstart', target], capture_output=True, text=True, timeout=4)
+            raise ValueError('The job, its destinations or its last run changed. Preview this backup again before confirming.')
+        result = subprocess.run([ctl, 'kickstart', loaded['target']], capture_output=True, text=True, timeout=4)
         if result.returncode:
             raise ValueError('The scheduler did not accept the request. Refresh the hub before retrying.')
     return {'state': 'requested' if apply else 'preview', 'token': fingerprint, 'vault': str(vault),
-            'summary': 'Save archive changes and push them to the configured Git remotes.',
+            'summary': ('Save archive changes and push them to: ' + ', '.join(labels) + '.') if labels else 'Save archive changes locally. No remote backup destinations are configured.',
             'effects': 'The normal backup checks and credential redaction still apply. Existing files may be redacted before saving. A running backup will not be interrupted.',
             'verification': 'Request accepted. Refresh to inspect the new completed run; success is not yet verified.' if apply else 'No backup has been started.'}
 

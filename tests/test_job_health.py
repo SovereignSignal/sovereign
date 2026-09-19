@@ -42,6 +42,25 @@ class Health(unittest.TestCase):
         self.document.write_text('key: sk-' + 'b'*32)
         self.assertEqual(self.describe()['state'], 'needs_attention')
 
+    def test_unreadable_flagged_file_stays_actionable(self):
+        self.document.write_text('key: sk-' + 'b'*32)
+        self.document.chmod(0)
+        try:
+            self.assertEqual(self.describe()['state'], 'needs_attention')
+        finally:
+            self.document.chmod(0o600)
+
+    def test_inaccessible_parent_is_not_a_confirmed_deletion(self):
+        folder = self.vault/'private'; folder.mkdir()
+        self.document.rename(folder/'document.md')
+        (folder/'document.md').write_text('key: sk-' + 'b'*32)
+        self.output.write_text(self.output.read_text().replace('--- document.md', '--- private/document.md'))
+        folder.chmod(0)
+        try:
+            self.assertEqual(self.describe()['state'], 'needs_attention')
+        finally:
+            folder.chmod(0o700)
+
     def test_missed_followup_returns_to_attention(self):
         result = self.describe(now=1700000000+2*86400)
         self.assertEqual(result['state'], 'needs_attention')
@@ -79,15 +98,26 @@ class Retry(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name).resolve(); self.state = self.home/'state'; self.vault=self.home/'vault'; self.vault.mkdir()
-        instance.write(self.state, {'vault':str(self.vault), 'lane':'qa', 'model':'qa', 'endpoint':'http://localhost:1'})
+        instance.write(self.state, {'vault':str(self.vault), 'lane':'qa', 'model':'qa', 'endpoint':'http://localhost:1', 'remotes':['archive']})
         self.plist=self.home/'Library/LaunchAgents/com.sovereign.hub.autocommit.plist'; self.plist.parent.mkdir(parents=True)
         self.plist.write_bytes(plistlib.dumps(manifest.render('autocommit',manifest.JOBS['autocommit'],ROOT,sys.executable,self.state,self.home)))
         self.homepatch=patch.dict(os.environ,HOME=str(self.home));self.homepatch.start();self.addCleanup(self.homepatch.stop)
         self.calls=[]
+        self.real_run=subprocess.run
+        subprocess.run(['git','init','-q',str(self.vault)],check=True)
+        subprocess.run(['git','-C',str(self.vault),'remote','add','archive','https://example.invalid/archive.git'],check=True)
+        item=plistlib.loads(self.plist.read_bytes())
+        self.loaded='gui/%d/com.sovereign.hub.autocommit = {\n'%os.getuid()
+        self.loaded+='\tpath = %s\n\tprogram = %s\n'%(self.plist,item['ProgramArguments'][0])
+        self.loaded+='\targuments = {\n'+''.join('\t\t%s\n'%a for a in item['ProgramArguments'])+'\t}\n'
+        self.loaded+='\tenvironment = {\n'+''.join('\t\t%s => %s\n'%(k,v) for k,v in item['EnvironmentVariables'].items())+'\t}\n'
+        self.loaded+='\tevent triggers = {\n\t\tcalendar => {\n\t\t\tstream = com.apple.launchd.calendarinterval\n\t\t\tdescriptor = {\n\t\t\t\t"Minute" => 30\n\t\t\t\t"Hour" => 4\n\t\t\t}\n\t\t}\n\t}\n}\n'
 
     def ctl(self, args, **kwargs):
+        if args[0] != '/bin/launchctl':
+            return self.real_run(args,**kwargs)
         self.calls.append(args)
-        return subprocess.CompletedProcess(args,0,'state = waiting','')
+        return subprocess.CompletedProcess(args,0,self.loaded if args[1]=='print' else '', '')
 
     def retry(self, **kwargs):
         return job_action.retry(str(self.vault),state=self.state,template=ROOT,**kwargs)
@@ -111,8 +141,60 @@ class Retry(unittest.TestCase):
         self.assertNotIn('kickstart',[c[1] for c in self.calls])
 
     def test_running_backup_is_not_interrupted(self):
-        with patch.object(job_action.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'\tpid = 42','')):
+        self.loaded+='\tpid = 42\n'
+        with patch.object(job_action.subprocess,'run',side_effect=self.ctl):
             with self.assertRaisesRegex(ValueError,'already running'):self.retry()
+
+    def test_actual_loaded_identity_and_calendar_must_match(self):
+        original=self.loaded
+        for before,after in ((str(ROOT/'bin/sov-hub'),str(self.home/'old/bin/sov-hub')),
+                             ('SOV_STATE_DIR => '+str(self.state),'SOV_STATE_DIR => '+str(self.home/'other')),
+                             ('"Hour" => 4','"Hour" => 5'),
+                             ('\tprogram = '+sys.executable,'\tprogram = /usr/bin/false')):
+            self.loaded=original.replace(before,after)
+            with self.subTest(change=before), patch.object(job_action.subprocess,'run',side_effect=self.ctl):
+                with self.assertRaises(ValueError):self.retry()
+                self.assertFalse(job_health.schedule_loaded('autocommit',self.state,ROOT))
+        self.assertNotIn('kickstart',[c[1] for c in self.calls])
+
+    def test_loaded_schedule_changed_after_preview_cannot_run(self):
+        with patch.object(job_action.subprocess,'run',side_effect=self.ctl):
+            plan=self.retry()
+            self.loaded=self.loaded.replace('"Hour" => 4','"Hour" => 5')
+            with self.assertRaises(ValueError):self.retry(token=plan['token'],apply=True)
+        self.assertNotIn('kickstart',[c[1] for c in self.calls])
+
+    def test_changed_push_url_rejects_previous_confirmation(self):
+        with patch.object(job_action.subprocess,'run',side_effect=self.ctl):
+            plan=self.retry()
+            self.assertIn('archive (example.invalid)',plan['summary'])
+            self.real_run(['git','-C',str(self.vault),'remote','set-url','--push','archive','https://other.invalid/repo.git'],check=True)
+            with self.assertRaisesRegex(ValueError,'destinations'):self.retry(token=plan['token'],apply=True)
+        self.assertNotIn('kickstart',[c[1] for c in self.calls])
+
+    def test_all_push_urls_and_rewrite_rules_are_bound_without_exposing_credentials(self):
+        self.real_run(['git','-C',str(self.vault),'remote','set-url','--add','--push','archive','https://user:password@example.invalid/a.git'],check=True)
+        self.real_run(['git','-C',str(self.vault),'remote','set-url','--add','--push','archive','alias:repo.git'],check=True)
+        self.real_run(['git','-C',str(self.vault),'config','url.https://backup.invalid/.insteadOf','alias:'],check=True)
+        with patch.object(job_action.subprocess,'run',side_effect=self.ctl):
+            plan=self.retry()
+            self.assertIn('backup.invalid',plan['summary'])
+            self.assertNotIn('password',json.dumps(plan))
+            self.real_run(['git','-C',str(self.vault),'config','url.https://changed.invalid/.insteadOf','alias:'],check=True)
+            self.real_run(['git','-C',str(self.vault),'config','--unset','url.https://backup.invalid/.insteadOf'],check=True)
+            with self.assertRaisesRegex(ValueError,'destinations'):self.retry(token=plan['token'],apply=True)
+        self.assertNotIn('kickstart',[c[1] for c in self.calls])
+
+    def test_push_instead_of_rewrite_changes_require_a_new_preview(self):
+        self.real_run(['git','-C',str(self.vault),'remote','set-url','archive','alias:repo.git'],check=True)
+        self.real_run(['git','-C',str(self.vault),'config','url.https://backup.invalid/.pushInsteadOf','alias:'],check=True)
+        with patch.object(job_action.subprocess,'run',side_effect=self.ctl):
+            plan=self.retry()
+            self.assertIn('backup.invalid',plan['summary'])
+            self.real_run(['git','-C',str(self.vault),'config','url.https://changed.invalid/.pushInsteadOf','alias:'],check=True)
+            self.real_run(['git','-C',str(self.vault),'config','--unset','url.https://backup.invalid/.pushInsteadOf'],check=True)
+            with self.assertRaisesRegex(ValueError,'destinations'):self.retry(token=plan['token'],apply=True)
+        self.assertNotIn('kickstart',[c[1] for c in self.calls])
 
     def test_wrong_archive_and_installed_state_are_rejected(self):
         with self.assertRaises(ValueError):job_action.retry(str(self.home/'other'),state=self.state,template=ROOT)

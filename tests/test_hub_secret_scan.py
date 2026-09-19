@@ -1,5 +1,6 @@
 """The commit gate distinguishes document slugs from credentials without leaking hits."""
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 import unittest
@@ -39,6 +40,30 @@ class SecretScan(unittest.TestCase):
 
     def test_filename_gate_still_blocks_credential_files(self):
         self.assertEqual(self.scan("ordinary text", ".env").returncode, 1)
+
+    def test_unreadable_content_cannot_pass_the_commit_gate(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); document=root/'note.md'; listing=root/'files'
+            key='sk-'+'Test7Value'*4
+            document.write_text(key); listing.write_text('note.md\n'); document.chmod(0)
+            try:
+                result=subprocess.run([str(ROOT/'bin/hub/secret-scan'),str(listing)],cwd=root,text=True,capture_output=True)
+                self.assertNotEqual(result.returncode,0)
+                self.assertNotIn(key,result.stdout+result.stderr)
+            finally:
+                document.chmod(0o600)
+
+    def test_scanner_read_error_cannot_be_reported_as_zero_hits(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); (root/'note.md').write_text('ordinary text')
+            listing=root/'files';listing.write_text('note.md\n')
+            fake=root/'bin';fake.mkdir();grep=fake/'grep'
+            grep.write_text('#!/bin/bash\nif [ "$1" = "-aoEn" ]; then exit 2; fi\nexec /usr/bin/grep "$@"\n')
+            grep.chmod(0o755)
+            result=subprocess.run([str(ROOT/'bin/hub/secret-scan'),str(listing)],cwd=root,text=True,capture_output=True,
+                                  env=dict(os.environ,PATH=str(fake)+os.pathsep+os.environ.get('PATH','')))
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('cannot scan',result.stderr)
 
 
 if __name__ == "__main__":

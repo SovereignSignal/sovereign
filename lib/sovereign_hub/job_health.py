@@ -1,14 +1,15 @@
 """Read-only explanations for completed hub runs. A cleared blocker is not recovery."""
 import datetime
-import os
 import plistlib
 from pathlib import Path
 import re
+import stat
 import subprocess
 import time
 import tempfile
 
 from brain_redact import redact_text
+from . import jobs
 
 MAX_OUTPUT = 65536
 
@@ -53,7 +54,13 @@ def cleared_scan(output, vault, template):
             return False
         try:
             path.resolve().relative_to(vault)
-            if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_size > 1048576)):
+            if path.is_symlink():
+                return False
+            try:
+                metadata = path.stat()
+            except FileNotFoundError:
+                continue  # A confirmed deletion removes the rejected content.
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 1048576:
                 return False
         except (OSError, ValueError):
             return False
@@ -70,14 +77,8 @@ def cleared_scan(output, vault, template):
 
 def schedule_loaded(job, state, template):
     try:
-        item = plistlib.loads((Path.home() / 'Library/LaunchAgents' / ('com.sovereign.hub.' + job + '.plist')).read_bytes())
-        args = item.get('ProgramArguments', [])
-        if len(args) < 3 or args[-2:] != ['tick', job] or Path(args[-3]).resolve() != (Path(template) / 'bin/sov-hub').resolve():
-            return False
-        if Path(item.get('EnvironmentVariables', {}).get('SOV_STATE_DIR', '')).resolve() != Path(state).resolve():
-            return False
-        return subprocess.run(['/bin/launchctl', 'print', 'gui/%d/com.sovereign.hub.%s' % (os.getuid(), job)],
-                              capture_output=True, timeout=1).returncode == 0
+        jobs.verified_loaded_job(job, state, template, timeout=1)
+        return True
     except (OSError, ValueError, plistlib.InvalidFileException, subprocess.TimeoutExpired):
         return False
 
