@@ -43,8 +43,8 @@ window.SovStatus = (() => {
       else return true;
     };
     // needs: failures, unreachable, the gate, unprotected machines
-    const localHubFailures = new Map(h.via === 'local' ? Object.entries(h.jobs||{}).filter(([,j])=>j.source==='hub-runner'&&j.ts&&j.exit!=null&&j.exit!==0).map(([k,j])=>['com.sovereign.hub.'+k,j.exit]) : []);
-    const coveredLocalJob = j => localHubFailures.has(j.label) && localHubFailures.get(j.label) === j.last_exit;
+    const localHubFailures = new Map(h.via === 'local' ? Object.entries(h.jobs||{}).filter(([,j])=>j.source==='hub-runner'&&j.ts&&j.exit!=null&&j.exit!==0).map(([k,j])=>['com.sovereign.hub.'+k,j]) : []);
+    const coveredLocalJob = j => {const receipt=localHubFailures.get(j.label);return receipt && receipt.exit===j.last_exit && Number.isFinite(j.last_run) && Date.parse(receipt.ts)/1000===j.last_run;};
     (D.needs_you || []).forEach((n, i) => { if(n.kind === "job" && (!n.host||n.host===m.host) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return; need.push({ state: "warn", name: n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: n.kind === "host" ? 0 : 1, cause: "need:" + n.kind, jump:n.host?{view:"hosts",id:n.host}:null }); });
     (D.jobs || []).filter(j => !coveredLocalJob(j)).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
     Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k,j]) => {

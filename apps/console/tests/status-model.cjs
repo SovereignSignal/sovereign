@@ -53,8 +53,8 @@ for (const file of fs.readdirSync(path.join(__dirname,'../ui')).filter(f=>/\.(ht
 }
 console.log('Decision guidance: no retired digest, Telegram or Archive-view approval instructions in app UI.');
 
-const recovering={ts:new Date().toISOString(),exit:1,source:'hub-runner',health:{state:'awaiting_verification',summary:'Previous blocker cleared; awaiting backup',checked_at:Date.now()/1000,verification_deadline:Date.now()/1000+3600}};
-const snapshot={machine:{host:'local'},hub:{via:'local',reachable:true,jobs:{autocommit:recovering}},jobs:[{label:'com.sovereign.hub.autocommit',last_exit:1}],needs_you:[{kind:'job',text:'com.sovereign.hub.autocommit last exited 1. Check its log.'}]};
+const recovering={ts:new Date(Math.floor(Date.now()/1000)*1000).toISOString(),exit:1,source:'hub-runner',health:{state:'awaiting_verification',summary:'Previous blocker cleared; awaiting backup',checked_at:Date.now()/1000,verification_deadline:Date.now()/1000+3600}};
+const snapshot={machine:{host:'local'},hub:{via:'local',reachable:true,jobs:{autocommit:recovering}},jobs:[{label:'com.sovereign.hub.autocommit',last_exit:1,last_run:Date.parse(recovering.ts)/1000}],needs_you:[{kind:'job',text:'com.sovereign.hub.autocommit last exited 1. Check its log.'}]};
 assert.equal(assess(snapshot).need.length,0);assert.equal(assess(snapshot).waiting.length,1);
 assert.equal(assess({...snapshot,_status:{stale:true}}).need.length,1);
 assert.equal(assess({hub:{jobs:{autocommit:{...recovering,health:{...recovering.health,verification_deadline:1}}}}}).need.length,1);
@@ -69,4 +69,7 @@ for(const via of ['ssh hub',undefined])for(const exit of [0,1]){
 assert.ok(assess({...snapshot,hub:{...snapshot.hub,jobs:{autocommit:{...recovering,exit:0}}}}).need.length>0);
 assert.ok(assess({...snapshot,jobs:[{label:'com.sovereign.hub.autocommit-old',last_exit:1}],needs_you:[{kind:'job',text:'com.sovereign.hub.autocommit-old last exited 1.'}]}).need.length>0);
 assert.ok(assess({...snapshot,needs_you:[{kind:'job',host:'other',text:snapshot.needs_you[0].text}]}).need.length>0);
+for(const last_run of [undefined,NaN,Date.parse(recovering.ts)/1000+1,Date.parse(recovering.ts)/1000-1]){
+ assert.ok(assess({...snapshot,jobs:[{...snapshot.jobs[0],last_run}]}).need.some(n=>n.jump?.id==='com.sovereign.hub.autocommit'));
+}
 console.log('Alert lifecycle: verified blocker, stale observations, missed verification, deduplicated local jobs, successful recovery and new failures passed.');
