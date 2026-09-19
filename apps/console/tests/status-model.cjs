@@ -53,11 +53,20 @@ for (const file of fs.readdirSync(path.join(__dirname,'../ui')).filter(f=>/\.(ht
 }
 console.log('Decision guidance: no retired digest, Telegram or Archive-view approval instructions in app UI.');
 
-const recovering={ts:new Date().toISOString(),exit:1,health:{state:'awaiting_verification',summary:'Previous blocker cleared; awaiting backup',checked_at:Date.now()/1000,verification_deadline:Date.now()/1000+3600}};
-const snapshot={hub:{reachable:true,jobs:{autocommit:recovering}},jobs:[{label:'com.sovereign.hub.autocommit',last_exit:1}],needs_you:[{kind:'job',text:'com.sovereign.hub.autocommit failed'}]};
+const recovering={ts:new Date().toISOString(),exit:1,source:'hub-runner',health:{state:'awaiting_verification',summary:'Previous blocker cleared; awaiting backup',checked_at:Date.now()/1000,verification_deadline:Date.now()/1000+3600}};
+const snapshot={machine:{host:'local'},hub:{via:'local',reachable:true,jobs:{autocommit:recovering}},jobs:[{label:'com.sovereign.hub.autocommit',last_exit:1}],needs_you:[{kind:'job',text:'com.sovereign.hub.autocommit last exited 1. Check its log.'}]};
 assert.equal(assess(snapshot).need.length,0);assert.equal(assess(snapshot).waiting.length,1);
 assert.equal(assess({...snapshot,_status:{stale:true}}).need.length,1);
 assert.equal(assess({hub:{jobs:{autocommit:{...recovering,health:{...recovering.health,verification_deadline:1}}}}}).need.length,1);
 assert.equal(assess({hub:{jobs:{autocommit:{...recovering,exit:0}}}}).waiting.length,0);
 assert.equal(assess({hub:{jobs:{autocommit:{...recovering,health:{state:'needs_attention'}}}}}).need.length,1);
+for(const via of ['ssh hub',undefined])for(const exit of [0,1]){
+ const separate=assess({...snapshot,hub:{via,reachable:true,jobs:{autocommit:{...recovering,exit}}}});
+ assert.ok(separate.need.some(n=>n.jump?.id==='com.sovereign.hub.autocommit'));
+ assert.ok(separate.need.some(n=>n.need===0));
+ assert.equal(separate.waiting.length,exit===1?1:0);
+}
+assert.ok(assess({...snapshot,hub:{...snapshot.hub,jobs:{autocommit:{...recovering,exit:0}}}}).need.length>0);
+assert.ok(assess({...snapshot,jobs:[{label:'com.sovereign.hub.autocommit-old',last_exit:1}],needs_you:[{kind:'job',text:'com.sovereign.hub.autocommit-old last exited 1.'}]}).need.length>0);
+assert.ok(assess({...snapshot,needs_you:[{kind:'job',host:'other',text:snapshot.needs_you[0].text}]}).need.length>0);
 console.log('Alert lifecycle: verified blocker, stale observations, missed verification, deduplicated local jobs, successful recovery and new failures passed.');
