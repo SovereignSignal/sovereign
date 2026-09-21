@@ -87,7 +87,33 @@ ap.add_argument("--init", action="store_true", help="set the watermark to now (f
 ap.add_argument("--self-test", action="store_true", help="run the auto-promote decision-logic self-test and exit")
 ap.add_argument("--dump-brief", metavar="FILE", help="write the FULL untargeted judge brief to FILE and exit (offline harness)")
 ap.add_argument("--brief-for", metavar="SOURCE", help="print the targeted judge brief this run would build for SOURCE and exit")
+ap.add_argument("--only", metavar="FILE", help="judge ONLY the vault-relative paths listed in FILE, "
+                                               "one per line, '#' comments ignored. Narrows the "
+                                               "harvest; changes nothing else. Requires --since-days: "
+                                               "a listed file older than the watermark is skipped "
+                                               "without it, and the run would move the watermark.")
 a = ap.parse_args()
+# --only names files the ordinary ordering was never going to reach, which is the
+# whole reason to use it — so the files are usually OLD. Two things then go wrong
+# silently, and both were found by reading rather than by the run failing.
+#
+# The mtime window still applies after the --only filter, so a listed file older
+# than the watermark is skipped and the run reports success having judged a
+# fraction of the list. On 2026-09-21 that would have been 4 of 46.
+#
+# Worse, a run without --since-days writes the watermark to now at the end, held
+# back only for errored and deferred files. A small --only run defers nothing, so
+# it would jump the watermark forward and strand every unjudged item the nightly
+# is still draining — 2,360 of them that day.
+#
+# --since-days fixes both: it overrides the watermark for the window, and the
+# write block treats an explicit window as a backfill that never moves it.
+if a.only and a.since_days is None:
+    sys.exit("curator-run: --only requires --since-days.\n"
+             "Without it, any listed file older than the watermark is silently skipped, and\n"
+             "finishing the run would move the watermark forward and strand the nightly's\n"
+             "unjudged backlog. Pass a window that covers the oldest file in the list; an\n"
+             "explicit window is treated as a backfill and never moves the watermark.")
 
 
 # ---------------------------------------------------------------------------
@@ -1341,8 +1367,33 @@ def _excerpt(path, limit=1200):
         return ""
     return re.sub(r"\s+", " ", txt).strip()
 
+def _only_set(path):
+    """Vault-relative paths this run is restricted to, or None for no restriction.
+
+    A narrowing of the harvest and nothing else: the same judge, prompt, thresholds
+    and gate apply to whatever survives it. Existing scoping (CURATOR_INCLUDE and
+    CURATOR_EXCLUDE) matches the DIRECTORY being walked, so it cannot pick one file
+    out of a folder — which is what a one-off pass over twelve versions of one deck
+    needs. An empty or unreadable list is fatal rather than silently unrestricted:
+    "judge nothing" and "judge everything" must never be one typo apart.
+    """
+    if not path:
+        return None
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as fh:
+            wanted = {ln.strip().strip("/") for ln in fh
+                      if ln.strip() and not ln.lstrip().startswith("#")}
+    except OSError as exc:
+        sys.exit("curator-run: cannot read --only list %s: %s" % (path, exc))
+    if not wanted:
+        sys.exit("curator-run: --only list %s is empty. Refusing: an empty restriction "
+                 "would otherwise read as no restriction at all." % path)
+    return wanted
+
+
 def candidates():
     out, skipped_by_hash = [], 0
+    only = _only_set(a.only)
     for r in (os.path.join(VAULT, "raw"), os.path.join(VAULT, "workstreams")):
         for dp, dn, fn in os.walk(r):
             if LANE in dp or "/node_modules" in dp or "/.git" in dp or "/imports/" in dp:
@@ -1362,6 +1413,8 @@ def candidates():
                 if f == "LANE.md":
                     continue  # the lane's contract file — config, never material
                 p = os.path.join(dp, f)
+                if only is not None and os.path.relpath(p, VAULT) not in only:
+                    continue  # --only: a narrowed harvest, nothing else changed
                 try:
                     if os.path.getmtime(p) <= since:
                         continue
