@@ -1107,14 +1107,14 @@ def self_test():
         f.write("{not json")
     check("cbmap corrupt file -> {}", cbmap_load(tmpmap) == {})
     check("cbmap missing file -> {}", cbmap_load(os.path.join(tmpdir, "nope.json")) == {})
-    tok, m2 = cb_token("short-slug", {})
-    check("cb_token short slug literal", tok == "short-slug" and m2 == {})
-    tok, m2 = cb_token(long_slug, {})
-    check("cb_token long slug mapped", tok == "c1" and m2 == {"c1": long_slug})
-    tok2, m3 = cb_token(long_slug, m2)
-    check("cb_token reuses existing key", tok2 == "c1" and m3 == m2)
-    tok3, m4 = cb_token("z" * 70, m2)
-    check("cb_token next free key", tok3 == "c2" and m4.get("c2") == "z" * 70)
+    tok, map2 = cb_token("short-slug", {})
+    check("cb_token short slug literal", tok == "short-slug" and map2 == {})
+    tok, map2 = cb_token(long_slug, {})
+    check("cb_token long slug mapped", tok == "c1" and map2 == {"c1": long_slug})
+    tok2, map3 = cb_token(long_slug, map2)
+    check("cb_token reuses existing key", tok2 == "c1" and map3 == map2)
+    tok3, map4 = cb_token("z" * 70, map2)
+    check("cb_token next free key", tok3 == "c2" and map4.get("c2") == "z" * 70)
 
     # --- resolve_slug ---
     pend = {"my-slug", "c1"}
