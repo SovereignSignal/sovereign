@@ -1,11 +1,36 @@
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 
 from sovereign_intake.common import IntakeError
 from . import core, recovery
+
+
+def template_hub_instance():
+    """The template-run hub's instance file, or None.
+
+    Same location bin/sov checks before running the law check, so one machine
+    answers "which hub am I" the same way everywhere.
+    """
+    state = os.environ.get('SOV_STATE_DIR') or os.path.join(os.path.expanduser('~'), '.local/state/sovereign')
+    instance = Path(state) / 'hub.json'
+    return instance if instance.is_file() else None
+
+
+def delegated_status():
+    """Answer `status` from the template hub's job table, or None if it is not this machine.
+
+    Returns that command's exit code, so a failing job status is not swallowed.
+    """
+    if not template_hub_instance():
+        return None
+    sov_hub = Path(__file__).resolve().parents[2] / 'bin' / 'sov-hub'
+    if not sov_hub.is_file():
+        return None
+    return subprocess.call([sys.executable, str(sov_hub), 'jobs', 'status'])
 
 
 def main():
@@ -29,6 +54,10 @@ def main():
         elif args.command == 'key': result = recovery.recovery_key(args.output, args.apply)
         elif args.command == 'restore': result = recovery.restore(args.capsule, args.destination, args.key_file, args.apply)
         else:
+            if args.command == 'status' and not core.config_path(args.config).exists():
+                delegated = delegated_status()
+                if delegated is not None:
+                    return delegated
             config = core.load(core.config_path(args.config))
             if args.command == 'status': result = core.status(config)
             elif args.command == 'doctor': result = core.doctor(config)

@@ -15,7 +15,7 @@ import time
 import urllib.parse
 
 from brain_local import archive_root
-from sovereign_intake.common import directory, read_under, json_read, atomic, exclusive, locked
+from sovereign_intake.common import IntakeError, atomic, directory, exclusive, json_read, locked, read_under
 
 ROOT = Path(__file__).resolve().parents[2]
 from .manifest import JOBS as _MANIFEST
@@ -75,9 +75,20 @@ def validate(config):
 
 def load(path):
     path = absolute(path)
-    config = json_read(path)
+    # Say which path, in both of the ways a hub can be absent. A missing FILE returns
+    # the default and falls to the isinstance check below; a missing DIRECTORY raises
+    # missing_directory out of read_under, which named nothing at all and is what the
+    # owner actually saw when this hub had never been installed here.
+    nowhere = ('No installed Hub at %s. Install one, pass --config, or if this machine '
+               'runs the template hub use `sov hub jobs status`.' % path)
+    try:
+        config = json_read(path)
+    except IntakeError as exc:
+        if str(exc) == 'missing_directory':
+            raise ValueError(nowhere) from None
+        raise
     if not isinstance(config, dict):
-        raise ValueError('No installed Hub at this configuration path.')
+        raise ValueError(nowhere)
     validate(config)
     if Path(config['destination']) != path.parent:
         raise ValueError('This Hub was moved. Restore a capsule to regenerate its paths.')
