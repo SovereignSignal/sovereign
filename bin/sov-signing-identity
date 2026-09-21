@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Create the local code-signing identity this machine's builds should use.
+
+An ad-hoc signature has no stable identity, so macOS treats every rebuild as a different
+application: the Documents permission is asked for again, every time, forever. build.sh
+has always looked for a certificate named "Sovereign Local Signing" and nothing ever
+created one, so a machine that builds from source falls back to ad-hoc and the owner
+clicks Allow on every launch.
+
+This is for building from source. A distributed Sovereign is signed once with an Apple
+Developer ID and notarized, and its users never see a certificate at all; that is the
+public release gate in DISTRIBUTION.md, not this.
+
+`--apply` prompts once for the login keychain password, at the trust step. That prompt is
+not a limitation to work around: a script that could silently install a trusted signing
+root would be a far worse thing than a recurring dialog.
+
+  sov signing-identity            what exists and what would be created
+  sov signing-identity --apply    create it, then builds pick it up on their own
+"""
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+NAME = "Sovereign Local Signing"
+KEYCHAIN = os.path.expanduser("~/Library/Keychains/login.keychain-db")
+CONFIG = """[req]
+distinguished_name = dn
+x509_extensions = v3
+prompt = no
+[dn]
+CN = %s
+[v3]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
+""" % NAME
+
+
+def existing():
+    r = subprocess.run(["security", "find-identity", "-v", "-p", "codesigning"],
+                       capture_output=True, text=True, timeout=30)
+    return [ln.strip() for ln in r.stdout.splitlines() if NAME in ln]
+
+
+def plan():
+    found = existing()
+    return {"identity": NAME, "present": bool(found), "matches": found,
+            "keychain": KEYCHAIN,
+            "summary": ("This machine already has the identity; builds sign with it and the "
+                        "Documents permission survives a rebuild."
+                        if found else
+                        "This machine has no stable signing identity, so every build is ad-hoc and "
+                        "macOS asks for Documents access again each time."),
+            "effects": ("Creates a self-signed code-signing certificate in your login keychain and "
+                        "marks it trusted for signing. macOS asks for your login password once, at "
+                        "the trust step. Nothing else on the machine changes, and no existing "
+                        "certificate is touched."),
+            "afterwards": "Build again; build.sh finds the identity by name with no flag or setting."}
+
+
+def apply():
+    if existing():
+        return dict(plan(), state="already-present")
+    if not shutil.which("openssl"):
+        raise ValueError("openssl is needed to create the certificate and was not found.")
+    work = tempfile.mkdtemp(prefix="sov-signing-")
+    os.chmod(work, 0o700)
+    try:
+        cfg, key = os.path.join(work, "req.cnf"), os.path.join(work, "k.pem")
+        crt, p12 = os.path.join(work, "c.pem"), os.path.join(work, "b.p12")
+        with open(cfg, "w") as fh:
+            fh.write(CONFIG)
+        run = lambda a: subprocess.run(a, capture_output=True, text=True, timeout=120)
+        r = run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-keyout", key,
+                 "-out", crt, "-days", "3650", "-nodes", "-config", cfg])
+        if r.returncode:
+            raise ValueError("The certificate could not be generated: " + r.stderr.strip()[-200:])
+        os.chmod(key, 0o600)
+        # Apple's importer rejects OpenSSL 3's default MAC, so ask for the older one.
+        r = run(["openssl", "pkcs12", "-export", "-inkey", key, "-in", crt, "-out", p12,
+                 "-passout", "pass:sovereign", "-name", NAME,
+                 "-keypbe", "PBE-SHA1-3DES", "-certpbe", "PBE-SHA1-3DES", "-macalg", "sha1"])
+        if r.returncode:
+            raise ValueError("The certificate could not be packaged: " + r.stderr.strip()[-200:])
+        r = run(["security", "import", p12, "-k", KEYCHAIN, "-P", "sovereign",
+                 "-T", "/usr/bin/codesign"])
+        if r.returncode:
+            raise ValueError("The certificate could not be added to your keychain: " + r.stderr.strip()[-200:])
+        # The one prompt. A self-signed certificate is not usable for signing until the
+        # owner says it is trusted, and that consent is the owner's to give, not a script's.
+        r = subprocess.run(["security", "add-trusted-cert", "-r", "trustRoot", "-p", "codeSign",
+                            "-k", KEYCHAIN, crt], capture_output=True, text=True, timeout=300)
+        if r.returncode:
+            raise ValueError("The certificate was added but not trusted for signing, so builds will "
+                             "still be ad-hoc. Trust it in Keychain Access, or run this again: "
+                             + (r.stderr or "").strip()[-160:])
+    finally:
+        shutil.rmtree(work, ignore_errors=True)   # the private key never outlives this run
+    found = existing()
+    if not found:
+        raise ValueError("The identity was created but macOS does not yet report it as valid for "
+                         "code signing. Open Keychain Access and check its trust settings.")
+    return dict(plan(), state="created", matches=found)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="sov signing-identity")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    try:
+        result = apply() if a.apply else dict(plan(), state="preview")
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        out = {"error": str(e)}
+        print(json.dumps(out) if a.json else "signing identity: " + str(e), file=sys.stderr)
+        return 1
+    if a.json:
+        print(json.dumps(result))
+    else:
+        print(result["summary"])
+        if result["state"] == "preview":
+            print("\n" + result["effects"] + "\n\nRun with --apply to create it.")
+        elif result["state"] == "created":
+            print("\nCreated. " + result["afterwards"])
+        for m in result.get("matches") or []:
+            print("  " + m)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

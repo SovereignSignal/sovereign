@@ -88,6 +88,13 @@ SIGN_ID="${SOV_SIGN_ID:-}"
 if [ -z "$SIGN_ID" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Sovereign Local Signing"; then
   SIGN_ID="Sovereign Local Signing"
 fi
+if [ -z "$SIGN_ID" ]; then
+  # Ad-hoc is a real fallback, not a failure: it builds and runs. But it has no stable
+  # identity, so macOS treats each rebuild as a different app and asks for Documents
+  # access again every time. Say so once, here, rather than leaving someone to wonder.
+  echo "    no signing identity; building ad-hoc. macOS will re-ask for permissions after"
+  echo "    every rebuild. Run \`sov signing-identity --apply\` once to stop that."
+fi
 SIGN_ID="${SIGN_ID:--}"
 # Sign embedded Mach-O code inside out; never silently downgrade a requested identity.
 while IFS= read -r -d '' nested; do
