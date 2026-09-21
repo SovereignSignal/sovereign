@@ -1745,7 +1745,9 @@ if a.dump_brief:
     print(f"curator-run: full brief written to {a.dump_brief} ({len(SYS)} chars)")
     raise SystemExit(0)
 if a.brief_for:
-    sys.stdout.write(brief_for(open(a.brief_for, encoding="utf-8", errors="ignore").read()[:12000]))
+    # Through the same reader the judge uses, or this harness would show a brief built
+    # from binary noise while the real run sees converted text.
+    sys.stdout.write(brief_for(_source_text(a.brief_for)[:12000]))
     raise SystemExit(0)
 
 
