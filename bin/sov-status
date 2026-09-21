@@ -1281,6 +1281,70 @@ def fetch_hub(root, hub_pointer, want):
     return {"reachable": None, "error": "no ~/.brain-hub pointer and this machine holds no hub lane"}
 
 
+def lane_permission_findings(fm, name, root):
+    """Where a lane's declared permissions disagree with themselves or with the law.
+
+    Every permission failure found on 2026-09-20 was this shape: the contract and the
+    reality had drifted and nothing compared them. Two producers carried a read wire
+    their owner never intended; a git-branch lane hit a mirror gate no contract
+    declared; a lane the law never named had been running for weeks. None of it was
+    hidden. Nothing looked.
+
+    Contract-level only. Whether a producer actually holds the files its scope excludes
+    can only be seen on that producer, not from here.
+    """
+    out = []
+    val = lambda k: str(fm.get(k) or "").split("#")[0].strip()
+    write, read, status = val("write"), val("read"), val("status")
+    if write == "git-branch" and not fm.get("mirror_harnesses"):
+        out.append({"level": "warn", "text": "git-branch lane declares no mirror_harnesses; the mirror refuses every harness until it does"})
+    if read in ("none", "") and fm.get("read_scope"):
+        out.append({"level": "warn", "text": "declares a read_scope while reading nothing; one of the two is stale"})
+    if not read:
+        out.append({"level": "warn", "text": "no read declared, so what this producer may see is unstated"})
+    if not fm.get("gear"):
+        out.append({"level": "warn", "text": "no trust gear declared"})
+    try:
+        law = open(os.path.join(root, "CLAUDE.md"), encoding="utf-8", errors="ignore").read()
+        if name.lower() not in law.lower():
+            out.append({"level": "warn", "text": "the law never names this lane, so no one agreed it should exist"})
+    except OSError:
+        pass
+    if status == "retired":
+        out.append({"level": "info", "text": "retired; kept as provenance, not a live wire"})
+    return out
+
+
+def _installed_app():
+    """The canonical installed app, beside the source it was built from.
+
+    Nothing compared the two until 2026-09-20, so one machine ran a 0.1 build-1
+    prototype for months while the other moved through twenty-two builds and every
+    release note truthfully said the first was "unchanged".
+
+    Reads ~/Applications/Sovereign.app only. That is the project's one canonical
+    install location, and deliberately not whatever the bundle id resolves to: four
+    bundles shared com.sovereign.console on one machine and macOS picked the highest
+    VERSION, which on that day was an unreleased build sitting in /private/tmp.
+    """
+    app = os.path.expanduser("~/Applications/Sovereign.app")
+    info = os.path.join(app, "Contents", "Info.plist")
+    if not os.path.isfile(info):
+        return {"installed": False}
+    out = {"installed": True, "path": app}
+    try:
+        import plistlib
+        with open(info, "rb") as fh:
+            d = plistlib.load(fh)
+        out["version"] = d.get("CFBundleShortVersionString")
+        out["build"] = d.get("CFBundleVersion")
+        # Absent on anything built before the stamp existed, which is itself the answer.
+        out["source_commit"] = d.get("SovereignSourceCommit")
+    except Exception:
+        out["unreadable"] = True
+    return out
+
+
 def main():
     if any(a in sys.argv[1:] for a in ("--help", "-h")):
         print(__doc__)
@@ -1297,11 +1361,13 @@ def main():
         rev = subprocess.run(["git", "-C", TEMPLATE_ROOT, "log", "-1", "--format=%h %cs"], capture_output=True, text=True, timeout=5).stdout.strip()
     except Exception:
         rev = None
+    app = _installed_app()
 
     out = {"generated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
            "machine": {"vault": root, "vault_name": os.path.basename(root) if root else None, "host": host,
                        "core": [c for c in core.split(",") if c], "template": TEMPLATE_ROOT, "template_rev": rev,
-                       "staging": stage, "connected": bool(root), "hub_pointer": hub_pointer}}
+                       "staging": stage, "connected": bool(root), "hub_pointer": hub_pointer,
+                       "app": app}}
     try:
         intro = brain_discovery.describe()
         out["machine"].update({key: intro["machine"].get(key) for key in ("role", "client_mode", "role_basis")})
@@ -1361,7 +1427,11 @@ def main():
                           "hub_files": (hub_lanes.get(name) or {}).get("files") if isinstance(hub_lanes.get(name), dict) else None,
                           "cards": (hub_contrib.get(name) or {}).get("cards", 0),
                           "recent_cards": (hub_contrib.get(name) or {}).get("recent", []),
-                          "last_run": manifest_last_run(d), "reads_7d": receipts_7d(d)})
+                          "last_run": manifest_last_run(d), "reads_7d": receipts_7d(d),
+                          # The permission grant itself, so something can finally show it.
+                          "gear": fm.get("gear"), "mirror_harnesses": fm.get("mirror_harnesses"),
+                          "read_scope": bool(fm.get("read_scope")),
+                          "findings": lane_permission_findings(fm, name, root)})
     out["lanes"] = lanes
 
     # harness catalog + installed state

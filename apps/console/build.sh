@@ -37,6 +37,12 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/ui"
 cp "$BUILD/Sovereign" "$APP/Contents/MacOS/Sovereign"
 cp "$HERE/Info.plist" "$APP/Contents/Info.plist"
+# Stamp the source this bundle was built from. Without it nothing can compare an
+# installed app against available source, which is how one machine ran a 0.1
+# prototype for months while the other moved through twenty-two builds.
+SRC_REV="$(git -C "$HERE/../.." log -1 --format=%h 2>/dev/null || echo unknown)"
+SRC_DIRTY=""; [ -z "$(git -C "$HERE/../.." status --porcelain 2>/dev/null)" ] || SRC_DIRTY="+local"
+/usr/libexec/PlistBuddy -c "Add :SovereignSourceCommit string ${SRC_REV}${SRC_DIRTY}" "$APP/Contents/Info.plist"
 if [ "$PREVIEW" -eq 1 ]; then
   /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.sovereign.console.preview' "$APP/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c 'Set :CFBundleName Sovereign Preview' "$APP/Contents/Info.plist"

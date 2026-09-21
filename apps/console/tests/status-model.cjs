@@ -97,3 +97,44 @@ assert.equal(copyRow({machine:{host:'here'},hub:{lane:'curator',lanes:{}},
 assert.equal(copyRow({machine:{host:'here'},hub:{lanes:{}},
   lanes:[{lane:'old',vault_age_h:900,hub_age_h:1,retired:true}]}), undefined);
 console.log('Copy lag: compares one lane in two places, names it, exempts the curator lane and retired lanes.');
+
+// The app must say whether it was built from the source on this machine. Nothing did,
+// which is how one machine ran a 0.1 prototype for months while the other moved through
+// twenty-two builds and every release note truthfully called the first "unchanged".
+const appRow = d => { const a = assess(d); return [...a.need, ...a.stale, ...a.fresh].find(x => x.name === 'this app'); };
+const withApp = (app, rev) => ({machine:{host:'here',app,template_rev:rev}});
+// Built from what is here: a quiet confirmation, not an alert.
+const current = appRow(withApp({installed:true,version:'1.2.3',build:'9',source_commit:'abc1234'},'abc1234 2026-01-01'));
+assert.equal(current.state,'live'); assert.match(current.detail,/built from the source on this machine/);
+// Built from something else: a thing to do.
+const appBehind = appRow(withApp({installed:true,version:'1.0.0',build:'1',source_commit:'old9999'},'abc1234 2026-01-01'));
+assert.equal(appBehind.state,'warn'); assert.equal(appBehind.cause,'app-behind');
+assert.match(appBehind.detail,/old9999/); assert.match(appBehind.detail,/abc1234/);
+assert.ok(assess(withApp({installed:true,version:'1.0.0',build:'1',source_commit:'old9999'},'abc1234 2026-01-01')).need.some(x=>x.name==='this app'),'behind belongs in needs');
+// A local build is still current when its commit matches.
+assert.equal(appRow(withApp({installed:true,version:'1.2.3',build:'9',source_commit:'abc1234+local'},'abc1234 2026-01-01')).state,'live');
+// An unstamped build says so rather than implying an agreement it cannot check.
+assert.equal(appRow(withApp({installed:true,version:'0.1',build:'1',source_commit:null},'abc1234 2026-01-01')).cause,'app-unstamped');
+// No app installed raises nothing at all.
+assert.equal(appRow(withApp({installed:false},'abc1234 2026-01-01')), undefined);
+console.log('App currency: current, behind, local build, unstamped and absent all reported honestly.');
+
+// A lane's contract is what grants its permissions. Nothing compared contract with
+// reality until 2026-09-20, which is how a read wire nobody intended, a mirror gate no
+// contract declared, and a lane the law never named all ran unnoticed.
+const permRows = d => assess(d).stale.filter(x => x.cause === 'permission-drift');
+const lanes = fs => ({machine:{host:'here'},lanes:fs});
+assert.equal(permRows(lanes([{lane:'clean',findings:[]}])).length, 0);
+const drift = permRows(lanes([{lane:'alpha',relative_path:'raw/workspaces/alpha',
+  findings:[{level:'warn',text:'git-branch lane declares no mirror_harnesses'}]}]));
+assert.equal(drift.length,1);
+assert.equal(drift[0].name,'lane alpha');
+assert.match(drift[0].detail,/mirror_harnesses/);
+assert.match(drift[0].action,/raw\/workspaces\/alpha\/LANE\.md/);
+assert.equal(drift[0].causeLabel,'have a permission their contract does not settle');
+// info-level notes (a retired lane saying so) are not drift and must not raise a row.
+assert.equal(permRows(lanes([{lane:'old',findings:[{level:'info',text:'retired'}]}])).length, 0);
+// Several lanes each contribute their own row, so grouping can count them.
+assert.equal(permRows(lanes([{lane:'a',findings:[{level:'warn',text:'x'}]},
+                             {lane:'b',findings:[{level:'warn',text:'y'},{level:'info',text:'z'}]}])).length, 2);
+console.log('Permission drift: contract-vs-reality findings surface per lane, info notes do not.');

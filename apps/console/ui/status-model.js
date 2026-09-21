@@ -42,6 +42,36 @@ window.SovStatus = (() => {
       else if (ageH > cad) stale.push({ state: "warn", name, detail: `${detail} ${age(ageH)} ago, expected every ${age(cad)}`, age_h: ageH, jump });
       else return true;
     };
+    // Is the app you are looking at built from the source on this machine?
+    // Nothing answered that until 2026-09-20, so one machine ran a 0.1 prototype for
+    // months while the other moved through twenty-two builds. It always says something:
+    // current is a quiet confirmation, behind is a thing to do, and a build with no
+    // stamp says so rather than implying agreement it cannot check.
+    const appInfo = m.app || {}, srcRev = (m.template_rev || "").split(" ")[0];
+    if (appInfo.installed) {
+      const label = `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"}`;
+      const jump = { view: "system" };
+      if (!appInfo.source_commit) {
+        stale.push({ state: "warn", name: "this app", detail: `${label} does not record the source it was built from, so it cannot be compared with this machine's source. Rebuild to start recording it.`, age_h: null, jump, cause: "app-unstamped" });
+      } else if (!srcRev) {
+        stale.push({ state: "warn", name: "this app", detail: `${label}; this machine's source revision could not be read, so the two cannot be compared.`, age_h: null, jump, cause: "app-source-unknown" });
+      } else if (appInfo.source_commit.replace("+local", "") !== srcRev) {
+        need.push({ state: "warn", name: "this app", detail: `${label} was built from ${appInfo.source_commit}; this machine's source is ${srcRev}. Rebuild and install to run what you have.`, age_h: null, jump, order: 1, cause: "app-behind" });
+      } else {
+        fresh.push({ state: "live", name: "this app", detail: `${label}, built from the source on this machine (${srcRev})`, age_h: null, jump, cause: "app-current" });
+      }
+    }
+    // Permissions: where a lane's declared contract disagrees with itself or the law.
+    // Every permission failure found on 2026-09-20 had this shape, and none of them was
+    // hidden: a read wire nobody intended, a mirror gate no contract declared, a lane
+    // running that the law never named. Nothing compared the contract with the reality.
+    (D.lanes || []).forEach(l => (l.findings || []).filter(f => f.level === "warn").forEach(f => {
+      stale.push({ state: "warn", name: `lane ${l.lane}`, detail: f.text,
+                   why: "The lane's own contract is what grants a producer its read and write permissions; this one does not say what it should.",
+                   action: `Open the lane's LANE.md and settle it: ${l.relative_path || "raw/workspaces/" + l.lane}/LANE.md`,
+                   age_h: null, jump: { view: "tools", id: l.lane },
+                   cause: "permission-drift", causeLabel: "have a permission their contract does not settle" });
+    }));
     // needs: failures, unreachable, the gate, unprotected machines
     const localHubFailures = new Map(h.via === 'local' ? Object.entries(h.jobs||{}).filter(([,j])=>j.source==='hub-runner'&&j.ts&&j.exit!=null&&j.exit!==0).map(([k,j])=>['com.sovereign.hub.'+k,j]) : []);
     const coveredLocalJob = j => {const receipt=localHubFailures.get(j.label);return receipt && receipt.exit===j.last_exit && Number.isFinite(j.last_run) && Date.parse(receipt.ts)/1000===j.last_run;};
