@@ -31,6 +31,38 @@ window.SovStatus = (() => {
     return {...health, state, summary, action, tone:state === 'healthy' ? 'live' : state === 'needs_attention' ? 'down' : '',
       label:state === 'awaiting_verification' ? 'Awaiting verification' : state === 'needs_attention' ? 'Needs attention' : state === 'healthy' ? 'Succeeded' : 'Unknown'};
   }
+  // How complete is the archive, from numbers that are already true rather than a score.
+  // One headline figure only: the share of eligible material the curator has actually
+  // read. Producers and the gate sit beside it because a high share means little if the
+  // things that feed it stopped, and a decision waiting on the owner is not the same
+  // kind of incomplete as material not yet read.
+  function completeness(D) {
+    const st = (D && D.hub && D.hub.status) || {}, cov = st.coverage || {};
+    const total = Number(cov.processable) || 0, judged = Number(cov.judged_ever) || 0;
+    const lanes = (D && D.lanes || []).filter(l => !l.retired);
+    // "Delivering" is the lane's own declared cadence, not a fixed clock: a lane that
+    // collects weekly is not behind at six days.
+    const live = lanes.filter(l => l.vault_age_h != null && l.vault_age_h <= 48).length;
+    const gate = Number((D && D.hub && D.hub.pending)) || 0;
+    const pct = total > 0 ? Math.round((judged / total) * 100) : null;
+    const parts = [];
+    if (pct != null) parts.push(pct + "% read");
+    if (lanes.length) parts.push(live + " of " + lanes.length + " producers delivering");
+    parts.push(gate ? (gate + " waiting on you") : "nothing waiting on you");
+    return {
+      read: { judged, total, pct },
+      waiting: Number(cov.unjudged_in_window) || 0,
+      out_of_reach: Number(cov.stranded_pre_watermark) || 0,
+      producers: { delivering: live, total: lanes.length },
+      gate,
+      headline: parts.join(" \u00b7 "),
+      // Said plainly, because a percentage on its own invites the wrong conclusion.
+      detail: total > 0
+        ? judged.toLocaleString() + " of " + total.toLocaleString() + " eligible items have been read by the curator."
+        : "The curator has not reported what it can see yet."
+    };
+  }
+
   function assess(D, storage) {
     const hub = () => D.hub || {}, arch = () => D.archive || {};
     const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
@@ -84,6 +116,32 @@ window.SovStatus = (() => {
                    age_h: null, jump: { view: "tools", id: l.lane },
                    cause: "permission-drift", causeLabel: "have a permission their contract does not settle" });
     }));
+    // What is waiting. The hub has always reported its queue depth and the app showed
+    // none of it: a row saying "open Review" while 2,259 items sat unjudged and 2,451
+    // more were deferred beyond the nightly cap. A number the owner cannot see is a
+    // number he cannot act on, and the rate is what makes it mean something.
+    const cov = st.coverage || {}, judgedRun = Number(st.judged) || 0;
+    const waitingCount = Number(cov.unjudged_in_window) || 0;
+    const strandedCount = Number(cov.stranded_pre_watermark) || 0;
+    const deferredCount = Number(st.deferred) || 0;
+    if (waitingCount > 0) {
+      const nights = judgedRun > 0 ? Math.ceil(waitingCount / judgedRun) : null;
+      waiting.push({ state: "warn", name: "Waiting to be judged", age_h: null, jump: { view: "jobs", id: "hub:job:nightly" },
+        detail: `${waitingCount.toLocaleString()} item${waitingCount === 1 ? "" : "s"} the curator has not read yet` +
+                (nights ? `, about ${nights} night${nights === 1 ? "" : "s"} at ${judgedRun} a night.` : "."),
+        why: `${(Number(cov.processable) || 0).toLocaleString()} items are eligible and ${(Number(cov.judged_ever) || 0).toLocaleString()} have ever been judged.` +
+             (deferredCount ? ` ${deferredCount.toLocaleString()} of the waiting are deferred past each run's cap and carried to the next.` : ""),
+        action: "Nothing is lost while it waits: the watermark is held below the oldest unjudged item.",
+        cause: "queue-waiting" });
+    }
+    if (strandedCount > 0) {
+      // Named separately because time alone never reaches it: the nightly judges newest
+      // first, so this tail stays where it is until something goes after it deliberately.
+      waiting.push({ state: "warn", name: "Older than the watermark", age_h: null, jump: { view: "jobs", id: "hub:job:burndown" },
+        detail: `${strandedCount.toLocaleString()} item${strandedCount === 1 ? "" : "s"} sit behind the point the curator started from and will not be reached by the nightly run.`,
+        why: "The nightly judges the newest material first, so this tail is only read by a run that goes after it on purpose.",
+        cause: "queue-stranded" });
+    }
     // needs: failures, unreachable, the gate, unprotected machines
     const localHubFailures = new Map(h.via === 'local' ? Object.entries(h.jobs||{}).filter(([,j])=>j.source==='hub-runner'&&j.ts&&j.exit!=null&&j.exit!==0).map(([k,j])=>['com.sovereign.hub.'+k,j]) : []);
     const coveredLocalJob = j => {const receipt=localHubFailures.get(j.label);return receipt && receipt.exit===j.last_exit && Number.isFinite(j.last_run) && Date.parse(receipt.ts)/1000===j.last_run;};
@@ -176,7 +234,7 @@ window.SovStatus = (() => {
     const freshG = collapse(fresh, (cause, rows) => { const newest = Math.min(...rows.map(r => r.age_h == null ? Infinity : r.age_h));
       return { state: "live", name: `${rows.length} mirrors`, detail: `pulled on ${rows[0].host}, newest ${age(newest)} ago`, age_h: isFinite(newest) ? newest : null, order: 1 }; });
     freshG.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
-    return { need: needG, fresh: freshG, stale, waiting };
+    return { need: needG, fresh: freshG, stale, waiting, completeness: completeness(D) };
   }
   const safeURL=value=>{try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)&&u.hostname?u.href:null}catch(_){return null}};
   function caption(status) {

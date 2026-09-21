@@ -21,6 +21,32 @@ window.Home = (() => {
   function panel(title,count){const p=element('section',null,'home-panel'),h=element('h2',title);if(count!=null)h.append(element('span',String(count)));p.append(h);return p}
   function message(p,text){p.append(element('p',text,'home-message'))}
   function ageFromRun(h){if(h.run_age_h!=null&&Number.isFinite(h.run_age_h))return h.run_age_h;const match=String(h.last_run||'').match(/\d{4}-\d\d-\d\dT\S+/);const n=match&&validTime(match[0]);return n==null?null:Math.max(0,(Date.now()-n)/3600000)}
+  // How complete the archive is, above everything else, every time. The hub always
+  // reported these numbers and the app showed none of them: a row saying "open Review"
+  // while thousands of items sat unread. A bar rather than a sentence because the shape
+  // of what is left is the part worth seeing at a glance.
+  function coverage(host){
+    const c=SovStatus.assess(status||{}).completeness;if(!c)return;
+    const box=element('section',null,'home-coverage');
+    const head=element('div',null,'coverage-head');
+    head.append(element('strong',c.read.pct!=null?c.read.pct+'% read':'Coverage unknown'));
+    head.append(element('small',c.headline));
+    box.append(head);
+    if(c.read.total>0){
+      const bar=element('div',null,'coverage-bar');
+      const seg=(cls,n)=>{if(!n)return;const s=element('i',null,'coverage-seg '+cls);s.style.flexGrow=String(n);bar.append(s)};
+      // read, still to read, and the tail the nightly will never reach: three different
+      // kinds of incomplete, so they are three segments rather than one number.
+      seg('read',c.read.judged);seg('waiting',c.waiting);seg('unreachable',c.out_of_reach);
+      box.append(bar);
+      const legend=element('p',null,'coverage-legend');
+      legend.append(element('span',c.detail));
+      if(c.waiting)legend.append(element('span',' · '+c.waiting.toLocaleString()+' waiting'));
+      if(c.out_of_reach)legend.append(element('span',' · '+c.out_of_reach.toLocaleString()+' out of reach'));
+      box.append(legend);
+    } else box.append(element('p',c.detail,'coverage-legend'));
+    host.append(box);
+  }
   function render(){
     if(!api)return;const host=document.getElementById('system-home');host.replaceChildren();host.classList.toggle('system-mode',view==='system');
     if(view==='system'){
@@ -35,6 +61,7 @@ window.Home = (() => {
     intro.append(element('p',status?.error?'System status unavailable. Your local archive is still available.':machine.connected?`${machine.vault_name||'Connected archive'} · ${machine.host||'this device'}`:'Open an archive and see which tools are connected.'));
     const refresh=element('button',pending?'Checking…':'Refresh status');refresh.disabled=pending;refresh.onclick=()=>Home.refresh();lead.append(intro,refresh);host.append(lead);
     observation(host);if(!status?.machine&&!status?.error)return;
+    coverage(host);
     if(machine.role){const mode=machine.client_mode==='contribute-only'?'Contribute only':machine.client_mode==='read-and-contribute'?'Read and contribute':machine.role==='client'?'Mode not declared':'';host.append(element('p',(machine.host||'This machine')+' · '+(machine.role==='hub'?'Hub':'Client')+(mode?' / '+mode:''),'home-subhead'))}
     if(root&&machine.vault&&root!==machine.vault)host.append(element('div',`You are browsing ${root.split('/').pop()}. Connections below belong to ${machine.vault_name||'another archive'} (${machine.vault}). Opening an archive does not connect it to these tools.`,'home-banner'));
     if(status?.error)host.append(element('div',status.error,'home-banner'));

@@ -1281,7 +1281,7 @@ def fetch_hub(root, hub_pointer, want):
     return {"reachable": None, "error": "no ~/.brain-hub pointer and this machine holds no hub lane"}
 
 
-def lane_permission_findings(fm, name, root):
+def lane_permission_findings(fm, name, root, retired=False):
     """Where a lane's declared permissions disagree with themselves or with the law.
 
     Every permission failure found on 2026-09-20 was this shape: the contract and the
@@ -1296,6 +1296,10 @@ def lane_permission_findings(fm, name, root):
     out = []
     val = lambda k: str(fm.get(k) or "").split("#")[0].strip()
     write, read, status = val("write"), val("read"), val("status")
+    if retired or status == "retired":
+        # Retiring a lane IS the resolution. Reporting it as unsettled would leave a row
+        # the owner already answered, which is how a list of findings stops being read.
+        return [{"level": "info", "text": "retired; kept as provenance, not a live wire"}]
     if write == "git-branch" and not fm.get("mirror_harnesses"):
         out.append({"level": "warn", "text": "git-branch lane declares no mirror_harnesses; the mirror refuses every harness until it does"})
     if read in ("none", "") and fm.get("read_scope"):
@@ -1310,8 +1314,6 @@ def lane_permission_findings(fm, name, root):
             out.append({"level": "warn", "text": "the law never names this lane, so no one agreed it should exist"})
     except OSError:
         pass
-    if status == "retired":
-        out.append({"level": "info", "text": "retired; kept as provenance, not a live wire"})
     return out
 
 
@@ -1431,7 +1433,7 @@ def main():
                           # The permission grant itself, so something can finally show it.
                           "gear": fm.get("gear"), "mirror_harnesses": fm.get("mirror_harnesses"),
                           "read_scope": bool(fm.get("read_scope")),
-                          "findings": lane_permission_findings(fm, name, root)})
+                          "_fm": fm})
     out["lanes"] = lanes
 
     # harness catalog + installed state
@@ -1443,6 +1445,10 @@ def main():
     retired = manifest.get("retired_harnesses") or {}
     for lane in lanes:
         lane["retired"] = any(r.get("lane") == lane["lane"] and not r.get("cleanup_pending") for r in retired.values())
+        # Findings are computed here, not where the row is built, because a lane's retired
+        # state is only known once the manifest has been read: retiring a lane is the
+        # owner's answer to it, and an answered row must not keep asking.
+        lane["findings"] = lane_permission_findings(lane.pop("_fm", {}) or {}, lane["lane"], root, lane["retired"])
     # The lanes that shared job actually serves. A calendar-cadence lane is in the manifest so
     # `sov disconnect all` can reach it, but it keeps its own job: it is not the runner's, and
     # every runner-shaped reading below (a synthetic lane row, the silence rules, the stall

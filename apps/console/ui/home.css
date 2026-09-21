@@ -30,3 +30,15 @@ body .layout{height:auto;grid-template-columns:230px minmax(0,1fr)}body .layout>
 .home-intake h3 { font-size: 13px; margin: 0 0 10px; }
 
 .home-waiting{grid-column:1/-1;border-top:1px solid var(--rule);padding-top:16px}.home-waiting h2{color:var(--muted)}
+
+/* Archive coverage: the first thing on Home, because it is the question the archive exists to answer. */
+.home-coverage{margin:12px 0 4px;padding:12px 14px;border:1px solid var(--line,#2a3344);border-radius:10px;background:var(--panel,#131a26)}
+.coverage-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.coverage-head strong{font-size:22px;line-height:1.1}
+.coverage-head small{opacity:.75}
+.coverage-bar{display:flex;height:8px;margin:10px 0 6px;border-radius:4px;overflow:hidden;background:var(--line,#2a3344)}
+.coverage-seg{display:block;height:100%}
+.coverage-seg.read{background:var(--ok,#3fb950)}
+.coverage-seg.waiting{background:var(--warn,#d29922)}
+.coverage-seg.unreachable{background:var(--muted,#6e7681)}
+.coverage-legend{margin:0;font-size:12px;opacity:.8}

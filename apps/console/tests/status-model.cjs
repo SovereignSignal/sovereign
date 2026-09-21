@@ -150,3 +150,46 @@ assert.equal(permRows(lanes([{lane:'old',findings:[{level:'info',text:'retired'}
 assert.equal(permRows(lanes([{lane:'a',findings:[{level:'warn',text:'x'}]},
                              {lane:'b',findings:[{level:'warn',text:'y'},{level:'info',text:'z'}]}])).length, 2);
 console.log('Permission drift: contract-vs-reality findings surface per lane, info notes do not.');
+
+// What is waiting for the curator. The hub always reported its queue depth and the app
+// showed none of it: "open Review" while thousands of items sat unjudged. The rate is
+// what makes the number mean anything to a person.
+const queueRows = d => assess(d).waiting.filter(x => (x.cause||'').startsWith('queue-'));
+const hubQueue = (status) => ({machine:{host:'here'},hub:{reachable:true,status}});
+const q = queueRows(hubQueue({judged:50,deferred:2451,coverage:{processable:6740,judged_ever:3812,unjudged_in_window:2259,stranded_pre_watermark:669}}));
+assert.equal(q.length,2);
+const w = q.find(x=>x.cause==='queue-waiting');
+assert.match(w.detail,/2,259 items/); assert.match(w.detail,/46 nights at 50 a night/);
+assert.match(w.why,/6,740/); assert.match(w.why,/3,812/); assert.match(w.why,/2,451/);
+// Nothing is lost while it waits, and the row says so rather than reading as an alarm.
+assert.match(w.action,/Nothing is lost/);
+const s = q.find(x=>x.cause==='queue-stranded');
+assert.match(s.detail,/669 items/); assert.match(s.detail,/will not be reached by the nightly/);
+// An empty queue says nothing at all.
+assert.equal(queueRows(hubQueue({judged:50,coverage:{unjudged_in_window:0,stranded_pre_watermark:0}})).length,0);
+// A run that judged nothing must not divide by zero or invent a rate.
+const noRate = queueRows(hubQueue({judged:0,coverage:{unjudged_in_window:12}}))[0];
+assert.match(noRate.detail,/12 items/); assert.ok(!/night/.test(noRate.detail),'no rate claimed when none is known');
+console.log('Queue depth: waiting and stranded are named with the rate that makes them mean something.');
+
+// How complete the archive is, always visible. One headline figure only: the share of
+// eligible material the curator has actually read. A single blended "score" would hide
+// which kind of incomplete you are looking at.
+const comp = d => assess(d).completeness;
+const full = comp({machine:{host:'here'},hub:{reachable:true,pending:2,status:{coverage:{processable:6740,judged_ever:3812,unjudged_in_window:2259,stranded_pre_watermark:669}}},
+  lanes:[{lane:'a',vault_age_h:1},{lane:'b',vault_age_h:2},{lane:'c',vault_age_h:900},{lane:'old',vault_age_h:1,retired:true}]});
+assert.equal(full.read.pct,57); assert.equal(full.read.judged,3812); assert.equal(full.read.total,6740);
+assert.equal(full.waiting,2259); assert.equal(full.out_of_reach,669);
+// A retired lane is not a producer that stopped delivering.
+assert.equal(full.producers.delivering,2); assert.equal(full.producers.total,3);
+assert.equal(full.gate,2);
+assert.match(full.headline,/57% read/); assert.match(full.headline,/2 of 3 producers/); assert.match(full.headline,/2 waiting on you/);
+assert.match(full.detail,/3,812 of 6,740/);
+// Nothing waiting is said plainly, not left blank for the reader to interpret.
+assert.match(comp({machine:{host:'here'},hub:{reachable:true,pending:0,status:{coverage:{processable:10,judged_ever:5}}},lanes:[]}).headline,/nothing waiting on you/);
+// Before the curator has reported, claim no percentage at all.
+const unknown = comp({machine:{host:'here'},hub:{reachable:true,status:{}},lanes:[]});
+assert.equal(unknown.read.pct,null);
+assert.match(unknown.detail,/has not reported/);
+assert.ok(!/%/.test(unknown.headline),'no percentage invented from no data');
+console.log('Completeness: one honest share read, producers and gate beside it, nothing invented.');
