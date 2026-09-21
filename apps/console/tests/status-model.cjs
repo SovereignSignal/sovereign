@@ -101,20 +101,32 @@ console.log('Copy lag: compares one lane in two places, names it, exempts the cu
 // The app must say whether it was built from the source on this machine. Nothing did,
 // which is how one machine ran a 0.1 prototype for months while the other moved through
 // twenty-two builds and every release note truthfully called the first "unchanged".
-const appRow = d => { const a = assess(d); return [...a.need, ...a.stale, ...a.fresh].find(x => x.name === 'this app'); };
+const APP_ROWS = ['Update available','Up to date','Update status unknown'];
+const appRow = d => { const a = assess(d); return [...a.need, ...a.stale, ...a.fresh].find(x => APP_ROWS.includes(x.name)); };
 const withApp = (app, rev) => ({machine:{host:'here',app,template_rev:rev}});
 // Built from what is here: a quiet confirmation, not an alert.
 const current = appRow(withApp({installed:true,version:'1.2.3',build:'9',source_commit:'abc1234'},'abc1234 2026-01-01'));
-assert.equal(current.state,'live'); assert.match(current.detail,/built from the source on this machine/);
+assert.equal(current.state,'live'); assert.equal(current.name,'Up to date');
+assert.match(current.detail,/newest build of this machine's source/);
+assert.match(current.why,/abc1234/,'the revision is evidence, so it belongs in the drawer');
+assert.ok(!/abc1234/.test(current.detail),'the headline must not lead with a commit hash');
 // Built from something else: a thing to do.
 const appBehind = appRow(withApp({installed:true,version:'1.0.0',build:'1',source_commit:'old9999'},'abc1234 2026-01-01'));
 assert.equal(appBehind.state,'warn'); assert.equal(appBehind.cause,'app-behind');
-assert.match(appBehind.detail,/old9999/); assert.match(appBehind.detail,/abc1234/);
-assert.ok(assess(withApp({installed:true,version:'1.0.0',build:'1',source_commit:'old9999'},'abc1234 2026-01-01')).need.some(x=>x.name==='this app'),'behind belongs in needs');
+assert.equal(appBehind.name,'Update available');
+assert.match(appBehind.detail,/newer version of Sovereign is ready to install/);
+assert.equal(appBehind.action,'Update now');
+assert.equal(appBehind.actionKind,'app-update');
+// The hashes are evidence; a person reading the row should not have to decode them.
+assert.ok(!/old9999|abc1234/.test(appBehind.detail),'no commit hashes in the headline');
+assert.match(appBehind.why,/old9999/); assert.match(appBehind.why,/abc1234/);
+assert.ok(assess(withApp({installed:true,version:'1.0.0',build:'1',source_commit:'old9999'},'abc1234 2026-01-01')).need.some(x=>x.name==='Update available'),'behind belongs in needs');
 // A local build is still current when its commit matches.
 assert.equal(appRow(withApp({installed:true,version:'1.2.3',build:'9',source_commit:'abc1234+local'},'abc1234 2026-01-01')).state,'live');
 // An unstamped build says so rather than implying an agreement it cannot check.
-assert.equal(appRow(withApp({installed:true,version:'0.1',build:'1',source_commit:null},'abc1234 2026-01-01')).cause,'app-unstamped');
+const unstamped = appRow(withApp({installed:true,version:'0.1',build:'1',source_commit:null},'abc1234 2026-01-01'));
+assert.equal(unstamped.cause,'app-unstamped'); assert.equal(unstamped.name,'Update status unknown');
+assert.equal(unstamped.action,'Update now'); assert.equal(unstamped.actionKind,'app-update');
 // No app installed raises nothing at all.
 assert.equal(appRow(withApp({installed:false},'abc1234 2026-01-01')), undefined);
 console.log('App currency: current, behind, local build, unstamped and absent all reported honestly.');

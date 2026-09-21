@@ -52,13 +52,25 @@ window.SovStatus = (() => {
       const label = `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"}`;
       const jump = { view: "system" };
       if (!appInfo.source_commit) {
-        stale.push({ state: "warn", name: "this app", detail: `${label} does not record the source it was built from, so it cannot be compared with this machine's source. Rebuild to start recording it.`, age_h: null, jump, cause: "app-unstamped" });
+        stale.push({ state: "warn", name: "Update status unknown", detail: `This build of Sovereign predates update checking, so it cannot tell you whether it is current. Installing once will fix that permanently.`,
+                     why: `The bundle records no source revision, so there is nothing to compare against this machine's source (${srcRev || "unknown"}).`,
+                     action: "Update now", actionKind: "app-update", age_h: null, jump, cause: "app-unstamped" });
       } else if (!srcRev) {
-        stale.push({ state: "warn", name: "this app", detail: `${label}; this machine's source revision could not be read, so the two cannot be compared.`, age_h: null, jump, cause: "app-source-unknown" });
+        stale.push({ state: "warn", name: "Update status unknown", detail: `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"} cannot be checked for updates right now.`,
+                     why: "This machine's source revision could not be read, so the installed build has nothing to be compared against.", age_h: null, jump, cause: "app-source-unknown" });
       } else if (appInfo.source_commit.replace("+local", "") !== srcRev) {
-        need.push({ state: "warn", name: "this app", detail: `${label} was built from ${appInfo.source_commit}; this machine's source is ${srcRev}. Rebuild and install to run what you have.`, age_h: null, jump, order: 1, cause: "app-behind" });
+        // Plainly: an update is ready. The revisions are evidence, so they belong in the
+        // drawer with the rest of the evidence, not in the sentence that has to land first.
+        need.push({ state: "warn", name: "Update available", detail: `A newer version of Sovereign is ready to install. You are running ${appInfo.version || "?"} build ${appInfo.build || "?"}.`,
+                    why: `The installed app was built from source ${appInfo.source_commit}; this machine's source is now ${srcRev}.`,
+                    action: "Update now",
+                    actionKind: "app-update",
+                    verify: "This row becomes \u201cUp to date\u201d once the new build is installed.",
+                    age_h: null, jump, order: 1, cause: "app-behind" });
       } else {
-        fresh.push({ state: "live", name: "this app", detail: `${label}, built from the source on this machine (${srcRev})`, age_h: null, jump, cause: "app-current" });
+        fresh.push({ state: "live", name: "Up to date", detail: `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"} is the newest build of this machine's source.`,
+                     why: `Built from source ${srcRev}, which is what this machine has.`,
+                     age_h: null, jump, cause: "app-current" });
       }
     }
     // Permissions: where a lane's declared contract disagrees with itself or the law.
