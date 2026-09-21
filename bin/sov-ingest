@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""sov-ingest — one path for material that arrives as a folder instead of a pipe.
+
+Most of what reaches this archive arrives through a producer lane on a tick. Plenty
+does not: an old project directory, exported writing, a pile of PDFs nobody wired up.
+Without a route in, that material is simply missing, and the owner cannot tell the
+difference between "judged and rejected" and "never seen".
+
+This tool does NOT write into the vault. Every file is handed to `sov-capture`, which
+owns the path fence, the redactor, the frontmatter emitter and the never-overwrite
+rule. Changing none of that is the point: the write boundary already has tests behind
+it, and a second writer into raw/ would be a second dialect to keep honest.
+
+So this tool only decides WHAT to hand over:
+  * which files are eligible, and converted how
+  * which are already in the archive under some other path
+  * which must stop the run because their NAME says credential
+
+Two facts shape the design.
+
+1. `curator-run.candidates()` walks only `.md` and `.txt`. Anything else is invisible
+   to the nightly forever, so a format this tool cannot convert is a format the owner
+   silently does not have. Converters are therefore not optional polish; they are the
+   difference between a wide net and a narrow one.
+
+2. That same function dedups on `known_hashes[relative_path] == content_hash`. The key
+   is the PATH. Identical bytes under a second path are a brand new item and get judged
+   twice. Since the owner should not have to know where every current and future harness
+   drops things, this tool checks candidate CONTENT against the hashes the curator has
+   already recorded, and skips what the archive demonstrably already holds.
+
+The dry plan is the default and writes nothing. It is also the measurement: it reports
+what would land and what would be skipped, by named reason, which is the only honest way
+to answer "how much am I missing?"
+"""
+import argparse, hashlib, json, os, re, subprocess, sys, tempfile
+from datetime import date
+
+BIN = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(BIN)
+sys.path.insert(0, os.path.join(ROOT, "lib"))
+from brain_redact import redact_text, SKIP_DIRS  # noqa: E402
+
+CAPTURE = os.path.join(BIN, "sov-capture")
+SCANNER = os.path.join(BIN, "hub", "secret-scan")
+
+DIRECT = {".md", ".markdown", ".txt", ".text"}
+TEXTUTIL = {".html", ".htm", ".rtf", ".doc", ".docx", ".odt", ".webarchive", ".rtfd"}
+PDF = {".pdf"}
+
+MAX_SOURCE = 8 * 1024 * 1024      # refuse to read a source file larger than this
+MAX_BODY = 1024 * 1024            # refuse to capture a converted body larger than this
+MIN_BODY = 24                     # a body shorter than this carries nothing to judge
+
+
+def resolve_vault():
+    """The same chain sov-capture uses, in the same order. One answer per machine."""
+    for env in ("BRAIN_ROOT", "SOVS_VAULT", "SOVEREIGN_ROOT", "SOVEREIGN_VAULT"):
+        v = os.environ.get(env)
+        if v and os.path.isdir(v):
+            return os.path.realpath(os.path.expanduser(v))
+    ptr = os.path.expanduser("~/.brain-root")
+    if os.path.isfile(ptr):
+        v = open(ptr, encoding="utf-8").read().strip()
+        if v and os.path.isdir(os.path.expanduser(v)):
+            return os.path.realpath(os.path.expanduser(v))
+    d = os.getcwd()
+    while d != "/":
+        if os.path.isdir(os.path.join(d, "knowledge")):
+            return os.path.realpath(d)
+        d = os.path.dirname(d)
+    sys.exit("sov-ingest: no vault (set $BRAIN_ROOT or ~/.brain-root)")
+
+
+def kebab(s, limit=60):
+    s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+    return (s[:limit].rstrip("-")) or "untitled"
+
+
+def classify(path):
+    """Return (kind, reason). kind is None when the file cannot become judgeable text."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in DIRECT:
+        return "direct", ""
+    if ext in TEXTUTIL:
+        return ("textutil", "") if os.path.exists("/usr/bin/textutil") else (None, "no-textutil")
+    if ext in PDF:
+        if os.path.exists("/opt/homebrew/bin/pdftotext") or os.path.exists("/usr/local/bin/pdftotext"):
+            return "pdftotext", ""
+        try:
+            import pypdf  # noqa: F401
+            return "pypdf", ""
+        except Exception:
+            return None, "no-pdf-converter"
+    return None, "unsupported-extension:%s" % (ext or "none")
+
+
+def convert(path, kind):
+    """Source bytes to plain text, or (None, reason). Never raises on a bad file."""
+    if kind == "direct":
+        try:
+            return open(path, encoding="utf-8").read(), ""
+        except UnicodeDecodeError:
+            return None, "not-utf8"
+    if kind == "textutil":
+        cp = subprocess.run(["/usr/bin/textutil", "-convert", "txt", "-stdout", path],
+                            capture_output=True, timeout=120)
+        if cp.returncode != 0:
+            return None, "textutil-failed"
+        return cp.stdout.decode("utf-8", "replace"), ""
+    if kind == "pdftotext":
+        exe = "/opt/homebrew/bin/pdftotext" if os.path.exists("/opt/homebrew/bin/pdftotext") \
+              else "/usr/local/bin/pdftotext"
+        cp = subprocess.run([exe, "-q", path, "-"], capture_output=True, timeout=300)
+        if cp.returncode != 0:
+            return None, "pdftotext-failed"
+        return cp.stdout.decode("utf-8", "replace"), ""
+    if kind == "pypdf":
+        try:
+            import pypdf
+            r = pypdf.PdfReader(path)
+            return "\n\n".join((pg.extract_text() or "") for pg in r.pages), ""
+        except Exception:
+            return None, "pypdf-failed"
+    return None, "unknown-kind"
+
+
+def known_content_hashes(vault):
+    """Invert the curator's path-keyed hash store into a set of content hashes.
+
+    It covers what the curator has actually judged, not all of raw/, so a match is
+    proof the archive already holds these bytes while a miss proves nothing. The
+    receipt says so rather than implying full coverage.
+    """
+    store = os.path.join(vault, "raw/workspaces/archivist/.content-hashes.json")
+    if not os.path.isfile(store):
+        return set(), False
+    try:
+        return set(json.load(open(store, encoding="utf-8")).values()), True
+    except Exception:
+        return set(), False
+
+
+LANE_TEMPLATE = """---
+# ---- identity (required) ----
+lane: {lane}
+producer: sov-ingest-folder
+mission: >
+  One-shot folder imports taken by hand with `sov ingest folder`. Source: {src}
+
+# ---- the wires (required) ----
+write: local
+read: none
+gear: ask-first
+
+# ---- what this lane carries ----
+sources_documents: {exts}
+sources_processes: none
+sources_excluded: files whose name matches the credential gate; formats with no converter on this machine
+
+# ---- lifecycle (required) ----
+status: proposed
+onboarded:
+---
+
+Created by `sov ingest` on {today} from `{src}`.
+
+Captures here are converted plain text, one per source file, each labelled with its
+original relative path. Re-running the same import is a no-op: a file already captured
+under its content hash is skipped, as is any file whose bytes the curator has already
+judged somewhere else in the archive.
+
+This lane is one-shot. It has no schedule, no heartbeat and no job; a quiet lane here is
+finished, not broken.
+"""
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="sov ingest", description="Bring a folder of material into a raw lane.")
+    ap.add_argument("adapter", choices=["folder"])
+    ap.add_argument("source")
+    ap.add_argument("--lane", default="", help="lane name (default: kebab-cased folder name)")
+    ap.add_argument("--apply", action="store_true", help="actually capture; without it this is a dry plan")
+    ap.add_argument("--limit", type=int, default=0, help="stop after N captures (0 = no limit)")
+    ap.add_argument("--json", action="store_true", help="machine-readable plan or receipt")
+    a = ap.parse_args()
+
+    vault = resolve_vault()
+    src = os.path.realpath(os.path.expanduser(a.source))
+    if not os.path.isdir(src):
+        sys.exit("sov-ingest: not a directory: %s" % src)
+    if os.path.realpath(vault) in (src, os.path.commonpath([src, os.path.realpath(vault)])) and \
+       src.startswith(os.path.realpath(vault) + os.sep):
+        sys.exit("sov-ingest: refusing to ingest a folder inside the vault")
+
+    lane = a.lane or kebab(os.path.basename(src))
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,60}", lane):
+        sys.exit("sov-ingest: bad lane name: %s" % lane)
+    lane_dir = os.path.join(vault, "raw/workspaces", lane)
+    lane_md = os.path.join(lane_dir, "LANE.md")
+
+    # ---- walk and classify ----
+    found, skipped = [], {}
+    for dp, dn, fn in os.walk(src, followlinks=False):
+        dn[:] = [d for d in dn if d not in SKIP_DIRS and not d.startswith(".")]
+        for f in sorted(fn):
+            if f.startswith("."):
+                continue
+            p = os.path.join(dp, f)
+            if os.path.islink(p) or not os.path.isfile(p):
+                continue
+            rel = os.path.relpath(p, src)
+            try:
+                size = os.path.getsize(p)
+            except OSError:
+                skipped.setdefault("unreadable", []).append(rel)
+                continue
+            if size > MAX_SOURCE:
+                skipped.setdefault("over-size-cap", []).append(rel)
+                continue
+            kind, why = classify(p)
+            if kind == "direct" and size < MIN_BODY:
+                # Cheap for direct text: a converted format needs converting to know,
+                # so those are still only caught at apply and reported there.
+                skipped.setdefault("too-small-to-judge", []).append(rel)
+                continue
+            if kind is None:
+                skipped.setdefault(why, []).append(rel)
+                continue
+            found.append((rel, p, kind, size))
+
+    if not found and not skipped:
+        sys.exit("sov-ingest: nothing found under %s" % src)
+
+    # ---- the credential gate, before a single byte is read for capture ----
+    scan = {"ran": False, "filename_hits": [], "exit": None}
+    if found:
+        with tempfile.NamedTemporaryFile("w", suffix=".list", delete=False) as t:
+            t.write("\n".join(rel for rel, _, _, _ in found) + "\n")
+            listfile = t.name
+        try:
+            cp = subprocess.run([SCANNER, listfile], cwd=src, capture_output=True, text=True, timeout=900)
+            scan["ran"], scan["exit"] = True, cp.returncode
+            section = cp.stdout.split("=== FILENAME HITS ===", 1)
+            if len(section) == 2:
+                body = section[1].split("===", 1)[0]
+                scan["filename_hits"] = [ln.strip() for ln in body.splitlines()
+                                         if ln.strip() and ln.strip() != "(none)"]
+        finally:
+            os.unlink(listfile)
+    if scan["filename_hits"]:
+        print("sov-ingest: refusing — these names say credential:", file=sys.stderr)
+        for h in scan["filename_hits"]:
+            print("  " + h, file=sys.stderr)
+        sys.exit(1)
+
+    # ---- content dedup against what the curator already judged ----
+    known, have_store = known_content_hashes(vault)
+    plan, digests = [], {}
+    for rel, p, kind, size in found:
+        raw = open(p, "rb").read()
+        ch = hashlib.sha256(raw).hexdigest()
+        if ch in known:
+            skipped.setdefault("already-in-archive", []).append(rel)
+            continue
+        if ch in digests:
+            skipped.setdefault("duplicate-within-folder", []).append(rel)
+            continue
+        digests[ch] = rel
+        slug = "%s-%s" % (kebab(os.path.splitext(os.path.basename(rel))[0]), ch[:12])
+        if os.path.exists(os.path.join(lane_dir, slug + ".md")):
+            skipped.setdefault("already-captured", []).append(rel)
+            continue
+        plan.append((rel, p, kind, size, slug, ch))
+
+    if a.limit:
+        for rel, _, _, _, _, _ in plan[a.limit:]:
+            skipped.setdefault("beyond-limit", []).append(rel)
+        plan = plan[: a.limit]
+
+    report = {
+        "adapter": "folder", "source": src, "vault": vault, "lane": lane,
+        "lane_declared": os.path.isfile(lane_md),
+        "found": len(found), "would_land": len(plan),
+        "by_kind": {k: sum(1 for x in plan if x[2] == k) for k in {x[2] for x in plan}},
+        "skipped": {k: len(v) for k, v in sorted(skipped.items())},
+        "dedup_store": "read" if have_store else "absent (no cross-path dedup this run)",
+        "scan": {"ran": scan["ran"], "exit": scan["exit"], "filename_hits": 0},
+    }
+    # sov-audit flags any lane the law never names (its "drift" section), so a wide net
+    # would earn one warning per folder. Hand over the exact line rather than the warning.
+    report["law_line"] = ("`raw/workspaces/%s/` — one-shot folder import from `%s`, "
+                          "taken by hand with `sov ingest folder`, no schedule." % (lane, src))
+
+    if not a.apply:
+        report["mode"] = "dry plan; nothing written"
+        report["examples"] = [r for r, _, _, _, _, _ in plan[:5]]
+        report["skipped_examples"] = {k: v[:3] for k, v in sorted(skipped.items())}
+        print(json.dumps(report, indent=2) if a.json else render(report))
+        return 0
+
+    # ---- apply ----
+    if not os.path.isfile(lane_md):
+        os.makedirs(lane_dir, exist_ok=True)
+        exts = ", ".join(sorted({os.path.splitext(r)[1].lower() or "none"
+                                 for r, _, _, _, _, _ in plan})) or "none"
+        with open(lane_md, "x", encoding="utf-8") as fh:
+            fh.write(LANE_TEMPLATE.format(lane=lane, src=src, exts=exts, today=date.today().isoformat()))
+        report["lane_created"] = os.path.relpath(lane_md, vault)
+
+    captured, failed, redactions = [], {}, {}
+    for rel, p, kind, size, slug, ch in plan:
+        text, why = convert(p, kind)
+        if text is None:
+            failed.setdefault(why, []).append(rel)
+            continue
+        text = text.strip()
+        if len(text) < MIN_BODY:
+            failed.setdefault("empty-after-conversion", []).append(rel)
+            continue
+        if len(text) > MAX_BODY:
+            text = text[:MAX_BODY] + "\n\n[truncated at the ingest body cap]"
+        # The provenance line also guarantees the body never opens with "---",
+        # which sov-capture refuses because frontmatter is its job, not the caller's.
+        body = "Source: %s (%d bytes, sha256 %s)\n\n%s" % (rel, size, ch[:12], text)
+        # Counted here only so the receipt can name what was found; sov-capture does
+        # the actual redaction on the card it writes and discards its own count.
+        _, hits = redact_text(body)
+        for kind in hits:
+            redactions[kind] = redactions.get(kind, 0) + 1
+        # sys.executable, never the CAPTURE shebang: `sov` picked this interpreter through
+        # _sov-python.sh, and `#!/usr/bin/env python3` would hand the write back to the
+        # Xcode shim that an Xcode update can revoke without warning.
+        cp = subprocess.run(
+            [sys.executable, CAPTURE, slug, "--lane", lane, "--from", "-", "--type", "capture",
+             "--title", re.sub(r"\s+", " ", os.path.splitext(os.path.basename(rel))[0]).replace(":", " ")[:120],
+             "--origin", rel],
+            input=body, text=True, capture_output=True, timeout=120)
+        if cp.returncode != 0:
+            failed.setdefault("capture-failed", []).append("%s: %s" % (rel, cp.stderr.strip()[:120]))
+            continue
+        captured.append(rel)
+
+    report.update({
+        "mode": "applied", "captured": len(captured),
+        "failed": {k: len(v) for k, v in sorted(failed.items())},
+        "failed_examples": {k: v[:3] for k, v in sorted(failed.items())},
+        "redactions": redactions,
+        "redactions_total": sum(redactions.values()),
+    })
+
+    # The receipt lives in machine state, never in the vault: Obsidian Sync does not
+    # carry this shape, and Part 2 makes lane state authoritative on the hub only.
+    state = os.path.expanduser("~/.local/state/sovereign")
+    os.makedirs(state, exist_ok=True)
+    with open(os.path.join(state, "ingest-%s.json" % lane), "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+    print(json.dumps(report, indent=2) if a.json else render(report))
+    return 0
+
+
+def render(r):
+    out = ["%s  %s" % (r["mode"], r["source"]),
+           "  lane           %s%s" % (r["lane"], "" if r["lane_declared"] else "  (will be created)"),
+           "  found          %d" % r["found"],
+           "  would land     %d %s" % (r["would_land"], r["by_kind"] or "")]
+    if "captured" in r:
+        red = ", ".join("%s x%d" % kv for kv in sorted(r["redactions"].items())) or "none"
+        out.append("  captured       %d  (redacted: %s)" % (r["captured"], red))
+        for k, n in r["failed"].items():
+            out.append("  failed:%-8s %d" % (k, n))
+    for k, n in r["skipped"].items():
+        out.append("  skipped:%-22s %d" % (k, n))
+    out.append("  dedup store    %s" % r["dedup_store"])
+    out.append("")
+    out.append("  Add to CLAUDE.md Part 2 so the Friday audit does not read this lane as drift:")
+    out.append("    " + r["law_line"])
+    return "\n".join(out)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

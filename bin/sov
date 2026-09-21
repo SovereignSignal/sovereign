@@ -18,6 +18,9 @@
 #   sov hub init|env|tick|jobs|kit|law
 #                                the template-run hub: instance file, runner, jobs from the
 #                                manifest, the rebuild kit, Part 1 drift (sov-hub)
+#   sov ingest folder <path>    bring a folder of material into its own raw lane:
+#                                 convert, redact, content-dedup, hand each file to
+#                                 sov-capture. Dry plan unless --apply (sov-ingest)
 #   sov about [--json]          explain this installation, offline and read-only
 #   sov contribute <command>    assess, collect, deliver, or import selected work
 #   sov status                    pointers, lanes on this machine, and their freshness
@@ -71,6 +74,7 @@ case "$cmd" in
   contribute) exec "$PYTHON" "$BIN/sov-contribute" "$@";;
   load)     "$PYTHON" "$BIN/sov-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/sov-load" "$@";;
   capture)  exec "$PYTHON" "$BIN/sov-capture" "$@";;
+  ingest)   exec "$PYTHON" "$BIN/sov-ingest" "$@";;
   check)
     # The label check, then Part 1 drift when this machine runs a template hub (warns only).
     /bin/bash "$BIN/sov-check" "$@"; rc=$?
