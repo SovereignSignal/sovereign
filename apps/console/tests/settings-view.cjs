@@ -60,6 +60,41 @@ test('a lane with no declared read is contribute-only, not unknown', () => {
   assert(paint({ D: { lanes: [{ lane: 'x' }] } }).includes('Contribute only'));
 });
 
+test('read_scope true is a flag, never a scope to print', () => {
+  // thestringer declares `read_scope: true`, which rendered as "reads true".
+  const html = paint({ D: { lanes: [{ lane: 'stringer', host: 'thestringer', read: 'git', read_scope: true }] } });
+  assert(!/reads\s+true/.test(html), 'a boolean read_scope must not be printed as a scope');
+  assert(html.includes('reads via git'));
+});
+
+test('the read mechanism keeps the parenthetical that says when it reads', () => {
+  const html = paint({ D: { lanes: [{ lane: 'a', host: 'm5', read: 'brain-load (session-start hook)' }] } });
+  assert(html.includes('reads via brain-load (session-start hook)'));
+});
+
+test('a declared string scope is named alongside the mechanism', () => {
+  const html = paint({ D: { lanes: [{ lane: 'a', host: 'm5', read: 'hook', read_scope: 'knowledge + own lane' }] } });
+  assert(html.includes('scoped to knowledge + own lane'));
+});
+
+test('lanes are grouped by the machine they run on, busiest first', () => {
+  const html = paint({ D: { lanes: [
+    { lane: 'a', host: 'm5' }, { lane: 'b', host: 'spp3' }, { lane: 'c', host: 'm5' }, { lane: 'd', host: 'm5' }] } });
+  const hosts = [...html.matchAll(/class="set-host"><th colspan="6">([^<]*)<small>([^<]*)</g)].map(m => [m[1], m[2]]);
+  assert.deepEqual(hosts, [['m5', '3 lanes'], ['spp3', '1 lane']]);
+});
+
+test('a lane with no host is placed, not dropped', () => {
+  const html = paint({ D: { lanes: [{ lane: 'orphan' }] } });
+  assert(html.includes('orphan'));
+  assert(html.includes('unplaced'));
+});
+
+test('the producer says what the tool is, beside the lane name', () => {
+  assert(paint({ D: { lanes: [{ lane: 'cursor-m5', host: 'm5', producer: 'Cursor (GUI composer + CLI agent)' }] } })
+    .includes('Cursor (GUI composer + CLI agent)'));
+});
+
 test('declared drift is shown in line and marks its row', () => {
   const html = paint({ D: { lanes: [{ lane: 'sovsclaw', read: 'none', findings: [{ level: 'warn', text: 'declares a read_scope while reading nothing' }] }] } });
   assert(html.includes('declares a read_scope while reading nothing'));
@@ -82,8 +117,8 @@ test('a retired lane with a real question still raises it, once', () => {
   const html = paint({ D: { lanes: [{ lane: 'x', read: 'none', retired: true,
     findings: [{ level: 'info', text: 'kept as provenance' }, { level: 'warn', text: 'the law never names this lane' }] }] } });
   assert(html.includes('class="warn retired"'));
-  // One body row, plus the header row the table always has.
-  assert.equal(html.split('<tr').length - 1, 2);
+  // One body row, plus the column header and the one host band above it.
+  assert.equal(html.split('<tr').length - 1, 3);
 });
 
 test('lane names are escaped, never injected', () => {

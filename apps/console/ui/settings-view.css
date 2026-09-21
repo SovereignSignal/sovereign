@@ -42,3 +42,10 @@
 .set-perms tr.retired td{opacity:.62}
 .set-perms tr.retired td:first-child small{display:inline;margin-left:6px;font:9px var(--mono);letter-spacing:.06em;text-transform:uppercase}
 .set-finding.info{color:var(--muted)}
+
+/* The machine is the shape of the table: one band per host, lanes beneath it. */
+.set-perms tr.set-host th{padding:18px 10px 7px 0;border-bottom:1px solid var(--rule);color:var(--ink);font:11px var(--sans);font-weight:500;letter-spacing:0;text-transform:none}
+.set-perms tr.set-host:first-child th{padding-top:6px}
+.set-perms tr.set-host th small{margin-left:9px;font:9px var(--mono);color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.set-perms td:first-child small{display:block;color:var(--muted);font-size:10px;margin-top:4px;line-height:1.5}
+.set-where{font:10px var(--mono);color:var(--muted);white-space:nowrap}

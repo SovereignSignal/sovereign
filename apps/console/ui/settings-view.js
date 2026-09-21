@@ -48,11 +48,18 @@ window.SovSettings = (() => {
   function permissionSection(D) {
     const lanes = (D && D.lanes || []).filter(l => l.lane && l.associated !== false);
     if (!lanes.length) return sect("What each producer may do", `<p class="set-lead">No producer lanes are declared for this archive.</p>`, "Lanes appear here once a producer is onboarded.");
+    // `read` carries its mechanism in parentheses and `read_scope` is sometimes the
+    // bare boolean `true` rather than a scope, which rendered as "reads true". Say
+    // what is actually known: the scope when there is one, else the mechanism.
     const level = l => {
-      const read = String(l.read || "none").replace(/\s*\(.*\)$/, "");
-      return read === "none" || read === "" ? ["Contribute only", "reads nothing from this archive"] : ["Read and contribute", "reads " + esc(l.read_scope || "a declared scope")];
+      const full = String(l.read || "none").trim();
+      // Classify on the bare mechanism; show the whole thing, because the
+      // parenthetical is where "when does it read" actually lives.
+      if (!full || full.replace(/\s*\(.*\)$/, "").trim().replace(/^none$/, "") === "") return ["Contribute only", "reads nothing from this archive"];
+      const scope = typeof l.read_scope === "string" && l.read_scope.trim() ? l.read_scope.trim() : "";
+      return ["Read and contribute", "reads via " + esc(full) + (scope ? ", scoped to " + esc(scope) : "")];
     };
-    const rows = lanes.map(l => {
+    const row = l => {
       const [badge, detail] = level(l), findings = l.findings || [];
       // An `info` note is the owner's own answer written down (a retired lane kept as
       // provenance), not something to chase. Only an open question marks the row, or a
@@ -60,14 +67,27 @@ window.SovSettings = (() => {
       const worst = findings.some(f => f.level === "bad") ? "bad" : findings.some(f => f.level === "warn") ? "warn" : "";
       const cls = [worst, l.retired ? "retired" : ""].filter(Boolean).join(" ");
       return `<tr${cls ? ` class="${cls}"` : ""}>
-        <td>${esc(l.lane)}${l.retired ? "<small>retired</small>" : ""}</td>
+        <td>${esc(l.lane)}${l.retired ? "<small>retired</small>" : ""}${l.producer ? `<small>${esc(l.producer)}</small>` : ""}</td>
+        <td class="set-where">${esc(l.host || "—")}</td>
         <td><span class="set-badge ${badge === "Contribute only" ? "narrow" : "wide"}">${badge}</span><small>${detail}</small></td>
         <td>${esc(l.write || "—")}</td>
         <td>${esc(l.gear || "—")}</td>
         <td>${findings.length ? findings.map(f => `<span class="set-finding ${esc(f.level)}">${esc(f.text)}</span>`).join("") : "<small>nothing to answer</small>"}</td></tr>`;
-    }).join("");
+    };
+    // Grouped by host, because "what runs where" is the question the flat list could
+    // not answer: the machine is the shape of the table, not a column to read down.
+    const byHost = new Map();
+    for (const l of lanes) {
+      const where = l.host || "unplaced";
+      if (!byHost.has(where)) byHost.set(where, []);
+      byHost.get(where).push(l);
+    }
+    const groups = [...byHost.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+    const rows = groups.map(([where, ls]) =>
+      `<tr class="set-host"><th colspan="6">${esc(where)}<small>${ls.length} lane${ls.length === 1 ? "" : "s"}</small></th></tr>`
+      + ls.map(row).join("")).join("");
     return sect("What each producer may do",
-      `<table class="set-perms"><tr><th>lane</th><th>permission</th><th>writes by</th><th>gear</th><th>drift</th></tr>${rows}</table>`,
+      `<table class="set-perms"><tr><th>lane</th><th>where</th><th>permission</th><th>writes by</th><th>gear</th><th>drift</th></tr>${rows}</table>`,
       "A lane that reads nothing cannot see your knowledge layer; it may only send. Gear is how far the curator may act on that lane without asking you first.");
   }
 
