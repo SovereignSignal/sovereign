@@ -146,6 +146,33 @@ class NothingNamesThisMachine(unittest.TestCase):
                                  "copied onto other people's machines, where that name is "
                                  "wrong." % probe)
 
+    def test_no_shipped_file_names_the_hub_this_machine_points_at(self):
+        """A client cannot catch a hub's name by asking who IT is.
+
+        Every probe above is built from this machine, so a client passes while
+        carrying the hub's hostname in plain sight and only the hub itself fails.
+        That happened on 2026-09-21: two vendored scripts described the wire as
+        "fenced and merged by <hub>", the laptop's run was green, and the guard
+        only went red once the commit reached the hub - after it was published.
+
+        The hub is the machine the kit publishes from, so its name is the one that
+        must not ship. Read it from the pointer `sov status` uses, take the alias
+        before the colon, and skip in silence when this machine points at no hub:
+        a standalone instance has no hub name to leak, and a guard that fails for
+        every unwired machine is a guard nobody reads.
+        """
+        hub = pointer(".brain-hub").split(":", 1)[0].strip()
+        if not probeable(hub):
+            self.skipTest("this machine points at no hub, or its name is a generic word")
+        found = self.hits(self.word(hub))
+        self.assertEqual(found, [],
+                         "a shipped file names the hub this machine points at "
+                         "(hub name %r matched). The hub is where the kit publishes "
+                         "from, so its name must not ship. If this is a coincidence - "
+                         "a variable or an ordinary word that happens to match - rename "
+                         "it rather than leaving the guard red, because a check that "
+                         "always fails is one nobody reads." % hub)
+
     def test_no_shipped_file_names_this_machines_brain(self):
         root = pointer(".brain-root")
         if not root:
