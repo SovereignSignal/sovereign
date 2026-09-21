@@ -83,6 +83,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     var hubBusy = false
     var hubReview: String?
     var backupBusy = false
+    var appUpdateBusy = false
     var discoveryBusy = false
     var producerBusy = false
     var producerReview: String?
@@ -139,6 +140,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             if panel.runModal() == .OK, let url = panel.url { deliver("hubPicked", ["field": field, "path": url.path]) }
         case "retryBackup":
             retryBackup(d, generation: generation)
+        case "appUpdate":
+            appUpdate(d, generation: generation)
         case "hubOperation":
             hubOperation(d, generation: generation)
         case "discover":
@@ -429,6 +432,78 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 }
             }
         }
+    }
+
+    /// Rebuild this machine's source into the installed app.
+    ///
+    /// The apply step is launched DETACHED on purpose. It replaces this very bundle, so
+    /// it has to outlive the process that starts it; run through the normal helper it
+    /// would be a child with a pipe and a timeout, and would die with its parent halfway
+    /// through a swap. Its output goes to a file for the same reason: a broken pipe when
+    /// this app exits must not take the updater with it.
+    private func appUpdate(_ request: [String: Any], generation: UUID) {
+        func fail(_ message: String) { deliver("appUpdateResult", ["error": message], generation: generation) }
+        guard !appUpdateBusy, let resources = Bundle.main.resourceURL else {
+            fail("An update is already being prepared."); return
+        }
+        guard !App.shared.snapshotting else { fail("Updates are disabled during QA."); return }
+        // The app cannot build from its own bundle: backend/ ships no apps/console.
+        guard let template = request["template"] as? String, !template.isEmpty else {
+            fail("This machine's source location is not known, so there is nothing to build from."); return
+        }
+        let py = resources.appendingPathComponent("runtime/bin/python3").path
+        let script = resources.appendingPathComponent("backend/bin/sov-app-update").path
+        guard FileManager.default.isReadableFile(atPath: script) else {
+            fail("This build of Sovereign predates in-app updating. Install once from the source checkout and the button works from then on."); return
+        }
+        let base = [py, "-I", "-B", script, "--template", template]
+        appUpdateBusy = true
+        run(base + ["--preview"], timeLimit: 60) { out, _, code in
+            DispatchQueue.main.async {
+                guard self.generation == generation else { self.appUpdateBusy = false; return }
+                let plan = (out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any] ?? [:]
+                guard code == 0, plan["state"] as? String == "preview", let token = plan["token"] as? String else {
+                    self.appUpdateBusy = false
+                    fail(plan["error"] as? String ?? "The update could not be prepared. Refresh and try again."); return
+                }
+                if plan["current"] as? Bool == true {
+                    self.appUpdateBusy = false
+                    self.deliver("appUpdateResult", ["state": "current", "verification": plan["summary"] as? String ?? "Sovereign is already up to date."], generation: generation)
+                    return
+                }
+                let alert = NSAlert(); alert.messageText = "Update Sovereign now?"
+                alert.informativeText = [plan["summary"] as? String, plan["effects"] as? String].compactMap { $0 }.joined(separator: "\n\n")
+                alert.addButton(withTitle: "Update now"); alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn else {
+                    self.appUpdateBusy = false
+                    self.deliver("appUpdateResult", ["state": "cancelled"], generation: generation); return
+                }
+                let log = FileManager.default.temporaryDirectory.appendingPathComponent("sovereign-app-update.log")
+                let started = self.launchDetached(base + ["--apply", "--token", token], logTo: log)
+                self.appUpdateBusy = false
+                if started {
+                    self.deliver("appUpdateResult", ["state": "started",
+                        "verification": "Building. Sovereign will close and reopen when the new build is ready."], generation: generation)
+                } else {
+                    fail("The update could not be started. Nothing was changed.")
+                }
+            }
+        }
+    }
+
+    /// Start a process that must survive this app exiting. No pipes, no timeout, no wait.
+    @discardableResult
+    func launchDetached(_ args: [String], logTo log: URL) -> Bool {
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        guard let handle = try? FileHandle(forWritingTo: log) else { return false }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: args[0])
+        p.arguments = Array(args.dropFirst())
+        p.environment = env()
+        p.standardOutput = handle
+        p.standardError = handle
+        do { try p.run() } catch { return false }
+        return true
     }
 
     private func hubOperation(_ request: [String: Any], generation: UUID) {

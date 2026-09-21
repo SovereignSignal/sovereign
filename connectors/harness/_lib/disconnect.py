@@ -111,12 +111,25 @@ def cleanup_plan(harness, vault):
             return data
         edit(home / 'shell-hooks-allowlist.json', allow, True)
     elif meta.get('read') == 'instruction':
-        block = '[Sovereign] ' + ' '.join((folder / 'INSTRUCTION.md').read_text().strip().replace('{{VAULT}}', vault).split())
+        def managed(source):
+            return '[Sovereign] ' + ' '.join(source.strip().replace('{{VAULT}}', vault).split())
+        block = managed((folder / 'INSTRUCTION.md').read_text())
+        # An instruction installed before the wording changed is still ours, and refusing
+        # to remove it strands the lane: the 2026-09-17 rename turned "the brain" into
+        # "the archive" in every INSTRUCTION.md, and from that day disconnect refused
+        # four already-connected lanes on the grounds that its own earlier text was a
+        # stranger's edit. Prior wordings live beside the current one, one paragraph each,
+        # so this recognises them by record rather than by loosening the check.
+        prior = folder / 'INSTRUCTION.prior.md'
+        blocks = [block] + ([managed(b) for b in prior.read_text().split('\n\n') if b.strip()]
+                            if prior.is_file() else [])
         def strip(text):
-            if '[Sovereign]' in text and text.count(block) != text.count('[Sovereign]'):
+            if '[Sovereign]' in text and sum(text.count(b) for b in blocks) != text.count('[Sovereign]'):
                 raise ValueError('Managed instruction differs from this archive; no configuration was changed.')
             # Remove exactly our paragraph, preserving owner text on either side.
-            return text.replace('\n\n' + block, '').replace(block, '')
+            for b in blocks:
+                text = text.replace('\n\n' + b, '').replace(b, '')
+            return text
         if meta.get('instruction_text_file'):
             edit(meta['instruction_text_file'], strip)
         else:

@@ -884,7 +884,9 @@ window.onerror = function (msg, src, line, col) {
     if(GLANCE)return ''; // The compact menu opens the console for troubleshooting.
     const url=SovStatus.safeURL(n.url);
     if(!['why','action','verify'].some(k=>n[k])&&!url)return '';
-    return `<details class="issue-details"><summary>Details</summary>${['why','action','verify'].filter(k=>n[k]).map(k=>`<p>${esc(n[k])}</p>`).join('')}${url?`<a href="${esc(url)}" data-status-url="${esc(url)}">Open verification link</a>`:''}${n.action?` <button data-copy-step="${esc(n.action)}">Copy next step</button>`:''}</details>`;
+    const keys = n.actionKind ? ['why','verify'] : ['why','action','verify'];
+    const act = n.actionKind ? ` <button data-act="${esc(n.actionKind)}">${esc(n.action||'Do it')}</button>` : (n.action?` <button data-copy-step="${esc(n.action)}">Copy next step</button>`:'');
+    return `<details class="issue-details"><summary>Details</summary>${keys.filter(k=>n[k]).map(k=>`<p>${esc(n[k])}</p>`).join('')}${url?`<a href="${esc(url)}" data-status-url="${esc(url)}">Open verification link</a>`:''}${act}</details>`;
   }
   function glanceHome() {
     const A = assess();
@@ -1082,6 +1084,7 @@ window.onerror = function (msg, src, line, col) {
   };
   const splitReview=()=>view==="review"&&matchMedia("(min-width:1100px)").matches;
   let backupPending=false,backupResult=null;
+  let appUpdatePending=false,appUpdateResult=null;
   function backupActions(o){
     if(!o.job)return '';
     const health=o.health||{},fresh=!D?._status?.stale&&!D?._status?.error&&hub().reachable===true&&selectedRoot===D?.machine?.vault;
@@ -1539,6 +1542,15 @@ window.onerror = function (msg, src, line, col) {
         backupPending=true;backupResult=null;renderInspector();
         return bridge({cmd:'retryBackup',root:selectedRoot});
       }
+      if (act === 'app-update') {
+        // The app cannot build from its own bundle, so it hands over this machine's
+        // source location; the updater refuses rather than guessing if it is missing.
+        if (appUpdatePending) return;
+        const template = D?.machine?.template;
+        if (!template) { appUpdateResult = "This machine's source location is not known, so there is nothing to build from."; renderInspector(); return; }
+        appUpdatePending = true; appUpdateResult = null; renderInspector();
+        return bridge({ cmd: 'appUpdate', template });
+      }
       if (act === "kickstart") {   // data-lane: one lane inside a job that carries many, run by name
         const m = { cmd: "kickstart", label: b.dataset.label };
         if (b.dataset.lane) m.lane = b.dataset.lane;
@@ -1682,6 +1694,14 @@ window.onerror = function (msg, src, line, col) {
       render(payload);
       if(resumeReview&&view==='review'&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
+    } else if (kind === "appUpdateResult") {
+      appUpdatePending = false;
+      appUpdateResult = payload.error || (payload.state === 'cancelled' ? 'Cancelled. Nothing was changed.'
+                        : payload.verification || 'Refresh to see the installed version.');
+      // "started" ends with this app being replaced and reopened, so there is no result
+      // to wait for here; "current" and any refusal are worth a refresh to settle the row.
+      renderInspector();
+      if (payload.state === 'current' || payload.error) setTimeout(refresh, 1500);
     } else if (kind === "backupResult") {
       backupPending=false;
       backupResult=payload.error||(payload.state==='cancelled'?'Cancelled. No backup was started.':payload.verification||'Refresh to inspect the backup result.');

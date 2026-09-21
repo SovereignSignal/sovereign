@@ -51,6 +51,25 @@ class ProducerRemoval(unittest.TestCase):
                 self.apply_plan(h);text=p.read_text()
                 self.assertIn('Owner before',text);self.assertIn('Owner after',text);self.assertNotIn('[Sovereign]',text)
                 self.assertEqual(self.apply_plan(h),[])
+    def test_an_earlier_wording_of_our_own_instruction_is_still_ours(self):
+        # The 2026-09-17 rename changed "the brain" to "the archive" in every
+        # INSTRUCTION.md. From that day disconnect refused four already-connected lanes,
+        # treating its own earlier text as a stranger's edit, and nobody noticed because
+        # nobody tried to disconnect until 2026-09-20.
+        for h in ('windsurf', 'cowork'):
+            with self.subTest(h=h):
+                prior = H / h / 'INSTRUCTION.prior.md'
+                self.assertTrue(prior.is_file(), 'the earlier wording must be recorded, not guessed')
+                block = '[Sovereign] ' + ' '.join(prior.read_text().strip().replace('{{VAULT}}', str(self.box.vault)).split())
+                content = 'Owner before\n\n' + block + '\n\nOwner after'
+                if h == 'windsurf':
+                    p = self.write('.codeium/windsurf/memories/global_rules.md', content)
+                else:
+                    p = self.write('Library/Application Support/Claude/local-agent-mode-sessions/a/b/spaces.json',
+                                   {'spaces': [{'id': 'keep', 'instructions': content}], 'owner': 42})
+                self.apply_plan(h); text = p.read_text()
+                self.assertNotIn('[Sovereign]', text, 'an earlier wording of our own block must still be removed')
+                self.assertIn('Owner before', text); self.assertIn('Owner after', text)
     def test_ambiguous_instructions_fail_before_any_write(self):
         p=self.write('.codeium/windsurf/memories/global_rules.md','Owner\n[Sovereign] edited instruction')
         before=p.read_bytes()
