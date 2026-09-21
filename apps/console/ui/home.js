@@ -7,6 +7,14 @@ window.Home = (() => {
   const ago=value=>{const n=validTime(value);if(n===null)return 'time unknown';const min=Math.max(0,Math.round((Date.now()-n)/60000));return min<60?min+'m ago':min<1440?Math.floor(min/60)+'h ago':Math.floor(min/1440)+'d ago'};
   const operations=(view,id,section)=>api.send({cmd:'navigate',page:'operations',place:{view,...(section?{section}:{}),...(id?{sel:{id}}:{})}});
   function row(title,detail,state,click,action){const e=element(click?'button':'div',null,'home-row');e.append(element('i',null,'health-dot '+(state||'')));const body=element('span',null,'text');body.append(element('strong',title));if(detail)body.append(element('small',detail));e.append(body);if(click){e.append(element('span',action||'›',action?'home-action':'chevron'));e.onclick=click}return e}
+  // Run a row's own action. The app cannot build from its own bundle, so an update hands
+  // over this machine's source location; the updater refuses rather than guessing.
+  function act(kind){
+    if(kind!=='app-update')return;
+    const template=status?.machine?.template;
+    if(!template){api.send({cmd:'clientError',error:"This machine's source location is not known, so there is nothing to build from."});return}
+    api.send({cmd:'appUpdate',template});
+  }
   function details(issue){
     const box=element('details',null,'home-issue');box.append(element('summary','Details'));
     for(const key of ['detail','why','action','verify'])if(issue?.[key])box.append(element('p',issue[key]));
@@ -79,7 +87,14 @@ window.Home = (() => {
       const groupViews=[...new Set((need.members||[]).map(member=>member.jump?.view))];
       const jump=need.jump||(groupViews.length===1&&groupViews[0]?{view:groupViews[0]}:null)||{view:source?.harness?'tools':source?.kind==='job'?'jobs':'glance',id:source?.harness};
       const action=gate?'Review':jump.view==='jobs'?(jump.id?'View job':'View jobs'):jump.view==='backups'?'View backups':jump.view==='hosts'?(jump.id?'View device':'View devices'):jump.view==='tools'?'View tools':'Open details';
-      attention.append(row(title,gate||['job-failed','no-backup'].includes(cause)?'':need.detail,need.state,()=>gate?api.review():operations(jump.view,jump.id),action));
+      // A row that can DO the thing says so on the row. "Update available … Open details"
+      // asks the reader to go looking for a button, which is how a thing that is one click
+      // away reads as a thing you have to go and find out about.
+      if(need.actionKind){
+        attention.append(row(title,need.detail,need.state,()=>act(need.actionKind),need.action||'Do it'));
+      } else {
+        attention.append(row(title,gate||['job-failed','no-backup'].includes(cause)?'':need.detail,need.state,()=>gate?api.review():operations(jump.view,jump.id),action));
+      }
       if(!gate)attention.append(details(need));
     }
     if(!needs.length)message(attention,!status||status.error?'Waiting for a successful status check.':hub.reachable===true?'No attention items reported by the connected system.':'No local attention items reported. Hub review status is unverified.');

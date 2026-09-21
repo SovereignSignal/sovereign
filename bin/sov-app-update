@@ -30,7 +30,33 @@ TEMPLATE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 
 def buildable(template):
-    return os.path.isfile(os.path.join(template, "apps", "console", "build.sh"))
+    return bool(template) and os.path.isfile(os.path.join(template, "apps", "console", "build.sh"))
+
+
+def resolve_template(given=None):
+    """Find a checkout that can actually build, not merely a path someone passed.
+
+    The app's own status reports `machine.template` as its BUNDLED backend, because the
+    app runs backend/bin/sov-status and that computes the template from where it sits. A
+    caller who forwards that value in good faith asks the app to build itself out of its
+    own bundle, which has no apps/console at all. That is exactly what happened on the
+    first real click of Update now.
+
+    So a given path is used only if it can build. Otherwise follow the front door: the
+    installed `sov` is a symlink into the real checkout, which is what a machine that
+    builds from source always has.
+    """
+    for candidate in (given, TEMPLATE):
+        if buildable(candidate):
+            return candidate
+    for door in ("~/brain-bin/sov", "~/.local/bin/sov", "~/bin/sov"):
+        path = os.path.expanduser(door)
+        if os.path.islink(path) or os.path.isfile(path):
+            root = os.path.dirname(os.path.dirname(os.path.realpath(path)))
+            if buildable(root):
+                return root
+    home = os.path.expanduser("~/sovs-brain-template")
+    return home if buildable(home) else None
 
 
 def installed():
@@ -59,7 +85,7 @@ def running():
 
 
 def plan(template=None):
-    template = template or TEMPLATE
+    template = resolve_template(template)
     app, rev = installed(), source_rev(template)
     p = {"installed": app, "source_commit": rev, "app_path": APP, "template": template,
          "buildable": buildable(template)}
@@ -76,14 +102,14 @@ def plan(template=None):
 
 
 def apply(token, template=None):
-    template = template or TEMPLATE
     p = plan(template)
+    template = p["template"]
     if token != p["token"]:
         raise ValueError("This machine's state changed since the preview. Refresh and try again.")
     if not p["source_commit"]:
         raise ValueError("This machine's source revision could not be read, so there is nothing to build.")
     if not p["buildable"]:
-        raise ValueError("No source checkout to build from at %s. Pass --template with the path to one." % template)
+        raise ValueError("No source checkout to build from was found. Pass --template with the path to one.")
     runtime = os.path.join(APP, "Contents", "Resources", "runtime")
     if not os.path.isfile(os.path.join(runtime, "bin", "python3")):
         raise ValueError("The installed app has no bundled runtime to build against.")

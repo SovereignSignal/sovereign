@@ -46,6 +46,14 @@ $('editor').onsubmit=e=>{e.preventDefault();if(pendingSave)return;saving(true);p
 window.sovDeliver=(kind,payload)=>{
  if(kind==='settings')return;
  if(kind==='status'){Home.status(payload);return}
+ if(kind==='appUpdateResult'){
+  // "started" ends with this app being replaced and reopened, so there is no result to
+  // wait for; say what is happening and let it happen. Anything else is worth a refresh.
+  const m=payload.error||(payload.state==='cancelled'?'Cancelled. Nothing was changed.':payload.verification||'Refresh to see the installed version.');
+  notice(m,!!payload.error);
+  if(payload.state&&payload.state!=='started')setTimeout(()=>Home.refresh(),1500);
+  return;
+ }
  if(kind==='goto'){if(!stateReady){pendingGoto=payload;return}if(payload.chooseArchive)window.sovChooseArchive(payload.create===true);else if(payload.capture)window.sovNewCapture();else setView(payload.view||'home');return}
  if(kind==='localState'){
    stateReady=true;root=payload.root||null;readRequest=++request;listRequest=++request;contextRequest=++request;

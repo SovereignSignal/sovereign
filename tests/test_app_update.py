@@ -64,6 +64,26 @@ class AppUpdatePreview(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("runtime", out["error"])
             self.assertTrue((app / "Contents/Info.plist").exists(), "the installed app must survive a refusal")
+    def test_the_bundles_own_backend_is_not_mistaken_for_a_checkout(self):
+        # The app reports machine.template as its BUNDLED backend, because it runs
+        # backend/bin/sov-status and that computes the template from where it sits. A UI
+        # forwarding that value in good faith asks the app to build itself out of its own
+        # bundle, which ships no apps/console. That is what the first real click of
+        # Update now did, and the guard has to be in the updater, not in every caller.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            bundle = home / "Applications/Sovereign.app/Contents/Resources/backend"
+            (bundle / "bin").mkdir(parents=True)
+            bundle_str = str(bundle)
+            env = dict(os.environ, HOME=str(home))
+            cp = subprocess.run([sys.executable, str(UPD), "--preview", "--template", bundle_str],
+                                env=env, capture_output=True, text=True)
+            out = json.loads(cp.stdout or "{}")
+            self.assertNotEqual(out.get("template"), bundle_str,
+                                "a path with no apps/console must never be used as the checkout")
+            # It falls through to a real one, or says there is none; never pretends.
+            if out.get("template"):
+                self.assertTrue(out.get("buildable"), "a resolved template must be able to build")
     def test_an_absent_app_still_previews_rather_than_crashing(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, out = run(Path(tmp), "--preview")
