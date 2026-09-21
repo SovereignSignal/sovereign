@@ -19,6 +19,7 @@ Both directions are covered: what must never travel, and what must not be lost.
 import importlib.machinery
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -39,7 +40,32 @@ def load(name):
         spec.loader.exec_module(module)
     finally:
         sys.argv = saved
+    point_at_fixture(module)
     return module
+
+
+FIXTURE_ROSTER = ["chair.eth", "steward.eth", "member.eth"]
+FIXTURE_DENY = ["Some Grantee Org"]
+
+
+def write(lines):
+    """A boundary file the test owns, so the suite does not read this machine's."""
+    handle = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+    handle.write("\n".join(lines) + "\n")
+    handle.close()
+    return handle.name
+
+
+def point_at_fixture(module):
+    """Redirect the module's boundary list at a fixture and clear its cache.
+
+    These are read lazily and cached per run, so both the path and the cache have
+    to move together or the module keeps whatever it read first.
+    """
+    if hasattr(module, "ROSTER"):
+        module.ROSTER, module._roster = write(FIXTURE_ROSTER), None
+    if hasattr(module, "ORG_DENY"):
+        module.ORG_DENY, module._seed = write(FIXTURE_DENY), None
 
 
 MARKER = "line withheld by the client boundary"
@@ -100,7 +126,7 @@ class Spp3Boundary(unittest.TestCase):
 
     def test_the_seated_committee_travels_by_name(self):
         """Owner decision 2026-09-21: a document about a committee may say who is on it."""
-        for handle in self.m.PUBLIC_ROLES:
+        for handle in self.m.public_roles():
             with self.subTest(handle=handle):
                 self.assertFalse(self.held(f"1. **{handle}** - Steward; grants experience"))
 
@@ -110,7 +136,7 @@ class Spp3Boundary(unittest.TestCase):
 
     def test_a_public_role_beside_a_private_handle_still_goes(self):
         """One permitted name does not launder the rest of the line."""
-        permitted = sorted(self.m.PUBLIC_ROLES)[0]
+        permitted = sorted(self.m.public_roles())[0]
         self.assertTrue(self.held(f"{permitted} met someapplicant.eth about the retro ask"))
 
     # ---- the shape of a withheld line ----
@@ -197,6 +223,55 @@ class UniclaudeBoundary(unittest.TestCase):
     def test_yield_ignores_the_source_header(self):
         content, markers, _ = self.m.yield_of("_Source: `~/x` on uniclaude, 4KB._\n\nreal line\n")
         self.assertEqual((content, markers), (1, 0))
+
+
+class BoundaryFileIsMandatory(unittest.TestCase):
+    """The lists moved onto each VM on 2026-09-21, so losing one must be loud.
+
+    An empty set is the dangerous default in both directions: for spp3's
+    allow-list it silently withholds the committee from every capture, and for
+    uniclaude's deny-list it silently lets withheld names travel.
+    """
+
+    def test_a_missing_list_stops_the_run(self):
+        for name, attr, cache in (("spp3-brain-daily", "ROSTER", "_roster"),
+                                  ("uniclaude-brain-daily", "ORG_DENY", "_seed")):
+            with self.subTest(producer=name):
+                m = load(name)
+                setattr(m, attr, "/nonexistent/boundary/list")
+                setattr(m, cache, None)
+                reader = m.public_roles if name.startswith("spp3") else m.org_deny_seed
+                with self.assertRaises(SystemExit) as caught:
+                    reader()
+                self.assertIn("FATAL", str(caught.exception))
+
+    def test_an_empty_list_stops_the_run(self):
+        for name, attr, cache in (("spp3-brain-daily", "ROSTER", "_roster"),
+                                  ("uniclaude-brain-daily", "ORG_DENY", "_seed")):
+            with self.subTest(producer=name):
+                m = load(name)
+                setattr(m, attr, write(["# only a comment"]))
+                setattr(m, cache, None)
+                reader = m.public_roles if name.startswith("spp3") else m.org_deny_seed
+                with self.assertRaises(SystemExit):
+                    reader()
+
+    def test_naming_nobody_must_be_said_out_loud(self):
+        """`none` is the only way to mean an empty set, so it cannot happen by accident."""
+        m = load("spp3-brain-daily")
+        m.ROSTER, m._roster = write(["none"]), None
+        self.assertEqual(m.public_roles(), set())
+        # And with nobody permitted, every handle is withheld.
+        kept, _ = m.filter_lines(["chair.eth chaired the session"])
+        self.assertIn(MARKER, kept[0])
+
+    def test_a_missing_calibration_corpus_fails_closed(self):
+        """It supplies most of uniclaude's deny-list, so losing it used to leak."""
+        m = load("uniclaude-brain-daily")
+        m.HOME = "/nonexistent/home"
+        with self.assertRaises(SystemExit) as caught:
+            m.derive_org_deny()
+        self.assertIn("calibration corpus is missing", str(caught.exception))
 
 
 class BothProducers(unittest.TestCase):

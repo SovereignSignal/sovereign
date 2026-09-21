@@ -1,0 +1,707 @@
+#!/usr/bin/env python3
+"""uniclaude-brain-daily — the uniclaude lane's producer pass.
+
+Durable, reusable grants-ops METHOD only. This box runs Uniswap Foundation client
+work, so this lane is narrower than the others: the transferable rule may travel,
+the client material under it may not.
+
+Rules this script enforces, per the lane contract:
+  - an explicit source allow-list, never a directory sweep, and each source declares
+    the STRUCTURE it may lift (rule blocks, named sections, a fenced framework, prose)
+  - four line filters drop any surviving line carrying a money figure, a client
+    record id, a contact detail, or an applicant/grantee organisation name
+  - the finished body is re-scanned for secrets, money and contacts; a body that
+    still trips is DROPPED WHOLE and logged loudly — never redacted and shipped
+  - idempotent: a source whose DISTILLED body is unchanged produces no capture
+  - bounded: bodies cap at 12KB with a pointer to the full source on this host
+  - `~/.claude/secrets/` is never read and never captured
+
+The applicant deny-list is derived, not memorised: the calibration corpus declares
+its exemplars in `### N. <Name> — VERDICT` headings, so the script harvests those
+names at runtime and drops any output line carrying one. New exemplars protect
+themselves. ORG_DENY_SEED covers grantee names that appear outside that structure.
+
+Run: uniclaude-brain-daily [--dry] [--preflight [--against <script>]]
+  --dry        distil and report, capture nothing
+  --preflight  render every source and say whether a change is safe to ship;
+               with --against <script>, diff against that copy of this script.
+               Reads only: no lane refresh, no capture, no heartbeat.
+"""
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+HOME = os.path.expanduser("~")
+BRAIN = os.path.join(HOME, "brain")
+BRANCH = "lane/uniclaude"
+CAPTURE = os.path.join(HOME, "bin", "brain-capture")
+STATE = os.path.join(HOME, ".brain-capture-state")
+LOG = os.path.join(HOME, ".brain-capture.log")
+CAP = 12288
+
+DRY = "--dry" in sys.argv
+# Preflight reads and reports only: no lane refresh, no capture, no heartbeat.
+PREFLIGHT = "--preflight" in sys.argv
+# --against <script>: render the same sources with another copy of this script.
+# Comparing against recorded bytes does not work - a withheld marker is about as
+# long as the line it replaces, so a filter that cut ten lines out of spp3's
+# evaluation rubric moved its byte count UP by 22 and no byte check saw it.
+AGAINST = (sys.argv[sys.argv.index("--against") + 1]
+           if "--against" in sys.argv and len(sys.argv) > sys.argv.index("--against") + 1 else None)
+
+# The corpus the applicant deny-list is derived from.
+CALIBRATION = "uf-report-out/calibration/uf-triage-calibration.md"
+
+# path, slug, title, topics, how, argument.
+#   rules    — the posture prose plus every **Rule: …** block, exemplars dropped
+#   fenced   — the first fenced block under the named heading (the framework itself)
+#   sections — the body under each named heading
+#   whole    — the document as written (only for docs that are already pure method)
+SOURCES = [
+    (CALIBRATION,
+     "uf-triage-calibration-rules", "UF grant triage: the calibration rules",
+     "grants,evaluation,method", "rules", None),
+
+    ("uf-report-out/scripts/uf-grants-evaluator-prompt.md",
+     "uf-grants-evaluator-framework", "UF grants auto-evaluator framework",
+     "grants,evaluation,automation", "fenced", "Step 5 — Evaluate"),
+
+    ("uf-payments-intel/editorial/guidance.md",
+     "payments-intel-editorial-guidance", "Payments intelligence editorial guidance",
+     "editorial,research,method", "whole", None),
+
+    ("uf-payments-intel/CLAUDE.md",
+     "payments-intel-collection-boundary", "Payments intel: collection boundary and degraded modes",
+     "automation,architecture,method", "sections",
+     ["Architecture — and the boundary that matters", "Degraded modes (all deliberate)"]),
+
+    ("uf-report-out/CLAUDE.md",
+     "uf-grants-ops-standing-rules", "UF grants ops standing rules",
+     "grants,process,ops", "sections", ["Key Behaviors"]),
+
+    ("uf-weekly-payments/CLAUDE.md",
+     "uf-payments-reporting-rules", "UF payments reporting standing rules",
+     "grants,process,ops", "sections", ["Key Behaviors / Standing Rules"]),
+
+    ("uf-report-out/docs/runbooks/cron-and-failover.md",
+     "headless-agent-cron-failover", "Headless agent cron and auth failover",
+     "automation,ops,architecture", "sections",
+     ["Timezone gotcha — schedules MUST be in UTC", "Auth-failover wrapper"]),
+
+    # --- added 2026-09-21: the grants-program method the repos encode, owner-approved.
+    # Sections chosen to carry reusable method and to avoid the record handles,
+    # money and identity this lane forbids. Config sections deliberately skipped.
+    ("uf-report-out/.claude/skills/uf-secondary-review/SKILL.md",
+     "uf-secondary-review-method", "UF grants: second-pass review and applicant replies",
+     "grants,evaluation,method,writing", "sections",
+     ["Workflow", "Email style guide", "Pushback replies", "Standing rules"]),
+
+    ("uf-report-out/.claude/skills/uf-context/SKILL.md",
+     "uf-grants-ops-orientation", "UF grants ops: standing rules and failure triage",
+     "grants,ops,method", "sections",
+     ["Standing rules — do not violate", "When something seems wrong"]),
+
+    ("uf-subk-monitor/CLAUDE.md",
+     "subcontractor-monitoring-method", "Subcontractor engagement monitoring: rules and onboarding",
+     "ops,method,monitoring", "sections",
+     ["Standing rules", "Adding an engagement"]),
+
+    ("uf-meeting-prep/README.md",
+     "meeting-prep-invariants", "Meeting prep automation: why it exists and its invariants",
+     "automation,method,design", "sections",
+     ["Why this repo exists", "Two invariants"]),
+]
+
+# Paths that must never be captured, whatever else changes. Belt to the allow-list's
+# braces: client output, live state, config, and credentials.
+FORBIDDEN = re.compile(
+    r"(\.claude/secrets|/secrets?/|\.env|reports?/|editions?/|memory/|"
+    r"\.db$|\.sqlite|sources\.yaml|crontab|\.cron-logs|/ops/notion\.json|"
+    r"dryrun-results|\.log$|\.venv)", re.I)
+
+SECRET_PATTERNS = [
+    (r"-----BEGIN [A-Z ]*PRIVATE KEY-----",              "private key block"),
+    (r"\bghp_[A-Za-z0-9]{20,}",                          "github token"),
+    (r"\bgithub_pat_[A-Za-z0-9_]{20,}",                  "github fine-grained pat"),
+    (r"\bsk-[A-Za-z0-9_\-]{20,}",                        "openai-style key"),
+    (r"\bpat[A-Za-z0-9]{10,}\.[A-Za-z0-9]{40,}",         "airtable pat"),
+    (r"\bre_[A-Za-z0-9_\-]{20,}",                        "resend key"),
+    (r"\bntn_[A-Za-z0-9]{20,}",                          "notion token"),
+    (r"\bxox[baprs]-[A-Za-z0-9\-]{10,}",                 "slack token"),
+    (r"\bAKIA[0-9A-Z]{16}\b",                            "aws access key id"),
+    (r"\b\d{8,10}:AA[A-Za-z0-9_\-]{30,}",                "telegram bot token"),
+    (r"\beyJ[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{15,}",   "jwt"),
+    (r"\bAIza[0-9A-Za-z_\-]{30,}",                       "google api key"),
+    (r"(?i)\b(api[_-]?key|secret|password|passwd|access[_-]?token|bearer|pat)\b\s*[:=]\s*"
+     r"[\"']?[A-Za-z0-9_\-\.]{16,}",                     "assigned credential value"),
+    (r"(?i)postgres(?:ql)?://[^\s:@]+:[^\s@]+@",         "database url with password"),
+]
+
+# ---- the four client-boundary line filters ----
+
+MONEY = re.compile(
+    r"(\$\s?\d[\d,]*(\.\d+)?\s?[KkMmBb]?\b"                    # $30K, $13.00M, $ 5,000
+    r"|\b\d[\d,]*(\.\d+)?\s?[KkMmBb]?\s?(USD|USDC|DAI|ETH|UNI)\b"
+    r"|\b(USD|USDC)\s?\d)")
+
+RECORD_ID = re.compile(
+    r"(\b(rec|tbl|fld|viw|app)[A-Za-z0-9]{14}\b"                # airtable
+    r"|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"   # notion uuid
+    r"|\b[0-9a-f]{32}\b"                                        # notion compact
+    r"|\bFY\d{2}-\d+-\d+\b"                                     # milestone id
+    r"|\b\d{9,}\b"                                              # hubspot object / stage id
+    r"|\b[A-Za-z0-9_-]{40,}\b)")                                # google sheet / drive id
+
+CONTACT = re.compile(
+    r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"          # email
+    r"|(?<![\w.%+-])@[A-Za-z0-9_]{3,}\b"                        # social handle
+    r"|\bt\.me/|\bdiscord\.gg/|\bcalendly\.com/"
+    r"|\b\+\d{1,3}[\s.-]?\(?\d{2,4}\)?[\s.-]?\d{3}[\s.-]?\d{3,4}\b)")   # phone
+
+# Grantee / applicant organisations that appear outside the exemplar-heading
+# structure, so cannot be derived. One line to add another.
+# The seeded names live on this machine, not in this file. The hub's nightly kit
+# publishes the template to GitHub with refs/heads/main frozen and carried whole:
+# no exclude list, no redaction (lib/sovereign_hub/kit.py, publication_plan). A
+# deny-list in the script is worse than a name in the script: it publishes the
+# judgement that those names are sensitive. The code ships; the names stay here.
+ORG_DENY = os.path.join(HOME, ".sovereign-boundary", "org-deny")
+_seed = None
+
+
+def load_org_deny_seed():
+    """Grantee names that must not travel, one per line, `#` comments ignored.
+
+    Missing or empty is fatal, and more sharply than for an allow-list: a deny
+    list that silently shrinks does not withhold less, it LEAKS more, and the run
+    still looks successful. To mean that nothing needs seeding beyond the derived
+    names, write the single word `none`.
+    """
+    try:
+        with open(ORG_DENY, encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f]
+    except OSError as exc:
+        raise SystemExit(
+            f"FATAL: cannot read {ORG_DENY}: {exc}\n"
+            "This file seeds the names that must never leave this machine. Running\n"
+            "without it would not withhold less carefully, it would leak. Write it\n"
+            "(one name per line, or the single word `none`) before running.")
+    names = {ln for ln in lines if ln and not ln.startswith("#")}
+    if not names:
+        raise SystemExit(
+            f"FATAL: {ORG_DENY} seeds nothing.\n"
+            "An empty file cannot be told apart from a truncated one. If the derived\n"
+            "names are genuinely enough, write the single word `none` instead.")
+    return set() if names == {"none"} else names
+
+
+def org_deny_seed():
+    """Read once per run, so importing this file costs nothing and never dies."""
+    global _seed
+    if _seed is None:
+        _seed = load_org_deny_seed()
+    return _seed
+
+
+# ---- yield: does this capture still carry anything? ----
+# A capture that says nothing is still a valid capture, and the nightly logs it
+# as a success. The floor is what refuses one; preflight below is what catches a
+# filter change removing content before it ever runs here.
+COLLAPSE_MARKER_SHARE = 0.5   # markers may not be half the content
+COLLAPSE_MIN_LINES = 3        # below this there is no durable note left
+
+
+def yield_of(body):
+    """Content lines, marker lines, and the share that is withheld.
+
+    The source header is scaffolding: it survives any filter and would mask a
+    collapse if counted as content.
+    """
+    content = markers = 0
+    for ln in body.splitlines():
+        t = ln.strip()
+        if not t or t.startswith("_Source:"):
+            continue
+        if "line withheld by the client boundary" in t:
+            markers += 1
+        else:
+            content += 1
+    total = content + markers
+    return content, markers, (markers / total if total else 0.0)
+
+
+def load_reference(path):
+    """Import another copy of this script so its distil can be called directly."""
+    import importlib.util
+    spec = importlib.util.spec_from_loader(
+        "ref", importlib.machinery.SourceFileLoader("ref", os.path.expanduser(path)))
+    mod = importlib.util.module_from_spec(spec)
+    saved, sys.argv = sys.argv, ["ref", "--dry"]
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.argv = saved
+    mod.HOME = HOME
+    return mod
+
+
+def reference_yield(reference, path, src_rel, how, arg):
+    """(content lines, marker lines) the reference copy would produce, or None."""
+    if not reference:
+        return None
+    try:
+        out = reference.distil(path, src_rel, how, arg, reference.derive_org_deny())
+        body = out[0] if isinstance(out, tuple) else out
+        if not body:
+            return 0, 0
+        content, markers, _ = yield_of(reference.cap_body(body, src_rel))
+        return content, markers
+    except Exception as exc:
+        log(f"reference render failed for {src_rel}: {exc}")
+        return None
+
+
+def preflight(state, deny):
+    """Render every source and say whether a change is safe to ship.
+
+    Writes nothing, captures nothing, and touches neither the lane nor the
+    heartbeat. Exit 2 means a source leaks, collapses, or loses content the
+    deployed copy keeps.
+    """
+    reference = load_reference(AGAINST) if AGAINST else None
+    if reference:
+        print(f"comparing against {AGAINST}")
+    print(f"{'slug':<36}{'bytes':>8}{'was':>8}{'delta':>9}  {'yield':<16}verdict")
+    print("-" * 98)
+    worst = 0
+    for src_rel, slug, title, topics, how, arg in SOURCES:
+        path = os.path.join(HOME, src_rel)
+        if FORBIDDEN.search(src_rel):
+            print(f"{slug:<36}{'-':>8}{'-':>8}{'-':>9}  {'-':<16}REFUSED by path rule")
+            worst = max(worst, 2)
+            continue
+        if not os.path.exists(path):
+            print(f"{slug:<36}{'-':>8}{'-':>8}{'-':>9}  {'-':<16}source absent")
+            worst = max(worst, 1)
+            continue
+        try:
+            body, _dropped = distil(path, src_rel, how, arg, deny)
+        except Exception as exc:
+            print(f"{slug:<36}{'-':>8}{'-':>8}{'-':>9}  {'-':<16}distil failed: {exc}")
+            worst = max(worst, 2)
+            continue
+        if not body:
+            print(f"{slug:<36}{'-':>8}{'-':>8}{'-':>9}  {'-':<16}extractor '{how}' found nothing")
+            worst = max(worst, 2)
+            continue
+        body = cap_body(body, src_rel)
+        nbytes = len(body.encode("utf-8"))
+        was = state.get(src_rel, {}).get("bytes")
+        content, markers, share = yield_of(body)
+        leaks = sorted({name for pat, name in
+                        ((MONEY, "money"), (CONTACT, "contact"), (RECORD_ID, "record-id"))
+                        if pat.search(body)} | set(secret_hits(body)))
+        ref = reference_yield(reference, path, src_rel, how, arg)
+        lost = (ref[0] - content) if ref else 0
+        gained = (markers - ref[1]) if ref else 0
+        delta = f"{nbytes - was:+d}" if was else "new"
+        note = f"{content}L {markers}M {share:.0%}"
+        if leaks:
+            verdict, rank = "LEAKS: " + ",".join(leaks), 2
+        elif content < COLLAPSE_MIN_LINES or share > COLLAPSE_MARKER_SHARE:
+            verdict, rank = "COLLAPSED - would be dropped", 2
+        elif ref and lost > 0:
+            verdict, rank = f"CUTS {lost} line{'' if lost == 1 else 's'} the deployed script keeps (+{gained} withheld)", 2
+        elif ref:
+            verdict, rank = "same as deployed", 0
+        elif was and nbytes == was:
+            verdict, rank = "unchanged", 0
+        else:
+            verdict, rank = "ok", 0
+        worst = max(worst, rank)
+        print(f"{slug:<36}{nbytes:>8}{was if was else '-':>8}{delta:>9}  {note:<16}{verdict}")
+    print("-" * 98)
+    print(["all sources carry content and leak nothing",
+           "review before shipping",
+           "DO NOT SHIP: a source leaks, collapses, or loses content the deployed script keeps"][worst])
+    if not reference:
+        print("no --against reference: this cannot tell you whether YOUR change cut anything.")
+    return worst
+
+
+def log(msg):
+    line = f"{datetime.now(timezone.utc).isoformat(timespec='seconds')}  {msg}"
+    print(line)
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def read(path):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def secret_hits(text):
+    return [name for pat, name in SECRET_PATTERNS if re.search(pat, text)]
+
+
+# ------------------------------------------------------- the applicant deny-list
+
+def derive_org_deny():
+    """Harvest exemplar names from the calibration corpus's own headings.
+
+    `### 7. TKN (ethpapers) — DECLINE current terms (2026-06-17)` yields both
+    "TKN" and "ethpapers". Deriving beats memorising: a new exemplar lands in the
+    deny-list the day it is written, with no edit here.
+    """
+    names = set(org_deny_seed())
+    path = os.path.join(HOME, CALIBRATION)
+    if not os.path.exists(path):
+        # Most of this deny-list is derived from that corpus, not seeded. Returning
+        # the seed alone was a silent fail-OPEN: the filter would pass names it has
+        # always caught, on a run that reports success. Refuse instead.
+        raise SystemExit(
+            f"FATAL: the calibration corpus is missing ({path}).\n"
+            "Nearly every name this lane withholds is derived from its headings, so\n"
+            "without it the deny-list collapses to the seed and applicant names that\n"
+            "have always been caught would travel. Restore it before running.")
+    for line in read(path).splitlines():
+        m = re.match(r"^#{2,4}\s+\d+\.\s+(.+?)\s+[—-]\s", line)
+        if not m:
+            continue
+        head = m.group(1).strip()
+        for part in re.split(r"[()/]", head):
+            part = part.strip()
+            if len(part) >= 3:
+                names.add(part)
+    return names
+
+
+def org_hit(line, deny):
+    low = line.lower()
+    return any(n.lower() in low for n in deny)
+
+
+def filter_lines(lines, deny):
+    """The four filters. A tripped line is dropped whole, not redacted: a
+    half-scrubbed sentence about client work is worse than a missing one.
+
+    The drop leaves a visible marker rather than closing the gap. Silently
+    splicing the neighbours produces a sentence that reads as complete and is
+    not — the worst failure mode for material headed to a trusted layer.
+    """
+    kept, dropped = [], {"money": 0, "record-id": 0, "contact": 0, "org": 0}
+    for ln in lines:
+        why = None
+        if MONEY.search(ln):
+            why = "money"
+        elif RECORD_ID.search(ln):
+            why = "record-id"
+        elif CONTACT.search(ln):
+            why = "contact"
+        elif org_hit(ln, deny):
+            why = "org"
+        if why:
+            dropped[why] += 1
+            indent = ln[:len(ln) - len(ln.lstrip())]
+            kept.append(f"{indent}[… line withheld by the client boundary: {why} …]")
+            continue
+        kept.append(ln)
+    return kept, dropped
+
+
+# ------------------------------------------------------------------- extractors
+
+def x_whole(txt, _arg):
+    return [ln for ln in txt.splitlines()]
+
+
+def x_rules(txt, _arg):
+    """The posture prose plus every `**Rule: …**` block. Exemplars never travel:
+    they are the part that carries applicant identity and verdicts."""
+    lines = txt.splitlines()
+    out, i = [], 0
+    # the posture section, up to the exemplars
+    while i < len(lines):
+        if re.match(r"^##\s+The posture", lines[i]):
+            out.append("## The posture")
+            i += 1
+            while i < len(lines) and not lines[i].startswith("##"):
+                out.append(lines[i])
+                i += 1
+            break
+        i += 1
+    out += ["", "## The transferable rules", ""]
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("**Rule:"):
+            block = [lines[i]]
+            while not block[-1].rstrip().endswith("**") and i + 1 < len(lines):
+                i += 1
+                block.append(lines[i])
+            out += ["- " + " ".join(b.strip() for b in block).strip("*").replace("Rule: ", "", 1), ""]
+        i += 1
+    return out
+
+
+def _head_text(line):
+    """A heading's own text: no `#`, no leading emoji or punctuation."""
+    return re.sub(r"^[^\w]+", "", line.lstrip("#").strip()).strip()
+
+
+def _find_heading(lines, want):
+    """The heading whose OWN text starts with `want`.
+
+    A substring match is not good enough: 'Auth-failover wrapper' is a substring
+    of the document's own title, 'Runbook: Cron schedule & auth-failover wrapper',
+    and matching the title lifts the whole document — including the config it was
+    supposed to leave behind.
+    """
+    w = want.lower()
+    for i, ln in enumerate(lines):
+        if ln.startswith("#") and _head_text(ln).lower().startswith(w):
+            return i
+    return None
+
+
+def x_fenced(txt, heading):
+    """The first fenced block under the named heading — the framework as written."""
+    lines = txt.splitlines()
+    start = _find_heading(lines, heading)
+    if start is None:
+        return []
+    out, in_fence = [], False
+    for ln in lines[start + 1:]:
+        if ln.startswith("```"):
+            if in_fence:
+                break
+            in_fence = True
+            continue
+        if in_fence:
+            out.append(ln)
+        elif ln.startswith("#"):
+            break
+    return out
+
+
+def x_sections(txt, headings):
+    """The body of each named heading, in the order declared.
+
+    A section stops at the NEXT heading of any level, so it never carries its
+    subtree along. That is what keeps a conceptual section ('Auth-failover
+    wrapper') from dragging in the operational subsections filed under it
+    ('Secrets', 'Testing') — config is not knowledge, and it is safer to declare
+    a subsection explicitly than to inherit it by accident.
+    """
+    lines = txt.splitlines()
+    out = []
+    for want in headings:
+        start = _find_heading(lines, want)
+        if start is None:
+            continue
+        out.append(f"## {_head_text(lines[start])}")
+        out.append("")
+        for ln in lines[start + 1:]:
+            if ln.startswith("#"):
+                break
+            out.append(ln)
+        out.append("")
+    return out
+
+
+EXTRACTORS = {"whole": x_whole, "rules": x_rules, "fenced": x_fenced, "sections": x_sections}
+
+
+# --------------------------------------------------------------------- assembly
+
+def cap_body(body, src_rel):
+    raw = body.encode("utf-8")
+    if len(raw) <= CAP:
+        return body
+    keep, size = [], 0
+    for line in body.splitlines(True):
+        n = len(line.encode("utf-8"))
+        if size + n > CAP - 260:
+            break
+        keep.append(line)
+        size += n
+    return "".join(keep).rstrip() + (
+        f"\n\n_(capture truncated at {CAP // 1024}KB; the rest stays on uniclaude at "
+        f"`~/{src_rel}`)_\n")
+
+
+def distil(path, src_rel, how, arg, deny):
+    txt = read(path)
+    nbytes = len(txt.encode("utf-8"))
+    raw_lines = EXTRACTORS[how](txt, arg)
+    if not raw_lines:
+        return None, None
+    kept, dropped = filter_lines(raw_lines, deny)
+
+    # collapse runs of blank lines the filters left behind
+    body, blank = [], False
+    for ln in kept:
+        if not ln.strip():
+            if blank:
+                continue
+            blank = True
+        else:
+            blank = False
+        body.append(ln)
+
+    head = [f"_Source: `~/{src_rel}` on uniclaude, {nbytes // 1024}KB. "
+            f"Method only — the client boundary is enforced by this lane's capture script._", ""]
+    return "\n".join(head + body).strip() + "\n", dropped
+
+
+# -------------------------------------------------------------------- the wires
+
+def git(*args):
+    return subprocess.run(["git", "-C", BRAIN] + list(args), capture_output=True, text=True)
+
+
+def refresh_lane():
+    """Keep the READ wire current by fast-forwarding the lane onto the hub's main."""
+    if git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != BRANCH:
+        log(f"ABORT: clone is not on {BRANCH}")
+        return False
+    if git("status", "--porcelain").stdout.strip():
+        log("ABORT: lane working tree is dirty — refusing to run")
+        return False
+    if git("fetch", "-q", "origin").returncode != 0:
+        log("ABORT: cannot reach the exchange")
+        return False
+    m = git("merge", "--no-edit", "-q", "origin/main")
+    if m.returncode != 0:
+        git("merge", "--abort")
+        log(f"ABORT: merging origin/main into {BRANCH} failed: {m.stderr.strip()}")
+        return False
+    return True
+
+
+
+def _heartbeat():
+    """Prove the whole pipe: an annotated tag (tagger date = now) forced onto
+    the exchange's reserved heartbeat ref, fetched by M3's fence. Best-effort
+    by contract: never raises, never fails the run — a failed push just leaves
+    the heartbeat stale, which is the hub's alarm working."""
+    try:
+        lane = BRANCH.split("/", 1)[1]          # lane/<slug> -> <slug>
+        t = git("tag", "-f", "-a", "hb-local", "-m", "heartbeat", "HEAD")
+        if t.returncode != 0:
+            log(f"heartbeat: tag failed (non-fatal): {t.stderr.strip()}")
+            return
+        r = git("push", "-qf", "origin",
+                f"refs/tags/hb-local:refs/heartbeats/{lane}")
+        if r.returncode != 0:
+            log(f"heartbeat: push failed (non-fatal): {r.stderr.strip()}")
+            return
+        log("heartbeat: pushed")
+    except Exception as e:
+        log(f"heartbeat: failed (non-fatal): {e}")
+
+
+def main():
+    state = {}
+    if os.path.exists(STATE):
+        try:
+            state = json.loads(read(STATE))
+        except Exception:
+            log("state file unreadable — treating every source as new")
+
+    if PREFLIGHT:
+        return preflight(state, derive_org_deny())
+
+    if not DRY and not refresh_lane():
+        return 1
+
+    deny = derive_org_deny()
+    log(f"applicant/grantee deny-list: {len(deny)} names (derived + seeded)")
+
+    changed = 0
+    for src_rel, slug, title, topics, how, arg in SOURCES:
+        if FORBIDDEN.search(src_rel):
+            log(f"REFUSED {slug}: source path matches the never-capture rule")
+            continue
+        path = os.path.join(HOME, src_rel)
+        if not os.path.exists(path):
+            log(f"skip {slug}: source absent ({src_rel})")
+            continue
+        try:
+            body, dropped = distil(path, src_rel, how, arg, deny)
+        except Exception as e:
+            log(f"SKIP {slug}: distil failed: {e}")
+            continue
+        if not body:
+            log(f"skip {slug}: extractor '{how}' found nothing to lift")
+            continue
+        body = cap_body(body, src_rel)
+
+        # ---- the final re-scan: drop whole, never redact ----
+        hits = secret_hits(body)
+        if MONEY.search(body):
+            hits.append("money figure")
+        if CONTACT.search(body):
+            hits.append("contact detail")
+        if RECORD_ID.search(body):
+            hits.append("client record id")
+        if hits:
+            log(f"DROPPED {slug}: body still trips the boundary scan "
+                f"({', '.join(sorted(set(hits)))}) — nothing captured")
+            continue
+
+        content, markers, share = yield_of(body)
+        if content < COLLAPSE_MIN_LINES or share > COLLAPSE_MARKER_SHARE:
+            log(f"DROPPED {slug}: nothing left after the boundary "
+                f"({content} content lines, {markers} withheld, {share:.0%} of it markers) "
+                f"— a source with nothing left is not a source")
+            continue
+
+        h = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        drops = ", ".join(f"{k}:{v}" for k, v in dropped.items() if v)
+        if state.get(src_rel, {}).get("body_sha") == h:
+            log(f"unchanged {slug} — no capture" + (f" (filters dropped {drops})" if drops else ""))
+            continue
+
+        nbytes = len(body.encode("utf-8"))
+        if DRY:
+            log(f"[DRY] would capture {slug} ({nbytes} bytes)"
+                + (f"; filters dropped {drops}" if drops else "; filters dropped nothing"))
+            continue
+
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as tf:
+            tf.write(body)
+            tmp = tf.name
+        try:
+            r = subprocess.run(
+                [CAPTURE, slug, "--from", tmp, "--title", title, "--topics", topics,
+                 "--origin", f"file://uniclaude/{src_rel}"],
+                capture_output=True, text=True)
+        finally:
+            os.unlink(tmp)
+
+        if r.returncode != 0:
+            log(f"FAILED {slug}: {r.stdout.strip()} {r.stderr.strip()}")
+            continue
+        log(f"captured {slug} ({nbytes} bytes)" + (f"; filters dropped {drops}" if drops else ""))
+        state[src_rel] = {"body_sha": h, "bytes": nbytes,
+                          "captured": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                          "slug": slug}
+        changed += 1
+
+    if not DRY:
+        with open(STATE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, sort_keys=True)
+        os.chmod(STATE, 0o600)
+        _heartbeat()   # always, captures or none — a dry run must not fake liveness
+    log(f"run complete — {changed} capture(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,752 @@
+#!/usr/bin/env python3
+"""spp3-brain-daily — the SPP3 lane's producer pass.
+
+Finished ENS program design material only. Distils an explicit allow-list of settled
+documents into short markdown captures and lands them in raw/workspaces/spp3/ via
+brain-capture (committed on lane/spp3, pushed to the exchange, fenced and merged by M3).
+
+Rules this script enforces, per the lane contract:
+  - idempotent: a source whose DISTILLED body is unchanged produces no capture
+  - no secrets: every body is scanned for credential-shaped values and dropped loudly
+  - no operational noise: an explicit allow-list, never a directory sweep
+  - NEVER applicant identities or evaluation verdicts: those are live ENS committee
+    material and do not belong in Sov's brain. Nothing under Accountability-Workspace,
+    no .cron-logs, no Notion exports, no per-applicant scoring.
+  - bounded: bodies cap at 12KB with a pointer to the full source on this host
+
+Generic by construction: sources are declared in SOURCES, distilled by one shared
+builder, so adding a document is a one-line change and no new code.
+
+Run: spp3-brain-daily [--dry] [--preflight]
+  --dry        distil and report, capture nothing
+  --preflight  render every source against the last captured bytes and say
+               whether a change is safe to ship. Reads only.
+"""
+import os, re, sys, json, hashlib, subprocess, tempfile
+from datetime import datetime, timezone
+
+HOME    = os.path.expanduser("~")
+BRAIN   = os.path.join(HOME, "brain")
+BRANCH  = "lane/spp3"
+CAPTURE = os.path.join(HOME, "bin", "brain-capture")
+STATE   = os.path.join(HOME, ".brain-capture-state")
+LOG     = os.path.join(HOME, ".brain-capture.log")
+CAP     = 12288
+
+DRY = "--dry" in sys.argv
+# Preflight reads and reports only: no lane refresh, no capture, no heartbeat.
+PREFLIGHT = "--preflight" in sys.argv
+# --against <script>: render the same sources with another copy of this script
+# and report what changed. Comparing to historical bytes does not work, because
+# a withheld marker is about as long as the line it replaces: the verdict filter
+# that cut ten lines out of the evaluation rubric moved its byte count UP by 22.
+AGAINST = (sys.argv[sys.argv.index("--against") + 1]
+           if "--against" in sys.argv and len(sys.argv) > sys.argv.index("--against") + 1 else None)
+
+# path, slug, title, topics. Finished design docs only.
+SOURCES = [
+    ("SPP3-Workspace/AI-Drafts/6-committee-operations-manual.md",
+     "spp3-committee-operations", "SPP3 committee operations", "ens,governance,process"),
+    ("SPP3-Workspace/AI-Drafts/4-rubric.md",
+     "spp3-evaluation-rubric", "SPP3 evaluation rubric", "ens,grants,evaluation"),
+    ("SPP3-Workspace/AI-Drafts/3-interview-guide.md",
+     "spp3-interview-method", "SPP3 interview method", "ens,evaluation,method"),
+    ("SPP3-Workspace/SPP3-Provider-FAQ.md",
+     "spp3-applicant-guidance", "SPP3 applicant guidance", "ens,grants,process"),
+    ("SPP3-Workspace/spp3-proposal.md",
+     "spp3-program-design", "SPP3 program design", "ens,grants,program-design"),
+    ("RFP-Workspace/README.md",
+     "rfp-harness-isolation-design", "RFP harness isolation design", "ens,automation,architecture"),
+    ("RFP-Workspace/docs/rfp-artifacts.md",
+     "rfp-pipeline-artifacts", "RFP pipeline artifacts", "ens,automation,process"),
+
+    # Added 2026-09-21, behind the client boundary added the same day. The other
+    # candidate, memory/project_retro_funding_rubric.md, was tested and rejected:
+    # filtered, it reduces to frontmatter and four withheld markers, because its
+    # substance is a named co-applicant's dispute. A source with nothing left
+    # after the boundary is not a source.
+    (".claude/projects/-home-ubuntu/memory/project_spp3_forum_findings.md",
+     "spp3-forum-findings", "SPP3: what the ENS forum surfaced",
+     "ens,governance,community"),
+]
+
+# Paths that must never be captured, whatever else changes. Belt to the allow-list's braces.
+FORBIDDEN = re.compile(r"(Accountability-Workspace|\.cron-logs|notion_export|secrets|"
+                       r"applicants?|scoring|scores|contacts?)", re.I)
+
+
+# ---- scheduled-process outputs: the owner's carve-out, 2026-09-16 ----
+# The Accountability workspace stays forbidden for DOCUMENTS: applicant, committee
+# and contact material never enters the brain. On 2026-09-16 the owner carved out
+# one PROCESS OUTPUT: the stream monitor's aggregate health record
+# (data/streams/status.json), projected to verdict, block, check counts and runway
+# level. Names, addresses, balances and rates are never copied. The backfill
+# (raw/workspaces/spp3/spp3-monitor-history-2026-08.md and -2026-09.md) covers the
+# series up to BASELINE_REV; this class continues it as dated increments, one
+# capture per qualifying event, carrying every observation since the last capture.
+# A healthy unchanged day produces no capture. Qualifying: the verdict changed,
+# any check failed, or the observation is a Monday (the monitor's weekly heartbeat).
+ACCT_REPO    = os.path.join(HOME, "Accountability-Workspace")
+MONITOR_FILE = "data/streams/status.json"
+BASELINE_REV = "463798c176403a56214ca70dab4c2e45b6ff0b1a"   # last revision in the backfill
+MONITOR_KEY  = "process:stream-monitor"                      # its entry in the state file
+MONITOR_CAP  = 400                                            # observations per capture, at most
+
+SECRET_PATTERNS = [
+    (r"-----BEGIN [A-Z ]*PRIVATE KEY-----",              "private key block"),
+    (r"\bghp_[A-Za-z0-9]{20,}",                          "github token"),
+    (r"\bgithub_pat_[A-Za-z0-9_]{20,}",                  "github fine-grained pat"),
+    (r"\bsk-[A-Za-z0-9_\-]{20,}",                        "openai-style key"),
+    (r"\bxox[baprs]-[A-Za-z0-9\-]{10,}",                 "slack token"),
+    (r"\bAKIA[0-9A-Z]{16}\b",                            "aws access key id"),
+    (r"\b\d{8,10}:AA[A-Za-z0-9_\-]{30,}",                "telegram bot token"),
+    (r"\beyJ[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{15,}",   "jwt"),
+    (r"\bAIza[0-9A-Za-z_\-]{30,}",                       "google api key"),
+    (r"(?i)\b(api[_-]?key|secret|password|passwd|access[_-]?token|bearer)\b\s*[:=]\s*"
+     r"[\"']?[A-Za-z0-9_\-\.]{16,}",                     "assigned credential value"),
+    (r"(?i)postgres(?:ql)?://[^\s:@]+:[^\s@]+@",         "database url with password"),
+]
+
+
+# ---- the client boundary, 2026-09-21 ----
+# Until now this lane filtered on the source PATH only, so a body could carry
+# anything a filename did not reveal. That is how a memory file naming a live
+# SPP3 co-applicant, and linking a current handle to a prior one, reached the
+# proposal stage: the path said "retro funding rubric" and nothing read the text.
+#
+# These are uniclaude's four line filters, ported so both producer lanes share
+# one shape, with the identity signal changed to what identifies people here.
+# ENS work names people by handle rather than by organisation, so the deny-list
+# uniclaude derives from its calibration corpus has no equivalent. The handle
+# itself is the signal, and it is regular.
+MONEY = re.compile(
+    r"(\$\s?\d[\d,]*(\.\d+)?\s?[KkMmBb]?\b"
+    r"|\b\d[\d,]*(\.\d+)?\s?[KkMmBb]?\s?(USD|USDC|USDT|DAI|ETH|ENS)\b)")
+
+# A handle is an identity here, and a prior handle beside a current one is worse
+# than either alone, so the whole line goes.
+IDENTITY = re.compile(
+    r"(\b[a-z0-9][a-z0-9_-]{2,}\.eth\b"           # ENS name
+    r"|\b0x[0-9a-fA-F]{40}\b"                      # Ethereum address
+    r"|discuss\.ens\.domains/t/\d+)", re.I)        # a thread pins a position to a person
+
+CONTACT = re.compile(
+    r"(\b[\w.+-]+@[\w-]+\.[\w.]{2,}\b"             # email
+    r"|(?<![\w/])@[A-Za-z0-9_]{3,}\b"              # social handle
+    r"|\b\+?\d[\d ()-]{8,}\d\b)")                  # phone
+
+# There is deliberately no verdict filter. A first version had one and it cut
+# "Scoring scale: 1-5 per criterion" and "Score 5 - Exceptional" out of the
+# evaluation rubric: a rubric IS a scoring scale, and the words that describe
+# the method are the same words that would report an outcome. No regex separates
+# them. What makes a verdict sensitive is the subject it names, so IDENTITY is
+# the filter that matters and this is left to it.
+#
+# The known limit: a verdict about a provider named in plain prose rather than
+# by handle passes all four filters. The allow-list is what covers that - seven
+# sources the owner read - and these filters are the second net, not the first.
+
+
+# Owner decision, 2026-09-21: the seated SPP3 committee travels. These people hold
+# a publicly announced office and naming them IS the content of the committee
+# operations manual; withholding them left a document about a committee that could
+# not say who was on it. This is an allow-list, not a pattern, so it fails safe: a
+# handle that is not on it — an applicant, a forum participant — is still withheld,
+# and a new committee member does not travel until the owner adds them here.
+# The roster lives on this machine, not in this file. The hub's nightly kit
+# publishes the template to GitHub with refs/heads/main frozen and carried whole:
+# no exclude list, no redaction (lib/sovereign_hub/kit.py, publication_plan). A
+# list of real people in the script is a list of real people on a public git
+# host. The code ships; the names stay here.
+ROSTER = os.path.join(HOME, ".sovereign-boundary", "public-roles")
+_roster = None
+
+
+def load_public_roles():
+    """Handles permitted to travel, one per line, `#` comments ignored.
+
+    Missing or empty is fatal. Degrading to an empty set would look like a
+    working run while silently withholding the committee from every capture, and
+    an absent file cannot be told apart from a policy of naming nobody. To mean
+    nobody, write the single word `none`.
+    """
+    try:
+        with open(ROSTER, encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f]
+    except OSError as exc:
+        raise SystemExit(
+            f"FATAL: cannot read {ROSTER}: {exc}\n"
+            "This file names the people whose names may leave this machine. Without it\n"
+            "the script cannot tell a seated office-holder from an applicant. Write it\n"
+            "(one handle per line, or the single word `none`) before running.")
+    names = {ln.lower() for ln in lines if ln and not ln.startswith("#")}
+    if not names:
+        raise SystemExit(
+            f"FATAL: {ROSTER} lists nobody.\n"
+            "An empty file cannot be told apart from a truncated one. If naming nobody\n"
+            "is what you mean, write the single word `none` instead.")
+    return set() if names == {"none"} else names
+
+
+def public_roles():
+    """Read once per run, so importing this file costs nothing and never dies."""
+    global _roster
+    if _roster is None:
+        _roster = load_public_roles()
+    return _roster
+
+
+def names_a_private_person(ln):
+    """True when the line identifies anyone who is not a seated office-holder."""
+    permitted = public_roles()
+    for m in IDENTITY.finditer(ln):
+        if m.group(0).lower() not in permitted:
+            return True
+    return False
+
+
+def line_hit(ln):
+    """Why this line may not travel, or None."""
+    if MONEY.search(ln):
+        return "money"
+    if names_a_private_person(ln):
+        return "identity"
+    if CONTACT.search(ln):
+        return "contact"
+    return None
+
+
+WITHHELD = "[… line withheld by the client boundary: %s …]"
+
+
+def filter_lines(lines):
+    """Drop a tripped line whole; never redact inside it.
+
+    The gap is left visible. Silently splicing the neighbours produces a
+    sentence that reads as complete and is not, which is the worst failure
+    mode for material headed to a trusted layer.
+    """
+    kept, dropped = [], {}
+    for ln in lines:
+        why = line_hit(ln)
+        if why:
+            dropped[why] = dropped.get(why, 0) + 1
+            indent = ln[:len(ln) - len(ln.lstrip())]
+            kept.append(indent + WITHHELD % why)
+            continue
+        kept.append(ln)
+    return kept, dropped
+
+
+# ---- yield: does this capture still carry anything? ----
+# A filter change cannot be trusted to shrink a capture a little. The verdict
+# filter removed on 2026-09-21 cut the evaluation rubric's scoring anchors, and
+# the retro-funding memory file reduced to frontmatter plus four markers. Both
+# would have shipped: a capture that says nothing is still a valid capture, and
+# the nightly would have logged it as a success.
+#
+# COLLAPSE is a floor, and it drops. SHRINK is an alarm, and it ships loudly,
+# because a source the owner genuinely trimmed is a real change and blocking it
+# would teach the owner to work around the guard.
+COLLAPSE_MARKER_SHARE = 0.5   # markers may not be half the content
+COLLAPSE_MIN_LINES = 3        # below this, there is no briefing card left
+SHRINK_ALARM = 0.4            # 40% smaller than last time is worth saying out loud
+
+
+def yield_of(body):
+    """Content lines, marker lines, and the share that is withheld.
+
+    Frontmatter and the source header are scaffolding: they survive any filter
+    and would mask a collapse if counted as content.
+    """
+    # Frontmatter never starts at line 0: the source header is written above it, so
+    # keying on index 0 meant this never fired on a real capture and YAML counted as
+    # content. Any `---` reached before the first prose line opens frontmatter.
+    in_fm, seen_prose, content, markers = False, False, 0, 0
+    for ln in body.splitlines():
+        t = ln.strip()
+        if t == "---" and (in_fm or not seen_prose):
+            in_fm = not in_fm
+            continue
+        if in_fm or not t or t.startswith("_Source:"):
+            continue
+        seen_prose = True
+        if "line withheld by the client boundary" in t:
+            markers += 1
+        else:
+            content += 1
+    total = content + markers
+    return content, markers, (markers / total if total else 0.0)
+
+
+def log(msg):
+    line = f"{datetime.now(timezone.utc).isoformat(timespec='seconds')}  {msg}"
+    print(line)
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def secret_hits(text):
+    return [name for pat, name in SECRET_PATTERNS if re.search(pat, text)]
+
+
+def read(path):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def cap_body(body, src_rel):
+    raw = body.encode("utf-8")
+    if len(raw) <= CAP:
+        return body
+    keep, size = [], 0
+    for line in body.splitlines(True):
+        n = len(line.encode("utf-8"))
+        if size + n > CAP - 240:
+            break
+        keep.append(line)
+        size += n
+    return "".join(keep).rstrip() + (
+        f"\n\n_(capture truncated at {CAP // 1024}KB; the rest stays on spp3 at "
+        f"`~/{src_rel}`)_\n"
+    )
+
+
+def distil(path, src_rel):
+    """One shared builder: the document's opening prose plus its heading map.
+
+    Keeps what a reader needs to know the document exists and what it decides,
+    without lifting the whole thing into the loading dock.
+    """
+    txt = read(path)
+    lines = txt.splitlines()
+    nbytes = len(txt.encode("utf-8"))
+
+    body, seen_prose = [], 0
+    for ln in lines:
+        if ln.startswith("#"):
+            continue
+        if ln.strip():
+            body.append(ln)
+            seen_prose += len(ln)
+        elif body:
+            body.append("")
+        if seen_prose > 1800:
+            break
+
+    heads = [ln for ln in lines if re.match(r"^#{2,3}\s+\S", ln)]
+    out = [l for l in body if l is not None]
+    if heads:
+        out += ["", "## Document map", ""]
+        # A heading names an applicant as readily as a paragraph does.
+        out += [f"- {h.lstrip('# ').strip()}" for h in heads[:40]]
+    out, dropped = filter_lines(out)
+    head = [f"_Source: `~/{src_rel}` on spp3, {nbytes // 1024}KB. "
+            f"Method only \u2014 the client boundary is enforced by this lane's capture script._", ""]
+    return "\n".join(head + out).strip() + "\n", dropped
+
+
+def git(*args):
+    return subprocess.run(["git", "-C", BRAIN] + list(args), capture_output=True, text=True)
+
+
+def refresh_lane():
+    """Keep the READ wire current by fast-forwarding the lane onto the hub's main."""
+    if git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != BRANCH:
+        log(f"ABORT: clone is not on {BRANCH}")
+        return False
+    if git("status", "--porcelain").stdout.strip():
+        log("ABORT: lane working tree is dirty — refusing to run")
+        return False
+    if git("fetch", "-q", "origin").returncode != 0:
+        log("ABORT: cannot reach the exchange")
+        return False
+    m = git("merge", "--no-edit", "-q", "origin/main")
+    if m.returncode != 0:
+        git("merge", "--abort")
+        log(f"ABORT: merging origin/main into {BRANCH} failed: {m.stderr.strip()}")
+        return False
+    return True
+
+
+
+# What this producer's runs cover, reported on every heartbeat (2026-09-16):
+# the hub's health check reads it off the tag message next to the lane's own
+# declaration in LANE.md, so a run that succeeds while collecting nothing is
+# visible as such. Counts only; never content.
+EXCLUDED = "applicant, committee and contact records; .cron-logs; Notion exports; secrets"
+
+
+def _heartbeat(coverage=None):
+    """Prove the whole pipe: an annotated tag (tagger date = now) forced onto
+    the exchange's reserved heartbeat ref, fetched by M3's fence. Best-effort
+    by contract: never raises, never fails the run — a failed push just leaves
+    the heartbeat stale, which is the hub's alarm working. The tag message
+    carries the run's coverage summary as one JSON line."""
+    try:
+        lane = BRANCH.split("/", 1)[1]          # lane/<slug> -> <slug>
+        msg = "heartbeat"
+        if coverage:
+            msg += "\n\ncoverage: " + json.dumps(coverage, sort_keys=True, separators=(",", ":"))
+        t = git("tag", "-f", "-a", "hb-local", "-m", msg, "HEAD")
+        if t.returncode != 0:
+            log(f"heartbeat: tag failed (non-fatal): {t.stderr.strip()}")
+            return
+        p = git("push", "-qf", "origin",
+                f"refs/tags/hb-local:refs/heartbeats/{lane}")
+        if p.returncode != 0:
+            log(f"heartbeat: push failed (non-fatal): {p.stderr.strip()}")
+            return
+        log("heartbeat: pushed")
+    except Exception as e:
+        log(f"heartbeat: failed (non-fatal): {e}")
+
+
+def acct_git(*args):
+    return subprocess.run(["git", "-C", ACCT_REPO] + list(args), capture_output=True, text=True)
+
+
+def monitor_project(rev):
+    """One observation, projected: verdict, block, check counts, runway level, and the
+    SHA-256 of the original JSON at that revision. No names, addresses, balances or rates."""
+    r = acct_git("show", f"{rev}:{MONITOR_FILE}")
+    if r.returncode != 0:
+        raise RuntimeError(f"cannot read {MONITOR_FILE} at {rev[:9]}: {r.stderr.strip()}")
+    raw = r.stdout
+    d = json.loads(raw)
+    checks = [s.get("ok") for s in d.get("streams", [])] + [s.get("ok") for s in d.get("retired", [])]
+    checks += [d.get("net_flow", {}).get("ok"), d.get("runway", {}).get("ok")]
+    return {
+        "rev": rev,
+        "at": str(d.get("checked_at", "")),
+        "block": d.get("block_number", ""),
+        "verdict": str(d.get("overall", "unknown")),
+        "ok": sum(1 for c in checks if c is True),
+        "total": len(checks),
+        "runway": str(d.get("runway", {}).get("level", "unknown")),
+        "sha": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+    }
+
+
+def monitor_reasons(prev, obs):
+    """Why this observation earns a capture; empty for a healthy unchanged day."""
+    reasons = []
+    if obs["verdict"] != prev["verdict"]:
+        reasons.append(f"verdict {prev['verdict']} -> {obs['verdict']}")
+    if obs["ok"] != obs["total"]:
+        reasons.append(f"{obs['total'] - obs['ok']} check(s) failing")
+    try:
+        if datetime.strptime(obs["at"][:10], "%Y-%m-%d").weekday() == 0:
+            reasons.append("weekly heartbeat (Monday)")
+    except ValueError:
+        reasons.append("unparseable timestamp")
+    return reasons
+
+
+def monitor_body(observations, since_rev, reasons):
+    first, last = observations[0], observations[-1]
+    out = [
+        f"_Source: `~/Accountability-Workspace/{MONITOR_FILE}` on spp3, "
+        f"revisions {since_rev[:9]}..{last['rev'][:9]}._",
+        "",
+        f"# SPP3 monitoring observations: {first['at'][:10]} to {last['at'][:10]}",
+        "",
+        "Continues the monitoring series (backfill baseline "
+        f"`spp3-monitor-history-2026-09`, revision {BASELINE_REV[:9]}). "
+        f"Captured because: {'; '.join(sorted(set(reasons)))}.",
+        "These are the monitor's own dated observations, not independent chain rechecks "
+        "or proof of continuous uptime. Projection excludes names, addresses, balances and "
+        "rate values; the original JSON is retained in the source Git revisions below.",
+        "",
+        f"{len(observations)} observation(s) since the last capture.",
+        "",
+        "| Observed UTC | Block | Verdict | Checks ok | Runway | Git revision | Original JSON SHA-256 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for o in observations:
+        out.append(f"| {o['at']} | {o['block']} | {o['verdict']} | {o['ok']}/{o['total']} | "
+                   f"{o['runway']} | {o['rev']} | {o['sha']} |")
+    return "\n".join(out) + "\n"
+
+
+def monitor_capture(state, cov):
+    """The process-output class. Returns the number of captures made (0 or 1);
+    fills `cov` with the run's counts for the heartbeat."""
+    if not os.path.isdir(os.path.join(ACCT_REPO, ".git")):
+        log("monitor: Accountability repo absent — skipped")
+        return 0
+    since = state.get(MONITOR_KEY, {}).get("last_rev") or BASELINE_REV
+    r = acct_git("log", "--reverse", "--format=%H", f"{since}..HEAD", "--", MONITOR_FILE)
+    if r.returncode != 0:
+        log(f"monitor: cannot list revisions after {since[:9]}: {r.stderr.strip()}")
+        return 0
+    revs = r.stdout.split()
+    if not revs:
+        log(f"monitor: no new observations since {since[:9]} — no capture")
+        return 0
+    cov["new_observations"] = len(revs)
+    if len(revs) > MONITOR_CAP:
+        log(f"monitor: {len(revs)} new revisions, capping at {MONITOR_CAP} this run")
+        revs = revs[:MONITOR_CAP]
+    try:
+        prev = monitor_project(since)
+        observations, reasons = [], []
+        for rev in revs:
+            obs = monitor_project(rev)
+            reasons += monitor_reasons(prev, obs)
+            observations.append(obs)
+            prev = obs
+    except Exception as e:
+        log(f"monitor: SKIP — {e}")
+        return 0
+    cov["qualifying"] = len(reasons)
+    if not reasons:
+        log(f"monitor: {len(observations)} new observation(s), none qualifying — no capture")
+        return 0
+
+    body = cap_body(monitor_body(observations, since, reasons), "Accountability-Workspace/" + MONITOR_FILE)
+    hits = secret_hits(body)
+    if hits:
+        log(f"DROPPED monitor: credential-shaped content ({', '.join(hits)}) — nothing captured")
+        return 0
+    last = observations[-1]
+    slug = f"spp3-monitor-{last['at'][:10]}"
+    nbytes = len(body.encode("utf-8"))
+    if DRY:
+        log(f"[DRY] would capture {slug} ({nbytes} bytes, {len(observations)} observation(s): "
+            f"{'; '.join(sorted(set(reasons)))})")
+        print(body)
+        return 0
+
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as tf:
+        tf.write(body)
+        tmp = tf.name
+    try:
+        r = subprocess.run(
+            [CAPTURE, slug, "--from", tmp,
+             "--title", f"SPP3 monitor observations to {last['at'][:10]}",
+             "--origin", f"file://spp3/Accountability-Workspace/{MONITOR_FILE}"],
+            capture_output=True, text=True)
+    finally:
+        os.unlink(tmp)
+    if r.returncode != 0:
+        log(f"FAILED monitor {slug}: {r.stdout.strip()} {r.stderr.strip()}")
+        return 0
+    log(f"captured {slug} ({nbytes} bytes, {len(observations)} observation(s))")
+    cov["captured"] = 1
+    state[MONITOR_KEY] = {
+        "last_rev": last["rev"], "body_sha": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "bytes": nbytes, "captured": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "slug": slug,
+    }
+    return 1
+
+
+
+def load_reference(path):
+    """Import another copy of this script so its distil can be called directly."""
+    import importlib.util
+    spec = importlib.util.spec_from_loader(
+        "ref", importlib.machinery.SourceFileLoader("ref", os.path.expanduser(path)))
+    mod = importlib.util.module_from_spec(spec)
+    saved, sys.argv = sys.argv, ["ref", "--dry"]
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.argv = saved
+    mod.HOME = HOME
+    return mod
+
+
+def reference_yield(reference, path, src_rel):
+    """(content lines, marker lines) the reference copy would produce, or None."""
+    if not reference:
+        return None
+    try:
+        out = reference.distil(path, src_rel)
+        # The deployed copy may predate the filters, when distil returned a bare string.
+        body = reference.cap_body(out[0] if isinstance(out, tuple) else out, src_rel)
+        content, markers, _ = yield_of(body)
+        return content, markers
+    except Exception as exc:
+        log(f"reference render failed for {src_rel}: {exc}")
+        return None
+
+
+def preflight(state):
+    """Render every source and report the delta against what was last captured.
+
+    This is the check to run after touching a filter or a source list and before
+    the change reaches the host. It writes nothing and captures nothing.
+    """
+    reference = load_reference(AGAINST) if AGAINST else None
+    if reference:
+        print(f"comparing against {AGAINST}")
+    print(f"{'slug':<34}{'bytes':>8}{'was':>8}{'delta':>9}  {'yield':<16}verdict")
+    print("-" * 96)
+    worst = 0
+    for src_rel, slug, title, topics in SOURCES:
+        path = os.path.join(HOME, src_rel)
+        if FORBIDDEN.search(src_rel):
+            print(f"{slug:<34}{'-':>8}{'-':>8}{'-':>9}  {'-':<16}REFUSED by path rule")
+            worst = max(worst, 2)
+            continue
+        if not os.path.exists(path):
+            print(f"{slug:<34}{'-':>8}{'-':>8}{'-':>9}  {'-':<16}source absent")
+            worst = max(worst, 1)
+            continue
+        body, dropped = distil(path, src_rel)
+        body = cap_body(body, src_rel)
+        nbytes = len(body.encode("utf-8"))
+        was = state.get(src_rel, {}).get("bytes")
+        content, markers, share = yield_of(body)
+        survived = sorted({w for w in (line_hit(ln) for ln in body.splitlines()
+                           if "line withheld by the client boundary" not in ln) if w})
+        delta = f"{nbytes - was:+d}" if was else "new"
+        note = f"{content}L {markers}M {share:.0%}"
+        # A reference copy is the only thing that answers "did MY change do this".
+        ref = reference_yield(reference, path, src_rel)
+        lost = (ref[0] - content) if ref else 0
+        gained_markers = (markers - ref[1]) if ref else 0
+        if survived:
+            verdict, rank = "LEAKS: " + ",".join(survived), 2
+        elif content < COLLAPSE_MIN_LINES or share > COLLAPSE_MARKER_SHARE:
+            verdict, rank = "COLLAPSED - would be dropped", 2
+        elif ref and lost > 0:
+            verdict, rank = f"CUTS {lost} line{'' if lost == 1 else 's'} the deployed script keeps (+{gained_markers} withheld)", 2
+        elif ref and lost < 0:
+            # Loosening a filter is the riskier direction on a client lane: this is
+            # material that did not travel yesterday and will travel tonight. Not a
+            # refusal, because it is usually the point of the change, but never silent.
+            verdict, rank = f"ADDS {-lost} line{'' if lost == -1 else 's'} the deployed script withholds — read them", 1
+        elif was and nbytes < was * (1 - SHRINK_ALARM):
+            verdict, rank = f"SHRANK {1 - nbytes / was:.0%}", 1
+        elif ref:
+            verdict, rank = "same as deployed", 0
+        elif was and nbytes == was:
+            verdict, rank = "unchanged", 0
+        else:
+            verdict, rank = "ok", 0
+        worst = max(worst, rank)
+        print(f"{slug:<34}{nbytes:>8}{was if was else '-':>8}{delta:>9}  {note:<16}{verdict}")
+    print("-" * 96)
+    print(["all sources carry content and leak nothing",
+           "read the flagged sources before shipping: something travels that did not, or shrank sharply",
+           "DO NOT SHIP: a source leaks, collapses, or loses content the deployed script keeps"][worst])
+    if not reference:
+        print("no --against reference: this cannot tell you whether YOUR change cut anything.")
+    return worst
+
+def main():
+    state = {}
+    if os.path.exists(STATE):
+        try:
+            state = json.loads(read(STATE))
+        except Exception:
+            log("state file unreadable — treating every source as new")
+
+    if PREFLIGHT:
+        return preflight(state)
+
+    if not DRY and not refresh_lane():
+        return 1
+
+    changed = 0
+    cov = {"documents": {"declared": len(SOURCES), "captured": 0, "unchanged": 0, "skipped": 0},
+           "process_outputs": {"declared": 1, "new_observations": 0, "qualifying": 0, "captured": 0},
+           "excluded": EXCLUDED}
+    docs = cov["documents"]
+    for src_rel, slug, title, topics in SOURCES:
+        if FORBIDDEN.search(src_rel):
+            log(f"REFUSED {slug}: source path matches the never-capture rule")
+            docs["skipped"] += 1
+            continue
+        path = os.path.join(HOME, src_rel)
+        if not os.path.exists(path):
+            log(f"skip {slug}: source absent ({src_rel})")
+            docs["skipped"] += 1
+            continue
+        try:
+            distilled, dropped = distil(path, src_rel)
+            body = cap_body(distilled, src_rel)
+        except Exception as e:
+            log(f"SKIP {slug}: distil failed: {e}")
+            docs["skipped"] += 1
+            continue
+
+        hits = secret_hits(body)
+        if hits:
+            log(f"DROPPED {slug}: credential-shaped content ({', '.join(hits)}) — nothing captured")
+            docs["skipped"] += 1
+            continue
+
+        survived = sorted({w for w in (line_hit(ln) for ln in body.splitlines()
+                           if "line withheld by the client boundary" not in ln) if w})
+        if survived:
+            log(f"DROPPED {slug}: client boundary tripped after distillation "
+                f"({', '.join(survived)}) — nothing captured")
+            docs["skipped"] += 1
+            continue
+        if dropped:
+            log(f"withheld in {slug}: " + ", ".join(f"{k}={v}" for k, v in sorted(dropped.items())))
+
+        content, markers, share = yield_of(body)
+        if content < COLLAPSE_MIN_LINES or share > COLLAPSE_MARKER_SHARE:
+            log(f"DROPPED {slug}: nothing left after the boundary "
+                f"({content} content lines, {markers} withheld, {share:.0%} of it markers) "
+                f"— a source with nothing left is not a source")
+            docs["skipped"] += 1
+            continue
+
+        was = state.get(src_rel, {}).get("bytes")
+        now_bytes = len(body.encode("utf-8"))
+        if was and now_bytes < was * (1 - SHRINK_ALARM):
+            log(f"SHRANK {slug}: {was} -> {now_bytes} bytes ({1 - now_bytes / was:.0%} smaller). "
+                f"Capturing anyway; check this was the source changing and not a filter.")
+
+        h = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        if state.get(src_rel, {}).get("body_sha") == h:
+            log(f"unchanged {slug} — no capture")
+            docs["unchanged"] += 1
+            continue
+
+        nbytes = len(body.encode("utf-8"))
+        if DRY:
+            log(f"[DRY] would capture {slug} ({nbytes} bytes)")
+            continue
+
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as tf:
+            tf.write(body)
+            tmp = tf.name
+        try:
+            r = subprocess.run(
+                [CAPTURE, slug, "--from", tmp, "--title", title,
+                 "--origin", f"file://spp3/{src_rel}"],
+                capture_output=True, text=True)
+        finally:
+            os.unlink(tmp)
+
+        if r.returncode != 0:
+            log(f"FAILED {slug}: {r.stdout.strip()} {r.stderr.strip()}")
+            continue
+        log(f"captured {slug} ({nbytes} bytes)")
+        docs["captured"] += 1
+        state[src_rel] = {"body_sha": h, "bytes": nbytes,
+                          "captured": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                          "slug": slug}
+        changed += 1
+
+    # the process-output class (owner carve-out, 2026-09-16); see the constants above
+    changed += monitor_capture(state, cov["process_outputs"])
+
+
+    if not DRY:
+        with open(STATE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, sort_keys=True)
+        os.chmod(STATE, 0o600)
+        _heartbeat(cov)   # always, captures or none — a dry run must not fake liveness
+    log(f"run complete — {changed} capture(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

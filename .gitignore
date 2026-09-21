@@ -5,10 +5,3 @@
 *.pre-*
 __pycache__/
 apps/console/build/
-
-# Held out of git until their name lists move to files the VMs hold.
-# These two scripts contain real ENS committee handles and a grantee organisation,
-# and every kit run pushes refs/heads/main to GitHub with no exclude list
-# (lib/sovereign_hub/kit.py:publication_plan). Committing them to main publishes
-# them. Remove this entry in the same commit that externalises the names.
-connectors/producers/
