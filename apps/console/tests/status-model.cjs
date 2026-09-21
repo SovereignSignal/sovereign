@@ -80,20 +80,20 @@ console.log('Alert lifecycle: verified blocker, stale observations, missed verif
 // stale. Done properly it catches the sync failing to carry a file type.
 const copyRow = d => assess(d).stale.find(x => x.name === 'this copy');
 // A dead mirror on another host is NOT this copy falling behind.
-assert.equal(copyRow({machine:{host:'m5'},hub:{lanes:{stringer:{age_h:0.1}}},
-  fleet:{hosts:[{host:'thestringer',harnesses:[{harness:'windsurf',lane:'stringer',run_age_h:393.9}]}]},
-  lanes:[{lane:'stringer',vault_age_h:0.1,hub_age_h:0.1}]}), undefined);
+assert.equal(copyRow({machine:{host:'here'},hub:{lanes:{alpha:{age_h:0.1}}},
+  fleet:{hosts:[{host:'elsewhere',harnesses:[{harness:'some-tool',lane:'alpha',run_age_h:393.9}]}]},
+  lanes:[{lane:'alpha',vault_age_h:0.1,hub_age_h:0.1}]}), undefined);
 // A lane whose content is older here than on the hub IS, and the row names that lane.
-const behind = copyRow({machine:{host:'m5'},hub:{lanes:{}},obsidian:{sync:'Obsidian Sync'},
-  lanes:[{lane:'wolfsclaw',vault_age_h:373.2,hub_age_h:348.0},{lane:'stringer',vault_age_h:0.1,hub_age_h:0.1}]});
+const behind = copyRow({machine:{host:'here'},hub:{lanes:{}},obsidian:{sync:'a sync'},
+  lanes:[{lane:'beta',vault_age_h:373.2,hub_age_h:348.0},{lane:'alpha',vault_age_h:0.1,hub_age_h:0.1}]});
 assert.ok(behind, 'a real lag must be reported');
-assert.match(behind.detail, /wolfsclaw/);
+assert.match(behind.detail, /beta/);
 assert.match(behind.detail, /has not carried everything/);
 assert.ok(behind.age_h > 25 && behind.age_h < 26, 'reports the actual gap, not a harness run age');
 // The curator's own lane is exempt: the law makes its operational state hub-authoritative.
-assert.equal(copyRow({machine:{host:'m5'},hub:{lane:'archivist',lanes:{}},
-  lanes:[{lane:'archivist',vault_age_h:12.7,hub_age_h:0.1}]}), undefined);
+assert.equal(copyRow({machine:{host:'here'},hub:{lane:'curator',lanes:{}},
+  lanes:[{lane:'curator',vault_age_h:12.7,hub_age_h:0.1}]}), undefined);
 // A retired lane never raises it either.
-assert.equal(copyRow({machine:{host:'m5'},hub:{lanes:{}},
+assert.equal(copyRow({machine:{host:'here'},hub:{lanes:{}},
   lanes:[{lane:'old',vault_age_h:900,hub_age_h:1,retired:true}]}), undefined);
 console.log('Copy lag: compares one lane in two places, names it, exempts the curator lane and retired lanes.');

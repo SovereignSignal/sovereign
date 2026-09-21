@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Import what every contribute-only lane has delivered.
+#
+# exchange-sync deliberately skips lanes declared `write: intake` and defers to "the
+# separate validated intake job". Until 2026-09-20 that job did not exist, so a
+# contribute-only producer delivered faithfully and nothing on this side ever picked it
+# up: a contributing producer's records sat on the exchange for days because the import was a
+# command only a human ran, and its lane read as stale the whole time.
+#
+# One import per declared intake lane, each through sov-contribute's own validation: it
+# fences the lane, rejects anything that escapes it, and writes its own receipt. A lane
+# that fails does not stop the others, and the job still exits nonzero so the runner's
+# receipt says so rather than reporting a clean run that imported nothing.
+
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOV_TEMPLATE="${SOV_TEMPLATE:-$(cd "$HERE/../.." && pwd)}"; export SOV_TEMPLATE
+# Settings come from the instance file. The runner exports them; a hand run asks the front door.
+[ -n "${SOVS_VAULT:-}" ] || eval "$(/bin/bash "$SOV_TEMPLATE/bin/sov" hub env)"
+
+PY="$(/bin/bash "$SOV_TEMPLATE/bin/_sov-python.sh" 2>/dev/null || true)"
+[ -x "${PY:-}" ] || PY=/usr/bin/python3
+
+rc=0 found=0
+shopt -s nullglob
+for lane_md in "$SOVS_VAULT"/raw/workspaces/*/LANE.md; do
+  grep -Eq '^write:[[:space:]]*intake[[:space:]]*$' "$lane_md" || continue
+  lane="$(basename "$(dirname "$lane_md")")"
+  found=$((found + 1))
+  if out="$("$SOV_TEMPLATE/bin/sov" contribute import --client "$lane" --apply 2>&1)"; then
+    printf 'intake: %s %s\n' "$lane" "$(printf '%s' "$out" | "$PY" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("imported (unparsed receipt)"); raise SystemExit
+rej = d.get("rejections") or []
+print("%s: received %s, imported %s, rejected %s, head %s" % (
+    d.get("state", "?"), d.get("received", "?"), d.get("imported_current", "?"),
+    len(rej) if hasattr(rej, "__len__") else rej, str(d.get("head", ""))[:12]))
+' 2>/dev/null || echo 'imported')"
+  else
+    printf 'intake: %s FAILED\n%s\n' "$lane" "$(printf '%s' "$out" | tail -5)" >&2
+    rc=1
+  fi
+done
+
+[ "$found" -gt 0 ] || echo 'intake: no lane declares write: intake; nothing to import'
+exit $rc

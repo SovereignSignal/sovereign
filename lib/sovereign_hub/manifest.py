@@ -35,6 +35,10 @@ JOBS = {
                     "description": "Edge-triggered reachability watch over the declared fleet"},
     "kit": {"program": "hub/kit", "hour": 3, "minute": 30, "deliver": False,
             "description": "Encrypt the rebuild kit, copy it off-site, mirror-push the vault and template"},
+    # exchange-sync skips `write: intake` lanes and defers to this job. Without it a
+    # contribute-only producer delivers on schedule and nothing ever imports the result.
+    "intake": {"program": "hub/intake", "interval_s": 1800, "deliver": False,
+               "description": "Import what every contribute-only lane has delivered to the exchange"},
 }
 
 
