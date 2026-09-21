@@ -63,14 +63,28 @@ window.SovStatus = (() => {
       if (late(x.name || x.id, "mirror last ran", ah, cad, { view: "tools", id: x.id }, "mirror-late") === true && ah != null && ah <= cad) fresh.push({ state: "live", name: x.name || x.id, detail: `pulled ${age(ah)} ago on ${m.host}`, age_h: ah, jump: { view: "tools", id: x.id }, cause: "pull:" + m.host, host: m.host }); });
     // a remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
     // observable cadence is about an hour, not its own 15 minutes
-    // The hub sees its own lanes and the producers' merges first; this copy sees them through the
-    // sync. Take the fresher of the two views, and name the lag itself when this copy falls behind.
-    const hubLanes = h.lanes || {}; let lag = 0, lagLane = null;
+    // A remote mirror's heartbeat reaches this copy through the exchange and the sync, so
+    // its observable cadence is about an hour, not its own fifteen minutes.
+    const hubLanes = h.lanes || {};
     hosts.filter(x => x.host !== m.host).forEach(x => (x.harnesses || []).forEach(t => {
       const here = t.run_age_h, there = (hubLanes[t.lane] || {}).age_h, ah = [here, there].filter(v => v != null).length ? Math.min(...[here, there].filter(v => v != null)) : null;
-      if (here != null && there != null && here - there > lag) { lag = here - there; lagLane = t.lane; }
       if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = 1, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host }, cause: "pull:" + x.host, host: x.host }); }));
-    if (lag > 1) stale.push({ state: "warn", name: "this copy", detail: `${age(lag)} behind the hub (${(D.obsidian || {}).sync || "sync"}); ${lagLane} is the widest gap`, age_h: lag, jump: { view: "backups", id: "bk:obsidian" } });
+    // Is THIS copy behind the hub? Compare the same lane's newest content in both places.
+    // It used to subtract a hub lane's age from a REMOTE HOST'S harness run age, which are
+    // not two views of one thing: a mirror that had not run in sixteen days on another
+    // machine was reported here as "this copy is 16d behind the hub", which was never true.
+    // Done properly this is the detector that catches the sync dropping file types it does
+    // not carry, which on 2026-09-20 had stranded 49 documents on a single machine.
+    // The curator's own lane is exempt: the law makes its operational state hub-authoritative,
+    // so this copy is meant to lag it.
+    let lag = 0, lagLane = null;
+    const curatorLane = h.lane || "archivist";
+    (D.lanes || []).forEach(l => {
+      if (l.retired || l.lane === curatorLane) return;
+      const here = l.vault_age_h, there = l.hub_age_h;
+      if (here != null && there != null && here - there > lag) { lag = here - there; lagLane = l.lane; }
+    });
+    if (lag > 1) stale.push({ state: "warn", name: "this copy", detail: `${age(lag)} behind the hub on ${lagLane} (${(D.obsidian || {}).sync || "sync"} has not carried everything)`, age_h: lag, jump: { view: "backups", id: "bk:obsidian" } });
     (bk.lanes || []).forEach(l => {
       const ah = ago(l.pushed), jump = { view: "backups", id: "bk:lane:" + l.lane };
       if (l.delivery === "waiting") {
