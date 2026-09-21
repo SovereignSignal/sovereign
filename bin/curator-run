@@ -2032,7 +2032,12 @@ def _coverage():
                 dn[:] = []
                 continue
             for f in fn:
-                if f.startswith(".") or not f.endswith((".md", ".txt")) or f == "LANE.md":
+                # The same gate the judging path uses at the candidates() walk. This
+                # counter kept the older (.md, .txt) test when the judge learned to read
+                # documents on 2026-09-20, so the 55 documents on the hub were judgeable
+                # but absent from `processable` — and the completeness figure the app
+                # shows was computed against a universe that excluded them.
+                if f.startswith(".") or not _judgeable(f) or f == "LANE.md":
                     continue
                 universe += 1
                 if os.path.join(rel_dp, f) in judged_srcs:
