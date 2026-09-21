@@ -1,0 +1,44 @@
+/* Settings pane: one readable column, not a drawer. Reuses the shell's tokens. */
+.set-pane{padding:26px 30px 40px;max-width:760px;min-width:0}
+.set-head{margin-bottom:30px}
+.set-head h1{font-size:26px;font-weight:450;letter-spacing:-.025em;margin:0 0 8px}
+.set-head p{font-size:12px;color:var(--muted);margin:0;line-height:1.7;max-width:60ch}
+.set-sect{border-top:1px solid var(--rule);padding:20px 0}
+.set-sect h2{font-size:12px;font-weight:500;margin:0 0 12px;color:var(--ink)}
+.set-sect h2 label{cursor:pointer}
+.set-lead{font-size:13px;line-height:1.7;margin:0 0 4px}
+.set-note{font-size:11px;line-height:1.7;color:var(--muted);margin:8px 0 0;max-width:66ch}
+.set-sect select{font-size:12px;border:1px solid var(--rule);background:var(--panel);color:var(--ink);padding:7px 9px;border-radius:5px;min-width:190px}
+.set-sect .radio,.set-sect .check{display:block;font-size:12px;margin:5px 0;cursor:pointer}
+.set-sect .acts{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+.set-sect .acts button{font-size:11px}
+.set-pane .mono{font:11px var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.set-save{margin-top:26px;padding-top:22px;border-top:1px solid var(--rule)}
+
+/* Permissions read as a table because the comparison between lanes is the point:
+   contribute-only beside read-and-contribute, with any declared drift in line. */
+.set-perms{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px}
+.set-perms th{text-align:left;font:9px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:400;padding:0 10px 8px 0;border-bottom:1px solid var(--rule)}
+.set-perms td{padding:11px 10px 11px 0;border-bottom:1px solid var(--rule);vertical-align:top;overflow-wrap:anywhere}
+.set-perms td small{display:block;color:var(--muted);font-size:10px;margin-top:4px;line-height:1.6}
+.set-perms tr.warn td:first-child{box-shadow:inset 2px 0 0 var(--brass);padding-left:8px}
+.set-perms tr.bad td:first-child{box-shadow:inset 2px 0 0 var(--down);padding-left:8px}
+.set-badge{display:inline-flex;align-items:center;gap:6px;font:10px var(--mono);color:var(--muted)}
+.set-badge:before{content:'';height:5px;width:5px;border-radius:50%;background:currentColor}
+.set-badge.narrow{color:var(--cyan)}
+.set-badge.wide{color:var(--brass)}
+.set-finding{display:block;font-size:10px;line-height:1.6;margin-bottom:5px}
+.set-finding.warn{color:var(--brass)}
+.set-finding.bad{color:var(--down)}
+
+@media(max-width:850px){
+  .set-pane{padding:20px 18px 32px}
+  .set-head h1{font-size:22px}
+  .set-perms{font-size:10px}
+  .set-perms th:nth-child(3),.set-perms td:nth-child(3){display:none}
+}
+
+/* A retired lane is provenance, not a live wire: present, and visibly answered. */
+.set-perms tr.retired td{opacity:.62}
+.set-perms tr.retired td:first-child small{display:inline;margin-left:6px;font:9px var(--mono);letter-spacing:.06em;text-transform:uppercase}
+.set-finding.info{color:var(--muted)}

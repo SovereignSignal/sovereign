@@ -11,3 +11,9 @@ body>.shell-rail #change{order:11;font-size:11px;color:var(--muted);padding-left
 @media(max-width:900px){body>.shell-rail{padding-left:9px;padding-right:9px}}
 
 #review-count:empty{display:none}
+
+/* Settings sits with the navigation but is not one of the views, so it takes the
+   foot of the rail above the archive name, separated by its own rule. */
+body>.shell-rail .rail-gear{order:9;margin-top:auto;color:var(--muted);font-size:11.5px}
+body>.shell-rail .rail-gear:hover{color:var(--ink)}
+body>.shell-rail #archive-name{margin-top:14px}

@@ -1,0 +1,114 @@
+const assert = require('node:assert/strict');
+let checks = 0; const test = (name, fn) => { fn(); checks++; console.log('PASS ' + name) };
+
+// The pane renders into a host element and posts through the bridge. Stub both so the
+// real module runs unchanged: what is asserted below is the markup the owner sees.
+const sent = [];
+const host = { isConnected: true, className: '', innerHTML: '', querySelector(sel) { return this.innerHTML.includes('id="' + sel.slice(1) + '"') ? { textContent: '' } : null } };
+global.window = { webkit: { messageHandlers: { sov: { postMessage: o => sent.push(o) } } } };
+require(process.argv[2] || '../ui/settings-view.js');
+const view = global.window.SovSettings;
+const paint = ctx => { host.innerHTML = ''; view.mount(host, Object.assign({ S: {}, D: null, root: null, pinned: false }, ctx)); return host.innerHTML };
+
+const app = extra => ({ machine: Object.assign({ app: { installed: true, version: '0.5.6', build: '28', source_commit: 'abc1234' }, template_rev: 'abc1234 subject' }, extra) });
+
+test('an archive that is open is named, and one that is not says so', () => {
+  assert(paint({ root: '/Owner/Research' }).includes('/Owner/Research'));
+  const none = paint({ root: null });
+  assert(none.includes('No archive is open'));
+  // Nothing to reveal when nothing is open, so the button is not offered.
+  assert(!none.includes('set-reveal'));
+});
+
+test('a current build offers no update action', () => {
+  const html = paint({ D: app() });
+  assert(html.includes('is the newest build'));
+  assert(html.includes('Check again'));
+  assert(!html.includes('id="set-update">Update now'));
+});
+
+test('a behind build offers the action and shows both revisions', () => {
+  const html = paint({ D: app({ template_rev: 'def5678 newer' }) });
+  assert(html.includes('A newer version is ready'));
+  assert(html.includes('class="brass" id="set-update"'));
+  assert(html.includes('abc1234') && html.includes('def5678'));
+});
+
+test('an unstamped build claims no agreement it cannot check', () => {
+  const html = paint({ D: app({ app: { installed: true, version: '0.1', build: '1' } }) });
+  assert(html.includes('predates update checking'));
+  assert(!html.includes('newest build'));
+  assert(!html.includes('is ready to install'));
+});
+
+test('a source revision that cannot be read offers no build', () => {
+  const html = paint({ D: app({ template_rev: '' }) });
+  assert(html.includes('cannot be checked right now'));
+  assert(!html.includes('class="brass" id="set-update"'));
+});
+
+test('contribute-only and read-and-contribute are told apart', () => {
+  const html = paint({ D: { lanes: [
+    { lane: 'spp3', read: 'none', write: 'git-branch', gear: 'ask-first' },
+    { lane: 'claude-m5', read: 'hook', read_scope: 'knowledge + own lane', write: 'connector', gear: 'routine' }] } });
+  assert(html.includes('Contribute only') && html.includes('reads nothing from this archive'));
+  assert(html.includes('Read and contribute') && html.includes('knowledge + own lane'));
+  assert(html.includes('ask-first') && html.includes('routine'));
+});
+
+test('a lane with no declared read is contribute-only, not unknown', () => {
+  assert(paint({ D: { lanes: [{ lane: 'x' }] } }).includes('Contribute only'));
+});
+
+test('declared drift is shown in line and marks its row', () => {
+  const html = paint({ D: { lanes: [{ lane: 'sovsclaw', read: 'none', findings: [{ level: 'warn', text: 'declares a read_scope while reading nothing' }] }] } });
+  assert(html.includes('declares a read_scope while reading nothing'));
+  assert(html.includes('<tr class="warn">'));
+});
+
+test('a lane the owner retired does not keep asking an answered question', () => {
+  assert(!paint({ D: { lanes: [{ lane: 'gone', associated: false }] } }).includes('gone'));
+});
+
+test('an info note is an answer already given, so it never marks the row', () => {
+  const html = paint({ D: { lanes: [{ lane: 'orca-m5', read: 'none', retired: true,
+    findings: [{ level: 'info', text: 'retired; kept as provenance, not a live wire' }] }] } });
+  assert(html.includes('retired; kept as provenance'));
+  assert(!html.includes('class="warn"'), 'an info-only lane must not read as drift');
+  assert(html.includes('class="retired"'));
+});
+
+test('a retired lane with a real question still raises it, once', () => {
+  const html = paint({ D: { lanes: [{ lane: 'x', read: 'none', retired: true,
+    findings: [{ level: 'info', text: 'kept as provenance' }, { level: 'warn', text: 'the law never names this lane' }] }] } });
+  assert(html.includes('class="warn retired"'));
+  // One body row, plus the header row the table always has.
+  assert.equal(html.split('<tr').length - 1, 2);
+});
+
+test('lane names are escaped, never injected', () => {
+  const html = paint({ D: { lanes: [{ lane: '<img src=x onerror=1>', read: 'none' }] } });
+  assert(!html.includes('<img'));
+  assert(html.includes('&lt;img'));
+});
+
+test('preferences reflect what is saved, not defaults', () => {
+  const html = paint({ S: { appearance: 'dark', where: 'menubar', closeQuits: true, loginItem: true, refresh: 300, defaultView: 'lanes', loginState: 'on' }, pinned: true });
+  assert(html.includes('value="dark" selected'));
+  assert(html.includes('value="menubar" checked'));
+  assert(html.includes('id="s-closequits" checked') && html.includes('id="s-login" checked'));
+  assert(html.includes('value="300" selected') && html.includes('value="lanes" selected'));
+  assert(html.includes('id="s-pin" checked'));
+  assert(html.includes('Registered with macOS'));
+});
+
+test('mounting twice does not duplicate the pane', () => {
+  view.mount(host, { root: '/a' }); view.mount(host, { root: '/a' });
+  assert.equal(host.innerHTML.split('class="set-pane"').length - 1, 1);
+});
+
+test('the pane never posts on its own', () => {
+  assert.equal(sent.length, 0);
+});
+
+console.log(checks + ' settings view checks passed.');
