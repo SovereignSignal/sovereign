@@ -191,6 +191,10 @@ nightly_rc=0
 if [[ "${ARCHIVIST_SKIP_NIGHTLY:-0}" != "1" ]]; then
   # ARCHIVIST_RUNNER (2026-09-04): the burn-down schedule runs a different judge
   # command through this same digest, so both land in one channel, same buttons.
+  # The nightly's cap, stated rather than inherited. hub/curate defaults to 4 for the
+  # 2-hourly tick, and this script shares it, so the daily run says its own number: 12,
+  # which is what curator-run defaulted to before the tick existed. Behaviour unchanged.
+  export ARCHIVIST_AUTO_PROMOTE_MAX="${ARCHIVIST_AUTO_PROMOTE_MAX:-12}"
   RUNNER="${ARCHIVIST_RUNNER:-$HERE/curate}"
   nightly_out="$("$RUNNER" 2>&1)" || nightly_rc=$?
   printf '== archivist-nightly.sh (exit %d) ==\n%s\n' "$nightly_rc" "$nightly_out"

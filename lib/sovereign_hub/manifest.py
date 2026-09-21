@@ -17,6 +17,14 @@ LABEL_PREFIX = "com.sovereign.hub."
 JOBS = {
     "nightly": {"program": "hub/nightly", "hour": 6, "minute": 0, "deliver": True,
                 "description": "Judge new raw material and propose durable knowledge; deliver the digest"},
+    # Continuous curation pilot, owner decision 2026-09-21: "we can't gate progress to
+    # that window every night". Cadence and cap only — no judge, prompt, threshold or
+    # promotion-logic change, so no gear question under that morning's ruling. The
+    # per-tick auto-promote cap lives in hub/curate, because render() writes a fixed
+    # environment and a cap declared here would be read by nothing. Review after 3 days;
+    # rollback is removing this entry and re-running `sov hub jobs install --apply`.
+    "curate": {"program": "hub/curate", "interval_s": 7200, "deliver": False,
+               "description": "Curate new raw as it arrives; the nightly stays the daily digest"},
     "burndown": {"program": "hub/burndown", "hour": 6, "minute": 27, "deliver": False,
                  "description": "Judge older material under the keep floor until it stops earning its place"},
     "weekly-audit": {"program": "hub/weekly-audit", "hour": 10, "minute": 0, "weekday": 5, "deliver": True,
@@ -74,9 +82,42 @@ def all_jobs(instance):
     return jobs
 
 
+# Every key render() and _schedule() understand. A spec key outside this set is a
+# mistake that would otherwise cost nothing to make and nothing to notice: on
+# 2026-09-21 a proposed job carried an "env" key to cap its auto-promotions, and
+# render() writes a FIXED EnvironmentVariables dict, so the plist would have loaded
+# and the job would have run at the default cap — 144 a day against an intended 4.
+# The manifest would have shown the cap, the plist would have loaded, the job would
+# have run. Only the promotions would have said otherwise, days later.
+# It must cover what runner.py reads as well as what render() does, and instance_jobs
+# as well as the shipped ones: the first version of this set omitted "args", which
+# runner.py passes to the program and all five of one hub's instance jobs carry. The
+# validator would then have raised on the first instance job and broken
+# `sov hub jobs install --apply` on that machine — a guard against silent config
+# failing loudly instead, which is better, but still a guard that breaks the thing it
+# guards. Enumerate from both readers, not from the jobs this file happens to ship.
+KNOWN_SPEC_KEYS = frozenset({
+    "program", "args", "description", "deliver",  # identity, arguments, delivery
+    "hour", "minute", "hours", "weekday",         # calendar schedules
+    "interval_s",                                 # interval schedules
+})
+
+
+def validate_spec(job_id, spec):
+    """Refuse a spec key nothing reads. Silence is the failure being prevented."""
+    unknown = sorted(set(spec) - KNOWN_SPEC_KEYS)
+    if unknown:
+        raise ValueError(
+            "hub job %r has unrecognised spec key(s): %s. Nothing reads them, so the job "
+            "would render and run without whatever they were meant to do. Known keys: %s."
+            % (job_id, ", ".join(unknown), ", ".join(sorted(KNOWN_SPEC_KEYS))))
+    return spec
+
+
 def render(job_id, spec, template_root, interpreter, state_dir, home):
     """One launchd item. The program is always the runner; the job's own program is the
     runner's business, read from the manifest again at tick time."""
+    validate_spec(job_id, spec)
     template_root = Path(template_root); state_dir = Path(state_dir); home = Path(home)
     logs = state_dir / "hub"
     item = {

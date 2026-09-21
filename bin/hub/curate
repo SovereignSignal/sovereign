@@ -11,6 +11,14 @@ STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
 # bulk below stays pruned and the rest (the owner's top-level pages,
 # ENS MetaGov Term 7, Cardano Funding Assessment ~ 457 files) is now curated.
 
+# Per-run auto-promote cap. This script serves two callers: the 06:00 nightly, which
+# exports 12 before invoking it, and the 2-hourly curate tick (owner decision
+# 2026-09-21), which does not — so 4 is the tick's default and a caller that means
+# something else says so. It cannot be declared in the manifest: render() writes a
+# fixed EnvironmentVariables dict and would ignore it silently.
+: "${ARCHIVIST_AUTO_PROMOTE_MAX:=4}"
+export ARCHIVIST_AUTO_PROMOTE_MAX
+
 pending_limit="${ARCHIVIST_PENDING_LIMIT:-50}"
 if ! [[ "$pending_limit" =~ ^[0-9]+$ ]] || (( pending_limit < 1 )); then
   printf 'archivist-nightly: invalid ARCHIVIST_PENDING_LIMIT=%q\n' "$pending_limit" >&2
