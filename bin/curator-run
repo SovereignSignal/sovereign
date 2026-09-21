@@ -1238,9 +1238,105 @@ def _load_hashes():
 
 known_hashes = _load_hashes()
 
+# ---- documents the judge could not previously read ----
+# candidates() used to gate on .md/.txt, so every deck, agreement and web clipping the
+# pipes faithfully delivered sat in raw/ permanently unjudged: the owner could not tell
+# "judged and rejected" from "never seen". These convert to text on the way to the judge.
+# The file itself stays the artifact; nothing is written beside it.
+#
+# Conversion is gated on the converter EXISTING. A missing converter means the file is not
+# a candidate at all, so it stays honestly unjudged rather than being judged as mojibake:
+# open(..., errors="ignore") on a .docx yields zip noise, and that noise would reach the
+# judge, the brief and the injection screen alike.
+TEXTUTIL = "/usr/bin/textutil"
+TEXTUTIL_EXT = (".html", ".htm", ".docx", ".doc", ".odt", ".rtf", ".rtfd", ".wordml", ".webarchive")
+# pptx and xlsx are zipped XML, and the text sits in known parts, so stdlib reads them
+# where textutil cannot. A deck is often the only record of a decision.
+OOXML_PARTS = {".pptx": ("ppt/slides/slide",),
+               # A workbook puts strings in sharedStrings.xml, or inline in each sheet
+               # when it was written without a shared table. Read both.
+               ".xlsx": ("xl/sharedStrings", "xl/worksheets/sheet")}
+PDFTOTEXT = next((c for c in ("/opt/homebrew/bin/pdftotext", "/usr/local/bin/pdftotext")
+                  if os.path.exists(c)), None)
+PLAIN_EXT = (".md", ".txt")
+
+
+def _convertible(name):
+    """The extension's converter, or None when this machine cannot read that format."""
+    low = name.lower()
+    if low.endswith(TEXTUTIL_EXT) and os.path.exists(TEXTUTIL):
+        return "textutil"
+    if low.endswith(".pdf") and PDFTOTEXT:
+        return "pdftotext"
+    if low.endswith(tuple(OOXML_PARTS)):
+        return "ooxml"
+    return None
+
+
+def _judgeable(name):
+    return name.lower().endswith(PLAIN_EXT) or _convertible(name) is not None
+
+
+def _source_text(path, limit=None):
+    """Text of a candidate source, converting documents. Empty string when it cannot."""
+    kind = _convertible(path)
+    if kind is None:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as fh:
+                return fh.read() if limit is None else fh.read(limit)
+        except OSError:
+            return ""
+    if kind == "ooxml":
+        txt = _ooxml_text(path)
+        if not _looks_like_prose(txt):
+            return ""
+        return txt if limit is None else txt[:limit]
+    argv = ([TEXTUTIL, "-convert", "txt", "-stdout", path] if kind == "textutil"
+            else [PDFTOTEXT, "-q", path, "-"])
+    try:
+        cp = subprocess.run(argv, capture_output=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if cp.returncode != 0:
+        return ""
+    txt = cp.stdout.decode("utf-8", "replace")
+    # textutil exits 0 on a file it cannot parse and echoes the raw bytes back, so the
+    # return code is not a usable signal. Check the OUTPUT instead: control characters
+    # mean this is not prose, and prose is the only thing the judge can act on.
+    if not _looks_like_prose(txt):
+        return ""
+    return txt if limit is None else txt[:limit]
+
+
+def _ooxml_text(path):
+    """Words out of a zipped Office part, with stdlib only. Empty on anything unexpected."""
+    import zipfile
+    prefixes = OOXML_PARTS[os.path.splitext(path)[1].lower()]
+    out = []
+    try:
+        with zipfile.ZipFile(path) as z:
+            for name in sorted(n for n in z.namelist() if n.startswith(prefixes)):
+                xml = z.read(name).decode("utf-8", "replace")
+                # <a:t> in a deck, <t> in a sheet's shared strings: the leaf text runs.
+                out.extend(re.findall(r"<(?:a:)?t[^>]*>([^<]+)</(?:a:)?t>", xml))
+    except (zipfile.BadZipFile, KeyError, OSError, UnicodeError):
+        return ""
+    import html as _html
+    return "\n".join(_html.unescape(s) for s in out)
+
+
+def _looks_like_prose(txt, tolerance=0.02):
+    if not txt:
+        return False
+    if "\x00" in txt:
+        return False
+    bad = sum(1 for c in txt if not c.isprintable() and c not in "\t\n\r")
+    return bad <= tolerance * len(txt)
+
+
 def _excerpt(path, limit=1200):
     try:
-        txt = open(path, encoding="utf-8", errors="ignore").read(limit)
+        txt = _source_text(path, limit)
     except OSError:
         return ""
     return re.sub(r"\s+", " ", txt).strip()
@@ -1261,7 +1357,7 @@ def candidates():
             ):
                 continue  # domain harvest: skip files outside the scope (still descend)
             for f in fn:
-                if f.startswith(".") or not f.endswith((".md", ".txt")):
+                if f.startswith(".") or not _judgeable(f):
                     continue
                 if f == "LANE.md":
                     continue  # the lane's contract file — config, never material
@@ -1672,7 +1768,7 @@ def _post_json(req, timeout):
 
 
 def judge(path):
-    txt = open(path, encoding="utf-8", errors="ignore").read()[:12000]
+    txt = _source_text(path)[:12000]
     name = os.path.relpath(path, VAULT)
     payload = json.dumps({"model": MODEL, "temperature": 0.1, "stream": False,
         "response_format": {"type": "json_object"},
@@ -1699,7 +1795,7 @@ def _screen_call(text):
 def judge_update(path, target, target_path):
     """Second pass for updates: show the model the existing card so the merge
     is drafted for the owner instead of left as manual work."""
-    txt = open(path, encoding="utf-8", errors="ignore").read()[:12000]
+    txt = _source_text(path)[:12000]
     card = _card_body(target_path)[:4000]
     name = os.path.relpath(path, VAULT)
     user = (f"UPDATE TASK. The brain already holds this card ({target}):\n\n{card}\n\n"
@@ -1775,7 +1871,7 @@ for p in cands:
     # the veto only bites on the gears and only promoted sources reach them. A flag
     # is loud, recorded in judgments.jsonl, and costs the item its gears, nothing more.
     screen_flagged, screen_why = _screen_source(
-        open(p, encoding="utf-8", errors="ignore").read()[:12000], SCREEN, _screen_call)
+        _source_text(p)[:12000], SCREEN, _screen_call)
     if screen_flagged:
         print(f"curator-run: injection screen FLAGGED {src} ({screen_why}) — "
               f"{slug} queues for the owner, gears withheld", file=sys.stderr)
