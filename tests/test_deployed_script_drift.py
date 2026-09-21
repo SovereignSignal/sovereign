@@ -124,5 +124,54 @@ class DeployedScriptDrift(unittest.TestCase):
                                              vendored_text=path.read_text(encoding="utf-8")))
 
 
+class CarriedFromTheHub(unittest.TestCase):
+    """A client has neither the heartbeat refs nor the vendored copy.
+
+    It cannot compute this, so the hub sends the facts and the client formats them.
+    The app's producer table renders client-computed lanes, so without this the
+    check is correct on the hub and invisible where it is actually read.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.m = load()
+
+    def test_a_hub_fact_set_becomes_a_finding_naming_whose_checkout(self):
+        found = self.m.script_drift_finding(
+            {"ran": "a" * 64, "vendored": "b" * 64, "rev": "abc1234", "at": 1789128602},
+            "the hub's checkout")
+        self.assertEqual(found["level"], "warn")
+        self.assertIn("ran aaaaaaaa", found["text"])
+        self.assertIn("vendored bbbbbbbb", found["text"])
+        # From a client the revision is the HUB's, and must not read as the client's own.
+        self.assertIn("the hub's checkout at abc1234", found["text"])
+
+    def test_agreeing_hashes_are_not_a_finding(self):
+        same = "c" * 64
+        self.assertIsNone(self.m.script_drift_finding(
+            {"ran": same, "vendored": same, "rev": "abc1234", "at": 1789128602}, "whoever"))
+
+    def test_absent_facts_never_become_no_drift(self):
+        """An unreachable hub sends nothing. Silence is not a clean bill of health."""
+        for facts in (None, {}, {"ran": "a" * 64}, {"vendored": "b" * 64}, "not a dict"):
+            with self.subTest(facts=facts):
+                self.assertIsNone(self.m.script_drift_finding(facts, "the hub's checkout"))
+
+    def test_a_missing_revision_still_produces_a_readable_finding(self):
+        found = self.m.script_drift_finding(
+            {"ran": "a" * 64, "vendored": "b" * 64, "rev": "", "at": None}, "the hub's checkout")
+        self.assertIn("time unknown", found["text"])
+        self.assertNotIn(" at ,", found["text"])
+
+    def test_the_hub_script_emits_facts_and_never_a_formatted_finding(self):
+        """The hub sends data; one formatter turns it into words, on the reader's side."""
+        import re as _re
+        body = _re.search(r"HUB_SCRIPT = r\'\'\'(.*?)\'\'\'",
+                          (ROOT / "bin" / "sov-status").read_text(encoding="utf-8"), _re.S).group(1)
+        self.assertIn('_entry["script"] = {"ran"', body)
+        self.assertNotIn("does not match the repo copy", body,
+                         "the message belongs to the formatter, not to both sides")
+
+
 if __name__ == "__main__":                                 # pragma: no cover
     unittest.main()

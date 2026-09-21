@@ -447,7 +447,7 @@ def plist_info(label):
 
 
 HUB_SCRIPT = r'''
-import os, sys, json, glob, re, time
+import os, sys, json, glob, re, time, subprocess, hashlib
 import datetime
 root = sys.argv[1]; now = time.time()
 def scan(path):
@@ -664,6 +664,35 @@ for base in ("tools", "workspaces"):
         if os.path.isdir(d):
             m, n = scan(d)
             out["lanes"][os.path.basename(d)] = {"age_h": round((now - m) / 3600, 2) if m else None, "files": n}
+
+# Only this machine can answer whether a producer's exporter matches the repo: it holds
+# the heartbeat refs and the vendored copy. A client has neither, so it cannot compute
+# this and must not guess. Facts only; the reader formats them.
+_tmpl = os.environ.get("SOV_TEMPLATE") or os.path.expanduser("~/sovs-brain-template")
+try:
+    _rev = subprocess.run(["git", "-C", _tmpl, "rev-parse", "--short", "HEAD"],
+                          capture_output=True, text=True, timeout=5).stdout.strip()
+except Exception:
+    _rev = ""
+for _lane, _entry in out["lanes"].items():
+    _vend = os.path.join(_tmpl, "connectors", "producers", _lane + "-brain-daily")
+    if not os.path.isfile(_vend):
+        continue
+    try:
+        _tag = subprocess.run(["git", "-C", root, "cat-file", "-p", "refs/heartbeats/" + _lane],
+                              capture_output=True, text=True, timeout=10)
+        if _tag.returncode != 0:
+            continue
+        _m = re.search(r"^script_sha:\s*([0-9a-f]{64})\s*$", _tag.stdout, re.M)
+        if not _m:
+            continue
+        with open(_vend, "rb") as _f:
+            _here = hashlib.sha256(_f.read()).hexdigest()
+        _when = re.search(r"^tagger .*?(\d{10}) ", _tag.stdout, re.M)
+        _entry["script"] = {"ran": _m.group(1), "vendored": _here, "rev": _rev,
+                            "at": int(_when.group(1)) if _when else None}
+    except Exception:
+        continue
 
 # Contribution: every trusted card records the raw path it came from, so the archive
 # itself says which producer earned each card. Cards sourced from workstreams are the
@@ -1281,6 +1310,28 @@ def fetch_hub(root, hub_pointer, want):
     return {"reachable": None, "error": "no ~/.brain-hub pointer and this machine holds no hub lane"}
 
 
+def script_drift_finding(facts, whose):
+    """Format a drift fact set, or None when the two sides agree.
+
+    `whose` names the checkout the vendored hash came from, because from a client
+    the revision belongs to the hub and would otherwise read as the client's own.
+    """
+    if not isinstance(facts, dict):
+        return None
+    ran, here = facts.get("ran"), facts.get("vendored")
+    if not ran or not here or ran == here:
+        return None
+    at = facts.get("at")
+    stamp = (datetime.datetime.fromtimestamp(int(at), datetime.timezone.utc)
+             .strftime("%Y-%m-%d %H:%MZ") if at else "time unknown")
+    rev = facts.get("rev") or ""
+    return {"level": "warn",
+            "text": "deployed script does not match the repo copy: ran %s (heartbeat %s) vs "
+                    "vendored %s, %s%s. If that checkout is behind the exchange, pull before "
+                    "investigating." % (ran[:8], stamp, here[:8], whose,
+                                        " at " + rev if rev else "")}
+
+
 def deployed_script_drift(lane, root):
     """Whether the exporter that RAN on a producer matches the copy in this checkout.
 
@@ -1313,11 +1364,7 @@ def deployed_script_drift(lane, root):
             here = hashlib.sha256(f.read()).hexdigest()
     except OSError:
         return None
-    if ran == here:
-        return None
     when = re.search(r"^tagger .*?(\d{10}) ", tag.stdout, re.M)
-    stamp = (datetime.datetime.fromtimestamp(int(when.group(1)), datetime.timezone.utc)
-             .strftime("%Y-%m-%d %H:%MZ") if when else "time unknown")
     rev = ""
     try:
         r = subprocess.run(["git", "-C", TEMPLATE_ROOT, "rev-parse", "--short", "HEAD"],
@@ -1325,10 +1372,8 @@ def deployed_script_drift(lane, root):
         rev = r.stdout.strip() if r.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         pass
-    return {"level": "warn",
-            "text": "deployed script does not match the repo copy: ran %s (heartbeat %s) vs "
-                    "vendored %s%s. If this hub is behind the exchange, pull before "
-                    "investigating." % (ran[:8], stamp, here[:8], " at " + rev if rev else "")}
+    return script_drift_finding({"ran": ran, "vendored": here, "rev": rev,
+                                 "at": int(when.group(1)) if when else None}, "this checkout")
 
 
 def lane_permission_findings(fm, name, root, retired=False):
@@ -1501,7 +1546,15 @@ def main():
         lane["findings"] = lane_permission_findings(lane.pop("_fm", {}) or {}, lane["lane"], root, lane["retired"])
         # A retired lane is not running, so its script cannot be drifting from anything.
         if not lane["retired"]:
+            # Computed here when this machine can (it holds the refs and the checkout),
+            # otherwise carried from the hub, which is the only other machine that can.
+            # Never both: on the hub both paths see the same facts and would say it twice.
             drift = deployed_script_drift(lane["lane"], root)
+            if drift is None:
+                hub_entry = hub_lanes.get(lane["lane"])
+                if isinstance(hub_entry, dict):
+                    # Absent facts mean the hub could not answer, never "no drift".
+                    drift = script_drift_finding(hub_entry.get("script"), "the hub's checkout")
             if drift:
                 lane["findings"].append(drift)
     # The lanes that shared job actually serves. A calendar-cadence lane is in the manifest so
