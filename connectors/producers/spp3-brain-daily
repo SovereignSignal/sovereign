@@ -279,6 +279,19 @@ def yield_of(body):
     return content, markers, (markers / total if total else 0.0)
 
 
+def script_sha():
+    """sha256 of the file that is running, for the hub to compare with its own copy.
+
+    Read from __file__ rather than a configured path, so what is reported is what
+    actually executed. A copy on disk that nothing runs is not the drift that ships.
+    """
+    try:
+        with open(os.path.realpath(__file__), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
 def log(msg):
     line = f"{datetime.now(timezone.utc).isoformat(timespec='seconds')}  {msg}"
     print(line)
@@ -388,6 +401,9 @@ def _heartbeat(coverage=None):
         msg = "heartbeat"
         if coverage:
             msg += "\n\ncoverage: " + json.dumps(coverage, sort_keys=True, separators=(",", ":"))
+        sha = script_sha()
+        if sha:
+            msg += "\n\nscript_sha: " + sha
         t = git("tag", "-f", "-a", "hb-local", "-m", msg, "HEAD")
         if t.returncode != 0:
             log(f"heartbeat: tag failed (non-fatal): {t.stderr.strip()}")
