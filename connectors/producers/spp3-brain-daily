@@ -3,7 +3,7 @@
 
 Finished ENS program design material only. Distils an explicit allow-list of settled
 documents into short markdown captures and lands them in raw/workspaces/spp3/ via
-brain-capture (committed on lane/spp3, pushed to the exchange, fenced and merged by M3).
+brain-capture (committed on lane/spp3, pushed to the exchange, fenced and merged by the hub).
 
 Rules this script enforces, per the lane contract:
   - idempotent: a source whose DISTILLED body is unchanged produces no capture
@@ -379,7 +379,7 @@ EXCLUDED = "applicant, committee and contact records; .cron-logs; Notion exports
 
 def _heartbeat(coverage=None):
     """Prove the whole pipe: an annotated tag (tagger date = now) forced onto
-    the exchange's reserved heartbeat ref, fetched by M3's fence. Best-effort
+    the exchange's reserved heartbeat ref, fetched by the hub's fence. Best-effort
     by contract: never raises, never fails the run — a failed push just leaves
     the heartbeat stale, which is the hub's alarm working. The tag message
     carries the run's coverage summary as one JSON line."""
