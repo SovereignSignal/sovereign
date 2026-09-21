@@ -30,7 +30,7 @@ Config, all instance-level: ~/.brain-root, ~/.brain-host, ~/.brain-core,
 
 Usage: sov-status [--json] [--no-hub]
 """
-import os, sys, json, glob, time, subprocess, socket, re, plistlib, datetime, shlex, shutil
+import os, sys, json, glob, time, subprocess, socket, re, plistlib, datetime, shlex, shutil, hashlib
 
 HERE = os.path.dirname(os.path.realpath(__file__))   # brain-bin symlinks here; the catalog lives beside the real file
 TEMPLATE_ROOT = os.path.abspath(os.path.join(HERE, ".."))
@@ -1281,6 +1281,56 @@ def fetch_hub(root, hub_pointer, want):
     return {"reachable": None, "error": "no ~/.brain-hub pointer and this machine holds no hub lane"}
 
 
+def deployed_script_drift(lane, root):
+    """Whether the exporter that RAN on a producer matches the copy in this checkout.
+
+    The exporter hashes itself into its heartbeat tag, so this compares what ran with
+    what is vendored here, never with a file on a disk nobody executed. Nothing is
+    reported when the lane has no vendored copy (it was never brought into the repo,
+    so it is not drifting from anything) or when the heartbeat predates the hash.
+
+    The finding names both hashes, which side is which, and this checkout's revision,
+    because "the producer drifted" and "this hub has not pulled yet" are the same
+    observation from here. Every commit this morning opened a window where the hub was
+    behind and a bare mismatch would have read as a leak on a machine that was correct.
+    """
+    vendored = os.path.join(TEMPLATE_ROOT, "connectors", "producers", lane + "-brain-daily")
+    if not os.path.isfile(vendored):
+        return None
+    try:
+        tag = subprocess.run(["git", "-C", root, "cat-file", "-p", "refs/heartbeats/" + lane],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if tag.returncode != 0:
+        return None
+    m = re.search(r"^script_sha:\s*([0-9a-f]{64})\s*$", tag.stdout, re.M)
+    if not m:
+        return None                       # an exporter that predates the hash; say nothing
+    ran = m.group(1)
+    try:
+        with open(vendored, "rb") as f:
+            here = hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+    if ran == here:
+        return None
+    when = re.search(r"^tagger .*?(\d{10}) ", tag.stdout, re.M)
+    stamp = (datetime.datetime.fromtimestamp(int(when.group(1)), datetime.timezone.utc)
+             .strftime("%Y-%m-%d %H:%MZ") if when else "time unknown")
+    rev = ""
+    try:
+        r = subprocess.run(["git", "-C", TEMPLATE_ROOT, "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=5)
+        rev = r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {"level": "warn",
+            "text": "deployed script does not match the repo copy: ran %s (heartbeat %s) vs "
+                    "vendored %s%s. If this hub is behind the exchange, pull before "
+                    "investigating." % (ran[:8], stamp, here[:8], " at " + rev if rev else "")}
+
+
 def lane_permission_findings(fm, name, root, retired=False):
     """Where a lane's declared permissions disagree with themselves or with the law.
 
@@ -1449,6 +1499,11 @@ def main():
         # state is only known once the manifest has been read: retiring a lane is the
         # owner's answer to it, and an answered row must not keep asking.
         lane["findings"] = lane_permission_findings(lane.pop("_fm", {}) or {}, lane["lane"], root, lane["retired"])
+        # A retired lane is not running, so its script cannot be drifting from anything.
+        if not lane["retired"]:
+            drift = deployed_script_drift(lane["lane"], root)
+            if drift:
+                lane["findings"].append(drift)
     # The lanes that shared job actually serves. A calendar-cadence lane is in the manifest so
     # `sov disconnect all` can reach it, but it keeps its own job: it is not the runner's, and
     # every runner-shaped reading below (a synthetic lane row, the silence rules, the stall
