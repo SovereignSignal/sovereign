@@ -107,6 +107,15 @@ if [ "$INSTALL" -eq 1 ]; then
   rm -rf "$HOME/Applications/Sovereign.app"
   cp -R "$APP" "$HOME/Applications/Sovereign.app"
   echo "[4] installed to ~/Applications/Sovereign.app"
+  # Leave exactly one bundle macOS can index. Every copy carries the same
+  # CFBundleIdentifier and macOS resolves an id to the HIGHEST VERSION it has seen,
+  # not to ~/Applications: on 2026-09-20 four copies shared com.sovereign.console on
+  # one machine, the Dock and `open -b` both reached an unreleased build in
+  # /private/tmp, and the installer's own "quit normally" step quit the wrong app.
+  # The build output is kept, just not as something that can be launched by mistake.
+  rm -rf "$BUILD/Sovereign.app-built"
+  mv "$APP" "$BUILD/Sovereign.app-built"
+  echo "    build copy parked as Sovereign.app-built so only the installed one is launchable"
   APP="$HOME/Applications/Sovereign.app"
 fi
 [ "$OPEN" -eq 1 ] && open "$APP"
