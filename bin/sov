@@ -21,6 +21,8 @@
 #   sov ingest folder <path>    bring a folder of material into its own raw lane:
 #                                 convert, redact, content-dedup, hand each file to
 #                                 sov-capture. Dry plan unless --apply (sov-ingest)
+#   sov app-update [--apply]    build this machine's source into the installed app and
+#                                 reopen it; preview without --apply (sov-app-update)
 #   sov about [--json]          explain this installation, offline and read-only
 #   sov contribute <command>    assess, collect, deliver, or import selected work
 #   sov status                    pointers, lanes on this machine, and their freshness
@@ -75,6 +77,7 @@ case "$cmd" in
   load)     "$PYTHON" "$BIN/sov-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/sov-load" "$@";;
   capture)  exec "$PYTHON" "$BIN/sov-capture" "$@";;
   ingest)   exec "$PYTHON" "$BIN/sov-ingest" "$@";;
+  app-update) exec "$PYTHON" "$BIN/sov-app-update" "$@";;
   check)
     # The label check, then Part 1 drift when this machine runs a template hub (warns only).
     /bin/bash "$BIN/sov-check" "$@"; rc=$?

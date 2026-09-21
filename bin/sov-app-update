@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Build this machine's source into the installed app, and reopen it.
+
+An app cannot replace itself while it is running, so `--apply` does the safe half first
+(build from source, which never touches the installed bundle), and only then quits the
+app, swaps it and reopens. A failed build leaves the running app exactly as it was.
+
+It quits by PATH, never by bundle identifier. On 2026-09-20 four bundles on one machine
+shared com.sovereign.console, macOS resolves an id to the highest VERSION it has indexed
+rather than to ~/Applications, and an installer's "quit normally" step therefore quit an
+unreleased build sitting in /private/tmp while truthfully reporting success.
+
+  sov-app-update --preview          what would happen, as JSON, writing nothing
+  sov-app-update --apply --token T  do it; the token must match the preview's
+"""
+import argparse
+import hashlib
+import json
+import os
+import plistlib
+import subprocess
+import sys
+import time
+
+APP = os.path.expanduser("~/Applications/Sovereign.app")
+# Where the source actually is. Run from a checkout this is the checkout; run from inside
+# the app it is not, because the bundled backend/ ships bin, lib, connectors and templates
+# and no apps/console/build.sh. Nothing can be built from in there, so the caller says.
+TEMPLATE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+def buildable(template):
+    return os.path.isfile(os.path.join(template, "apps", "console", "build.sh"))
+
+
+def installed():
+    info = os.path.join(APP, "Contents", "Info.plist")
+    if not os.path.isfile(info):
+        return {}
+    try:
+        with open(info, "rb") as fh:
+            d = plistlib.load(fh)
+        return {"version": d.get("CFBundleShortVersionString"), "build": d.get("CFBundleVersion"),
+                "source_commit": d.get("SovereignSourceCommit")}
+    except Exception:
+        return {}
+
+
+def source_rev(template=None):
+    r = subprocess.run(["git", "-C", template or TEMPLATE, "log", "-1", "--format=%h"],
+                       capture_output=True, text=True, timeout=10)
+    return r.stdout.strip() or None
+
+
+def running():
+    r = subprocess.run(["pgrep", "-f", APP + "/Contents/MacOS/Sovereign"],
+                       capture_output=True, text=True)
+    return [p for p in r.stdout.split() if p]
+
+
+def plan(template=None):
+    template = template or TEMPLATE
+    app, rev = installed(), source_rev(template)
+    p = {"installed": app, "source_commit": rev, "app_path": APP, "template": template,
+         "buildable": buildable(template)}
+    p["current"] = bool(app.get("source_commit")) and app.get("source_commit", "").replace("+local", "") == rev
+    p["summary"] = ("Sovereign is already the newest build of this machine's source."
+                    if p["current"] else
+                    "Build Sovereign from this machine's source and install it.")
+    p["effects"] = ("Sovereign will close and reopen. The current app is kept so it can be put back. "
+                    "Your settings and the selected archive are not touched. Nothing is installed if the build fails.")
+    # The token binds a confirmation to exactly the state that was previewed.
+    p["token"] = hashlib.sha256(json.dumps(
+        [app.get("source_commit"), app.get("build"), rev], sort_keys=True).encode()).hexdigest()[:32]
+    return p
+
+
+def apply(token, template=None):
+    template = template or TEMPLATE
+    p = plan(template)
+    if token != p["token"]:
+        raise ValueError("This machine's state changed since the preview. Refresh and try again.")
+    if not p["source_commit"]:
+        raise ValueError("This machine's source revision could not be read, so there is nothing to build.")
+    if not p["buildable"]:
+        raise ValueError("No source checkout to build from at %s. Pass --template with the path to one." % template)
+    runtime = os.path.join(APP, "Contents", "Resources", "runtime")
+    if not os.path.isfile(os.path.join(runtime, "bin", "python3")):
+        raise ValueError("The installed app has no bundled runtime to build against.")
+
+    # 1. Build. The installed app is untouched until this succeeds.
+    env = dict(os.environ, SOV_PYTHON_RUNTIME=runtime)
+    build = subprocess.run(["/bin/bash", os.path.join(TEMPLATE, "apps", "console", "build.sh")],
+                           capture_output=True, text=True, timeout=900, env=env, cwd=TEMPLATE)
+    if build.returncode != 0:
+        raise ValueError("The build failed, so nothing was installed: " + (build.stderr or "").strip()[-300:])
+    built = os.path.join(template, "apps", "console", "build", "Sovereign.app")
+    if not os.path.isdir(built):
+        raise ValueError("The build reported success but produced no app bundle.")
+
+    # 2. Now, and only now, stand the app down. By path, never by bundle id.
+    for pid in running():
+        subprocess.run(["kill", pid], capture_output=True)
+    for _ in range(40):
+        if not running():
+            break
+        time.sleep(0.25)
+    if running():
+        raise ValueError("Sovereign did not close, so it was not replaced. Quit it and try again.")
+
+    # 3. Keep what is there, then swap.
+    back = os.path.expanduser("~/sovereign-rollback/app-update-%s" % time.strftime("%Y%m%dT%H%M%S"))
+    os.makedirs(back, exist_ok=True)
+    if os.path.isdir(APP):
+        subprocess.run(["ditto", APP, os.path.join(back, "previous.app")], check=True, timeout=300)
+        subprocess.run(["rm", "-rf", APP], check=True, timeout=120)
+    subprocess.run(["cp", "-R", built, APP], check=True, timeout=300)
+    subprocess.run(["rm", "-rf", built + "-built"], capture_output=True)
+    os.rename(built, built + "-built")   # one launchable bundle, as build.sh --install leaves it
+
+    now = installed()
+    if now.get("source_commit", "").replace("+local", "") != p["source_commit"]:
+        raise ValueError("The installed app does not match the source it was built from. The previous app is at " + back)
+    subprocess.run(["open", APP], capture_output=True, timeout=60)
+    return {"state": "installed", "installed": now, "source_commit": p["source_commit"],
+            "rollback": back, "verification": "Sovereign was rebuilt from this machine's source and reopened."}
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="sov-app-update")
+    ap.add_argument("--preview", action="store_true")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--token")
+    ap.add_argument("--template", help="the source checkout to build from")
+    a = ap.parse_args()
+    try:
+        if a.apply:
+            print(json.dumps(apply(a.token, a.template)))
+        else:
+            print(json.dumps(dict(plan(a.template), state="preview")))
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        print(json.dumps({"error": str(e)}))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
