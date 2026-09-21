@@ -49,8 +49,8 @@ test('a source revision that cannot be read offers no build', () => {
 
 test('contribute-only and read-and-contribute are told apart', () => {
   const html = paint({ D: { lanes: [
-    { lane: 'spp3', read: 'none', write: 'git-branch', gear: 'ask-first' },
-    { lane: 'claude-m5', read: 'hook', read_scope: 'knowledge + own lane', write: 'connector', gear: 'routine' }] } });
+    { lane: 'alpha', read: 'none', write: 'git-branch', gear: 'ask-first' },
+    { lane: 'beta', read: 'hook', read_scope: 'knowledge + own lane', write: 'connector', gear: 'routine' }] } });
   assert(html.includes('Contribute only') && html.includes('reads nothing from this archive'));
   assert(html.includes('Read and contribute') && html.includes('knowledge + own lane'));
   assert(html.includes('ask-first') && html.includes('routine'));
@@ -61,27 +61,28 @@ test('a lane with no declared read is contribute-only, not unknown', () => {
 });
 
 test('read_scope true is a flag, never a scope to print', () => {
-  // thestringer declares `read_scope: true`, which rendered as "reads true".
-  const html = paint({ D: { lanes: [{ lane: 'stringer', host: 'thestringer', read: 'git', read_scope: true }] } });
+  // A producer that declares `read_scope: true` - a flag, not a scope - rendered
+  // as "reads true" until 2026-09-21.
+  const html = paint({ D: { lanes: [{ lane: 'gamma', host: 'Worker-Z', read: 'git', read_scope: true }] } });
   assert(!/reads\s+true/.test(html), 'a boolean read_scope must not be printed as a scope');
   assert(html.includes('reads via git'));
 });
 
 test('the read mechanism keeps the parenthetical that says when it reads', () => {
-  const html = paint({ D: { lanes: [{ lane: 'a', host: 'm5', read: 'brain-load (session-start hook)' }] } });
+  const html = paint({ D: { lanes: [{ lane: 'a', host: 'Laptop-A', read: 'brain-load (session-start hook)' }] } });
   assert(html.includes('reads via brain-load (session-start hook)'));
 });
 
 test('a declared string scope is named alongside the mechanism', () => {
-  const html = paint({ D: { lanes: [{ lane: 'a', host: 'm5', read: 'hook', read_scope: 'knowledge + own lane' }] } });
+  const html = paint({ D: { lanes: [{ lane: 'a', host: 'Laptop-A', read: 'hook', read_scope: 'knowledge + own lane' }] } });
   assert(html.includes('scoped to knowledge + own lane'));
 });
 
 test('lanes are grouped by the machine they run on, busiest first', () => {
   const html = paint({ D: { lanes: [
-    { lane: 'a', host: 'm5' }, { lane: 'b', host: 'spp3' }, { lane: 'c', host: 'm5' }, { lane: 'd', host: 'm5' }] } });
+    { lane: 'a', host: 'Laptop-A' }, { lane: 'b', host: 'Worker-Z' }, { lane: 'c', host: 'Laptop-A' }, { lane: 'd', host: 'Laptop-A' }] } });
   const hosts = [...html.matchAll(/class="set-host"><th colspan="6">([^<]*)<small>([^<]*)</g)].map(m => [m[1], m[2]]);
-  assert.deepEqual(hosts, [['m5', '3 lanes'], ['spp3', '1 lane']]);
+  assert.deepEqual(hosts, [['Laptop-A', '3 lanes'], ['Worker-Z', '1 lane']]);
 });
 
 test('a lane with no host is placed, not dropped', () => {
@@ -91,12 +92,12 @@ test('a lane with no host is placed, not dropped', () => {
 });
 
 test('the producer says what the tool is, beside the lane name', () => {
-  assert(paint({ D: { lanes: [{ lane: 'cursor-m5', host: 'm5', producer: 'Cursor (GUI composer + CLI agent)' }] } })
+  assert(paint({ D: { lanes: [{ lane: 'some-tool', host: 'Laptop-A', producer: 'Cursor (GUI composer + CLI agent)' }] } })
     .includes('Cursor (GUI composer + CLI agent)'));
 });
 
 test('declared drift is shown in line and marks its row', () => {
-  const html = paint({ D: { lanes: [{ lane: 'sovsclaw', read: 'none', findings: [{ level: 'warn', text: 'declares a read_scope while reading nothing' }] }] } });
+  const html = paint({ D: { lanes: [{ lane: 'delta', read: 'none', findings: [{ level: 'warn', text: 'declares a read_scope while reading nothing' }] }] } });
   assert(html.includes('declares a read_scope while reading nothing'));
   assert(html.includes('<tr class="warn">'));
 });
@@ -106,7 +107,7 @@ test('a lane the owner retired does not keep asking an answered question', () =>
 });
 
 test('an info note is an answer already given, so it never marks the row', () => {
-  const html = paint({ D: { lanes: [{ lane: 'orca-m5', read: 'none', retired: true,
+  const html = paint({ D: { lanes: [{ lane: 'epsilon', read: 'none', retired: true,
     findings: [{ level: 'info', text: 'retired; kept as provenance, not a live wire' }] }] } });
   assert(html.includes('retired; kept as provenance'));
   assert(!html.includes('class="warn"'), 'an info-only lane must not read as drift');
