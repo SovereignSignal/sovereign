@@ -28,8 +28,12 @@ window.SovStatus = (() => {
       else if (status._status?.stale || !Number.isFinite(health.checked_at) || now-health.checked_at > 300) {summary = 'Refresh to check backup recovery';action='Refresh status to verify the current blocker and hub connection before retrying.';}
       else state = 'awaiting_verification';
     }
-    return {...health, state, summary, action, tone:state === 'healthy' ? 'live' : state === 'needs_attention' ? 'down' : '',
-      label:state === 'awaiting_verification' ? 'Awaiting verification' : state === 'needs_attention' ? 'Needs attention' : state === 'healthy' ? 'Succeeded' : 'Unknown'};
+    // A job that stood down on purpose (runner.PAUSED_EXIT) reports a condition, not a
+    // failure: the owner clears it by deciding, and nothing about the job needs repair.
+    if (state === 'needs_attention' && health.state === 'paused') state = 'paused';
+    return {...health, state, summary, action,
+      tone:state === 'healthy' ? 'live' : state === 'needs_attention' ? 'down' : state === 'paused' ? 'warn' : '',
+      label:state === 'awaiting_verification' ? 'Awaiting verification' : state === 'paused' ? 'Paused' : state === 'needs_attention' ? 'Needs attention' : state === 'healthy' ? 'Succeeded' : 'Unknown'};
   }
   // How complete is the archive, from numbers that are already true rather than a score.
   // One headline figure only: the share of eligible material the curator has actually
@@ -148,9 +152,10 @@ window.SovStatus = (() => {
     (D.needs_you || []).forEach((n, i) => { if(n.kind === "job" && (!n.host||n.host===m.host) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return; need.push({ state: "warn", name: n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: n.kind === "host" ? 0 : 1, cause: "need:" + n.kind, jump:n.host?{view:"hosts",id:n.host}:null }); });
     (D.jobs || []).filter(j => !coveredLocalJob(j)).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
     Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k,j]) => {
-      const health = hubJob(j,D), pending = health.state === 'awaiting_verification';
+      const health = hubJob(j,D), paused = health.state === 'paused', pending = paused || health.state === 'awaiting_verification';
       (pending ? waiting : need).push({state:health.tone,name:k,detail:j.health ? health.summary : `exited ${j.exit} on the hub`,
-        why:health.why,action:health.action,verify:health.verify,age_h:ago(j.ts),jump:{view:'jobs',id:'hub:job:'+k},order:0,cause:pending?'job-verifying':'job-failed'});
+        why:health.why,action:health.action,verify:health.verify,age_h:ago(j.ts),jump:{view:'jobs',id:'hub:job:'+k},order:0,
+        cause:paused?'job-paused':pending?'job-verifying':'job-failed'});
     });
     if (h.jobs_error) need.push({ state: "warn", name: "Hub jobs", detail: h.jobs_error, jump: { view: "jobs" }, order: 0, cause: "hub-jobs-unknown" });
     hosts.filter(x => x.net && x.net.online === false && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Operations → Hosts.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));

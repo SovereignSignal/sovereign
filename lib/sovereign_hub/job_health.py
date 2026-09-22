@@ -10,6 +10,7 @@ import tempfile
 
 from brain_redact import redact_text
 from . import jobs
+from .runner import PAUSED_EXIT
 
 MAX_OUTPUT = 65536
 
@@ -83,6 +84,28 @@ def schedule_loaded(job, state, template):
         return False
 
 
+def paused(job, spec, state, now):
+    """PAUSED_EXIT: the job did no work, on purpose, and says why in its own words.
+
+    Generic by default, because any job may report one. A job we ship names its
+    condition, so the owner reads what is paused rather than an exit code.
+    """
+    clean, _ = redact_text(read_output(state, job))
+    said = '\n'.join(clean.strip().splitlines()[-5:])[:2000]
+    health = {'state': 'paused', 'summary': 'Paused; this run did no work',
+              'why': said or 'The job reported a condition it will not work through, and no captured output is available.',
+              'action': 'Clear the condition the job reported. The job itself needs no repair.',
+              'verify': 'The next scheduled run completes normally.',
+              'condition_output': said, 'checked_at': now}
+    if job == 'curate' and spec.get('program') == 'hub/curate':
+        health.update(summary='Review queue full, curation paused',
+                      why=(said or 'The proposal queue reached its limit.') +
+                          '\nNo new material is being judged, on any lane, until the queue is under its limit.',
+                      action='Open Sovereign → Review to compare and decide (or curator-approve on the hub). Curation resumes on the next tick once the queue drops below its limit.',
+                      verify='After your decisions, refresh; the next curate tick runs and its last exit is 0.')
+    return health
+
+
 def describe(job, row, spec, state, template, vault, now=None):
     now = time.time() if now is None else now
     stamp, code = row.get('last_run'), row.get('last_exit')
@@ -90,6 +113,8 @@ def describe(job, row, spec, state, template, vault, now=None):
         return {'state': 'unknown', 'summary': 'No completed run recorded'}
     if code == 0:
         return {'state': 'healthy', 'summary': 'Last run succeeded'}
+    if code == PAUSED_EXIT:
+        return paused(job, spec, state, now)
     output = read_output(state, job)
     clean, _ = redact_text(output)
     health = {'state': 'needs_attention', 'summary': 'Last run failed',
