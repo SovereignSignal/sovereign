@@ -141,6 +141,7 @@ def known_content_hashes(vault):
         return set(), False
 
 
+LANE_RULE = "=" * 24 + " LANE.md " + "=" * 24
 LANE_TEMPLATE = """---
 # ---- identity (required) ----
 lane: {lane}
@@ -163,7 +164,7 @@ status: proposed
 onboarded:
 ---
 
-Created by `sov ingest` on {today} from `{src}`.
+Declared by the owner on {today} for `sov ingest folder {src}`.
 
 Captures here are converted plain text, one per source file, each labelled with its
 original relative path. Re-running the same import is a no-op: a file already captured
@@ -300,13 +301,23 @@ def main():
         return 0
 
     # ---- apply ----
+    # A new lane is the owner's to declare (Part 1, "who writes where"), so an undeclared
+    # lane is printed, never written: the owner saves the text and reruns. Exit 2, like
+    # the preflight guards: do not proceed, nothing is wrong with the input.
     if not os.path.isfile(lane_md):
-        os.makedirs(lane_dir, exist_ok=True)
         exts = ", ".join(sorted({os.path.splitext(r)[1].lower() or "none"
                                  for r, _, _, _, _, _ in plan})) or "none"
-        with open(lane_md, "x", encoding="utf-8") as fh:
-            fh.write(LANE_TEMPLATE.format(lane=lane, src=src, exts=exts, today=date.today().isoformat()))
-        report["lane_created"] = os.path.relpath(lane_md, vault)
+        text = LANE_TEMPLATE.format(lane=lane, src=src, exts=exts, today=date.today().isoformat())
+        if a.json:
+            report.update(mode="refused: lane not declared; nothing written",
+                          lane_md=os.path.relpath(lane_md, vault), lane_text=text)
+            print(json.dumps(report, indent=2))
+            return 2
+        print("sov-ingest: lane `%s` is not declared; refusing to write into a lane nobody has declared." % lane)
+        print("Save the text between the rules as %s, then rerun the same command."
+              % os.path.relpath(lane_md, vault))
+        print(LANE_RULE); print(text, end=""); print(LANE_RULE)
+        return 2
 
     captured, failed, redactions = [], {}, {}
     for rel, p, kind, size, slug, ch in plan:
@@ -361,7 +372,7 @@ def main():
 
 def render(r):
     out = ["%s  %s" % (r["mode"], r["source"]),
-           "  lane           %s%s" % (r["lane"], "" if r["lane_declared"] else "  (will be created)"),
+           "  lane           %s%s" % (r["lane"], "" if r["lane_declared"] else "  (undeclared: apply prints LANE.md and refuses)"),
            "  found          %d" % r["found"],
            "  would land     %d %s" % (r["would_land"], r["by_kind"] or "")]
     if "captured" in r:

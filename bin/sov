@@ -20,7 +20,8 @@
 #                                manifest, the rebuild kit, Part 1 drift (sov-hub)
 #   sov ingest folder <path>    bring a folder of material into its own raw lane:
 #                                 convert, redact, content-dedup, hand each file to
-#                                 sov-capture. Dry plan unless --apply (sov-ingest)
+#                                 sov-capture. Dry plan unless --apply; an undeclared
+#                                 lane is printed and refused, the owner saves LANE.md (sov-ingest)
 #   sov app-update [--apply]    build this machine's source into the installed app and
 #                                 reopen it; preview without --apply (sov-app-update)
 #   sov signing-identity        create this machine's local code-signing identity so a

@@ -13,7 +13,25 @@ def ingest(vault,src,*args,home=None):
 def fixture(tmp):
  root=Path(tmp);vault=root/'vault';(vault/'knowledge').mkdir(parents=True);(vault/'raw/workspaces').mkdir(parents=True)
  src=root/'src';(src/'sub').mkdir(parents=True);return root,vault,src
+def declare(vault,src,root):
+ r=ingest(vault,src,'--apply',home=root);assert r.returncode==2,(r.returncode,r.stderr)
+ lane=vault/'raw/workspaces'/src.name;lane.mkdir(parents=True,exist_ok=True)
+ rule=[l for l in r.stdout.splitlines() if l.startswith('====') and 'LANE.md' in l][0]
+ (lane/'LANE.md').write_text(r.stdout.split(rule+'\n')[1])
 class IngestFolder(unittest.TestCase):
+ def test_an_undeclared_lane_prints_its_declaration_and_refuses(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root,vault,src=fixture(tmp)
+   (src/'notes.md').write_text('Material that must not land in a lane nobody has declared yet.\n')
+   r=ingest(vault,src,'--apply',home=root)
+   self.assertEqual(r.returncode,2,r.stdout+r.stderr)
+   self.assertFalse((vault/'raw/workspaces/src').exists())
+   self.assertIn('lane: src',r.stdout);self.assertIn('LANE.md',r.stdout);self.assertIn('refus',r.stdout.lower())
+   # the owner saves what was printed; the same command now proceeds
+   declare(vault,src,root)
+   r=ingest(vault,src,'--apply',home=root);self.assertEqual(r.returncode,0,r.stderr)
+   self.assertEqual(len([p for p in (vault/'raw/workspaces/src').glob('*.md') if p.name!='LANE.md']),1)
+   self.assertNotIn('lane_created',r.stdout)
  def test_lands_supported_files_once_and_replays_to_zero(self):
   with tempfile.TemporaryDirectory() as tmp:
    root,vault,src=fixture(tmp)
@@ -21,8 +39,9 @@ class IngestFolder(unittest.TestCase):
    (src/'sub/plain.txt').write_text('Plain text with enough body to be judged as real material.\n')
    (src/'tiny.txt').write_text('no\n')
    (src/'blob.bin').write_bytes(b'\x00\xff'*64)
-   r=ingest(vault,src,'--apply',home=root);self.assertEqual(r.returncode,0,r.stderr)
    lane=vault/'raw/workspaces/src'
+   declare(vault,src,root)
+   r=ingest(vault,src,'--apply',home=root);self.assertEqual(r.returncode,0,r.stderr)
    self.assertEqual(sorted(p.name for p in lane.glob('*.md') if p.name!='LANE.md').__len__(),2)
    self.assertTrue((lane/'LANE.md').exists())
    again=ingest(vault,src,'--apply',home=root);self.assertEqual(again.returncode,0,again.stderr)
@@ -45,6 +64,7 @@ class IngestFolder(unittest.TestCase):
    root,vault,src=fixture(tmp)
    token='gh'+'p_'+'A'*35
    (src/'leaky.md').write_text('A note carrying %s inside ordinary prose about grants.\n'%token)
+   declare(vault,src,root)
    r=ingest(vault,src,'--apply','--json',home=root);self.assertEqual(r.returncode,0,r.stderr)
    cards=[p for p in (vault/'raw/workspaces/src').glob('*.md') if p.name!='LANE.md']
    self.assertEqual(len(cards),1)
@@ -55,6 +75,7 @@ class IngestFolder(unittest.TestCase):
    root,vault,src=fixture(tmp)
    body='The very same bytes, filed under two different names entirely.\n'
    (src/'first.md').write_text(body);(src/'sub/second.md').write_text(body)
+   declare(vault,src,root)
    r=ingest(vault,src,'--apply',home=root);self.assertEqual(r.returncode,0,r.stderr)
    cards=[p for p in (vault/'raw/workspaces/src').glob('*.md') if p.name!='LANE.md']
    self.assertEqual(len(cards),1,'content dedup, not path dedup')
