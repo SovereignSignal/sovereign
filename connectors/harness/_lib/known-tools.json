@@ -222,6 +222,22 @@
    "commands": [
     "orca"
    ]
+  },
+  {
+   "id": "parallels",
+   "name": "Parallels Desktop guests",
+   "connector": "parallels",
+   "detect": [
+    "/usr/local/bin/prlctl",
+    "/Applications/Parallels Desktop.app"
+   ],
+   "note": "Linux guests with Claude Code or Claude Desktop inside; the host pulls their memory and outputs through prlctl, one folder per guest",
+   "apps": [
+    "Parallels Desktop.app"
+   ],
+   "commands": [
+    "prlctl"
+   ]
   }
  ]
 }

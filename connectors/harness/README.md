@@ -15,6 +15,7 @@ sov connect <harness> ... --apply                                               
 | `codex` | SessionStart hook in `~/.codex/hooks.json`, same shape, trusted at install by `trust.py` (the same config record the `/hooks` screen writes) | `~/.codex/memories` working tree | none |
 | `cursor` | `sessionStart` hook in `~/.cursor/hooks.json`, pack returned as `additional_context` | GUI chats exported from SQLite to markdown, CLI transcripts, plans, skills, config | none |
 | `cowork` | no hooks; `ensure-instruction.py` writes the read instruction into every space's instructions field, re-applied each mirror run so new spaces are covered | each project space's memory folder | none (restart Claude Desktop once if it was open) |
+| `parallels` | none: contribute-only guests by owner decision, the vault is never shared into a guest | every running Linux guest's Claude Code memory and Claude Desktop outputs, pulled by the host through `prlctl exec`, one folder per guest; stopped guests skipped, credentials and transcripts never asked for | none |
 
 ## Shared parts, in `_lib/`
 

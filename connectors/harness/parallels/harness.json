@@ -1,0 +1,12 @@
+{
+ "name": "Parallels guests",
+ "lane_prefix": "parallels",
+ "read": "none",
+ "hook_file": null,
+ "write": "mirror",
+ "manual_step": null,
+ "description": "Linux guests on this Mac are contribute-only producers the hub cannot reach (no SSH, no Tailscale); nothing in a guest reads the archive. The host pulls each running guest's Claude Code memory and Claude Desktop outputs through Parallels' own command line, one folder per guest, never credentials or transcripts.",
+ "detect": [
+  "/usr/local/bin/prlctl"
+ ]
+}

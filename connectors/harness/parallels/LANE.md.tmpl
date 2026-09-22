@@ -1,0 +1,30 @@
+---
+lane: parallels-{{HOST}}
+producer: Parallels guest VMs on {{HOST}}, pulled by the host
+host: {{HOST}}
+mission: >
+  The Linux VMs on this Mac hold Claude Code and Claude Desktop sessions for work the
+  owner keeps in its own machine (one VM per client context). They have no SSH and no
+  Tailscale, so the hub cannot reach them; the host pulls each running guest's Claude
+  Code memory and Claude Desktop outputs through Parallels' own command line, one folder
+  per guest. Provenance is the guest folder name; a guest's identity context travels
+  with it (see knowledge/concepts/identities).
+write: rsync{{WRITE_VIA}}
+read: none (contribute-only, owner decision 2026-09-22)
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect parallels` on {{DATE}}.
+
+Write wire: `connectors/harness/parallels/mirror.sh` every {{INTERVAL}}s via {{SCHEDULER}}
+(`{{RUNNER}}`, lane id `{{LABEL}}`). For every guest `prlctl list` reports as running, it
+tars `/home/*/.claude/projects/*/memory/` and `/home/*/Claude/` out of the guest into
+`<guest-slug>/claude-code/memory/<project>/` and `<guest-slug>/claude/`. A guest that is
+stopped or suspended is named in `MANIFEST.md` and skipped; nothing is invented for it.
+Credentials and transcripts are never asked for. The guest is never written to.
+
+Read wire: none, by owner decision (2026-09-22): the guests are contribute-only. Nothing
+in a guest reads the archive, and the vault is never mounted or shared into a guest.
+This is the same standing as the contribute-only producer boxes, not a gap to close.
