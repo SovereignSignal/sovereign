@@ -243,6 +243,7 @@ fi
 # --- 1) nightly curation (breaker-guarded), output kept, fail-loud ---
 nightly_out=""
 nightly_rc=0
+paused_rc=0
 if [[ "${ARCHIVIST_SKIP_NIGHTLY:-0}" != "1" ]]; then
   # ARCHIVIST_RUNNER (2026-09-04): the burn-down schedule runs a different judge
   # command through this same digest, so both land in one channel, same buttons.
@@ -253,7 +254,13 @@ if [[ "${ARCHIVIST_SKIP_NIGHTLY:-0}" != "1" ]]; then
   RUNNER="${ARCHIVIST_RUNNER:-$HERE/curate}"
   nightly_out="$("$RUNNER" 2>&1)" || nightly_rc=$?
   printf '== archivist-nightly.sh (exit %d) ==\n%s\n' "$nightly_rc" "$nightly_out"
-  if (( nightly_rc != 0 )); then
+  # 75 is the queue circuit breaker (see hub/curate): nothing was judged because the
+  # review queue is full. Not a failure, and the digest is exactly what the owner needs
+  # in that state, since it already leads with BREAKER OPEN and lists what is pending, so
+  # compose and send it, then carry the code out so this run's receipt says paused too.
+  if (( nightly_rc == 75 )); then
+    paused_rc=$nightly_rc
+  elif (( nightly_rc != 0 )); then
     echo "archivist-nightly-cron: archivist-nightly.sh failed (exit $nightly_rc); aborting before digest" >&2
     exit "$nightly_rc"
   fi
@@ -265,7 +272,7 @@ fi
 if [[ "${ARCHIVIST_DIGEST_ONLY_IF_NEW:-0}" == "1" ]] \
    && ! grep -qE 'proposed [1-9]|^NEW_COUNT: [1-9]|auto-promoted [1-9]|STOP kept' <<<"$nightly_out"; then
   echo "archivist-nightly-cron: nothing new this run; digest skipped (ARCHIVIST_DIGEST_ONLY_IF_NEW=1)"
-  exit 0
+  exit "$paused_rc"
 fi
 digest_out=""
 digest_rc=0
@@ -303,4 +310,6 @@ if "$TG_SEND" --html --reply-markup "$KB" "$MSG"; then
   fi
 else
   echo "archivist-nightly-cron: digest send failed; the count window stays open" >&2
+  exit 1                                                # a failed send is still a failed run
 fi
+exit "$paused_rc"                                       # 75 when the breaker held this run

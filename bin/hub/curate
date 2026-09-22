@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 # Nightly Archivist run: curate new raw on owned inference, deliver the digest.
+#
+# What this script's exit codes mean, because a tick that did nothing must not read as a
+# tick that worked:
+#   0   a pass ran
+#   64  ARCHIVIST_PENDING_LIMIT is not a usable number (EX_USAGE)
+#   75  the queue circuit breaker is open: the review queue is full, so nothing was
+#       judged, on any lane, until the owner drains the gate (EX_TEMPFAIL; nothing is
+#       broken, the work is paused). This is lib/sovereign_hub/runner.py's PAUSED_EXIT:
+#       the runner keeps it in the receipt, withholds last-ok, and tells the owner once
+#       rather than every two hours. The two numbers must stay equal.
+# Anything else comes from curator-run: 3 = gave up waiting for the model lock after 4h,
+# 4 = the sovereign-inference law refused the endpoint or model.
 set -euo pipefail
 export PATH="/opt/homebrew/bin:$PATH"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,7 +43,12 @@ pending_count=${#pending_cards[@]}
 if (( pending_count >= pending_limit )); then
   printf 'curator-run: queue circuit breaker open: %d pending >= limit %d; no new sources judged\n' \
     "$pending_count" "$pending_limit"
-  exit 0
+  exit 75
 fi
 
-"$HERE/../curator-run" --max 50
+# curator-run's own shebang is `#!/usr/bin/env python3`, which on a Mac finds the Xcode
+# shim: after an Xcode update that refuses to run until someone accepts the license, and
+# a scheduled job that names it fails every tick, silently. Name the interpreter the
+# resolver picks instead: the same one every rendered launchd job already uses.
+. "$SOV_TEMPLATE/bin/_sov-python.sh"
+exec "$(sov_python "$SOV_TEMPLATE")" "$SOV_TEMPLATE/bin/curator-run" --max 50

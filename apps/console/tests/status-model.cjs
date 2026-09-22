@@ -74,6 +74,21 @@ for(const last_run of [undefined,NaN,Date.parse(recovering.ts)/1000+1,Date.parse
 }
 console.log('Alert lifecycle: verified blocker, stale observations, missed verification, deduplicated local jobs, successful recovery and new failures passed.');
 
+// A job that stood down on purpose is a condition to clear, not a failure to fix. The
+// curate tick exits 75 while the review queue is full: curation is paused for every
+// lane, nothing is broken, and the owner clears it by deciding.
+const pausedJob={ts:new Date().toISOString(),exit:75,source:'hub-runner',cadence_s:7200,
+ health:{state:'paused',summary:'Review queue full, curation paused',why:'50 pending >= limit 50',
+         action:'Open Sovereign → Review to compare and decide (or curator-approve on the hub).'}};
+const pausedView=assess({machine:{host:'local'},hub:{via:'local',reachable:true,jobs:{curate:pausedJob}}});
+assert.equal(pausedView.need.filter(n=>n.jump?.id==='hub:job:curate').length,0,'a paused job is not a failure');
+const pausedRow=pausedView.waiting.find(w=>w.jump?.id==='hub:job:curate');
+assert.ok(pausedRow,'a paused job waits on the owner');
+assert.equal(pausedRow.detail,'Review queue full, curation paused');
+assert.equal(box.window.SovStatus.hubJob(pausedJob).label,'Paused');
+assert.equal(box.window.SovStatus.hubJob({...pausedJob,health:{}}).label,'Needs attention','an unnamed non-zero exit is still a failure');
+console.log('A paused hub job reads as a named condition waiting on the owner, never as a failed run.');
+
 // "this copy is behind the hub" must compare the SAME lane in two places. It used to
 // subtract a hub lane's age from a remote host's harness run age, so a mirror that had
 // not run in sixteen days elsewhere was reported here as this copy being sixteen days
