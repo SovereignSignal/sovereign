@@ -918,8 +918,26 @@ def fleet_view(root, contrib=None):
                                                  "meta": {"kind": "local VM", "where": "Parallels on " + (me or "this machine")},
                                                  "net": {"online": None, "ip": None, "via": None}})
         rec["vm"] = vm
-        if vm.get("ip") and not rec["net"].get("ip"):
-            rec["net"] = {"online": port_open(vm["ip"]), "ip": vm["ip"], "via": "parallels"}
+        # Parallels reports no address for a guest on its shared network and the guests run
+        # no SSH, so a port probe answers nothing. The hypervisor knows whether the guest is
+        # running, which is what "online" means for a machine only this host can reach.
+        if vm.get("status") and not rec["net"].get("online"):
+            rec["net"] = {"online": vm["status"] == "running", "ip": vm.get("ip"), "via": "parallels"}
+        # The guest's own folder in this host's parallels lane is its lane: the row then
+        # shows what was pulled and how fresh it is, instead of "no tools" for a guest
+        # whose memory is in the archive.
+        slug = re.sub(r"[^a-z0-9]+", "-", (vm.get("name") or "").lower()).strip("-")
+        gdir = os.path.join(root, "raw", "tools", "parallels-" + (me or ""), slug) if me else None
+        if gdir and os.path.isdir(gdir):
+            pulled = [os.path.basename(p) for p in sorted(glob.glob(os.path.join(gdir, "*"))) if os.path.isdir(p)]
+            rec["lanes"].append({"lane": "parallels-%s/%s" % (me, slug), "producer": "Claude Code in the guest, pulled by " + me,
+                                 "read": "none (contribute-only)", "write": "prlctl exec (via " + me + ")",
+                                 "status": "onboarded", "newest_age_h": age_h(newest_mtime(gdir)),
+                                 "cards": (contrib.get("parallels-" + me) or {}).get("cards", 0), "pulled": pulled})
+            cc = os.path.join(gdir, "claude-code")
+            if os.path.isdir(cc):
+                rec["harnesses"].append({**_harness_entry(cc, "claude-code"), "lane": "parallels-%s/%s" % (me, slug),
+                                         "last_run": manifest_last_run(os.path.dirname(gdir)), "pulled_by": me})
     hosts_sorted = sorted(hosts.values(), key=lambda r: (0 if r["host"] == me else 1, -len(r["harnesses"]), r["host"]))
     return {"hosts": hosts_sorted, "registry": registry_path, "tailscale": bool(peers),
             "bootstrap": bootstrap_handoff() if any(r.get("vm") for r in hosts.values()) else None}
