@@ -17,7 +17,14 @@
 #   Dry run: archivist-nightly-cron.sh --compose-dry-run
 #   composes from the LAST run's captured output ($SOV_STATE_DIR/hub/
 #   archivist-nightly.last-output) + the lane's current INBOX.md/proposals,
-#   prints the message and reply_markup, sends NOTHING, runs no curation.
+#   prints the message and reply_markup, sends NOTHING, runs no curation, and
+#   leaves the count marker where it is.
+#
+# Counts 2026-09-22: the four headline numbers cover the window since the last
+# digest, read from the lane's judgments.jsonl and decisions.log rather than from
+# this run's stdout, because the curate tick judges every two hours and this run
+# is one of twelve. The window closes at the lane's .last-digest marker, which
+# only a sent digest moves. See lib/sovereign_hub/digest_counts.py.
 set -uo pipefail
 export PATH="/opt/homebrew/bin:$PATH"
 export ARCHIVIST_GLM_REVIEW_DISABLE=1
@@ -36,29 +43,68 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 TG_SEND="$HERE/tg-send"
 LANE="$SOVS_VAULT/raw/workspaces/$CURATOR_LANE"
 
+# The window counting (below) runs on the interpreter the hub's own jobs use.
+. "$SOV_TEMPLATE/bin/_sov-python.sh"
+PY="$(sov_python "$SOV_TEMPLATE")"
+digest_counts() {
+  PYTHONPATH="$SOV_TEMPLATE/lib${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PY" -m sovereign_hub.digest_counts "$@"
+}
+
 # --- HTML escaping for dynamic content (Telegram parse_mode=HTML) ---
 html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"; }
 
 # --- compose the compact HTML digest + inline keyboard ---
 # $1 = file holding the combined run output (curator-run summary lines +
-#      archivist-notion-digest.py stdout). Sets globals MSG and KB.
+#      archivist-notion-digest.py stdout). Sets globals MSG, KB and WINDOW_END.
 MSG=""
 KB=""
+# The instant the headline counts were taken, and so the instant the marker
+# records once the digest is out. Empty means the window could not be read.
+WINDOW_END=""
 compose_digest() {
   local combined="$1"
   local judged_n new_n autoprom_n autorej_n pending_n notion_url breaker_line
-  judged_n="$(sed -n 's/^curator-run: judged \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
-  [[ -n "$judged_n" ]] || judged_n="$(sed -n 's/^JUDGED_COUNT: //p' "$combined" 2>/dev/null | head -1)"
-  judged_n="${judged_n:-0}"
-  new_n="$(sed -n 's/^NEW_COUNT: //p' "$combined" 2>/dev/null | head -1)"
-  [[ -n "$new_n" ]] || new_n="$(sed -n 's/^curator-run: judged [0-9][0-9]* new item(s), proposed \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
-  new_n="${new_n:-0}"
-  autoprom_n="$(sed -n 's/^curator-run: auto-promoted \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
-  autoprom_n="${autoprom_n:-0}"
-  autorej_n="$(sed -n 's/^curator-run: auto-rejected \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
-  autorej_n="${autorej_n:-0}"
+  local run_judged_n run_new_n run_autoprom_n run_autorej_n window_note=""
+  # What THIS run did. It still drives the sections below, which list card names
+  # out of the INBOX this run wrote, and the breaker prefix, which is about this
+  # run judging nothing. It is no longer the header.
+  run_judged_n="$(sed -n 's/^curator-run: judged \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
+  [[ -n "$run_judged_n" ]] || run_judged_n="$(sed -n 's/^JUDGED_COUNT: //p' "$combined" 2>/dev/null | head -1)"
+  run_judged_n="${run_judged_n:-0}"
+  run_new_n="$(sed -n 's/^NEW_COUNT: //p' "$combined" 2>/dev/null | head -1)"
+  [[ -n "$run_new_n" ]] || run_new_n="$(sed -n 's/^curator-run: judged [0-9][0-9]* new item(s), proposed \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
+  run_new_n="${run_new_n:-0}"
+  run_autoprom_n="$(sed -n 's/^curator-run: auto-promoted \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
+  run_autoprom_n="${run_autoprom_n:-0}"
+  run_autorej_n="$(sed -n 's/^curator-run: auto-rejected \([0-9][0-9]*\) .*/\1/p' "$combined" 2>/dev/null | head -1)"
+  run_autorej_n="${run_autorej_n:-0}"
   notion_url="$(sed -n 's/^NOTION_URL: //p' "$combined" 2>/dev/null | head -1)"
   breaker_line="$(grep -m1 'queue circuit breaker open' "$combined" 2>/dev/null || true)"
+
+  # The four headline counts cover the window SINCE THE LAST DIGEST, read from the
+  # lane's own ledgers (lib/sovereign_hub/digest_counts.py). The curate tick judges
+  # every two hours, so this run is one of twelve, and composing the header from its
+  # own output reported a twelfth of the day while the pending count beside it was
+  # right. WINDOW_END is the instant the numbers were taken; it is what the marker
+  # records after the send, so two digests meet with no gap and no overlap.
+  local counts_out=""
+  WINDOW_END=""
+  counts_out="$(digest_counts counts --lane "$LANE" 2>/dev/null)" || counts_out=""
+  judged_n="$(sed -n 's/^JUDGED=\([0-9][0-9]*\)$/\1/p' <<<"$counts_out" | head -1)"
+  new_n="$(sed -n 's/^NEW=\([0-9][0-9]*\)$/\1/p' <<<"$counts_out" | head -1)"
+  autoprom_n="$(sed -n 's/^AUTO_APPLIED=\([0-9][0-9]*\)$/\1/p' <<<"$counts_out" | head -1)"
+  autorej_n="$(sed -n 's/^AUTO_REJECTED=\([0-9][0-9]*\)$/\1/p' <<<"$counts_out" | head -1)"
+  WINDOW_END="$(sed -n 's/^WINDOW_END=\([0-9][0-9.]*\)$/\1/p' <<<"$counts_out" | head -1)"
+  if [[ -z "$judged_n" || -z "$new_n" || -z "$autoprom_n" || -z "$autorej_n" || -z "$WINDOW_END" ]]; then
+    # The ledgers could not be read. The digest still goes out, reporting this run
+    # and saying which it is, rather than claiming a quiet day it did not measure.
+    echo "archivist-nightly-cron: cannot read the count window; header reports this run only" >&2
+    judged_n="$run_judged_n"; new_n="$run_new_n"
+    autoprom_n="$run_autoprom_n"; autorej_n="$run_autorej_n"
+    WINDOW_END=""
+    window_note="counts: this run only (the window could not be read)"
+  fi
 
   # Pending = the proposals actually on disk (the authoritative queue; INBOX
   # only lists this run's cards, older pending ones live on in proposals/).
@@ -69,22 +115,28 @@ compose_digest() {
   local msg
   msg="<b>${ARCHIVIST_DIGEST_TITLE:-Archivist nightly}</b> $(date '+%Y-%m-%d %H:%M')"
   msg+=$'\n'"judged $judged_n · new $new_n · auto-applied $autoprom_n · auto-rejected $autorej_n · pending $pending_n"
+  if [[ -n "$window_note" ]]; then
+    msg+=$'\n'"$window_note"
+  fi
   if [[ -n "$breaker_line" ]]; then
     msg+=$'\n'"$(html_escape "$breaker_line")"
   fi
 
   # Auto-applied: card names only, one per line with type tag. NO revert
   # commands here; they stay in INBOX.md and the Notion review page.
+  # This section is THIS RUN's, because INBOX.md is: the header's auto-applied
+  # number counts the whole window and is the larger of the two, so the section
+  # says whose names these are rather than looking like a contradiction.
   local autoprom_failed=""
   grep -m1 '^curator-run: auto-promoted .*FAILURE' "$combined" >/dev/null 2>&1 && autoprom_failed=1
-  if (( autoprom_n > 0 )) || [[ -n "$autoprom_failed" ]]; then
+  if (( run_autoprom_n > 0 )) || [[ -n "$autoprom_failed" ]]; then
     local auto_lines=""
     # the /^## / reset is load-bearing: without it this swallows the `- **slug**`
     # lines of every section BELOW Auto-applied (Screened, Taste-flagged) and
     # reports flagged cards to the phone as though a gear had landed them.
     auto_lines="$(awk '/^## Auto-applied/{f=1;next} /^## /{f=0} f && /^- \*\*/' "$LANE/INBOX.md" 2>/dev/null || true)"
     if [[ -n "$auto_lines" ]]; then
-      msg+=$'\n\n'"<b>Auto-applied ($autoprom_n)</b>"
+      msg+=$'\n\n'"<b>Auto-applied this run ($run_autoprom_n)</b>"
       local line slug meta typ
       while IFS= read -r line; do
         slug="${line#- \*\*}"; slug="${slug%%\*\**}"
@@ -158,7 +210,10 @@ compose_digest() {
     msg+=$'\n\n'"<a href=\"$notion_url\">Notion review page</a>"
   fi
 
-  if (( judged_n == 0 )) && [[ -n "$breaker_line" ]]; then
+  # THIS RUN's judged count, deliberately: the breaker is about this run being
+  # turned away at the queue, and the window's count is non-zero whenever a tick
+  # got through today, which would have hidden the one line that says so.
+  if (( run_judged_n == 0 )) && [[ -n "$breaker_line" ]]; then
     msg="BREAKER OPEN:
 $msg"
   fi
@@ -234,4 +289,18 @@ printf '%s\n%s\n' "$nightly_out" "$digest_out" >"$combined_tmp"
 compose_digest "$combined_tmp"
 rm -f "$combined_tmp"
 
-"$TG_SEND" --html --reply-markup "$KB" "$MSG"
+# The marker closes the count window, so it moves only once a digest has gone out,
+# and it records the instant the counts were TAKEN rather than the instant of the
+# send: anything the ledgers gained while this message was composed belongs to
+# tomorrow's numbers. A send that did not happen leaves the window open, or the work
+# this digest never delivered would never be reported at all. tg-send's own contract
+# is to log a dropped message and still exit 0, so this guard catches the send step
+# not running at all; a message Telegram refused is visible in notify.log, not here.
+if "$TG_SEND" --html --reply-markup "$KB" "$MSG"; then
+  if [[ -n "$WINDOW_END" ]]; then
+    digest_counts mark --lane "$LANE" --at "$WINDOW_END" \
+      || echo "archivist-nightly-cron: digest sent but the count window was not closed; tomorrow repeats these counts" >&2
+  fi
+else
+  echo "archivist-nightly-cron: digest send failed; the count window stays open" >&2
+fi
