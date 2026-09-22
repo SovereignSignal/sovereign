@@ -116,8 +116,10 @@ def apply(token, template=None):
 
     # 1. Build. The installed app is untouched until this succeeds.
     env = dict(os.environ, SOV_PYTHON_RUNTIME=runtime)
-    build = subprocess.run(["/bin/bash", os.path.join(TEMPLATE, "apps", "console", "build.sh")],
-                           capture_output=True, text=True, timeout=900, env=env, cwd=TEMPLATE)
+    # Build from the checkout the plan resolved, never from TEMPLATE: run from inside the
+    # app, TEMPLATE is the bundle, which ships no build.sh. That was the second real click.
+    build = subprocess.run(["/bin/bash", os.path.join(template, "apps", "console", "build.sh")],
+                           capture_output=True, text=True, timeout=900, env=env, cwd=template)
     if build.returncode != 0:
         raise ValueError("The build failed, so nothing was installed: " + (build.stderr or "").strip()[-300:])
     built = os.path.join(template, "apps", "console", "build", "Sovereign.app")

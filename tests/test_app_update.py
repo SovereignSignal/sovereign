@@ -84,6 +84,38 @@ class AppUpdatePreview(unittest.TestCase):
             # It falls through to a real one, or says there is none; never pretends.
             if out.get("template"):
                 self.assertTrue(out.get("buildable"), "a resolved template must be able to build")
+    def test_apply_builds_from_the_resolved_checkout_not_from_where_the_script_sits(self):
+        # The second real click of Update now: the plan resolved a real checkout, then
+        # apply() built from TEMPLATE, the directory the script sits in, which inside the
+        # app is the bundle and ships no build.sh. Run a copy of the updater from a fake
+        # bundle and prove the build is invoked in the checkout the plan chose.
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp); app = home / "Applications/Sovereign.app"
+            bundle(app, "1.0.0", "7", "aaaaaaa")
+            (app / "Contents/Resources/runtime/bin").mkdir(parents=True)
+            (app / "Contents/Resources/runtime/bin/python3").write_text("")
+            inside = app / "Contents/Resources/backend/bin"; inside.mkdir(parents=True)
+            shutil.copy(UPD, inside / "sov-app-update")
+            checkout = home / "src"; (checkout / "apps/console").mkdir(parents=True)
+            marker = checkout / "build-ran-here"
+            (checkout / "apps/console/build.sh").write_text(
+                "#!/bin/bash\ntouch '%s'\necho 'stop here' >&2\nexit 1\n" % marker)
+            subprocess.run(["git", "-C", str(checkout), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(checkout), "-c", "user.email=t@t", "-c", "user.name=t",
+                            "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+            env = dict(os.environ, HOME=str(home))
+            def go(*args):
+                cp = subprocess.run([sys.executable, str(inside / "sov-app-update"), *args],
+                                    env=env, capture_output=True, text=True)
+                return cp.returncode, json.loads(cp.stdout or "{}")
+            _, prev = go("--preview", "--template", str(checkout))
+            self.assertEqual(prev.get("template"), str(checkout))
+            code, out = go("--apply", "--token", prev["token"], "--template", str(checkout))
+            self.assertEqual(code, 1)
+            self.assertTrue(marker.exists(), "build.sh in the resolved checkout must be the one that runs: %s" % out)
+            self.assertIn("stop here", out["error"])
+            self.assertNotIn("No such file", out["error"])
     def test_an_absent_app_still_previews_rather_than_crashing(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, out = run(Path(tmp), "--preview")
