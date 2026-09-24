@@ -1322,8 +1322,74 @@ def _judgeable(name):
     return name.lower().endswith(PLAIN_EXT) or _convertible(name) is not None
 
 
+# Producers that keep long documents as bounded parts write them side by side as
+# <document>-pNN-<capture>.md (the SovsClaw intake), each part cut at a byte boundary,
+# often mid-word. A part judged alone reads as truncated, the judge rightly says
+# TRUNCATED, and the part's hash then seals it. So the curator reads a split document
+# whole: every part in order, the newest capture of each (2026-09-23).
+_PART_RX = re.compile(r"^(?P<doc>.+)-p(?P<n>\d{2,3})-[0-9a-f]{16,}\.md$")
+_PART_BEGIN, _PART_END = "<!-- retained-source-begin -->", "<!-- retained-source-end -->"
+_part_dirs = {}
+
+
+def _doc_parts(path):
+    """Every part of the split document `path` belongs to, in order, or None."""
+    m = _PART_RX.match(os.path.basename(path))
+    if not m:
+        return None
+    d = os.path.dirname(path)
+    if d not in _part_dirs:
+        docs = {}
+        try:
+            names = os.listdir(d)
+        except OSError:
+            names = []
+        for f in names:
+            mm = _PART_RX.match(f)
+            if not mm:
+                continue
+            p, n = os.path.join(d, f), int(mm.group("n"))
+            newest = docs.setdefault(mm.group("doc"), {})
+            try:
+                if n not in newest or os.path.getmtime(p) > os.path.getmtime(newest[n]):
+                    newest[n] = p
+            except OSError:
+                pass
+        _part_dirs[d] = docs
+    newest = _part_dirs[d].get(m.group("doc"), {})
+    return [newest[n] for n in sorted(newest)] if len(newest) > 1 else None
+
+
+def _whole_document(parts):
+    """The split document as one text: the first part's frontmatter and preamble, then
+    each part's retained source joined exactly, since the cuts fall mid-word. None when
+    a part is not the shape this knows, so the caller reads the part as it is."""
+    head, sources = None, []
+    for p in parts:
+        try:
+            with open(p, encoding="utf-8", errors="ignore") as fh:
+                t = fh.read()
+        except OSError:
+            return None
+        b, e = t.find(_PART_BEGIN), t.rfind(_PART_END)
+        if b == -1 or e < b:
+            return None
+        if head is None:
+            head = t[: b + len(_PART_BEGIN)]
+        src = t[b + len(_PART_BEGIN): e]
+        sources.append(src[1:] if src.startswith("\n") else src)
+        if sources[-1].endswith("\n"):
+            sources[-1] = sources[-1][:-1]      # the exporter's newline before the end marker
+    head = re.sub(r"(?m)^Part: \d+/(\d+)$", "Parts: all %d, reassembled in order by the curator" % len(parts), head)
+    return head + "\n" + "".join(sources) + "\n" + _PART_END + "\n"
+
+
 def _source_text(path, limit=None):
     """Text of a candidate source, converting documents. Empty string when it cannot."""
+    parts = _doc_parts(path)
+    whole = _whole_document(parts) if parts else None
+    if whole is not None:
+        return whole if limit is None else whole[:limit]
     kind = _convertible(path)
     if kind is None:
         try:
@@ -1453,6 +1519,17 @@ def candidates():
     return sorted(out, key=lambda p: (rank(p), -os.path.getmtime(p))), skipped_by_hash
 
 cands_all, skipped_by_hash = candidates()
+# One judgment per split document: its first-ranked part stands for it, the other parts
+# fold into it (their judgment rows and hashes are written with it, after the loop).
+_doc_reps, _kept = set(), []
+for _p in cands_all:
+    if _doc_parts(_p):
+        _key = (os.path.dirname(_p), _PART_RX.match(os.path.basename(_p)).group("doc"))
+        if _key in _doc_reps:
+            continue
+        _doc_reps.add(_key)
+    _kept.append(_p)
+cands_all = _kept
 cands = cands_all[: a.max]
 # Overflow beyond --max is DEFERRED, never dropped: the watermark is held below the
 # oldest unjudged candidate (see the write block) so the tail re-enters next run.
@@ -2091,6 +2168,25 @@ for _i, p in enumerate(cands):
 errored = [j for j in judgments if j.get("error")]
 errored_srcs = {j["source"] for j in errored}
 
+# The other parts of each split document judged whole this run: a row that points at
+# the part that stood for them, and (below) their hashes, so they count as judged and
+# are not judged again alone. A document whose judging errored records none of this.
+_folded_parts = []
+for _p in cands:
+    _parts = _doc_parts(_p)
+    _rep = os.path.relpath(_p, VAULT)
+    if not _parts or _rep in errored_srcs:
+        continue
+    for _q in _parts:
+        if _q == _p:
+            continue
+        _folded_parts.append(_q)
+        judgments.append({"timestamp": datetime.now(timezone.utc).astimezone().isoformat(),
+                          "lane": LANE_NAME, "model": MODEL, "source": os.path.relpath(_q, VAULT),
+                          "hash": _file_hash(_q), "mtime": os.path.getmtime(_q), "excerpt": "",
+                          "promote": False, "judged_with": _rep,
+                          "reason": "part of a split document, judged whole with " + _rep})
+
 # Deferred (overflow) files must re-enter too: collect their mtimes so the
 # watermark can be held below the oldest one. Per-file stat errors just drop
 # that file from the floor calculation — it re-enters when next touched.
@@ -2320,8 +2416,9 @@ if not a.dry:
             wm_val = min(wm_val, min(deferred_mtimes) - 1)
         open(WM, "w").write(str(wm_val))
     # record content hashes for files we judged so sync re-touches skip next time
-    # (errored files excluded: no hash means they are re-judged, not hash-skipped)
-    for p in cands:
+    # (errored files excluded: no hash means they are re-judged, not hash-skipped).
+    # Folded parts of split documents go with the part that stood for them.
+    for p in list(cands) + _folded_parts:
         rel = os.path.relpath(p, VAULT)
         if rel in errored_srcs:
             continue
