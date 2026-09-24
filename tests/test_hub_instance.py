@@ -47,6 +47,13 @@ class Instance(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(bad)):
                 instance.validate(dict(GOOD, judge_parallel=bad))
 
+    def test_curate_auto_promote_max_is_a_bounded_integer(self):
+        self.assertEqual(instance.validate(dict(GOOD, curate_auto_promote_max=12))["curate_auto_promote_max"], 12)
+        self.assertEqual(instance.validate(dict(GOOD, curate_auto_promote_max=0))["curate_auto_promote_max"], 0)
+        for bad in (-1, 51, "12", True, 2.5):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                instance.validate(dict(GOOD, curate_auto_promote_max=bad))
+
     def test_env_exports_are_what_the_scripts_expect(self):
         out = instance.env_exports(instance.validate(dict(GOOD)))
         self.assertIn("export SOVS_VAULT='/tmp/v'", out)
@@ -57,6 +64,8 @@ class Instance(unittest.TestCase):
         self.assertIn("export CURATOR_EXCLUDE='raw/tools/Private'", out)
         self.assertIn("export ARCHIVIST_PENDING_LIMIT='50'", out)
         self.assertIn("export CURATOR_JUDGE_PARALLEL='1'", out, "one judge call at a time unless the owner says otherwise")
+        self.assertIn("export SOV_CURATE_AUTO_PROMOTE_MAX='4'", out, "the tick's cap, never the nightly's")
+        self.assertNotIn("ARCHIVIST_AUTO_PROMOTE_MAX", out, "exporting that name would move the nightly and burndown")
         self.assertIn("export BURNDOWN_KEEP_FLOOR_PCT='2'", out)
         self.assertIn("export SOV_HUB_REMOTES='origin exchange'", out)
         self.assertIn("export SOV_HUB_EXCHANGE='exchange'", out, "the exchange defaults to the last remote")

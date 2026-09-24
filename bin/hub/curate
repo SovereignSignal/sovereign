@@ -25,10 +25,11 @@ STATE="${SOV_STATE_DIR:-$HOME/.local/state/sovereign}"
 
 # Per-run auto-promote cap. This script serves two callers: the 06:00 nightly, which
 # exports 12 before invoking it, and the 2-hourly curate tick (owner decision
-# 2026-09-21), which does not — so 4 is the tick's default and a caller that means
-# something else says so. It cannot be declared in the manifest: render() writes a
-# fixed EnvironmentVariables dict and would ignore it silently.
-: "${ARCHIVIST_AUTO_PROMOTE_MAX:=4}"
+# 2026-09-21), which does not. The tick's cap is hub.json curate_auto_promote_max
+# (exported as SOV_CURATE_AUTO_PROMOTE_MAX, default 4), a name of its own so that
+# changing the tick can never move the nightly or the burndown, which read
+# ARCHIVIST_AUTO_PROMOTE_MAX when it is set.
+: "${ARCHIVIST_AUTO_PROMOTE_MAX:=${SOV_CURATE_AUTO_PROMOTE_MAX:-4}}"
 export ARCHIVIST_AUTO_PROMOTE_MAX
 
 pending_limit="${ARCHIVIST_PENDING_LIMIT:-50}"

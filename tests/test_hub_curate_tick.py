@@ -102,7 +102,9 @@ class TheCapDependsOnWhoIsCalling(unittest.TestCase):
 
     def test_curate_defaults_to_four_and_respects_an_existing_value(self):
         source = (ROOT / "bin" / "hub" / "curate").read_text(encoding="utf-8")
-        self.assertRegex(source, r':\s*"\$\{ARCHIVIST_AUTO_PROMOTE_MAX:=4\}"',
+        # Since 2026-09-24 the tick's own number comes from hub.json (curate_auto_promote_max,
+        # exported as SOV_CURATE_AUTO_PROMOTE_MAX) and still defaults to 4, still only when unset.
+        self.assertRegex(source, r':\s*"\$\{ARCHIVIST_AUTO_PROMOTE_MAX:=\$\{SOV_CURATE_AUTO_PROMOTE_MAX:-4\}\}"',
                          "the tick default is 4, assigned only when unset")
         self.assertIn("export ARCHIVIST_AUTO_PROMOTE_MAX", source)
 
@@ -117,7 +119,7 @@ class TheCapDependsOnWhoIsCalling(unittest.TestCase):
         nightly = (ROOT / "bin" / "hub" / "nightly").read_text(encoding="utf-8")
         curate = (ROOT / "bin" / "hub" / "curate").read_text(encoding="utf-8")
         self.assertIsNotNone(re.search(r"ARCHIVIST_AUTO_PROMOTE_MAX:-12", nightly))
-        self.assertIsNotNone(re.search(r"ARCHIVIST_AUTO_PROMOTE_MAX:=4", curate))
+        self.assertIsNotNone(re.search(r"SOV_CURATE_AUTO_PROMOTE_MAX:-4\}", curate))
 
 
 if __name__ == "__main__":                                 # pragma: no cover

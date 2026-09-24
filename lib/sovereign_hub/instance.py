@@ -17,6 +17,7 @@ FILE = "hub.json"
 REQUIRED = ("vault", "lane", "model", "endpoint")
 DEFAULTS = {
     "version": 1, "audit_model": None, "exclude": [], "pending_limit": 50, "judge_parallel": 1,
+    "curate_auto_promote_max": 4,
     "burndown": {"since_days": 400, "max": 120, "pending_limit": 200, "keep_floor_pct": 2},
     "remotes": [], "snapshot": {"folder": None, "keep": 30},
     "notify": {"archive": None, "alerts": None},
@@ -63,6 +64,11 @@ def validate(inst):
     jp = out["judge_parallel"]
     if isinstance(jp, bool) or not isinstance(jp, int) or not 1 <= jp <= 4:
         raise ValueError("hub.json: judge_parallel must be an integer from 1 to 4")
+    # Gear-gated landings per curate tick (the nightly keeps its own 12). How many land,
+    # never which: the gears in the lane's gears.json still decide what may.
+    cap = out["curate_auto_promote_max"]
+    if isinstance(cap, bool) or not isinstance(cap, int) or not 0 <= cap <= 50:
+        raise ValueError("hub.json: curate_auto_promote_max must be an integer from 0 to 50")
     from .manifest import all_jobs
     all_jobs(out)                      # raises on a bad instance job
     return out
@@ -93,6 +99,7 @@ def env_exports(inst):
         ("CURATOR_ENDPOINT", inst["endpoint"]), ("CURATOR_EXCLUDE", ":".join(inst["exclude"])),
         ("ARCHIVIST_PENDING_LIMIT", inst["pending_limit"]),
         ("CURATOR_JUDGE_PARALLEL", inst["judge_parallel"]),
+        ("SOV_CURATE_AUTO_PROMOTE_MAX", inst["curate_auto_promote_max"]),
         ("BURNDOWN_SINCE_DAYS", b["since_days"]), ("BURNDOWN_MAX", b["max"]),
         ("BURNDOWN_PENDING_LIMIT", b["pending_limit"]), ("BURNDOWN_KEEP_FLOOR_PCT", b["keep_floor_pct"]),
         ("SOV_HUB_REMOTES", " ".join(inst["remotes"])),

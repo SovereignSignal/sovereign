@@ -36,11 +36,12 @@ NOTIFY = ("#!/bin/bash\nprintf 'channel=%s\\n%s\\n' \"${TG_ENV_FILE:-}\" \"$*\" 
           ">> \"$SOV_STUB_LOG\"\ncat >> \"$SOV_STUB_LOG\"\nexit 0\n")
 
 
-def run_curate(tmp, pending, limit=50):
+def run_curate(tmp, pending, limit=50, **extra_env):
     """The real script against a fixture vault, with curator-run stubbed.
 
     The stub carries no shebang and is not executable, so it runs only if curate names
-    an interpreter for it; it reports which one, and what arguments it was given.
+    an interpreter for it; it reports which one, what arguments it was given, and the
+    auto-promote cap it was handed.
     """
     root = Path(tmp)
     proposals = root / "vault" / "raw/workspaces/curator/proposals"
@@ -50,12 +51,15 @@ def run_curate(tmp, pending, limit=50):
     tpl = root / "tpl" / "bin"
     tpl.mkdir(parents=True)
     (tpl / "curator-run").write_text(
-        "import sys\nprint('curator-run stub: %s :: %s' % (sys.executable, ' '.join(sys.argv[1:])))\n")
+        "import os, sys\nprint('curator-run stub: %s :: %s :: cap=%s' % (sys.executable, ' '.join(sys.argv[1:]),"
+        " os.environ.get('ARCHIVIST_AUTO_PROMOTE_MAX')))\n")
     shutil.copy2(ROOT / "bin" / "_sov-python.sh", tpl / "_sov-python.sh")
     env = dict(os.environ, SOVS_VAULT=str(root / "vault"), CURATOR_LANE="curator",
                SOV_TEMPLATE=str(root / "tpl"), SOV_PYTHON=sys.executable,
                ARCHIVIST_PENDING_LIMIT=str(limit))
     env.pop("ARCHIVIST_AUTO_PROMOTE_MAX", None)
+    env.pop("SOV_CURATE_AUTO_PROMOTE_MAX", None)
+    env.update(extra_env)
     return subprocess.run(["/bin/bash", str(CURATE)], env=env, capture_output=True, text=True, timeout=60)
 
 
@@ -89,6 +93,20 @@ class TheBreakerSaysItTripped(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             self.assertIn(sys.executable, done.stdout,
                           "curator-run must run under the interpreter _sov-python.sh picks")
+
+    def test_the_tick_cap_is_four_unless_hub_json_says_otherwise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIn("cap=4", run_curate(tmp, pending=0).stdout)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIn("cap=12", run_curate(tmp, pending=0, SOV_CURATE_AUTO_PROMOTE_MAX="12").stdout,
+                          "hub.json curate_auto_promote_max raises the tick's cap")
+
+    def test_the_nightly_cap_is_not_the_ticks(self):
+        """The nightly exports its own 12 before calling curate; the tick setting must not
+        reach it, or raising or lowering the tick would silently move the nightly too."""
+        with tempfile.TemporaryDirectory() as tmp:
+            done = run_curate(tmp, pending=0, ARCHIVIST_AUTO_PROMOTE_MAX="12", SOV_CURATE_AUTO_PROMOTE_MAX="4")
+            self.assertIn("cap=12", done.stdout)
 
     def test_an_unusable_limit_is_still_its_own_refusal(self):
         with tempfile.TemporaryDirectory() as tmp:
