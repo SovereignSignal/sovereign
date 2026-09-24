@@ -1447,6 +1447,25 @@ def _looks_like_prose(txt, tolerance=0.02):
     return bad <= tolerance * len(txt)
 
 
+JUDGE_CHARS = 12000
+
+
+def _judge_text(path):
+    """What the judge reads of a source: all of it when it fits, otherwise the first
+    JUDGE_CHARS ended at a paragraph break and marked as continuing. A text that simply
+    stops mid-sentence is what the TRUNCATED rule describes, so a long document cut
+    blind drew TRUNCATED; a marked excerpt says the rest exists (2026-09-24)."""
+    txt = _source_text(path)
+    if len(txt) <= JUDGE_CHARS:
+        return txt
+    cut = txt.rfind("\n\n", 0, JUDGE_CHARS)
+    if cut < JUDGE_CHARS // 2:
+        cut = txt.rfind("\n", 0, JUDGE_CHARS)
+    if cut < JUDGE_CHARS // 2:
+        cut = JUDGE_CHARS
+    return txt[:cut].rstrip() + "\n\n[source continues: %d more characters not shown]\n" % (len(txt) - cut)
+
+
 def _excerpt(path, limit=1200):
     try:
         txt = _source_text(path, limit)
@@ -1898,11 +1917,11 @@ if a.dump_brief:
 if a.brief_for:
     # Through the same reader the judge uses, or this harness would show a brief built
     # from binary noise while the real run sees converted text.
-    sys.stdout.write(brief_for(_source_text(a.brief_for)[:12000]))
+    sys.stdout.write(brief_for(_judge_text(a.brief_for)))
     raise SystemExit(0)
 if a.source_for:
     # The judge's user text, for paired re-judges that must match the pipeline exactly.
-    sys.stdout.write(_source_text(a.source_for)[:12000])
+    sys.stdout.write(_judge_text(a.source_for))
     raise SystemExit(0)
 
 
@@ -1935,7 +1954,7 @@ def _chat_body(model, temperature, messages):
 
 
 def judge(path):
-    txt = _source_text(path)[:12000]
+    txt = _judge_text(path)
     name = os.path.relpath(path, VAULT)
     payload = _chat_body(MODEL, 0.1,
         [{"role": "system", "content": brief_for(txt)},
@@ -1960,7 +1979,7 @@ def _screen_call(text):
 def judge_update(path, target, target_path):
     """Second pass for updates: show the model the existing card so the merge
     is drafted for the owner instead of left as manual work."""
-    txt = _source_text(path)[:12000]
+    txt = _judge_text(path)
     card = _card_body(target_path)[:4000]
     name = os.path.relpath(path, VAULT)
     user = (f"UPDATE TASK. The brain already holds this card ({target}):\n\n{card}\n\n"
@@ -2055,7 +2074,7 @@ for _i, p in enumerate(cands):
     # the veto only bites on the gears and only promoted sources reach them. A flag
     # is loud, recorded in judgments.jsonl, and costs the item its gears, nothing more.
     screen_flagged, screen_why = _screen_source(
-        _source_text(p)[:12000], SCREEN, _screen_call)
+        _judge_text(p), SCREEN, _screen_call)
     if screen_flagged:
         print(f"curator-run: injection screen FLAGGED {src} ({screen_why}) — "
               f"{slug} queues for the owner, gears withheld", file=sys.stderr)

@@ -136,5 +136,26 @@ class SplitDocuments(unittest.TestCase):
         self.assertFalse((Path(self.home) / ".local" / "state" / "sovs-cron" / "model.lock").exists())
 
 
+    def test_a_long_source_ends_at_a_paragraph_and_says_it_continues(self):
+        """A blind 12,000-character cut stops mid-sentence, which is what the TRUNCATED rule
+        describes; on 2026-09-24 a ten-part document read whole still drew TRUNCATED."""
+        long_note = self.vault / "raw" / "tools" / "stub" / "long.md"
+        long_note.parent.mkdir(parents=True, exist_ok=True)
+        paras = ["Paragraph %03d says something whole and ends properly." % i + " filler" * 90 for i in range(40)]
+        long_note.write_text("\n\n".join(paras) + "\n", encoding="utf-8")
+        short_note = self.vault / "raw" / "tools" / "stub" / "short.md"
+        short_note.write_text("A short note.\n", encoding="utf-8")
+        env = {"PATH": "/usr/bin:/bin", "HOME": self.home, "PYTHONPATH": str(ROOT / "lib"),
+               "SOVS_VAULT": str(self.vault), "CURATOR_LANE": "stubtest"}
+        read = lambda p: subprocess.run([sys.executable, str(CURATOR), "--source-for", str(p)],
+                                        capture_output=True, text=True, timeout=60, env=env).stdout
+        out = read(long_note)
+        self.assertRegex(out, r"\[source continues: \d+ more characters not shown\]\n$")
+        body = out.rsplit("\n\n[source continues", 1)[0]
+        self.assertLessEqual(len(body), 12000)
+        self.assertTrue(body.endswith("filler"), "the excerpt ends where a paragraph ends")
+        self.assertEqual(read(short_note), "A short note.\n", "a source that fits is read whole, unmarked")
+
+
 if __name__ == "__main__":
     unittest.main()
