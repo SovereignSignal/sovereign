@@ -106,6 +106,8 @@ ap.add_argument("--init", action="store_true", help="set the watermark to now (f
 ap.add_argument("--self-test", action="store_true", help="run the auto-promote decision-logic self-test and exit")
 ap.add_argument("--dump-brief", metavar="FILE", help="write the FULL untargeted judge brief to FILE and exit (offline harness)")
 ap.add_argument("--brief-for", metavar="SOURCE", help="print the targeted judge brief this run would build for SOURCE and exit")
+ap.add_argument("--source-for", metavar="SOURCE", help="print the exact source text the judge would read for SOURCE "
+                "(a split document whole, cut at 12000 chars) and exit")
 ap.add_argument("--only", metavar="FILE", help="judge ONLY the vault-relative paths listed in FILE, "
                                                "one per line, '#' comments ignored. Narrows the "
                                                "harvest; changes nothing else. Requires --since-days: "
@@ -1247,7 +1249,7 @@ def _model_lock(job):
                 raise SystemExit(3)
             time.sleep(60)
 
-_MODEL_LOCK = None if (a.dump_brief or a.brief_for) else _model_lock("curator-run")
+_MODEL_LOCK = None if (a.dump_brief or a.brief_for or a.source_for) else _model_lock("curator-run")
 
 os.makedirs(PROP, exist_ok=True)
 if a.init:
@@ -1897,6 +1899,10 @@ if a.brief_for:
     # Through the same reader the judge uses, or this harness would show a brief built
     # from binary noise while the real run sees converted text.
     sys.stdout.write(brief_for(_source_text(a.brief_for)[:12000]))
+    raise SystemExit(0)
+if a.source_for:
+    # The judge's user text, for paired re-judges that must match the pipeline exactly.
+    sys.stdout.write(_source_text(a.source_for)[:12000])
     raise SystemExit(0)
 
 

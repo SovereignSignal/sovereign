@@ -122,5 +122,19 @@ class SplitDocuments(unittest.TestCase):
             stub.close()
 
 
+    def test_source_for_prints_the_whole_document_without_the_model_lock(self):
+        """Paired re-judges read the judge's text through --source-for; it must be the
+        pipeline's own text and must never wait on, or create, the model lock."""
+        rel = next((self.vault / "raw" / "workspaces" / "demo").glob(DOC + "-p02-*.md"))
+        env = {"PATH": "/usr/bin:/bin", "HOME": self.home, "PYTHONPATH": str(ROOT / "lib"),
+               "SOVS_VAULT": str(self.vault), "CURATOR_LANE": "stubtest"}
+        done = subprocess.run([sys.executable, str(CURATOR), "--source-for", str(rel)],
+                              capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("signer/secret files apart", done.stdout)
+        self.assertIn("PART-THREE", done.stdout)
+        self.assertFalse((Path(self.home) / ".local" / "state" / "sovs-cron" / "model.lock").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
