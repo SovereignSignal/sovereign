@@ -16,7 +16,7 @@ from sovereign_intake.common import atomic, json_read
 FILE = "hub.json"
 REQUIRED = ("vault", "lane", "model", "endpoint")
 DEFAULTS = {
-    "version": 1, "audit_model": None, "exclude": [], "pending_limit": 50,
+    "version": 1, "audit_model": None, "exclude": [], "pending_limit": 50, "judge_parallel": 1,
     "burndown": {"since_days": 400, "max": 120, "pending_limit": 200, "keep_floor_pct": 2},
     "remotes": [], "snapshot": {"folder": None, "keep": 30},
     "notify": {"archive": None, "alerts": None},
@@ -57,6 +57,12 @@ def validate(inst):
         raise ValueError("hub.json: exclude must be a list")
     if not isinstance(out["pending_limit"], int) or out["pending_limit"] < 1:
         raise ValueError("hub.json: pending_limit must be a positive integer")
+    # Concurrent judge calls. It must match the model server's own slots
+    # (OLLAMA_NUM_PARALLEL): more than the server runs just queues there and eats the
+    # per-call timeout.
+    jp = out["judge_parallel"]
+    if isinstance(jp, bool) or not isinstance(jp, int) or not 1 <= jp <= 4:
+        raise ValueError("hub.json: judge_parallel must be an integer from 1 to 4")
     from .manifest import all_jobs
     all_jobs(out)                      # raises on a bad instance job
     return out
@@ -86,6 +92,7 @@ def env_exports(inst):
         ("CURATOR_MODEL", inst["model"]), ("CURATOR_AUDIT_MODEL", inst["audit_model"]),
         ("CURATOR_ENDPOINT", inst["endpoint"]), ("CURATOR_EXCLUDE", ":".join(inst["exclude"])),
         ("ARCHIVIST_PENDING_LIMIT", inst["pending_limit"]),
+        ("CURATOR_JUDGE_PARALLEL", inst["judge_parallel"]),
         ("BURNDOWN_SINCE_DAYS", b["since_days"]), ("BURNDOWN_MAX", b["max"]),
         ("BURNDOWN_PENDING_LIMIT", b["pending_limit"]), ("BURNDOWN_KEEP_FLOOR_PCT", b["keep_floor_pct"]),
         ("SOV_HUB_REMOTES", " ".join(inst["remotes"])),

@@ -19,6 +19,9 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
   CURATOR_REASONING_EFFORT  reasoning_effort sent on every model call (default: empty,
                     which omits the field and leaves the model's own thinking on). Setting
                     it changes the judge, so it resets the gears.
+  CURATOR_JUDGE_PARALLEL  judge calls in flight at once (default 1; hub.json judge_parallel).
+                    Match the model server's slots. Verdicts are consumed in candidate
+                    order, so this changes speed, never what is judged or written.
   CURATOR_KEYFILE   file holding the API key, if the endpoint needs one (default: none)
   ARCHIVIST_AUTO_PROMOTE_MAX  per-run cap on gear-gated auto-promotions,
                     updates + new cards combined (default 12)
@@ -68,6 +71,13 @@ MODEL = os.environ.get("CURATOR_MODEL", "qwen3.8:27b")
 # skips flipped to promote with thinking on, both dense design docs). "minimal" and
 # "low" were not cheaper on qwen3.8. Owner reverted the same day.
 REASONING_EFFORT = os.environ.get("CURATOR_REASONING_EFFORT", "")
+try:
+    JUDGE_PARALLEL = min(4, max(1, int(os.environ.get("CURATOR_JUDGE_PARALLEL") or 1)))
+except ValueError:
+    JUDGE_PARALLEL = 1
+# A call can wait at the server behind the others in flight before its own turn, so the
+# per-call ceiling grows with the number in flight rather than timing out queued calls.
+CALL_TIMEOUT = 480 * JUDGE_PARALLEL
 KEYFILE = os.environ.get("CURATOR_KEYFILE", "")
 # never-promote paths (vault-relative prefixes, colon-separated) — pruned from the gather entirely
 EXCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_EXCLUDE", "").split(":") if e.strip()]
@@ -1848,7 +1858,7 @@ def judge(path):
         [{"role": "system", "content": brief_for(txt)},
          {"role": "user", "content": f"SOURCE: {name}\n\n{txt}"}])
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    out = _post_json(req, 480)["choices"][0]["message"]["content"]
+    out = _post_json(req, CALL_TIMEOUT)["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", out, re.S)
     return json.loads(m.group(0)) if m else None
 
@@ -1861,7 +1871,7 @@ def _screen_call(text):
         [{"role": "system", "content": SCREEN_SYS},
          {"role": "user", "content": text[:12000]}])
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    return _post_json(req, 360)["choices"][0]["message"]["content"]
+    return _post_json(req, 360 * JUDGE_PARALLEL)["choices"][0]["message"]["content"]
 
 
 def judge_update(path, target, target_path):
@@ -1879,7 +1889,7 @@ def judge_update(path, target, target_path):
         [{"role": "system", "content": brief_for(txt + "\n" + card)},
          {"role": "user", "content": user}])
     req = urllib.request.Request(ENDPOINT, payload, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    out = _post_json(req, 480)["choices"][0]["message"]["content"]
+    out = _post_json(req, CALL_TIMEOUT)["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", out, re.S)
     return json.loads(m.group(0)) if m else None
 
@@ -1906,7 +1916,27 @@ try:
 except (OSError, ValueError):
     pass
 _seen_this_run = set(_key_to_slug)
-for p in cands:
+# Judge calls in flight at once (CURATOR_JUDGE_PARALLEL). judge() reads only what is fixed
+# for the run (the brief, the card index, the pending list), so the next few calls can
+# start early; each verdict is still consumed in candidate order and everything after it
+# stays sequential. The look-ahead is bounded so a failed run never leaves a queue of
+# model calls behind it.
+_pool, _ahead = None, {}
+if JUDGE_PARALLEL > 1 and len(cands) > 1:
+    from concurrent.futures import ThreadPoolExecutor
+    _pool = ThreadPoolExecutor(max_workers=JUDGE_PARALLEL)
+
+
+def _judge_ahead(i):
+    if _pool is None:
+        return judge(cands[i])
+    for j in range(i, min(i + JUDGE_PARALLEL, len(cands))):
+        if j not in _ahead:
+            _ahead[j] = _pool.submit(judge, cands[j])
+    return _ahead.pop(i).result()
+
+
+for _i, p in enumerate(cands):
     judged += 1
     src = os.path.relpath(p, VAULT)
     base_judgment = {
@@ -1919,7 +1949,7 @@ for p in cands:
         "excerpt": _excerpt(p),
     }
     try:
-        v = judge(p)
+        v = _judge_ahead(_i)
     except Exception as exc:
         judgments.append({**base_judgment, "promote": None, "error": str(exc)[:500]})
         continue

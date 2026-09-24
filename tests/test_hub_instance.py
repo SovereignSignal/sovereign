@@ -41,6 +41,12 @@ class Instance(unittest.TestCase):
         with self.assertRaises(ValueError):
             instance.validate(bad)
 
+    def test_judge_parallel_is_a_small_positive_integer(self):
+        self.assertEqual(instance.validate(dict(GOOD, judge_parallel=2))["judge_parallel"], 2)
+        for bad in (0, 5, "2", True, 1.5):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                instance.validate(dict(GOOD, judge_parallel=bad))
+
     def test_env_exports_are_what_the_scripts_expect(self):
         out = instance.env_exports(instance.validate(dict(GOOD)))
         self.assertIn("export SOVS_VAULT='/tmp/v'", out)
@@ -50,6 +56,7 @@ class Instance(unittest.TestCase):
         self.assertIn("export CURATOR_ENDPOINT='http://localhost:11434/v1/chat/completions'", out)
         self.assertIn("export CURATOR_EXCLUDE='raw/tools/Private'", out)
         self.assertIn("export ARCHIVIST_PENDING_LIMIT='50'", out)
+        self.assertIn("export CURATOR_JUDGE_PARALLEL='1'", out, "one judge call at a time unless the owner says otherwise")
         self.assertIn("export BURNDOWN_KEEP_FLOOR_PCT='2'", out)
         self.assertIn("export SOV_HUB_REMOTES='origin exchange'", out)
         self.assertIn("export SOV_HUB_EXCHANGE='exchange'", out, "the exchange defaults to the last remote")
