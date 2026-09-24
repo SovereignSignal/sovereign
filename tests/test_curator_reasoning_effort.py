@@ -1,13 +1,12 @@
-"""The judge answers without thinking, and that setting reaches the wire.
+"""The judge thinks by default, and CURATOR_REASONING_EFFORT reaches the wire when set.
 
-On 2026-09-23 the Ollama log showed 68% of judge time was qwen3.8 thinking (median
-843 tokens a call) that curator-run never reads; the bake-off corpus scored thinking
-off at 19/20 against 18/20 with no false promotes either way, at a third of the time.
-The owner switched it off. The setting is only real if the request body carries it,
-so these cases run the real script against a loopback stub and read what it sent.
-
-Empty CURATOR_REASONING_EFFORT must omit the field entirely: that is how an owner
-puts back the model's own default, and how a model that rejects the field is judged.
+On 2026-09-23 thinking was 68% of judge time, so the owner switched it off ("none").
+It tied on the bake-off corpus and ran 3x faster, but live it lost recall: 1 promote
+in its first 100 judgments against ~11% before, and 2 of 10 paired skips flipped to
+promote with thinking on. The owner reverted the same day. The default therefore
+omits the field, which is what leaves the model's own thinking on; any value set is
+sent as-is. Both halves are only real if the request body shows them, so these cases
+run the real script against a loopback stub and read what it sent.
 """
 import http.server
 import json
@@ -76,19 +75,19 @@ def run_once(extra_env):
 
 class JudgeReasoningEffort(unittest.TestCase):
 
-    def test_default_sends_none(self):
+    def test_default_omits_the_field_so_the_judge_thinks(self):
         done, bodies = run_once({})
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertTrue(bodies, "the judge never called the model:\n" + done.stdout + done.stderr)
         for body in bodies:
-            self.assertEqual(body.get("reasoning_effort"), "none")
+            self.assertNotIn("reasoning_effort", body)
 
-    def test_empty_omits_the_field(self):
-        done, bodies = run_once({"CURATOR_REASONING_EFFORT": ""})
+    def test_a_set_value_is_sent(self):
+        done, bodies = run_once({"CURATOR_REASONING_EFFORT": "none"})
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertTrue(bodies, "the judge never called the model:\n" + done.stdout + done.stderr)
         for body in bodies:
-            self.assertNotIn("reasoning_effort", body)
+            self.assertEqual(body.get("reasoning_effort"), "none")
 
     def test_the_rest_of_the_body_is_unchanged(self):
         """The refactor into one body builder must not move anything the judge relied on."""

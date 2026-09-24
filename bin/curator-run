@@ -16,9 +16,9 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
                     writers to knowledge/ run on owner-controlled compute. Pointing
                     this at a cloud endpoint is an explicit owner decision, never a default.
   CURATOR_MODEL     model id (default: qwen3.8:27b)
-  CURATOR_REASONING_EFFORT  reasoning_effort sent on every model call (default: none,
-                    i.e. no thinking). Empty omits the field and leaves the model's own
-                    default. Changing it changes the judge, so it resets the gears.
+  CURATOR_REASONING_EFFORT  reasoning_effort sent on every model call (default: empty,
+                    which omits the field and leaves the model's own thinking on). Setting
+                    it changes the judge, so it resets the gears.
   CURATOR_KEYFILE   file holding the API key, if the endpoint needs one (default: none)
   ARCHIVIST_AUTO_PROMOTE_MAX  per-run cap on gear-gated auto-promotions,
                     updates + new cards combined (default 12)
@@ -62,11 +62,12 @@ NON_KNOWLEDGE_DIRS = ("workstreams", "raw", "archive", "repos")
 # compute. Cloud is an explicit opt-in via CURATOR_ENDPOINT, never the shipped default.
 ENDPOINT = os.environ.get("CURATOR_ENDPOINT", "http://localhost:11434/v1/chat/completions")
 MODEL = os.environ.get("CURATOR_MODEL", "qwen3.8:27b")
-# Owner decision 2026-09-23: the judge answers without thinking. Thinking was 68% of
-# judge time (median 843 tokens per call) and the curator reads only the JSON answer;
-# on the bake-off corpus thinking-off scored 19/20 against 18/20, 0/3 false promotes
-# on both, at a third of the time.
-REASONING_EFFORT = os.environ.get("CURATOR_REASONING_EFFORT", "none")
+# The judge thinks: empty sends no reasoning_effort, so the model's default applies.
+# 2026-09-23: "none" ran 3x faster and tied on the bake-off corpus, but live it lost
+# recall (1 promote in its first 100 judgments against ~11% before; 2 of 10 paired
+# skips flipped to promote with thinking on, both dense design docs). "minimal" and
+# "low" were not cheaper on qwen3.8. Owner reverted the same day.
+REASONING_EFFORT = os.environ.get("CURATOR_REASONING_EFFORT", "")
 KEYFILE = os.environ.get("CURATOR_KEYFILE", "")
 # never-promote paths (vault-relative prefixes, colon-separated) — pruned from the gather entirely
 EXCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_EXCLUDE", "").split(":") if e.strip()]
