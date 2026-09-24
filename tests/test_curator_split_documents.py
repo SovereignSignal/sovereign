@@ -155,6 +155,12 @@ class SplitDocuments(unittest.TestCase):
         self.assertLessEqual(len(body), 12000)
         self.assertTrue(body.endswith("filler"), "the excerpt ends where a paragraph ends")
         self.assertEqual(read(short_note), "A short note.\n", "a source that fits is read whole, unmarked")
+        # The judge's TRUNCATED rule names this marker as a deliberate excerpt (2026-09-24);
+        # the rule and the marker must describe the same thing or the fix silently lapses.
+        brief = subprocess.run([sys.executable, str(CURATOR), "--brief-for", str(long_note)],
+                               capture_output=True, text=True, timeout=60, env=env).stdout
+        self.assertIn("'[source continues: N more characters not shown]' is a deliberate excerpt", brief)
+        self.assertRegex(out, r"\[source continues: \d+ more characters not shown\]")
 
 
 if __name__ == "__main__":
