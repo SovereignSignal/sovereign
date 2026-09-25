@@ -67,7 +67,7 @@ class Box:
         (self.vault / "knowledge" / "entities" / "me.md").write_text(
             "---\ntype: entity\nsource: owner\ncreated: 2026-01-01\n---\n# Me\n\nThe owner.\n")
         self.stub.mkdir()
-        for name in ("launchctl", "systemctl", "loginctl"):
+        for name in ("launchctl", "systemctl", "loginctl", "prlctl"):
             p = self.stub / name
             p.write_text(STUB)
             p.chmod(0o755)
@@ -87,6 +87,8 @@ class Box:
              "SOV_MANIFEST": str(self.state / "connectors.json"),
              "SOV_LAUNCHCTL": str(self.stub / "launchctl"),
              "SOV_SYSTEMCTL": str(self.stub / "systemctl"),
+             # Absolute Parallels discovery must never read the host's real guests.
+             "PRLCTL": str(self.stub / "prlctl"),
              "SOV_PLATFORM": self.platform,
              "SOV_CLT_PYTHON": str(self.clt_python),
              "USER": os.environ.get("USER", "tester"), "LOGNAME": os.environ.get("USER", "tester")}
