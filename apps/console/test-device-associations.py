@@ -33,6 +33,7 @@ if(PHASE==='disassociate'){
  window.sovRefresh();await pause(350);check('Refresh preserves disassociation',!!restore());
 }else if(PHASE==='restore'){
  await wait(restore);check('Disassociation survives app restart',!!restore());restore().click();await wait(button);
+ await wait(()=>!document.getElementById('vmeta').textContent.includes('refreshing'));
  check('Restore returns device to active list',!document.querySelector('#rows').textContent.includes('Disassociated devices'));
  check('Offline warning returns after restore',document.querySelector('#vtext').textContent.includes('retired-worker'));
 }else if(PHASE==='other-archive'){
