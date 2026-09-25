@@ -76,7 +76,7 @@ window.Home = (() => {
     const badge=document.getElementById('review-count');if(badge)badge.textContent=GateModel.queue(status,root).count||'';
     if(!root&&!machine.connected&&!status?.error)return;
     const grid=element('div',null,'home-grid');host.append(grid);
-    const nodes=status?.fleet?.hosts||[],tools=(status?.harnesses||[]).filter(h=>h.detected||h.state==='connected'||h.state==='partial'||h.runs_on||h.hub_installed);
+    const nodes=status?.fleet?.hosts||[],tools=(status?.harnesses||[]).filter(h=>h.state!=='removed'&&(h.detected||h.state==='connected'||h.state==='partial'||h.runs_on||h.hub_installed));
     const assessment=SovStatus.assess(status||{},localStorage),needs=assessment.need,deliveries=status?.backups?.lanes||[];
     const attention=panel('Needs your attention',needs.length||null);
     for(const need of needs){
