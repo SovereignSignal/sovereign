@@ -126,7 +126,7 @@ def main():
    needs[0]['why']+=' <img src=x onerror=alert(1)>'
    data={'generated_at':datetime.now(timezone.utc).isoformat(),'machine':{'connected':True,'host':'studio','vault':str(archive),'vault_name':'QA Archive'},'hub':{'reachable':True,'pending':0,'proposals':[]},'fleet':fleet,'backups':backups,'needs_you':needs,'harnesses':[],'archive':{'cards':[]}}
    if scene.startswith('concise'):
-    data.update(fleet={'hosts':[]},needs_you=[{'kind':'gate','text':'9 proposals waiting.'}],backups={'hosts':[{'host':'worker-'+str(n),'node':'hypervisor','reachable':True,'last_dump_age_h':None,'jobs':1} for n in range(6)]})
+    data.update(fleet={'hosts':[]},needs_you=[{'kind':'gate','text':'9 proposals waiting.'}],backups={'hosts':[{'host':'worker-'+str(n),'node':'hypervisor','reachable':True,'inventory_complete':True,'scheduled':True,'last_dump_age_h':None,'jobs':1} for n in range(6)]})
     data['hub'].update(pending=9,proposals=[{'slug':'proposal-'+str(n),'title':'Proposal '+str(n),'type':'concept'} for n in range(9)],jobs={'autocommit':{'ts':data['generated_at'],'exit':1,'cadence_s':86400}})
    if scene=='concise-mixed':
     data.update(needs_you=[],backups={},hub={'reachable':True,'pending':0,'proposals':[]},harnesses=[{'id':'local-tool','name':'local-tool','state':'connected','run_age_h':10,'cadence_s':3600}],fleet={'hosts':[{'host':'remote','net':{'online':True},'harnesses':[{'harness':'remote-tool','run_age_h':10}]}]})

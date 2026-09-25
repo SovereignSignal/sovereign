@@ -67,6 +67,26 @@ window.SovStatus = (() => {
     };
   }
 
+  function backupState(h) {
+    if(h.backup_required===false)return {state:'idle',label:'not required',text:'Backup alerts excluded on this Mac',issue:null};
+    if(!h.reachable)return {state:'',label:'unknown',text:'Proxmox could not be reached',issue:null};
+    const hasBackup=Number.isFinite(h.last_dump_age_h),incomplete=h.inventory_complete!==true;
+    if(incomplete)return {state:'warn',label:'unknown',text:hasBackup?'Backup found; storage checks incomplete':'Backup storage could not be fully checked',issue:'backup-unknown'};
+    if(typeof h.scheduled!=='boolean')return {state:'warn',label:'unknown',text:hasBackup?'Backup found; schedule coverage unknown':'Backup schedule coverage unknown',issue:'backup-unknown'};
+    if(!hasBackup)return {state:'down',label:h.scheduled===false?'not scheduled':'unprotected',text:h.scheduled===false?'No enabled backup job includes this VM':'No completed backup found in Proxmox storage',issue:'no-backup'};
+    if(h.scheduled===false)return {state:'warn',label:'not scheduled',text:'Backup exists; no enabled job includes this VM',issue:'backup-unscheduled'};
+    if(h.last_dump_age_h>=48)return {state:'warn',label:'stale',text:'Latest backup is over 48 hours old',issue:'backup-stale'};
+    return {state:'live',label:'backed up',text:'Backup recorded'+(h.last_backup?.storage?' on '+h.last_backup.storage:''),issue:null};
+  }
+  function backupScope(value) {
+    const config=value?.backup_scope;
+    if(!config?.available||config.scope!==value.machine?.vault)return value;
+    const excluded=new Set(config.excluded||[]),hosts=(value.backups?.hosts||[]).map(h=>({...h,backup_required:!excluded.has(h.node+':'+h.vmid)}));
+    // A node connection alert is relevant only while it has a monitored VM.
+    const hypervisors=value._backup_scope_hypervisors||(value.needs_you||[]).filter(n=>n.kind==='hypervisor');
+    const current=[...(value.needs_you||[]).filter(n=>n.kind!=='hypervisor'),...hypervisors];
+    return {...value,_backup_scope_hypervisors:hypervisors,backups:{...value.backups,hosts},needs_you:current.filter(n=>n.kind!=='hypervisor'||hosts.some(h=>h.node===n.node&&h.backup_required))};
+  }
   function assess(D, storage) {
     const hub = () => D.hub || {}, arch = () => D.archive || {};
     const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
@@ -162,7 +182,15 @@ window.SovStatus = (() => {
     const hubName = h.hub_host || (m.hub_pointer || '').split(':')[0];
     if (h.reachable === false && !(D.needs_you||[]).some(n=>n.kind==='hub') && !hosts.some(x => x.host === hubName && x.net?.online === false))
       need.push({state:'down',name:'Hub',detail:'unreachable; review and acceptance could not be checked',jump:{view:'jobs'},order:0});
-    (bk.hosts || []).filter(x => x.reachable && x.last_dump_age_h == null).forEach(x => need.push({ state: "warn", name: x.host, detail: x.jobs===0?`no backup job on ${x.node}`:`no completed backup reported on ${x.node}`, age_h: null, jump: { view: "backups", id: "bk:host:" + x.host }, order: 2, cause: "no-backup", causeLabel: "have no completed backup" }));
+    (bk.hosts || []).forEach(x => {
+      const b=backupState(x);if(!b.issue)return;
+      need.push({state:b.state,name:x.host,detail:b.text,age_h:x.last_dump_age_h,
+        jump:{view:'backups',id:'bk:host:'+x.host},order:2,cause:b.issue,
+        causeLabel:b.issue==='no-backup'?'have no completed backup':b.issue==='backup-unknown'?'have unknown backup status':b.issue==='backup-unscheduled'?'have no backup schedule':'have stale backups',
+        why:b.issue==='backup-unknown'?(x.backup_errors||[]).join(' ')||b.text:b.text,
+        action:'Open Operations → Backups and inspect this VM’s storage and job coverage in Proxmox.',
+        verify:'Refresh after the storage check or next successful backup; confirm the recorded backup and schedule coverage.'});
+    });
     // cadence: mirrors here, mirrors on every host, producer pushes, hub jobs, the snapshot
     (D.harnesses || []).forEach(x => { if (x.state !== "connected" || x.runs_on) return; const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run), cad = intervalOf(x) / 3600;
       if (late(x.name || x.id, "mirror last ran", ah, cad, { view: "tools", id: x.id }, "mirror-late") === true && ah != null && ah <= cad) fresh.push({ state: "live", name: x.name || x.id, detail: `pulled ${age(ah)} ago on ${m.host}`, age_h: ah, jump: { view: "tools", id: x.id }, cause: "pull:" + m.host, host: m.host }); });
@@ -256,6 +284,7 @@ window.SovStatus = (() => {
   }
   // Keep raw status and archive history intact. Every app surface uses this projection.
   function associations(value) {
+    value=backupScope(value);
     const retired=new Set((value?.harnesses||[]).filter(h=>h.state==='removed').map(h=>h.lane));
     if(retired.size)value={...value,
       lanes:(value.lanes||[]).map(l=>({...l,retired:retired.has(l.lane),associated:retired.has(l.lane)?false:l.associated})),
@@ -293,5 +322,5 @@ window.SovStatus = (() => {
       action:'Open Operations → Backups and inspect this lane’s source commit and hub connection. If the service is older, ask its maintainer to update it, then refresh.',
       verify:'The lane reports accepted or waiting after refresh. Only accepted confirms inclusion on the hub.'};
   }
-  return {assess, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations};
+  return {assess, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations};
 })();

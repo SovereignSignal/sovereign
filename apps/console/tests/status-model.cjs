@@ -39,11 +39,11 @@ assert.equal(assess({needs_you:[{kind:'host',host:'worker',text:'worker offline'
 for(const delivery of [undefined,'unknown']){const issue=model.contributionIssue({lane:'qa',delivery});for(const key of ['why','action','verify'])assert.ok(issue[key]);}
 console.log('Status transparency: safe URLs, retained failures, observation age/budget, issue fields, dedupe and older-service fallbacks passed.');
 
-for(const status of [failures,{needs_you:[{kind:'legacy',text:'Something failed'}]}, {backups:{hosts:[{host:'vm',node:'node',reachable:true,jobs:1,last_dump_age_h:null}],lanes:[lane('waiting')]}}]){
+for(const status of [failures,{needs_you:[{kind:'legacy',text:'Something failed'}]}, {backups:{hosts:[{host:'vm',node:'node',reachable:true,inventory_complete:true,scheduled:true,jobs:1,last_dump_age_h:null}],lanes:[lane('waiting')]}}]){
  for(const row of assess(status).need)for(const key of ['why','action','verify'])assert.ok(row[key],key);
 }
-const backupNeed=assess({backups:{hosts:[{host:'vm',node:'node',reachable:true,jobs:1,last_dump_age_h:null}]}}).need[0];
-assert.match(backupNeed.detail,/no completed backup/);assert.doesNotMatch(backupNeed.detail,/no backup job/);
+const backupNeed=assess({backups:{hosts:[{host:'vm',node:'node',reachable:true,inventory_complete:true,scheduled:true,jobs:1,last_dump_age_h:null}]}}).need[0];
+assert.match(backupNeed.detail,/no completed backup/i);assert.doesNotMatch(backupNeed.detail,/no backup job/);
 console.log('Derived and grouped alerts carry explanations; a configured backup job is not mistaken for no job.');
 
 // Notification delivery must never direct an owner decision outside Review.

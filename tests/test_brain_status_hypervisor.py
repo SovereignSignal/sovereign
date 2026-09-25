@@ -11,6 +11,7 @@ port_open pre-check decides in one second), nodes are probed concurrently so the
 worst case is one node's budget rather than the sum, and the failure is still recorded
 and cached exactly as before.
 """
+import json
 import importlib.machinery
 import importlib.util
 import os
@@ -92,7 +93,7 @@ class HypervisorProbe(unittest.TestCase):
             time.sleep(0.4)
             with lock:
                 active[0] -= 1
-            return subprocess.CompletedProcess(argv, 0, stdout="1\n1700000000 vzdump-qemu-102-x.vma\n", stderr="")
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"version":2,"node":"node-a","jobs":[{"id":"nightly","vmids":["102"]}],"storages":[{"storage":"nas","active":True,"backups":[{"vmid":102,"ctime":1700000000,"size":100,"volid":"nas:backup/x"}]}]}), stderr="")
 
         m.subprocess.run = fake_run
         m.port_open = lambda host, port=22, timeout=1.0: True

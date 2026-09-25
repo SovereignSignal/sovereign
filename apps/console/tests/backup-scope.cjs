@@ -1,0 +1,32 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const ctx=vm.createContext({console,Date,Map,Set,window:{}});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/status-model.js'),'utf8')+';globalThis.model=window.SovStatus;',ctx);
+const model=ctx.model;
+const host={host:'worker',node:'node-a',vmid:'102',reachable:true,scheduled:true,jobs:1,inventory_complete:true,last_dump_age_h:3,last_backup:{storage:'nas'}};
+assert.equal(model.backupState(host).label,'backed up');
+for(const h of [{inventory_complete:false},{scheduled:null},{last_dump_age_h:null},{last_dump_age_h:50},{scheduled:false}])assert.notEqual(model.backupState({...host,...h}).state,'live');
+assert.equal(model.backupState({...host,scheduled:false,last_dump_age_h:null}).label,'not scheduled');
+const raw={machine:{vault:'/archive'},backup_scope:{available:true,scope:'/archive',excluded:['node-a:102']},backups:{hosts:[host]},needs_you:[{kind:'host',host:'worker'},{kind:'hypervisor',node:'node-a'}],fleet:{hosts:[{host:'worker'}]}};
+const scoped=model.associations(raw);
+assert.equal(model.backupState(scoped.backups.hosts[0]).label,'not required');
+assert.equal(model.assess(scoped).need.filter(n=>n.jump?.view==='backups').length,0);
+assert.equal(scoped.needs_you.length,1);assert.equal(scoped.needs_you[0].kind,'host');
+assert.equal(scoped.fleet.hosts.length,1);assert.equal(raw.backups.hosts[0].backup_required,undefined);
+const restored=model.associations({...raw,backup_scope:{...raw.backup_scope,excluded:[]}});
+assert.equal(model.backupState(restored.backups.hosts[0]).label,'backed up');
+const foreign=model.associations({...raw,backup_scope:{...raw.backup_scope,scope:'/other'}});
+assert.equal(foreign.backups.hosts[0].backup_required,undefined);
+const otherNode=model.associations({...raw,backups:{hosts:[{...host,node:'node-b'}]}});
+assert.equal(otherNode.backups.hosts[0].backup_required,true);
+const partial=model.assess({backups:{hosts:[{...host,inventory_complete:false}]}});
+assert.equal(partial.need[0].cause,'backup-unknown');
+console.log('Backup scope: NAS evidence, unknown/stale/unscheduled states, exclusions, restore, archive and node isolation passed.');
+
+assert.equal(model.backupState({reachable:true,jobs:1,last_dump_age_h:1}).label,'unknown');
+const reprojected=model.associations({...scoped,backup_scope:{...scoped.backup_scope,excluded:[]}});
+assert.equal(reprojected.needs_you.some(n=>n.kind==='hypervisor'),true);
+
+const withGate=model.associations({...raw,needs_you:[...raw.needs_you,{kind:'gate',text:'one proposal'}]});
+withGate.needs_you=withGate.needs_you.filter(n=>n.kind!=='gate');
+const resolved=model.associations({...withGate,backup_scope:{...withGate.backup_scope,excluded:[]}});
+assert.equal(resolved.needs_you.some(n=>n.kind==='gate'),false);

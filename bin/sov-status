@@ -947,6 +947,7 @@ def backups_view(root, hub, fleet):
     """Backup posture, read-only: the hub's copies of the archive (from the hub script), the
     producers' lanes on the keep, and for hosts that live on a hypervisor node this machine
     can reach, whether the node backs the VM up (Proxmox: vzdump jobs and dumps)."""
+    from proxmox_backups import PROBE, parse_probe, vm_status
     bk = dict((hub.get("backups") or {}))
     hosts = []
     cache_p = os.path.expanduser("~/.cache/sovereign/hypervisor-backups.json")
@@ -958,8 +959,8 @@ def backups_view(root, hub, fleet):
     # retried once and then held for two minutes only.
     def _fresh(node):
         e = cache.get(node) or {}
-        ttl = 900 if e.get("reachable") else 120
-        return (time.time() - e.get("_at", 0)) < ttl
+        ttl = 900 if e.get("reachable") and not e.get("partial") else 120
+        return e.get("version") == 2 and (time.time() - e.get("_at", 0)) < ttl
     # The probe is optional detail and must never hold the status: with both nodes down
     # the old serial loop cost two attempts of a 12 s ssh timeout per node (49 s measured
     # 2026-09-11, the console showing an empty environment the whole time, again every
@@ -1000,19 +1001,13 @@ def backups_view(root, hub, fleet):
                 host, port = _target(node)
                 if not port_open(host, port, timeout=1.0):
                     raise OSError("port %d closed or filtered" % port)
-                probe = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node,
-                                    "grep -c '^vzdump' /etc/pve/jobs.cfg 2>/dev/null; ls -t --time-style=+%s -l /var/lib/vz/dump/ 2>/dev/null | awk '{print $6, $7}' | grep -E 'vma|tar' | head -50"],
-                                   capture_output=True, text=True, timeout=PROBE_BUDGET)
+                probe = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node, "python3 -"],
+                                       input=PROBE, capture_output=True, text=True, timeout=PROBE_BUDGET)
                 probe.check_returncode()
-                o = probe.stdout.splitlines()
-                jobs = int(o[0]) if o and o[0].strip().isdigit() else 0
-                dumps = {}
-                for line in o[1:]:
-                    parts = line.split()
-                    if len(parts) == 2:
-                        mm = re.search(r"vzdump-(?:qemu|lxc)-(\d+)-", parts[1])
-                        if mm: dumps.setdefault(mm.group(1), int(parts[0]))
-                return {"jobs": jobs, "dumps": dumps, "reachable": True, "detail": None}
+                inventory = parse_probe(probe.stdout)
+                partial = bool(inventory.get("jobs_error") or inventory.get("storage_error") or
+                               any(r.get("error") for r in inventory["jobs"] + inventory["storages"]))
+                return {"inventory": inventory, "reachable": True, "detail": None, "partial": partial}
             except Exception as exc:
                 d = _why(exc)
                 if "%s" in d["action"]: d["action"] = d["action"] % node
@@ -1040,14 +1035,12 @@ def backups_view(root, hub, fleet):
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=min(4, len(todo))) as pool:
             for node, res in zip(todo, pool.map(_probe, todo)):
-                probed[node] = res
-                cache[node] = dict(res, _at=time.time())
+                cache[node] = dict(res, _at=time.time(), version=2)
+                probed[node] = cache[node]
     for h, node, vmid in wanted:
         pn = probed[node]
-        last = pn["dumps"].get(vmid)
-        hosts.append({"host": h["host"], "node": node, "vmid": vmid, "reachable": pn["reachable"], "jobs": pn["jobs"],
-                      "last_dump_age_h": round((time.time() - last) / 3600, 1) if last else None,
-                      "detail": pn.get("detail")})
+        hosts.append({"host": h["host"], "node": node, "vmid": vmid, "reachable": pn["reachable"],
+                      "detail": pn.get("detail"), **vm_status(pn, vmid, time.time())})
     if todo:
         cache.pop("_at", None)                         # per-node stamps now, see _fresh
         try:

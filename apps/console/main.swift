@@ -56,6 +56,18 @@ enum Settings {
         d.set(all, forKey: "sov.deviceAssociations")
     }
 
+    static func backupExclusions(_ root: String) -> [String] {
+        (d.dictionary(forKey: "sov.backupExclusions") as? [String: [String]])?[archiveKey(root)] ?? []
+    }
+    static func requireBackup(_ id: String, required: Bool, root: String) {
+        var all = d.dictionary(forKey: "sov.backupExclusions") as? [String: [String]] ?? [:]
+        let key = archiveKey(root)
+        var ids = Set(all[key] ?? [])
+        if required { ids.remove(id) } else { ids.insert(id) }
+        if ids.isEmpty { all.removeValue(forKey: key) } else { all[key] = ids.sorted() }
+        d.set(all, forKey: "sov.backupExclusions")
+    }
+
     static func dict(probe: Bool = false) -> [String: Any] {
         // Asking launchd about the login item is synchronous and can block an ad-hoc
         // signed app; do it only when the settings pane is open, never on the boot path.
@@ -126,6 +138,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.async { App.shared.navigate(page: page, place: d["place"] as? [String: Any]) }
         case "status":
             requestStatus(d, generation: generation)
+        case "backupScope":
+            setBackupScope(d, generation: generation)
         case "deviceAssociation":
             setDeviceAssociation(d, generation: generation)
         case "hubDefaults":
@@ -392,6 +406,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         if let error = error { state["error"] = error; state["detail"] = detail }
         value["_status"] = state; value["request"] = waiter.request ?? NSNull()
         value["device_associations"] = deviceAssociationState()
+        value["backup_scope"] = backupScopeState()
         if statusCache == nil, let error = error { value["error"] = error }
         deliver("status", value, generation: waiter.generation)
     }
@@ -627,6 +642,31 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             self.producerBusy = false
             if !apply && code == 0 && self.generation == generation { self.producerReview = key }
         }
+    }
+
+    private func backupScopeState() -> [String: Any] {
+        guard let root = Settings.archive, let machine = statusCache?["machine"] as? [String: Any],
+              let vault = machine["vault"] as? String, Settings.archiveKey(root) == Settings.archiveKey(vault) else {
+            return ["available": false]
+        }
+        return ["available": true, "scope": vault, "excluded": Settings.backupExclusions(root)]
+    }
+
+    private func setBackupScope(_ request: [String: Any], generation: UUID) {
+        let state = backupScopeState()
+        guard state["available"] as? Bool == true, let root = Settings.archive,
+              let requestedRoot = request["root"] as? String,
+              Settings.archiveKey(requestedRoot) == Settings.archiveKey(root),
+              let host = request["host"] as? String, let node = request["node"] as? String,
+              let vmid = request["vmid"] as? String, let required = request["required"] as? Bool,
+              let backups = statusCache?["backups"] as? [String: Any],
+              let hosts = backups["hosts"] as? [[String: Any]],
+              hosts.contains(where: { $0["host"] as? String == host && $0["node"] as? String == node && $0["vmid"] as? String == vmid }) else {
+            deliver("backupScope", ["error": "Refresh this archive's backup list before changing its scope."], generation: generation)
+            return
+        }
+        Settings.requireBackup(node + ":" + vmid, required: required, root: root)
+        deliver("backupScope", ["host": host, "required": required, "scope": backupScopeState()], generation: generation)
     }
 
     private func deviceAssociationState() -> [String: Any] {

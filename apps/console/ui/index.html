@@ -789,12 +789,16 @@ window.onerror = function (msg, src, line, col) {
         note: "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
     });
     (b.hosts || []).forEach(h => {
-      const state = !h.reachable ? "" : h.last_dump_age_h == null ? "down" : h.last_dump_age_h < 48 ? "live" : "warn";
+      const status = SovStatus.backupState(h), last=h.last_backup;
       row("bk:host:" + h.host, { label: h.host + " · VM " + h.vmid + " on " + h.node,
-        desc: !h.reachable ? "node not reachable from here" : h.last_dump_age_h == null ? (h.jobs ? "backup job exists, no dump yet" : "no backup job on the node") : "last dump " + age(h.last_dump_age_h) + " ago",
-        state, stateText: state === "down" ? "unprotected" : state === "live" ? "backed up" : state === "warn" ? "stale" : "unknown", tag: "vm image", age_h: h.last_dump_age_h,
-        detail: [["node", h.node], ["vmid", h.vmid], ["backup jobs on the node", h.jobs == null ? "unknown" : h.jobs], ["last dump", h.last_dump_age_h == null ? "none" : age(h.last_dump_age_h) + " ago"]],
-        note: "The lane is safe (it is git); the machine is not: a VM with no backup job is rebuilt from scratch if the node dies. Proxmox: Datacenter › Backup › Add, one job for every VM, target the NAS when it is up." });
+        desc: status.text, state: status.state, stateText: status.label, tag: "vm image", age_h: h.last_dump_age_h, backupHost:h,
+        detail: [["node", h.node], ["VM", h.vmid], ["monitoring",h.backup_required===false?'Not required on this Mac':'Required'],
+          ["enabled jobs including this VM",h.jobs == null ? 'unknown' : h.jobs],
+          ["schedule",(h.backup_jobs||[]).map(j=>j.id+': '+(j.schedule||'unknown')+' → '+(j.storage||'default storage')).join('; ')||'none reported'],
+          ["last backup",h.last_dump_age_h==null?'none reported':age(h.last_dump_age_h)+' ago'],["storage",last?.storage||'none reported'],
+          ["backup volume",last?.volid||'none reported'],["storage inventory",h.inventory_complete===true?'complete':h.inventory_complete===false?'incomplete':'not reported'],
+          ["checked",h.backup_observed_at?new Date(h.backup_observed_at*1000).toLocaleString():'unknown']],
+        note: [...(h.backup_errors||[]),'Proxmox reports backups across its configured storage, including NAS storage. Job coverage comes from Proxmox’s selected guests. Backup presence does not verify a restore.'].join(' ') });
     });
     return out;
   }
@@ -1161,7 +1165,7 @@ window.onerror = function (msg, src, line, col) {
       return;
     }
     if (it.kind === "backup" || it.kind === "hub") {
-      box.innerHTML = head(esc(o.label), esc(o.desc), o.tag) + `
+      box.innerHTML = head(esc(o.label), esc(o.desc), o.tag) + backupScopeActions(o) + `
         <div class="sect"><h2>Where it stands</h2>${kv(o.detail.map(([k, v]) => [k, v == null ? "–" : String(v)]))}</div>
         <div class="sect"><h2>What it means</h2><div class="prose">${esc(o.note)}</div></div>${backupActions(o)}
         ${o.gate || o.goto ? `<div class="acts">${o.gate ? `<button class="brass" data-act="gotogate">Open the gate</button>` : ""}${o.goto ? `<button data-goto-view="${o.goto === "backups" ? "backups" : "archive"}" data-goto-sec="${esc(o.goto)}">${o.goto === "backups" ? "Backups view" : "Archive view"}</button>` : ""}</div>` : ""}`;
@@ -1378,6 +1382,12 @@ window.onerror = function (msg, src, line, col) {
   // VM gets the one line to run inside it first; then the hub does the rest (sov host add).
   let pendingHost = null;
   let pendingDevice=null;
+  function backupScopeActions(o){
+    const h=o.backupHost,config=D.backup_scope;
+    if(!h||!config?.available||config.scope!==selectedRoot)return '';
+    const excluded=h.backup_required===false;
+    return `<div class="sect"><h2>Backup scope</h2><p class="prose">Saved for this archive on this Mac. Changes backup alerts only. Proxmox jobs and existing backups stay unchanged.</p><button data-act="backup-scope" data-host="${esc(h.host)}" data-node="${esc(h.node)}" data-vmid="${esc(h.vmid)}" data-required="${excluded?'true':'false'}">${excluded?'Require backup':'Backup not required'}</button><p id="backup-scope-message" role="status"></p></div>`;
+  }
   function deviceAssociationSect(host){
     const settings=D.device_associations||{},protectedHost=(settings.protected_hosts||[]).some(n=>n.toLowerCase()===host.host.toLowerCase());
     if(!settings.available||selectedRoot!==D.machine?.vault)return '';
@@ -1464,6 +1474,9 @@ window.onerror = function (msg, src, line, col) {
     bridge({ cmd: "clientError", where: where, msg: msg });   // reaches the app's log, where a QA run can read it
   }
   function onClick(e) {
+    const backupScope=e.target.closest('[data-act="backup-scope"]');
+    if(backupScope){backupScope.disabled=true;bridge({cmd:'backupScope',root:selectedRoot,host:backupScope.dataset.host,node:backupScope.dataset.node,vmid:backupScope.dataset.vmid,required:backupScope.dataset.required==='true'});return;}
+
     const association=e.target.closest('[data-act="device-disassociate"],[data-act="device-restore"]');
     if(association)return deviceAssociation(association.dataset.host,association.dataset.act==='device-restore');
     const seg = e.target.closest(".seg button"); if (seg) return setView(seg.dataset.view);
@@ -1647,6 +1660,11 @@ window.onerror = function (msg, src, line, col) {
       if(payload.request!==discoveryRequest)return;
       discoveryRequest=null;discovery=payload;
       if(view==='tools'){renderList();renderInspector();}
+      return;
+    }
+    if(kind==='backupScope'){
+      if(payload.error){const message=$('#backup-scope-message');if(message)message.textContent=payload.error;const button=$('[data-act="backup-scope"]');if(button)button.disabled=false;}
+      else {D.backup_scope=payload.scope;D=SovStatus.associations(D);render(D);refresh();}
       return;
     }
     if(kind==='deviceAssociation'){
