@@ -96,6 +96,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     var hubReview: String?
     var backupBusy = false
     var appUpdateBusy = false
+    var appUpdateProcess: Process?
     var discoveryBusy = false
     var producerBusy = false
     var producerReview: String?
@@ -461,7 +462,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         guard !appUpdateBusy, let resources = Bundle.main.resourceURL else {
             fail("An update is already being prepared."); return
         }
-        guard !App.shared.snapshotting else { fail("Updates are disabled during QA."); return }
+        let qa = App.shared.snapshotting ? ProcessInfo.processInfo.environment["SOV_QA_UPDATE_COMMAND"] : nil
+        guard !App.shared.snapshotting || qa != nil else { fail("Updates are disabled during QA."); return }
         // The app cannot build from its own bundle: backend/ ships no apps/console.
         guard let template = request["template"] as? String, !template.isEmpty else {
             fail("This machine's source location is not known, so there is nothing to build from."); return
@@ -471,7 +473,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         guard FileManager.default.isReadableFile(atPath: script) else {
             fail("This build of Sovereign predates in-app updating. Install once from the source checkout and the button works from then on."); return
         }
-        let base = [py, "-I", "-B", script, "--template", template]
+        let base = qa.map { [$0, "--template", template] } ?? [py, "-I", "-B", script, "--template", template]
         appUpdateBusy = true
         run(base + ["--preview"], timeLimit: 60) { out, _, code in
             DispatchQueue.main.async {
@@ -489,35 +491,58 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 let alert = NSAlert(); alert.messageText = "Update Sovereign now?"
                 alert.informativeText = [plan["summary"] as? String, plan["effects"] as? String].compactMap { $0 }.joined(separator: "\n\n")
                 alert.addButton(withTitle: "Update now"); alert.addButton(withTitle: "Cancel")
-                guard alert.runModal() == .alertFirstButtonReturn else {
+                let confirmed = App.shared.snapshotting
+                    ? ProcessInfo.processInfo.environment["SOV_QA_UPDATE_CONFIRM"] == "1"
+                    : alert.runModal() == .alertFirstButtonReturn
+                guard confirmed else {
                     self.appUpdateBusy = false
                     self.deliver("appUpdateResult", ["state": "cancelled"], generation: generation); return
                 }
-                let log = FileManager.default.temporaryDirectory.appendingPathComponent("sovereign-app-update.log")
-                let started = self.launchDetached(base + ["--apply", "--token", token], logTo: log)
-                self.appUpdateBusy = false
+                let log = FileManager.default.temporaryDirectory.appendingPathComponent("sovereign-app-update-\(UUID().uuidString).log")
+                let started = self.launchDetached(base + ["--apply", "--token", token], logTo: log) { result in
+                    self.appUpdateBusy = false
+                    self.appUpdateProcess = nil
+                    // Report to the current document even if navigation changed during the build.
+                    self.deliver("appUpdateResult", result, generation: self.generation)
+                }
                 if started {
                     self.deliver("appUpdateResult", ["state": "started",
                         "verification": "Building. Sovereign will close and reopen when the new build is ready."], generation: generation)
                 } else {
+                    self.appUpdateBusy = false
                     fail("The update could not be started. Nothing was changed.")
                 }
             }
         }
     }
 
-    /// Start a process that must survive this app exiting. No pipes, no timeout, no wait.
+    /// File output lets the updater survive this app exiting. Observe termination while
+    /// the app remains open so a failed build cannot leave a permanent Building banner.
     @discardableResult
-    func launchDetached(_ args: [String], logTo log: URL) -> Bool {
-        FileManager.default.createFile(atPath: log.path, contents: nil)
-        guard let handle = try? FileHandle(forWritingTo: log) else { return false }
+    func launchDetached(_ args: [String], logTo log: URL, done: @escaping ([String: Any]) -> Void) -> Bool {
+        guard FileManager.default.createFile(atPath: log.path, contents: nil),
+              let handle = try? FileHandle(forWritingTo: log) else { return false }
+        defer { try? handle.close() }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: args[0])
         p.arguments = Array(args.dropFirst())
         p.environment = env()
         p.standardOutput = handle
         p.standardError = handle
+        p.terminationHandler = { process in
+            let output = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+            var result = output.split(separator: "\n").reversed().compactMap { line in
+                String(line).data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+            }.first ?? [:]
+            if result["error"] == nil && (process.terminationStatus != 0 || result["state"] as? String != "installed") {
+                let detail = String(output.suffix(1200)).trimmingCharacters(in: .whitespacesAndNewlines)
+                result = ["error": "The updater stopped (exit \(process.terminationStatus)). \(detail.isEmpty ? "No result was returned." : detail) Log: \(log.path)"]
+            }
+            let completed = result
+            DispatchQueue.main.async { done(completed) }
+        }
         do { try p.run() } catch { return false }
+        appUpdateProcess = p
         return true
     }
 

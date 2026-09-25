@@ -1715,11 +1715,10 @@ window.onerror = function (msg, src, line, col) {
       if(resumeReview&&view==='review'&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
     } else if (kind === "appUpdateResult") {
-      appUpdatePending = false;
+      appUpdatePending = payload.state === 'started';
       appUpdateResult = payload.error || (payload.state === 'cancelled' ? 'Cancelled. Nothing was changed.'
                         : payload.verification || 'Refresh to see the installed version.');
-      // "started" ends with this app being replaced and reopened, so there is no result
-      // to wait for here; "current" and any refusal are worth a refresh to settle the row.
+      // Keep the request pending until completion or failure.
       renderInspector();
       if (payload.state === 'current' || payload.error) setTimeout(refresh, 1500);
     } else if (kind === "backupResult") {

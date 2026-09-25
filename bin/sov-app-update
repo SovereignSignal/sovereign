@@ -121,7 +121,8 @@ def apply(token, template=None):
     build = subprocess.run(["/bin/bash", os.path.join(template, "apps", "console", "build.sh")],
                            capture_output=True, text=True, timeout=900, env=env, cwd=template)
     if build.returncode != 0:
-        raise ValueError("The build failed, so nothing was installed: " + (build.stderr or "").strip()[-300:])
+        detail = (build.stderr or build.stdout or "No build output was returned.").strip()[-1200:]
+        raise ValueError("The build failed (exit %s), so nothing was installed: %s" % (build.returncode, detail))
     built = os.path.join(template, "apps", "console", "build", "Sovereign.app")
     if not os.path.isdir(built):
         raise ValueError("The build reported success but produced no app bundle.")

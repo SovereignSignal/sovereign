@@ -48,8 +48,7 @@ window.sovDeliver=(kind,payload)=>{
  if(kind==='settings')return;
  if(kind==='status'){Home.status(payload);return}
  if(kind==='appUpdateResult'){
-  // "started" ends with this app being replaced and reopened, so there is no result to
-  // wait for; say what is happening and let it happen. Anything else is worth a refresh.
+  // Failed builds return a terminal result while this app remains open.
   const m=payload.error||(payload.state==='cancelled'?'Cancelled. Nothing was changed.':payload.verification||'Refresh to see the installed version.');
   notice(m,!!payload.error);
   if(payload.state&&payload.state!=='started')setTimeout(()=>Home.refresh(),1500);

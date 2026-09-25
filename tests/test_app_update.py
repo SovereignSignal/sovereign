@@ -116,6 +116,19 @@ class AppUpdatePreview(unittest.TestCase):
             self.assertTrue(marker.exists(), "build.sh in the resolved checkout must be the one that runs: %s" % out)
             self.assertIn("stop here", out["error"])
             self.assertNotIn("No such file", out["error"])
+    def test_stdout_only_build_failure_is_reported_without_touching_app(self):
+        import runpy
+        from unittest.mock import patch
+        updater = runpy.run_path(str(UPD))
+        apply = updater['apply']
+        fake = {'token': 'ok', 'template': '/test/source', 'source_commit': 'abc', 'buildable': True}
+        with patch.dict(apply.__globals__, plan=lambda template: fake), \
+             patch('os.path.isfile', return_value=True), \
+             patch('subprocess.run', return_value=subprocess.CompletedProcess([], 9, 'stdout diagnostic', '')) as run:
+            with self.assertRaisesRegex(ValueError, 'exit 9.*stdout diagnostic'):
+                apply('ok')
+            self.assertEqual(run.call_count, 1, 'failure must stop before quit or installation')
+
     def test_an_absent_app_still_previews_rather_than_crashing(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, out = run(Path(tmp), "--preview")

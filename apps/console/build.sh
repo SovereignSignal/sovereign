@@ -85,8 +85,15 @@ cp "$HERE/runtime.lock.json" "$APP/Contents/Resources/runtime.lock.json"
 # a stable identity when the machine has one (SOV_SIGN_ID, or a certificate whose name
 # starts with "Sovereign Local Signing") and the grant survives rebuilds.
 SIGN_ID="${SOV_SIGN_ID:-}"
-if [ -z "$SIGN_ID" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Sovereign Local Signing"; then
-  SIGN_ID="Sovereign Local Signing"
+if [ -z "$SIGN_ID" ]; then
+  # A name can match expired/duplicate certificates even when only one identity is
+  # valid. Use the fingerprint from the valid-identity list, never the display name.
+  IDENTITIES="$(security find-identity -v -p codesigning)" || exit 1
+  SIGN_ID="$(printf '%s\n' "$IDENTITIES" | awk '/"Sovereign Local Signing"/ {print $2}' | sort -u)"
+  if [ "$(printf '%s\n' "$SIGN_ID" | awk 'NF {n++} END {print n+0}')" -gt 1 ]; then
+    echo "Multiple valid Sovereign signing identities. Set SOV_SIGN_ID to the intended fingerprint." >&2
+    exit 1
+  fi
 fi
 if [ -z "$SIGN_ID" ]; then
   # Ad-hoc is a real fallback, not a failure: it builds and runs. But it has no stable
@@ -99,12 +106,12 @@ SIGN_ID="${SIGN_ID:--}"
 # Sign embedded Mach-O code inside out; never silently downgrade a requested identity.
 while IFS= read -r -d '' nested; do
   if file -b "$nested" | grep -q 'Mach-O'; then
-    codesign --force --sign "$SIGN_ID" --options runtime "$nested" >/dev/null 2>&1
+    codesign --force --sign "$SIGN_ID" --options runtime "$nested" >/dev/null
   fi
 done < <(find "$APP/Contents/Resources/runtime" -type f -print0)
 codesign --force --sign "$SIGN_ID" --options runtime "$BACKEND/bin/hub-crypto"
 codesign --force --sign "$SIGN_ID" --options runtime "$APP/Contents/MacOS/sov"
-codesign --force --sign "$SIGN_ID" --options runtime "$APP" >/dev/null 2>&1
+codesign --force --sign "$SIGN_ID" --options runtime "$APP" >/dev/null
 codesign --verify --deep --strict "$APP"
 echo "    signed and verified (distribution notarization is separate)"
 echo "    $APP"
