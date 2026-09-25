@@ -66,6 +66,10 @@ def main(argv=None):
             for r in jobs.status(state, template):
                 last_ok = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["last_ok"])) if r["last_ok"] else "never"
                 print("%-16s %-14s last exit %-4s last ok %s" % (r["job"], r["schedule"], r["last_exit"] if r["last_exit"] is not None else "-", last_ok))
+                p = r.get('progress')
+                if p and p['active']:
+                    print("  %s; phase %.0fm; last progress %.0fm ago (completion unverified)" %
+                          (p['summary'], p['phase_elapsed_s']/60, p['no_progress_s']/60))
             return 0
         if args.action == "uninstall":
             for p in jobs.uninstall(state, template, home, ctl, args.apply):

@@ -747,6 +747,7 @@ if os.path.exists(os.path.join(state, "hub.json")):
             out["jobs"][jid] = {"ts": datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).isoformat() if stamp is not None else None,
                                 "exit": row["last_exit"] if stamp is not None else None, "last_ok": row["last_ok"],
                                 "schedule": row["schedule"], "cadence_s": cadence, "source": "hub-runner",
+                                "progress": row.get("progress"),
                                 "health": job_health.describe(jid, row, spec, state, tmpl, root) if job_health else {}}
     except (ImportError, OSError, ValueError, KeyError, TypeError, OverflowError):
         out["jobs"] = {}

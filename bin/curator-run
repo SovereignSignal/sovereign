@@ -40,6 +40,8 @@ import os, re, json, glob, sys, time, argparse, hashlib, urllib.request, urllib.
 # per-document judge briefs (bin/_curator_brief.py); realpath because brain-bin/ symlinks here
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import _curator_brief as _brief
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'lib'))
+from sovereign_hub.progress import Progress
 from datetime import datetime, timezone
 
 def _pointer(path):
@@ -1212,6 +1214,9 @@ if os.environ.get("CURATOR_ALLOW_REMOTE", "").strip().lower() in ("1", "on", "tr
     print("curator-run: WARNING — CURATOR_ALLOW_REMOTE is set; inference locality is NOT enforced")
 
 
+_progress = Progress() if (a.dry or a.init or a.dump_brief or a.brief_for or a.source_for) else Progress.from_env()
+
+
 def _model_lock(job):
     """Serialize model jobs across scripts (curator runs, the weekly audit, ad-hoc
     backfills). Two jobs sharing the single local-inference slot push each other's
@@ -1233,10 +1238,16 @@ def _model_lock(job):
             fh.truncate()
             fh.write("%s pid %d since %s\n" % (job, os.getpid(), time.strftime("%F %T")))
             fh.flush()
+            _progress.update('gathering')
             if waited:
                 print("%s: model lock acquired, proceeding" % job)
             return fh
         except OSError:
+            try:
+                _holder = open(fh.name).read().strip()
+            except OSError:
+                _holder = ''
+            _progress.update('waiting_model', holder=_holder, advance=not waited)
             if not waited:
                 try:
                     holder = open(fh.name).read().strip()
@@ -2041,6 +2052,7 @@ def _judge_ahead(i):
 
 
 for _i, p in enumerate(cands):
+    _progress.update('judging', current=_i + 1, total=len(cands))
     judged += 1
     src = os.path.relpath(p, VAULT)
     base_judgment = {
@@ -2075,6 +2087,8 @@ for _i, p in enumerate(cands):
     # Injection screen — only on sources that produced a promote verdict, because
     # the veto only bites on the gears and only promoted sources reach them. A flag
     # is loud, recorded in judgments.jsonl, and costs the item its gears, nothing more.
+    if SCREEN:
+        _progress.update('screening', current=_i + 1, total=len(cands))
     screen_flagged, screen_why = _screen_source(
         _judge_text(p), SCREEN, _screen_call)
     if screen_flagged:
@@ -2128,6 +2142,7 @@ for _i, p in enumerate(cands):
         tp = _knowledge_path(target)
         if tp:
             try:
+                _progress.update('merging', current=_i + 1, total=len(cands))
                 v2 = judge_update(p, target, tp)
                 if v2 and (v2.get("body") or "").strip():
                     v["body"] = v2["body"]
@@ -2192,6 +2207,7 @@ for _i, p in enumerate(cands):
 # Sovereign-inference law: a failed local run fails loudly, never silently.
 # Errored files must be re-judged next run: hold the watermark below them and
 # skip their content hashes so they re-enter the gather.
+_progress.update('saving', current=judged, total=len(cands))
 errored = [j for j in judgments if j.get("error")]
 errored_srcs = {j["source"] for j in errored}
 

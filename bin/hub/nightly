@@ -267,6 +267,8 @@ if [[ "${ARCHIVIST_SKIP_NIGHTLY:-0}" != "1" ]]; then
 fi
 
 # --- 2) Notion review page (stdout captured for parsing; stderr flows through) ---
+PYTHONPATH="$SOV_TEMPLATE/lib${PYTHONPATH:+:$PYTHONPATH}" \
+  "$PY" -m sovereign_hub.progress digest
 # ARCHIVIST_DIGEST_ONLY_IF_NEW=1 (2026-09-04): a burn-down pass that proposed nothing
 # sends no digest and creates no review page. The nightly keeps its unconditional one.
 if [[ "${ARCHIVIST_DIGEST_ONLY_IF_NEW:-0}" == "1" ]] \

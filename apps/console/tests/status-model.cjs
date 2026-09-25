@@ -25,6 +25,17 @@ assert.equal(assess({hub:{reachable:false}}).need[0].state,'down');
 console.log('Status assessment: 4 unknown variants neutral; waiting, accepted freshness, failures, grouping and hub dedupe passed.');
 
 const model=box.window.SovStatus;
+const liveProgress={phase:'judging',active:true,summary:'Judging 3/50',checked_at:Date.now()/1000,no_progress_s:90};
+const progressing=model.hubJob({exit:0,progress:liveProgress});
+assert.equal(progressing.label,'Running');
+assert.match(progressing.summary,/Judging 3\/50.*Last run succeeded/);
+assert.equal(model.hubJob({exit:1,progress:liveProgress}).state,'needs_attention');
+assert.equal(model.hubJob({exit:1,progress:liveProgress}).tone,'down');
+assert.equal(model.hubJob({exit:0,progress:{...liveProgress,phase:'waiting_model'}}).label,'Waiting');
+assert.equal(model.hubJob({exit:0,progress:liveProgress},{_status:{stale:true}}).label,'Refresh progress');
+assert.equal(model.hubJob({exit:0,progress:{...liveProgress,checked_at:1}}).label,'Refresh progress');
+assert.equal(model.hubJob({exit:0,progress:{...liveProgress,active:false}}).label,'Progress ended');
+assert.equal(model.hubJob({exit:0,progress:{...liveProgress,phase:'completed'}}).label,'Succeeded');
 for(const value of ['javascript:alert(1)','file:///private/secret','data:text/html,hello','not-a-url'])assert.equal(model.safeURL(value),null);
 assert.equal(model.safeURL('https://example.com/check'),'https://example.com/check');
 const observed={machine:{connected:true},generated_at:new Date(Date.now()-120000).toISOString(),_status:{duration_s:7,budget_s:45}};

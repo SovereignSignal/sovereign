@@ -36,6 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import os, re, json, glob, sys, argparse, hashlib, urllib.request, urllib.parse, ast, time
 from datetime import datetime, timezone, date, timedelta
+from sovereign_hub.progress import Progress
 
 if any(arg in ("--help", "-h") for arg in sys.argv[1:]):
     print(__doc__)
@@ -128,6 +129,7 @@ ap.add_argument("--max-historicize", type=int, default=6, help="stale cards redr
 ap.add_argument("--stale-grace", type=int, default=14, help="days past a deadline before it counts as stale")
 ap.add_argument("--ws-stale", type=int, default=21, help="days without a log.md touch before a workstream counts dormant")
 a = ap.parse_args()
+_progress = Progress.from_env()
 
 
 def _model_lock(job):
@@ -151,10 +153,16 @@ def _model_lock(job):
             fh.truncate()
             fh.write("%s pid %d since %s\n" % (job, os.getpid(), time.strftime("%F %T")))
             fh.flush()
+            _progress.update('structure')
             if waited:
                 print("%s: model lock acquired, proceeding" % job)
             return fh
         except OSError:
+            try:
+                _holder = open(fh.name).read().strip()
+            except OSError:
+                _holder = ''
+            _progress.update('waiting_model', holder=_holder, advance=not waited)
             if not waited:
                 try:
                     holder = open(fh.name).read().strip()
@@ -169,6 +177,8 @@ def _model_lock(job):
 
 if not a.no_llm:
     _MODEL_LOCK = _model_lock("sov-audit")
+else:
+    _progress.update('structure')
 
 TODAY = date.today()
 findings = {}          # section -> [lines]
@@ -542,7 +552,8 @@ if not a.no_llm:
         'Respond ONE JSON object: {"action":"historicize|retire|keep","body":"full replacement body, factual '
         'prose, NO markdown heading (empty when keep)","why":"1-2 sentences for the future reader",'
         '"residue":"only when retiring: the durable one-liner + which card it belongs on, else empty"}.')
-    for p in stale_cards[: a.max_historicize]:
+    for _progress_i, p in enumerate(stale_cards[: a.max_historicize]):
+        _progress.update('historicize', current=_progress_i + 1, total=len(stale_cards[: a.max_historicize]))
         slug = os.path.basename(p)[:-3]
         prop_path = os.path.join(PROP_AUDIT, slug + ".md")
         # pending in EITHER queue means hands off: the nightly may already be
@@ -684,7 +695,8 @@ if not a.no_llm:
         '"action":"keep|trim|merge|historicize|retire","note":"<=25 words, concrete"}. '
         "historicize = the card's facts are time-bound and should be rewritten as dated history, "
         "not deleted. violates=false means the card is fine — most should be.")
-    for p, t in queue[: a.max_screen]:
+    for _progress_i, (p, t) in enumerate(queue[: a.max_screen]):
+        _progress.update('retro_taste', current=_progress_i + 1, total=len(queue[: a.max_screen]))
         llm_calls += 1
         try:
             v = ask(SYS_TASTE, f"CARD ({rel(p)}):\n\n{t[:5000]}")
@@ -723,7 +735,8 @@ if not a.no_llm:
         + (f"OWNER TASTE RULES:\n{_taste}\n\n" if _taste else "")
         + 'Respond with ONE JSON object: {"disagree":true|false,"why":"<=25 words"}.')
     step = max(1, len(rows) // a.max_skips) if rows else 1
-    for j in rows[::step][: a.max_skips]:
+    for _progress_i, j in enumerate(rows[::step][: a.max_skips]):
+        _progress.update('skip_audit', current=_progress_i + 1, total=len(rows[::step][: a.max_skips]))
         llm_calls += 1
         try:
             v = ask(SYS_SKIP, f"SOURCE: {j.get('source','?')}\nPRIMARY'S REASON TO SKIP: {j.get('reason','')}\n\nEXCERPT:\n{j.get('excerpt','')[:2500]}")
@@ -736,6 +749,7 @@ if not a.no_llm:
     json.dump({"line": mark}, open(SKIPMARK, "w", encoding="utf-8"))
 
 # ---------- the report ----------
+_progress.update('saving')
 os.makedirs(AUDIT_DIR, exist_ok=True)
 stamp = datetime.now().strftime("%Y-%m-%d")
 report_path = os.path.join(AUDIT_DIR, f"audit-{stamp}.md")

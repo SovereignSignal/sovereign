@@ -12,7 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import instance, manifest
+from . import instance, manifest, progress
 
 RETIRED = "sovereign-retired"
 
@@ -116,7 +116,8 @@ def status(state, template):
     for job_id, spec in sorted(manifest.all_jobs(inst).items()):
         rows.append({"job": job_id, "label": manifest.label(job_id), "schedule": describe(spec),
                      "last_run": _read_int(hub / (job_id + ".last-run")), "last_ok": _read_int(hub / (job_id + ".last-ok")),
-                     "last_exit": _read_int(hub / (job_id + ".last-exit"))})
+                     "last_exit": _read_int(hub / (job_id + ".last-exit")),
+                     "progress": progress.read(state, job_id)})
     return rows
 
 

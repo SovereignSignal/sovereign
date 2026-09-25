@@ -18,6 +18,16 @@ window.SovStatus = (() => {
   const HUB_CADENCE_H = { "archivist-nightly": 24, "archivist-weekly": 168, "archivist-weekly-landed": 168, "daily-health-check": 24,
     "vault-autocommit": 24, "fleet-watch": 1, "fleet-watch-drill": 168, "proxmox-monitor": 24, "pi-cluster-monitor": 24 };
   const shortLabel = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
+  function jobProgress(job, status = {}) {
+    const p = job.progress, now = Date.now()/1000;
+    if (!p || p.phase === 'completed') return null;
+    if (status._status?.stale || !Number.isFinite(p.checked_at) || now-p.checked_at > 300 || p.checked_at > now+5)
+      return {label:'Refresh progress',summary:'Progress observation is out of date',tone:'warn'};
+    if (!p.active) return {label:'Progress ended',summary:'Recorded worker is no longer running; check the completion receipt',tone:'warn'};
+    const elapsed = Number.isFinite(p.no_progress_s) ? age(p.no_progress_s/3600) : '?';
+    return {label:p.phase === 'waiting_model' ? 'Waiting' : 'Running',
+      summary:String(p.summary || 'Working')+'; last progress '+elapsed+' ago',tone:'warn'};
+  }
   function hubJob(job, status = {}) {
     const health = job.health || {}, now = Date.now()/1000;
     let state = job.exit === 0 ? 'healthy' : job.exit == null ? 'unknown' : 'needs_attention';
@@ -31,9 +41,10 @@ window.SovStatus = (() => {
     // A job that stood down on purpose (runner.PAUSED_EXIT) reports a condition, not a
     // failure: the owner clears it by deciding, and nothing about the job needs repair.
     if (state === 'needs_attention' && health.state === 'paused') state = 'paused';
-    return {...health, state, summary, action,
-      tone:state === 'healthy' ? 'live' : state === 'needs_attention' ? 'down' : state === 'paused' ? 'warn' : '',
-      label:state === 'awaiting_verification' ? 'Awaiting verification' : state === 'paused' ? 'Paused' : state === 'needs_attention' ? 'Needs attention' : state === 'healthy' ? 'Succeeded' : 'Unknown'};
+    const progress = jobProgress(job,status);
+    return {...health, state, summary:progress ? progress.summary+'; '+summary : summary, action,
+      tone:state === 'needs_attention' ? 'down' : progress ? progress.tone : state === 'healthy' ? 'live' : state === 'paused' ? 'warn' : '',
+      label:progress ? progress.label : state === 'awaiting_verification' ? 'Awaiting verification' : state === 'paused' ? 'Paused' : state === 'needs_attention' ? 'Needs attention' : state === 'healthy' ? 'Succeeded' : 'Unknown'};
   }
   // How complete is the archive, from numbers that are already true rather than a score.
   // One headline figure only: the share of eligible material the curator has actually

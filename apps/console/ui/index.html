@@ -742,7 +742,12 @@ window.onerror = function (msg, src, line, col) {
       const hj = h.jobs || {};
       if (h.jobs_error) row("hub:jobs:unknown", { label: "Hub jobs", desc: h.jobs_error, state: "warn", stateText: "unknown" });
       Object.keys(hj).sort().forEach(k => { const j = hj[k],health=SovStatus.hubJob(j,D); row("hub:job:" + k, { label: k, desc: health.summary, state: health.tone, stateText: health.label, age_h: ago(j.ts), job:k,health,
-        detail: [["last completed", j.ts], ["exit", j.exit], ["schedule", j.schedule || "unknown"], ["next verification", health.next_due ? new Date(health.next_due*1000).toLocaleString() : null]], note: health.why || (j.source === "hub-runner" ? "These receipts describe completed runs; a job may currently be running." : "Reported by the hub's legacy cron wrapper.") }); });
+        detail: [["last completed", j.ts], ["exit", j.exit], ["schedule", j.schedule || "unknown"],
+                 ["reported progress", j.progress?.summary],
+                 ["phase started", j.progress?.phase_started_at ? new Date(j.progress.phase_started_at*1000).toLocaleString() : null],
+                 ["last progress", j.progress?.last_progress_at ? new Date(j.progress.last_progress_at*1000).toLocaleString() : null],
+                 ["progress checked", j.progress?.checked_at ? new Date(j.progress.checked_at*1000).toLocaleString() : null],
+                 ["next verification", health.next_due ? new Date(health.next_due*1000).toLocaleString() : null]], note: health.why || (j.source === "hub-runner" ? "Progress shows the current worker; only a completed receipt establishes the outcome." : "Reported by the hub's legacy cron wrapper.") }); });
     }
     // What the operating system runs, then what runs inside it. A lane row carries the label of the
     // one job that kicks it, so counting the two apart is what keeps the header honest.

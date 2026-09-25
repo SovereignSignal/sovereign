@@ -16,7 +16,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import instance, manifest
+from . import instance, manifest, progress
 
 TAIL_LINES = 15
 CHILD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin"
@@ -69,9 +69,15 @@ def tick(job_id, state=None, template=None, notify=None):
     argv = [program if program.startswith("/") else str(template / "bin" / program)] + list(spec.get("args") or [])
     out = hub / (job_id + ".last-output")
     started = int(time.time())
+    observation = progress.Progress.start(state, job_id)
+    env = job_env(inst, state, template)
+    # Clear inherited identifiers even for jobs that do not report progress.
+    env.pop('SOV_PROGRESS_JOB', None); env.pop('SOV_PROGRESS_RUN', None)
+    if observation.path is not None:
+        env.update(SOV_PROGRESS_JOB=job_id, SOV_PROGRESS_RUN=observation.run_id)
     try:
         with open(out, "w") as fh:
-            rc = subprocess.run(argv, stdout=fh, stderr=subprocess.STDOUT, env=job_env(inst, state, template),
+            rc = subprocess.run(argv, stdout=fh, stderr=subprocess.STDOUT, env=env,
                                 cwd=inst["vault"] if os.path.isdir(inst["vault"]) else None).returncode
     except OSError as e:
         out.write_text("could not start %s: %s\n" % (argv[0], e)); rc = 127
@@ -83,6 +89,7 @@ def tick(job_id, state=None, template=None, notify=None):
         was = None
     (hub / (job_id + ".last-run")).write_text("%d\n" % ended)
     exit_file.write_text("%d\n" % rc)
+    observation.update('completed')
     if rc == 0:
         (hub / (job_id + ".last-ok")).write_text("%d\n" % ended)
     text = out.read_text(errors="ignore")
