@@ -50,6 +50,23 @@ errs="$(validate_note "$prop")"
 sub="$(type_subdir "$(fm_get "$prop" type)")"
 dest="$KNOWLEDGE/$sub/$(basename "$prop")"
 slug="$(basename "$prop" .md)"
+# A legacy alias must not land as a second card under its proposal filename.
+if [ -f "$PROPOSALS/.meta.json" ]; then
+  declared_target="$(python3 - "$PROPOSALS/.meta.json" "$slug" <<'PY'
+import json, sys
+meta = json.load(open(sys.argv[1], encoding='utf-8'))
+entry = meta.get(sys.argv[2], {})
+target = entry.get('update_of')
+if target is not None and not isinstance(target, str):
+    raise ValueError('Invalid update target')
+print(target or '')
+PY
+  )" || { echo "REFUSED: proposal update metadata could not be verified."; exit 1; }
+  if [ -n "$declared_target" ] && [ "$declared_target" != "$slug" ]; then
+    echo "REFUSED: this proposal updates $declared_target but has a different filename. Consolidate it under the target card before approval."
+    exit 1
+  fi
+fi
 mkdir -p "$KNOWLEDGE/$sub"
 update_landing=0
 # Cross-folder collision (2026-09-04). The same slug in ANOTHER type's folder is a

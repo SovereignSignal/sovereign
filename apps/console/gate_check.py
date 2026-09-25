@@ -65,6 +65,14 @@ def check(root, lane, slug, *, resolving=False):
     digest = hashlib.sha256(json.dumps({'proposal': card, 'existing': existing, 'update': update, 'metadata': entry}, sort_keys=True).encode()).hexdigest()
     notes = []
     if isinstance(entry, dict):
+        target = entry.get('update_of')
+        if target and target != slug:
+            state = 'target_conflict'
+            notes.append('This update targets '+str(target)+'. Consolidate it under the target card before approval.')
+        sources = entry.get('source_refs')
+        if isinstance(sources, list) and len(sources) > 1:
+            notes.append('Combined source evidence requires owner review: '+ '; '.join(
+                str(row.get('source', 'unknown')) for row in sources if isinstance(row, dict)))
         for flag, reason, label in [('screen_flagged','screen_reason','Source screening'),('taste_flagged','taste_reason','Curator review')]:
             if entry.get(flag): notes.append(label+': '+str(entry.get(reason) or 'needs your review'))
     return {'state': state, 'review_notes': notes, 'fingerprint': digest, 'proposal': card, 'existing': existing, 'destination': destination, 'update': update, 'metadata_fingerprint': hashlib.sha256(json.dumps(entry,sort_keys=True).encode()).hexdigest()}

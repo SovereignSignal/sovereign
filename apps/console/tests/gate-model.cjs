@@ -28,6 +28,9 @@ assert.equal(g.canResolve({...conflict,existing:[...conflict.existing,...conflic
 assert.equal(g.canResolve({...conflict,existing:[{type:'entity',path:'knowledge/concepts/example.md'}]},null),false);
 assert.equal(g.canApprove({state:'resolution_pending',fingerprint:token},null),false);
 assert.equal(g.canReject({state:'resolution_pending',fingerprint:token},null),false);
+assert.equal(g.canApprove({state:'target_conflict',fingerprint:token},null),false);
+assert.equal(g.canReject({state:'target_conflict',fingerprint:token},null),true);
+assert.match(g.describe('target_conflict')[0],/consolidation/);
 console.log('Resolution eligibility and interrupted-decision guards passed.');
 
 assert.equal(g.canResolve({...conflict,existing:[{type:'concept'}]},null),false);

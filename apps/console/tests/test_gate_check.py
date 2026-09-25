@@ -38,12 +38,29 @@ class GateCheckTests(unittest.TestCase):
     check.assert_called_once_with(expected,'curator',self.slug)
     self.assertEqual(json.loads(output.getvalue())['state'],'ready')
  def test_new_card_ready(self):self.assertEqual(self.check()['state'],'ready')
+ def test_alias_update_is_refused_in_ui_and_direct_gate_even_with_force(self):
+  (self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':'other-card'}}))
+  self.assertEqual(self.check()['state'],'target_conflict')
+  self.assertIn('other-card',self.check()['review_notes'][0])
+  command=HERE.parents[1]/'bin/curator-approve.sh'
+  before=(self.proposals/(self.slug+'.md')).read_bytes()
+  for flags in ([],['--force']):
+   result=subprocess.run([str(command),*flags,self.slug],capture_output=True,text=True,
+                         env=dict(os.environ,HOME=str(self.base),SOVS_VAULT=str(self.root),CURATOR_LANE=self.lane))
+   self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+   self.assertIn('different filename',result.stdout)
+   self.assertEqual((self.proposals/(self.slug+'.md')).read_bytes(),before)
+   self.assertFalse((self.root/'knowledge/entities'/(self.slug+'.md')).exists())
+ def test_combined_evidence_is_visible_in_review_notes(self):
+  (self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'source_refs':[{'source':'first.md'},{'source':'second.md'}]}}))
+  notes=self.check()['review_notes']
+  self.assertTrue(any('first.md' in n and 'second.md' in n for n in notes))
  def test_type_conflict_preserves_both_cards(self):
   a=self.existing();b=self.existing('concepts','concept');before=(a.read_bytes(),b.read_bytes());c=self.check();self.assertEqual(c['state'],'type_conflict');self.assertEqual(len(c['existing']),2);self.assertEqual((a.read_bytes(),b.read_bytes()),before)
  def test_same_folder_needs_declared_update(self):
   self.existing();self.assertEqual(self.check()['state'],'update_conflict');(self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':self.slug}}));self.assertEqual(self.check()['state'],'ready')
  def test_different_update_target_does_not_authorize_overwrite(self):
-  self.existing();(self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':'other'}}));self.assertEqual(self.check()['state'],'update_conflict')
+  self.existing();(self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':'other'}}));self.assertEqual(self.check()['state'],'target_conflict')
  def test_changed_card_cannot_execute(self):
   token=self.check()['fingerprint'];self.card(self.proposals/(self.slug+'.md'),body='Edited after review');self.assertEqual(self.execute(self.base/'never-run',fingerprint=token)['state'],'changed')
  def test_changed_existing_card_invalidates_review(self):

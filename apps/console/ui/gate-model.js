@@ -5,6 +5,7 @@ window.GateModel = (() => {
     ready:['Ready for your decision','The current proposal has been checked. Approval will check it again before making a change.'],
     type_conflict:['Two card types need reconciling','This name already exists under a different card type. Compare the cards below and keep one canonical card before approving this update.'],
     update_conflict:['An existing card needs a merge','This proposal would replace an existing card, but it has not been marked as a merged update. Compare both versions before proceeding.'],
+    target_conflict:['This update needs consolidation','It names an existing card but uses a different proposal name. Consolidate the evidence under the target card before approving, or reject this draft.'],
     changed:['The proposal changed','Nothing was approved by this request. Check the latest version and review it before deciding again.'],
     missing:['This proposal is no longer waiting','It may have been handled elsewhere. Refresh the queue to see its current state.'],
     invalid:['This proposal needs correction','Its labels are incomplete or unsupported. Correct the proposal before approving it.'],
@@ -21,7 +22,7 @@ window.GateModel = (() => {
   function describe(state){return messages[state]||messages.uncertain}
   function canApprove(check,pending){return !pending&&check?.state==='ready'&&/^[a-f0-9]{64}$/.test(check.fingerprint||'')}
   function canResolve(check,pending){const c=check?.existing?.[0],folders={entity:'entities',concept:'concepts',synthesis:'syntheses',plan:'syntheses',review:'syntheses'};return !pending&&check?.state==='type_conflict'&&check.update===true&&check.existing.length===1&&!!folders[c?.type]&&typeof c.path==='string'&&c.path.split('/').at(-2)===folders[c.type]&&c.type!==check.proposal?.type&&/^[a-f0-9]{64}$/.test(check.fingerprint||'')}
-  function canReject(check,pending){return !pending&&['ready','type_conflict','update_conflict'].includes(check?.state)&&/^[a-f0-9]{64}$/.test(check.fingerprint||'')}
+  function canReject(check,pending){return !pending&&['ready','type_conflict','update_conflict','target_conflict'].includes(check?.state)&&/^[a-f0-9]{64}$/.test(check.fingerprint||'')}
   // Age changes every status tick; content, routing and review metadata do not.
   function reviewKey(status,slug){
     const hub=status.hub||{},proposal=(hub.proposals||[]).find(p=>p.slug===slug);
