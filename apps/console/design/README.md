@@ -1,7 +1,7 @@
 # Sovereign interface contract
 
-One application, one source checkout, one installed `Sovereign.app`. Home, Review,
-Notes and Operations share the same left navigation rail and native window.
+One application, one source checkout, one installed `Sovereign.app`. Home, System, Review and
+Operations share the same left navigation rail and native window.
 Operations keeps its internal Hosts, Archive, Lanes, Tools, Hub and Backups tabs.
 The compact menu-bar Glance is the only separate frame.
 
@@ -17,7 +17,7 @@ picker in this release; the explicit override is a launch environment setting.
 Default window: 900 × 600 pt. Minimum: 720 × 460 pt. Rail width is 170 pt, 140 pt at
 narrow sizes. Content scrolls within its pane. Nodes stay visible on Home with an
 expansion control. Selecting a tool filters its context receipts. Review contains
-attention items and contributions. Notes supports inspection and local capture.
+attention items and contributions. Archive files remain available in Finder; preparation records open in the default editor.
 No conversational suggestion cards on Home.
 
 `ui/shell.css` defines the shared rail; `home.css` and `operations-shell.css` define
@@ -116,7 +116,7 @@ override is accepted only during snapshot QA.
 `test-home.py` exercises native rendering, labels, safe text, draft preservation,
 stale replies and a capture/read roundtrip in a disposable archive.
 `tests/status-model.cjs` covers unknown/waiting/accepted lanes and real failures.
-`test-release.py --evidence <folder>` captures light and dark Home, Review, Notes
+`test-release.py --evidence <folder>` captures light and dark Home, Review, System
 and Operations at both supported sizes, checking themes, rails and attention counts.
 Use `--live` for a screenshot against the installed status command.
 

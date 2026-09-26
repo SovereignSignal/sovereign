@@ -14,6 +14,7 @@ def probe(theme,view,live=False):
  const css=getComputedStyle(document.body);
  checks.theme=theme===expected;
  checks.ground=css.backgroundColor===(expected==='dark'?'rgb(0, 6, 15)':'rgb(250, 250, 247)');
+ checks.noNotes=!document.getElementById('notes-tab')&&!document.getElementById('editor');
  checks.rail=!!document.querySelector('.shell-rail')&&getComputedStyle(document.querySelector('.shell-rail')).display!=='none';
  checks.noHorizontalOverflow=document.documentElement.scrollWidth<=innerWidth;
  checks.page=['operations','review'].includes(view)?location.pathname.endsWith('/index.html'):location.pathname.endsWith('/local.html');
@@ -27,7 +28,7 @@ def probe(theme,view,live=False):
   checks.queueCount=document.querySelectorAll('#rows [data-id^="p:"]').length===count;
   checks.reviewHeading=document.getElementById('vault').textContent==='Review';
   checks.noOperationsTabs=getComputedStyle(document.querySelector('#switch .seg')).display==='none';
- }else if(view==='notes')checks.notesVisible=!document.getElementById('workspace').hidden;
+ }else if(view==='system')checks.systemVisible=!!document.querySelector('.sv');
  else {checks.homeVisible=!document.getElementById('system-home').hidden;
   const panel=document.querySelector('.home-attention');
   unknown=[...panel.querySelectorAll('.home-row')].filter(e=>/acceptance.*(?:unverified|not reported|unknown)|not been verified/.test(e.textContent)).map(e=>e.textContent);
@@ -47,7 +48,7 @@ def main():
   brain_local.capture(archive,'A useful decision','Local notes remain portable Markdown.')
   fixture={'version':'QA','generated_at':datetime.now(timezone.utc).isoformat(),'machine':{'connected':True,'host':'studio','vault':str(archive),'vault_name':'QA archive','hub_pointer':'hub:/archive'},'hub':{'reachable':True,'pending':2,'proposals':[{'slug':'first','title':'A useful decision','type':'concept'},{'slug':'second','title':'Keep this finding','type':'entity'}]},'needs_you':[{'kind':'gate','text':'2 proposals ready for review'}],'jobs':[{'label':'collection-test','last_exit':1}],'fleet':{'hosts':[{'host':'studio','net':{'online':True}},{'host':'worker','net':{'online':False}}]},'archive':{'cards':[]},'harnesses':[], 'backups':{'lanes':[{'lane':'unknown-producer'},{'lane':'waiting-producer','delivery':'waiting'},{'lane':'accepted-producer','delivery':'accepted','pushed':datetime.now(timezone.utc).isoformat()}]}}
   command=base/'status';command.write_text('#!/bin/sh\ncat <<\'STATUS\'\n'+json.dumps(fixture)+'\nSTATUS\n');command.chmod(0o700)
-  cases=[('dark','900x600','home','operations')] if args.live else [(theme,size,first,second) for theme in ['dark','light'] for size in ['900x600','720x460'] for first,second in [('home','review'),('notes','operations')]]
+  cases=[('dark','900x600','home','operations')] if args.live else [(theme,size,first,second) for theme in ['dark','light'] for size in ['900x600','720x460'] for first,second in [('home','review'),('system','operations')]]
   for theme,size,first,second in cases:
    name=('live-' if args.live else '')+theme+'-'+size
    snap=args.evidence/(name+'-'+first+'.png')

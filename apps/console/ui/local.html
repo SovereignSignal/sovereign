@@ -3,48 +3,39 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self'">
 <title>Sovereign</title><link rel="stylesheet" href="tokens.css">
 <style>
-*{box-sizing:border-box}body{margin:0;background:var(--ground);color:var(--ink);font:14px var(--sans)}button,input,textarea{font:inherit}button{cursor:pointer;border:1px solid var(--rule);border-radius:7px;background:var(--panel);color:var(--ink);padding:8px 13px}button.primary{background:var(--brass);border-color:var(--brass);color:#15181C}button:hover{filter:brightness(.95)}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--brass);outline-offset:2px}button:disabled{opacity:.5;cursor:default}header{height:79px;padding:30px 24px 14px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--rule)}header strong{font-size:17px}header span{color:var(--muted);margin-left:auto}#notice{padding:9px 24px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--rule)}#notice.error{color:var(--down)}.welcome{max-width:620px;margin:70px auto;padding:0 24px}.eyebrow{color:var(--brass-ink);font-size:12px;letter-spacing:.06em;text-transform:uppercase}h1{font-size:34px;line-height:1.15;font-weight:550;margin:16px 0}p{color:var(--muted);line-height:1.6}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}.fine{font-size:12px}.layout{display:grid;grid-template-columns:285px 1fr;height:calc(100vh - 114px)}nav{border-right:1px solid var(--rule);display:flex;flex-direction:column;min-height:0;padding:16px 12px}input,textarea{border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--ink);padding:10px;min-width:0}#search{width:100%}#notes{overflow:auto;flex:1;margin:12px -4px}#notes button{width:100%;text-align:left;background:none;border:none;border-radius:4px;padding:12px 8px;display:block}#notes button.selected{background:var(--sel)}#notes small{display:block;color:var(--muted);margin-top:5px;font-size:11px;overflow:hidden;text-overflow:ellipsis}article{padding:26px;min-width:0;overflow:auto}#reader{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;font-family:var(--sans)}#editor{display:flex;flex-direction:column;gap:14px;height:100%}#editor label{font-size:12px;color:var(--muted)}#body{flex:1;min-height:150px;resize:none;line-height:1.6}#count{font-size:12px;color:var(--muted);padding:7px 4px}[hidden]{display:none!important}.empty{padding:16px 4px;color:var(--muted);line-height:1.6}h2{font-size:22px;margin-top:0}#note-path{font-size:12px;color:var(--muted);overflow-wrap:anywhere}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}@media(max-width:740px){.layout{grid-template-columns:230px 1fr}header{padding-left:18px}article{padding:20px}}
+*{box-sizing:border-box}body{margin:0;background:var(--ground);color:var(--ink);font:14px var(--sans)}button,input,textarea{font:inherit}button{cursor:pointer;border:1px solid var(--rule);border-radius:7px;background:var(--panel);color:var(--ink);padding:8px 13px}button.primary{background:var(--brass);border-color:var(--brass);color:#15181C}button:hover{filter:brightness(.95)}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--brass);outline-offset:2px}button:disabled{opacity:.5;cursor:default}header{height:79px;padding:30px 24px 14px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--rule)}header strong{font-size:17px}header span{color:var(--muted);margin-left:auto}#notice{padding:9px 24px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--rule)}#notice.error{color:var(--down)}.welcome{max-width:620px;margin:70px auto;padding:0 24px}.eyebrow{color:var(--brass-ink);font-size:12px;letter-spacing:.06em;text-transform:uppercase}h1{font-size:34px;line-height:1.15;font-weight:550;margin:16px 0}p{color:var(--muted);line-height:1.6}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}.fine{font-size:12px}[hidden]{display:none!important}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}@media(max-width:740px){header{padding-left:18px}}
 </style><link rel="stylesheet" href="home.css"><link rel="stylesheet" href="shell.css"><link rel="stylesheet" href="system-view.css"><link rel="stylesheet" href="settings-view.css"></head><body>
-<header class="shell-rail" aria-label="Primary navigation"><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="true">Home</button><button id="system-tab" aria-pressed="false">System</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="notes-tab" aria-pressed="false" disabled>Notes</button><button id="archive-backups-tab">Backups</button><button id="operations-tab">Operations</button><button id="settings-tab" class="rail-gear" title="Settings">⚙ Settings</button><button id="change" hidden>Open archive…</button></header><div id="app-bar"><span id="page-label">Overview</span><span>Owned by you</span></div>
+<header class="shell-rail" aria-label="Primary navigation"><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="true">Home</button><button id="system-tab" aria-pressed="false">System</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="archive-backups-tab">Backups</button><button id="operations-tab">Operations</button><button id="settings-tab" class="rail-gear" title="Settings">⚙ Settings</button><button id="change" hidden>Open archive…</button></header><div id="app-bar"><span id="page-label">Overview</span><span>Owned by you</span></div>
 <div id="notice" role="status" aria-live="polite">Local files. No account required.</div>
 <section id="system-home" aria-label="System overview"></section>
-<section class="welcome" id="welcome"><div class="eyebrow">A place for what you learn</div><h1>Keep the work.<br>Carry the knowledge.</h1><p>Create an archive of plain Markdown files you own. Capture a thought, find it again, and open it in the editor you already use.</p><div class="actions"><button class="primary" id="create">Create archive…</button><button id="choose">Open existing archive…</button></div><p class="fine">Choose where your files live. Nothing is uploaded, and no background jobs are installed. Backups and connected tools can be added as the app develops.</p></section>
-<main class="layout" id="workspace" hidden><nav aria-label="Archive notes"><button id="new" class="primary">New capture</button><label for="search" class="fine" style="margin:16px 0 6px">Search your notes</label><input id="search" type="search" placeholder="Title or content" autocomplete="off"><div id="notes"></div><div id="count"></div><button id="reveal">Show archive in Finder</button></nav><article>
-<div id="empty"><h2>What would you like to keep?</h2><p>Add a capture or choose a note from the list. Captures stay in your raw collection, ready for review.</p></div>
-<section id="detail" hidden><h2 id="note-title"></h2><div id="note-path"></div><div class="actions"><button id="open-file">Open in text editor</button></div><pre id="reader"></pre></section>
-<form id="editor" hidden><h2>New capture</h2><label for="title">Title</label><input id="title" maxlength="160" required placeholder="A decision, a method, a useful finding"><label for="body">Note</label><textarea id="body" required placeholder="What happened? What is worth keeping?"></textarea><div class="actions" style="margin:0"><button type="submit" id="save" class="primary">Save capture</button><button type="button" id="cancel">Cancel</button></div><p class="fine">Saved as Markdown in raw/workspaces/owner. Recognized credential patterns are redacted before saving.</p></form>
-</article></main>
+<section class="welcome" id="welcome"><div class="eyebrow">A place for what you learn</div><h1>Keep the work.<br>Carry the knowledge.</h1><p>Create an archive of plain Markdown files you own. Connect your tools, review proposed knowledge, and see how your system is working.</p><div class="actions"><button class="primary" id="create">Create archive…</button><button id="choose">Open existing archive…</button></div><p class="fine">Choose where your files live. Nothing is uploaded, and no background jobs are installed. Backups and connected tools can be added as the app develops.</p></section>
 <script src="status-model.js"></script><script src="gate-model.js"></script><script src="system-model.js"></script><script src="system-view.js"></script><script src="home.js"></script>
 <script>
 'use strict';
-const $=id=>document.getElementById(id);let root=null,current=null,request=0,listRequest=0,readRequest=0,contextRequest=0,pendingSave=null,view="home",stateReady=false,pendingGoto=null;
+const $=id=>document.getElementById(id);let root=null,request=0,readRequest=0,contextRequest=0,view="home",stateReady=false,pendingGoto=null;
 const send=data=>window.webkit.messageHandlers.sov.postMessage(data);
-function saving(value){for(const id of ['save','title','body','new','change','cancel'])$(id).disabled=value}
 function notice(text,error=false){$('notice').textContent=text;$('notice').classList.toggle('error',error)}
 function local(action,extra={}){const id=++request;send({cmd:'local',action,...extra,request:id});return id}
-function refresh(){if(root){if(view==='notes')listRequest=local('list',{query:$('search').value});contextRequest=local('context')}if(view!=='notes')Home.refresh()}
-function setView(next){if(next==='review'){send({cmd:"navigate",page:"review"});return false}if(!leaveDraft())return false;view=next;readRequest=++request;display('empty');$('system-home').hidden=view==='notes';Home.view(view==='system'?'system':'overview');$('system-tab').setAttribute('aria-pressed',view==='system');$('review-tab').setAttribute('aria-pressed',view==='review');$('page-label').textContent=view==='notes'?'Notes':view==='system'?'System':'Overview';$('workspace').hidden=view!=='notes'||!root;$('welcome').hidden=!!root||view!=='home';$('home-tab').setAttribute('aria-pressed',view==='home');$('notes-tab').setAttribute('aria-pressed',view==='notes');if(view==='notes')refresh();return true}
+function refresh(){if(root)contextRequest=local('context');Home.refresh()}
+function setView(next){
+ if(next==='review'){send({cmd:'navigate',page:'review'});return false}
+ view=next==='system'?'system':'home';
+ Home.view(view==='system'?'system':'overview');
+ $('system-tab').setAttribute('aria-pressed',view==='system');
+ $('home-tab').setAttribute('aria-pressed',view==='home');
+ $('page-label').textContent=view==='system'?'System':'Overview';
+ $('welcome').hidden=!!root||view!=='home';return true;
+}
 $('home-tab').onclick=()=>setView('home');
 $('system-tab').onclick=()=>setView('system');
-$('notes-tab').onclick=()=>setView('notes');
 $('review-tab').onclick=()=>setView('review');
 $('archive-backups-tab').onclick=()=>{if(leaveDraft())send({cmd:'navigate',page:'operations',place:{view:'recovery'}})};
 $('operations-tab').onclick=()=>send({cmd:'navigate',page:'operations'});
 $('settings-tab').onclick=()=>send({cmd:'navigate',page:'operations',place:{settings:true}});
-Home.init({send, review:()=>setView('review'), openNote:path=>{if(setView('notes'))select(path)}, browse:()=>setView('notes')});
-function display(id){for(const name of ['empty','detail','editor'])$(name).hidden=name!==id}
-function select(path){current=path;readRequest=local('read',{path});}
-function unsaved(){return !$('editor').hidden&&($('title').value||$('body').value)}
-function leaveDraft(){if(pendingSave)return false;return !unsaved()||window.confirm('Discard this unsaved capture?')}
+Home.init({send,review:()=>setView('review'),openNote:path=>{if(root)readRequest=local('read',{path})},browse:()=>{if(root)send({cmd:'reveal',path:root})}});
 $('create').onclick=()=>send({cmd:'chooseArchive',create:true});
 $('choose').onclick=()=>send({cmd:'chooseArchive',create:false});
-$('change').onclick=()=>{if(leaveDraft())send({cmd:'chooseArchive',create:false})};
-$('new').onclick=()=>{if(!leaveDraft())return;readRequest=++request;view='notes';$('system-home').hidden=true;$('workspace').hidden=false;$('home-tab').setAttribute('aria-pressed','false');$('review-tab').setAttribute('aria-pressed','false');$('system-tab').setAttribute('aria-pressed','false');$('page-label').textContent='Notes';$('notes-tab').setAttribute('aria-pressed','true');display('editor');$('title').value='';$('body').value='';$('title').focus()};
-$('cancel').onclick=()=>{if(leaveDraft()){display('empty');$('title').value='';$('body').value=''}};
-$('reveal').onclick=()=>send({cmd:'reveal',path:root});
-$('open-file').onclick=()=>send({cmd:'open',path:root+'/'+current});
-let timer; $('search').oninput=()=>{clearTimeout(timer);timer=setTimeout(refresh,250)};
-$('editor').onsubmit=e=>{e.preventDefault();if(pendingSave)return;saving(true);pendingSave=local('capture',{title:$('title').value,body:$('body').value})};
+$('change').onclick=()=>send({cmd:'chooseArchive',create:false});
 window.sovDeliver=(kind,payload)=>{
  if(kind==='settings')return;
  if(kind==='status'){Home.status(payload);return}
@@ -55,37 +46,26 @@ window.sovDeliver=(kind,payload)=>{
   if(payload.state&&payload.state!=='started')setTimeout(()=>Home.refresh(),1500);
   return;
  }
- if(kind==='goto'){if(!stateReady){pendingGoto=payload;return}if(payload.chooseArchive)window.sovChooseArchive(payload.create===true);else if(payload.capture)window.sovNewCapture();else setView(payload.view||'home');return}
+ if(kind==='goto'){if(!stateReady){pendingGoto=payload;return}if(payload.chooseArchive)window.sovChooseArchive(payload.create===true);else setView(payload.view||'home');return}
  if(kind==='localState'){
-   stateReady=true;root=payload.root||null;readRequest=++request;listRequest=++request;contextRequest=++request;
-   $('welcome').hidden=!!root;$('workspace').hidden=true;$('change').hidden=!root;$('notes-tab').disabled=!root;
+   stateReady=true;root=payload.root||null;readRequest=++request;contextRequest=++request;
+   $('welcome').hidden=!!root;$('change').hidden=!root;
    $('archive-name').textContent=root?root.split('/').pop():'Your archive, on your Mac';
    Home.archive(root);view='home';setView('home');
-   if(root){current=null;display('empty');notice('Local archive open. Connected system status is shown separately.');refresh()}else {Home.refresh();if(payload.error)notice(payload.error,true)}if(pendingGoto){const next=pendingGoto;pendingGoto=null;window.sovDeliver('goto',next)}return;
+   if(root){notice('Local archive open. Connected system status is shown separately.');refresh()}else {Home.refresh();if(payload.error)notice(payload.error,true)}if(pendingGoto){const next=pendingGoto;pendingGoto=null;window.sovDeliver('goto',next)}return;
  }
  if(kind!=='local')return;
  if(payload.action==='context'){if(payload.request===contextRequest)Home.context(payload);return}
- if(payload.action==='list'&&payload.request!==listRequest)return;
  if(payload.action==='read'&&payload.request!==readRequest)return;
- if(payload.action==='capture'){saving(false);pendingSave=null}
  if(payload.error){notice(payload.error,true);return}
- if(payload.action==='list'){
-   root=payload.root;$('archive-name').textContent=payload.name;$('notes').replaceChildren();
-   for(const n of payload.notes){const b=document.createElement('button');b.textContent=n.title;const sub=document.createElement('small');sub.textContent=n.path;b.append(sub);b.classList.toggle('selected',current===n.path);b.onclick=()=>{if(leaveDraft()){for(const other of $('notes').children)other.classList.toggle('selected',other===b);select(n.path)}};$('notes').append(b)}
-   $('count').textContent=(payload.limited?'Showing 500 of ':'')+payload.total+(payload.total===1?' note':' notes');
-   notice('Stored on this Mac · Backup is not configured by this app.');
- }else if(payload.action==='read'){
-   display('detail');$('note-title').textContent=payload.title;$('note-path').textContent=current;$('reader').textContent=payload.text;
- }else if(payload.action==='capture'){
-   $('title').value='';$('body').value='';select(payload.path);refresh();notice(payload.redactions?'Saved. '+payload.redactions+' credential pattern(s) redacted.':'Capture saved.');
- }
+ // The archive engine validates the relative path before handing it to the editor.
+ if(payload.action==='read'&&root&&payload.path)send({cmd:'open',path:root+'/'+payload.path});
 };
 window.sovRefresh=refresh;
 window.sovSnapshotReady=()=>stateReady;
-window.sovView=value=>{if(['home','system','review','notes'].includes(value))return setView(value);return false};
-window.sovCanQuit=leaveDraft;
-window.sovNewCapture=()=>{if(root){if(setView('notes'))$('new').click()}else notice('Create or open an archive to capture a note.')};
-window.sovChooseArchive=create=>{if(leaveDraft())send({cmd:'chooseArchive',create})};
+window.sovView=value=>{if(['home','system','review'].includes(value))return setView(value);return false};
+window.sovCanQuit=()=>true;
+window.sovChooseArchive=create=>send({cmd:'chooseArchive',create});
 window.onerror=()=>notice('The archive view encountered an error. Reopen the window to retry.',true);
 send({cmd:'localState'});
 </script></body></html>

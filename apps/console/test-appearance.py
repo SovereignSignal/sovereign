@@ -13,18 +13,15 @@ const check=(name,ok)=>{checks[name]=!!ok};
 const change=async value=>{post({cmd:'appearance',value});await wait(()=>document.documentElement.dataset.theme===value);await pause(80)};
 const report=()=>post({cmd:'clientError',where:'appearance-qa',msg:JSON.stringify({scene:SCENE,theme:document.documentElement.dataset.theme,width:innerWidth,checks,failures:Object.keys(checks).filter(k=>!checks[k])})});
 '''
-DRAFT=r'''
+HOME=r'''
 await wait(()=>!document.getElementById('system-home').hidden);
 check('fresh install follows System',!document.documentElement.dataset.theme || ['dark','light'].includes(document.documentElement.dataset.theme));
 post({cmd:'qaAppearance',openGlance:true});
-window.sovNewCapture();const title=document.getElementById('title'),body=document.getElementById('body');
-title.value='Keep this draft';body.value='A complete unsaved thought';body.focus();body.setSelectionRange(2,8);
-window.__appearanceSentinel={};const sentinel=window.__appearanceSentinel;
-for(const theme of ['light','dark']){await change(theme);check(theme+' draft and DOM preserved',body===document.getElementById('body')&&body.value==='A complete unsaved thought'&&title.value==='Keep this draft'&&window.__appearanceSentinel===sentinel);check(theme+' focus and selection preserved',document.activeElement===body&&body.selectionStart===2&&body.selectionEnd===8);post({cmd:'qaAppearance'});await pause(350)}
+const home=document.getElementById('system-home');
+for(const theme of ['light','dark']){await change(theme);check(theme+' Home DOM preserved',home===document.getElementById('system-home'));post({cmd:'qaAppearance'});await pause(350)}
 post({cmd:'appearance',value:'invalid'});await pause(150);check('invalid appearance ignored',document.documentElement.dataset.theme==='dark');
 post({cmd:'appearance',value:'system'});await pause(200);post({cmd:'qaAppearance'});await pause(350);
 for(const theme of ['light','dark']){post({cmd:'qaAppearance',systemTheme:theme});await wait(()=>document.documentElement.dataset.theme===theme);check('System observes '+theme,true)}
-check('System switch preserves draft',body===document.getElementById('body')&&body.value==='A complete unsaved thought');
 await change('light');report();
 '''
 PERSIST=r'''
@@ -86,7 +83,6 @@ def main():
   else:env['SOV_QA_JS']='(async()=>{'+code+'})().catch(e=>window.webkit.messageHandlers.sov.postMessage({cmd:"clientError",where:"appearance-qa-failure",msg:String(e.stack||e)}));void 0;'
   # Preserve the draft through all checks and the first screenshot. Clear only
   # this disposable fixture before snapshot shutdown reaches the native quit guard.
-  if scene=='draft':env['SOV_QA_JS_AFTER_ANCHOR']="const t=document.getElementById('title'),b=document.getElementById('body');if(t.value!=='Keep this draft'||b.value!=='A complete unsaved thought')throw Error('Draft changed before capture');t.value='';b.value='';"
   if scene=='navigation':env['SOV_QA_JS']="window.webkit.messageHandlers.sov.postMessage({cmd:'appearance',value:'dark'});void 0;"
   if home:env['SOV_QA_GATE_HOME']=str(home)
   cp=subprocess.run([str(app),'-sov.archive',str(root)],env=env,text=True,capture_output=True,timeout=50)
@@ -103,7 +99,7 @@ def main():
    base=Path(tmp);root=base/'Appearance QA';brain_local.create(root,REPO);root=root.resolve();brain_local.capture(root,'Existing note','Keep local content.')
    data={'machine':{'connected':True,'host':'QA Desk','vault':str(root),'vault_name':'Appearance QA'},'hub':{'reachable':True,'hub_host':'QA Hub','pending':0},'archive':{'cards':[]},'jobs':[{'label':'com.sov.connector.runner','last_exit':0},{'label':'collection','kick':'com.sov.connector.runner','last_exit':0}],'harnesses':[{'id':'reader','name':'QA Reader','state':'connected','hook_registered':True,'read':'hook','trusted':True,'lane':'reader','lane_dir':str(root/'raw/tools/reader')}],'fleet':{'hosts':[{'host':'QA Desk','net':{'online':True}}]},'needs_you':[]}
    command=base/'status';command.write_text('#!/bin/sh\ncat <<\'DATA\'\n'+json.dumps(data)+'\nDATA\n');command.chmod(0o700)
-   for scene,script,anchor in [('draft',DRAFT,None),('persist',PERSIST,None),('navigation',"check('new document uses current theme',document.documentElement.dataset.theme==='dark');report();",'operations:view:glance'),('operations',OPS,'operations:view:jobs'),('system',SYSTEM,None)]:
+   for scene,script,anchor in [('home',HOME,None),('persist',PERSIST,None),('navigation',"check('new document uses current theme',document.documentElement.dataset.theme==='dark');report();",'operations:view:glance'),('operations',OPS,'operations:view:jobs'),('system',SYSTEM,None)]:
     if args.scenes and scene not in args.scenes:continue
     for size in (['900x600','720x460'] if scene in ['operations','system'] else ['900x600']):run(scene,root,command,script,size,anchor)
   if not args.scenes or 'gate' in args.scenes:
