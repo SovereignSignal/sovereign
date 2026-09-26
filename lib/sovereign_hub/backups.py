@@ -37,6 +37,10 @@ EXCLUDES = ['repository working trees (repos/)', 'local model weights and caches
             'external credentials and machine keys', 'unsent work and other hosts or VM images']
 
 
+class SourceChanged(ValueError):
+    """A consistent snapshot could not be collected; retry once from scratch."""
+
+
 def absolute(value):
     if not isinstance(value, str) or not value or len(value) > 4096 or any(ord(c) < 32 for c in value):
         raise ValueError('Choose a valid absolute path on the archive host.')
@@ -249,7 +253,10 @@ def target_identity(folder):
 
 
 def check_target(ctx, config):
-    folder = directory(config['folder'])
+    try:
+        folder = directory(config['folder'])
+    except (OSError, ValueError):
+        raise ValueError('The backup folder is unavailable. Connect the disk or NAS on the archive host, then refresh or reconnect its folder.') from None
     if target_identity(folder) != config['destination_id']:
         raise ValueError('The backup destination is disconnected or has changed. Reconnect the original disk or NAS.')
     recovery.check_key(config['key'], ctx['root'], Path(ctx['managed']['destination']) if ctx['managed'] else ctx['state'])
@@ -270,7 +277,17 @@ def status(ctx):
             same_disk = folder.stat().st_dev == ctx['root'].stat().st_dev
         except (OSError, ValueError) as e:
             problem = str(e); available = False; same_disk = None
-        destinations.append(dict(folder=config['folder'], available=available, problem=problem,
+        saved = receipt(ctx, 'last-success.json'); restored = receipt(ctx, 'restore.json')
+        latest_present = False
+        if available and re.fullmatch(r'[a-f0-9]{32}', saved.get('backup_id', '')):
+            try:
+                with safe_open(Path(config['folder']) / (saved['backup_id'] + '.sovbackup')) as f:
+                    latest_present = os.fstat(f.fileno()).st_size == saved.get('bytes')
+            except (OSError, ValueError): pass
+        latest_restored = bool(saved.get('backup_id') and restored.get('backup_id') == saved['backup_id']
+                               and restored.get('archive_id', config['archive_id']) == config['archive_id']
+                               and restored.get('state') == 'restored' and restored.get('restore_tested'))
+        destinations.append(dict(latest_present=latest_present, latest_restored=latest_restored, folder=config['folder'], available=available, problem=problem,
                                  same_disk=same_disk, key=config['key'],
                                  last_success=receipt(ctx, 'last-success.json'), last_attempt=receipt(ctx, 'last-attempt.json'),
                                  last_verification=receipt(ctx, 'verification.json'), last_restore=receipt(ctx, 'restore.json')))
@@ -284,7 +301,18 @@ def prepare(ctx, req):
     action = req['action']; config = configuration(ctx)
     plan = dict(protocol=PROTOCOL, action=action, root=str(ctx['root']), host=ctx['machine']['host'],
                 mode=ctx['kind'], scheduled=False, excludes=EXCLUDES)
-    if action == 'configure':
+    if action == 'reconnect':
+        if not config: raise ValueError('Add a backup destination first.')
+        folder = directory(absolute(req.get('folder')))
+        for source in (ctx['root'], ctx['state']):
+            if within(folder, source) or within(source, folder): raise ValueError('Choose a separate backup folder.')
+        if target_identity(folder) != config['destination_id']:
+            raise ValueError('This is a different backup destination. Choose the original folder on the reconnected disk or NAS.')
+        if ctx['managed'] and (within(folder, Path(ctx['managed']['destination'])) or within(Path(ctx['managed']['destination']), folder)):
+            raise ValueError('Choose a separate backup folder outside the installed Hub.')
+        check_target(ctx, dict(config, folder=str(folder)))
+        plan.update(config=config, folder=str(folder), folder_identity=[folder.stat().st_dev, folder.stat().st_ino])
+    elif action == 'configure':
         folder = directory(absolute(req.get('folder')))
         for root in (ctx['root'], ctx['state']):
             if within(folder, root) or within(root, folder): raise ValueError('Choose a separate backup folder outside the archive and operating state.')
@@ -400,22 +428,22 @@ def make_backup(ctx, config):
         with tarfile.open(plain, 'w') as tar:
             for name, (path, before) in sorted(entries.items()):
                 with safe_open(path) as f:
-                    if signature(os.fstat(f.fileno())) != before: raise ValueError('Source changed before backup. Retry when writers are idle.')
+                    if signature(os.fstat(f.fileno())) != before: raise SourceChanged('Source changed before backup. Retry when writers are idle.')
                     header = tarfile.TarInfo(name); header.size=before[2]; header.mode=0o700 if before[5] & 0o111 else 0o600
                     reader = HashReader(f); tar.addfile(header, reader)
-                    if signature(os.fstat(f.fileno())) != before: raise ValueError('Source changed during backup. Retry when writers are idle.')
+                    if signature(os.fstat(f.fileno())) != before: raise SourceChanged('Source changed during backup. Retry when writers are idle.')
                     manifest['files'][name] = {'sha256':reader.hash.hexdigest(),'size':header.size,'mode':header.mode}
             raw=json.dumps(manifest, sort_keys=True).encode()
             if len(raw)>MAX_MANIFEST: raise ValueError('Recovery manifest is too large.')
             h=tarfile.TarInfo('manifest.json');h.size=len(raw);h.mode=0o600;tar.addfile(h,io.BytesIO(raw))
         after,_=inventory(ctx)
-        if after != entries or directory_inventory(ctx) != directories or link_inventory(ctx) != links: raise ValueError('Source inventory changed during backup. Retry when writers are idle.')
+        if after != entries or directory_inventory(ctx) != directories or link_inventory(ctx) != links: raise SourceChanged('Source inventory changed during backup. Retry when writers are idle.')
         for name,(path,before) in entries.items():
             with safe_open(path) as f:
                 reader=HashReader(f)
                 while reader.read(BLOCK): pass
                 if reader.hash.hexdigest()!=manifest['files'][name]['sha256'] or signature(os.fstat(f.fileno()))!=before:
-                    raise ValueError('Source changed during backup. Retry when writers are idle.')
+                    raise SourceChanged('Source changed during backup. Retry when writers are idle.')
         crypt('seal',config['key'],plain,sealed)
         # Authenticate the saved bytes and manifest before publishing success.
         checked=work/'checked.tar';crypt('open',config['key'],sealed,checked)
@@ -510,7 +538,7 @@ def verify_or_restore(ctx,config,plan):
         metadata=inspect_tar(plain)
         if not restore and metadata.get('archive_id')!=config['archive_id']: raise ValueError('This backup belongs to a different archive.')
         result=dict(state='verified',backup=plan['backup'],backup_id=metadata['backup_id'],finished=time.time(),
-                    files=len(metadata['files']),integrity_verified=True,scheduled=False)
+                    files=len(metadata['files']),archive_id=metadata['archive_id'],integrity_verified=True,scheduled=False)
         if restore:
             staged=work/'restored';staged.mkdir(mode=0o700);inspect_tar(plain,staged)
             destination=Path(plan['destination'])
@@ -593,6 +621,10 @@ def operate(req, serve=False):
     with locked(ctx['store']/'operation.lock'):
         # Revalidate state after acquiring the operation lock.
         if prepare(ctx,req)['token']!=req['token']:raise ValueError('Configuration changed. Preview again.')
+        if action=='reconnect':
+            config=dict(plan['config'], folder=plan['folder'])
+            atomic(ctx['store']/'config.json', config)
+            return dict(protocol=PROTOCOL, applied=True, state='reconnected', config=config, scheduled=False)
         if action=='configure':
             folder=Path(plan['folder']);key=Path(plan['key'])
             if plan['create_key']:write_new(key,os.urandom(32))
@@ -617,7 +649,19 @@ def operate(req, serve=False):
         attempt=dict(action=action,state='running',started=time.time())
         atomic(ctx['store']/'last-attempt.json',attempt)
         try:
-            result=make_backup(ctx,config) if action=='backup' else verify_or_restore(ctx,config,plan)
+            if action=='backup':
+                for number in (1, 2):
+                    atomic(ctx['store']/'last-attempt.json', dict(attempt, attempt_number=number))
+                    try:
+                        result=make_backup(ctx,config)
+                        result['attempts']=number
+                        break
+                    except SourceChanged:
+                        if number==2: raise
+                        # The failed attempt has already discarded all temporary files.
+                        # Only source contention is retried, never storage/key errors.
+            else:
+                result=verify_or_restore(ctx,config,plan)
         except BaseException as exc:
             atomic(ctx['store']/'last-attempt.json',dict(attempt,state='failed',finished=time.time(),error=str(exc)[:1000]));raise
         atomic(ctx['store']/'last-attempt.json',dict(attempt,**result))

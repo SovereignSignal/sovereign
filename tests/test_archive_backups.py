@@ -98,11 +98,55 @@ class ArchiveBackups(unittest.TestCase):
         self.configure();original=b.inventory;calls=[0]
         def changing(ctx):
             calls[0]+=1
-            if calls[0]==5:self.note.write_text('changed during collection')
+            if calls[0] in (5,7):self.note.write_text('changed during collection '+str(calls[0]))
             return original(ctx)
         with patch.object(b,'inventory',side_effect=changing):
             with self.assertRaisesRegex(ValueError,'changed'):self.request('backup',True)
         self.assertEqual(list(self.folder.glob('*.sovbackup')),[])
+    def test_source_contention_retries_once_and_saves_consistent_new_content(self):
+        self.configure(); original=b.inventory; calls=[0]
+        def changing(ctx):
+            calls[0]+=1
+            if calls[0]==5:self.note.write_text('new consistent content')
+            return original(ctx)
+        with patch.object(b,'inventory',side_effect=changing):saved=self.request('backup',True)
+        self.assertEqual(saved['attempts'],2)
+        self.assertEqual(len(list(self.folder.glob('*.sovbackup'))),1)
+        self.request('restore',True,backup=saved['backup'],destination=str(self.restore),key=str(self.key))
+        self.assertEqual((self.restore/'archive/knowledge/concepts/decision.md').read_text(),'new consistent content')
+    def test_storage_error_is_not_retried(self):
+        self.configure()
+        with patch.object(b,'make_backup',side_effect=OSError('disk disconnected')) as make:
+            with self.assertRaises(OSError):self.request('backup',True)
+        self.assertEqual(make.call_count,1)
+    def test_reconnect_after_restart_preserves_history_and_refuses_other_destination(self):
+        saved=self.backup(); ctx=b.context(str(self.archive)); before=b.receipt(ctx,'last-success.json')
+        moved=self.base/'remounted';self.folder.rename(moved)
+        # Simulate a newly launched app: only persisted configuration is available.
+        self.assertFalse(self.request('status')['destinations'][0]['available'])
+        wrong=self.base/'wrong';wrong.mkdir()
+        with self.assertRaisesRegex(ValueError,'different backup'):self.request('reconnect',True,folder=str(wrong))
+        plan=self.request('reconnect',folder=str(moved))
+        self.assertEqual(b.configuration(ctx)['folder'],str(self.folder))
+        self.request('reconnect',True,folder=str(moved))
+        self.assertEqual(b.receipt(ctx,'last-success.json'),before)
+        self.assertEqual(b.configuration(ctx)['archive_id'],saved['archive_id'])
+        self.assertTrue(self.request('status')['destinations'][0]['latest_present'])
+        self.request('verify',True,backup=str(moved/Path(saved['backup']).name))
+    def test_reconnect_preview_rejects_changed_identity(self):
+        self.configure();plan=self.request('reconnect',folder=str(self.folder))
+        (self.folder/'.sovereign-backup-destination.json').write_text('{"version":1,"id":"'+'a'*32+'"}')
+        with self.assertRaises(ValueError):
+            b.operate(dict(protocol=1,root=str(self.archive),action='reconnect',folder=str(self.folder),apply=True,token=plan['token']))
+    def test_status_does_not_transfer_restore_proof_to_new_backup_or_missing_copy(self):
+        saved=self.backup()
+        self.request('restore',True,backup=saved['backup'],destination=str(self.restore),key=str(self.key))
+        self.assertTrue(self.request('status')['destinations'][0]['latest_restored'])
+        latest=self.request('backup',True)
+        self.assertFalse(self.request('status')['destinations'][0]['latest_restored'])
+        self.assertTrue(self.request('status')['destinations'][0]['latest_present'])
+        Path(latest['backup']).unlink()
+        self.assertFalse(self.request('status')['destinations'][0]['latest_present'])
     def test_symlink_source_and_key_refused(self):
         self.configure();(self.archive/'linked').symlink_to(self.key)
         with self.assertRaises(ValueError):self.request('backup',True)

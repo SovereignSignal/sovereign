@@ -26,6 +26,8 @@ if(SCENE==='narrow'){
 }else{
  apply().click();await wait(()=>document.querySelector('.ab-card')&&!window.SovBackups.busy);
  check('Destination saved on correct host',replies.some(r=>r.state==='configured'&&r.applied));
+ check('Configured archive opens backup action',document.querySelector('[data-ab-action="backup"]').getAttribute('aria-pressed')==='true');
+ check('Manual cadence is explicit',document.querySelector('.ab-mode').textContent.includes('Automatic backups are not enabled'));
  document.querySelector('[data-ab-action="backup"]').click();preview().click();await wait(()=>!apply().disabled);
  check('Backup preview includes files',replies.at(-1).files>0);apply().click();await wait(()=>replies.some(r=>r.state==='completed')&&!window.SovBackups.busy);
  check('Saved bytes authenticated',replies.find(r=>r.state==='completed')?.integrity_verified===true);
@@ -33,6 +35,10 @@ if(SCENE==='narrow'){
  document.querySelector('[data-ab-action="restore"]').click();input('destination',RESTORE);preview().click();await wait(()=>!apply().disabled);apply().click();
  await wait(()=>replies.some(r=>r.state==='restored')&&!window.SovBackups.busy);
  check('Restore stays inactive',replies.find(r=>r.state==='restored')?.activation_required===true&&replies.find(r=>r.state==='restored')?.scheduled===false);
+ check('Latest backup restore proof is visible',document.querySelector('.ab-card').textContent.includes('Restore tested'));
+ document.querySelector('[data-ab-action="reconnect"]').click();input('folder',FOLDER);preview().click();await wait(()=>!apply().disabled);apply().click();
+ await wait(()=>replies.some(r=>r.state==='reconnected')&&!window.SovBackups.busy);
+ check('Reconnect keeps successful restore proof',document.querySelector('.ab-card').textContent.includes('Restore tested'));
  check('Navigation released',window.sovCanQuit());
  if(SCENE==='remote'){
   check('Authority is visible',document.querySelector('.archive-backups').textContent.includes('fixture-hub'));
@@ -68,7 +74,7 @@ def main():
     (home/'.brain-root').write_text(str(archive));(home/'.brain-hub').write_text('fixture-hub:'+str(authoritative))
     key=hubhome/'recovery.key'
     bridge=folder/'fixture-ssh';backend=a.app/'Contents/Resources/backend/bin/sov-backup';runtime=a.app/'Contents/Resources/runtime/bin/python3'
-    bridge.write_text('#!'+sys.executable+'\nimport os,sys,subprocess,json\nfrom pathlib import Path\nraw=sys.stdin.read()\nwith open('+repr(str(folder/'requests'))+',"a") as f:f.write(raw+"\\n")\nrequests=Path('+repr(str(folder/'requests'))+').read_text().splitlines()\nif json.loads(raw).get("action")=="status" and sum(json.loads(line).get("action")=="status" for line in requests)>=5:\n print(json.dumps({"protocol":1,"error":"Fixture authority unavailable"}));sys.exit(1)\nenv=dict(os.environ,HOME='+repr(str(hubhome))+')\nenv.pop("SOV_PYTHON_RUNTIME",None)\nr=subprocess.run(['+repr(str(runtime))+',"-I","-B",'+repr(str(backend))+',"--serve"],input=raw,text=True,env=env)\nsys.exit(r.returncode)\n');bridge.chmod(0o700);env['SOV_QA_ARCHIVE_BACKUP_SSH']=str(bridge)
+    bridge.write_text('#!'+sys.executable+'\nimport os,sys,subprocess,json\nfrom pathlib import Path\nraw=sys.stdin.read()\nwith open('+repr(str(folder/'requests'))+',"a") as f:f.write(raw+"\\n")\nrequests=Path('+repr(str(folder/'requests'))+').read_text().splitlines()\nif json.loads(raw).get("action")=="status" and sum(json.loads(line).get("action")=="status" for line in requests)>=6:\n print(json.dumps({"protocol":1,"error":"Fixture authority unavailable"}));sys.exit(1)\nenv=dict(os.environ,HOME='+repr(str(hubhome))+')\nenv.pop("SOV_PYTHON_RUNTIME",None)\nr=subprocess.run(['+repr(str(runtime))+',"-I","-B",'+repr(str(backend))+',"--serve"],input=raw,text=True,env=env)\nsys.exit(r.returncode)\n');bridge.chmod(0o700);env['SOV_QA_ARCHIVE_BACKUP_SSH']=str(bridge)
    (authoritative/'example-link').symlink_to('knowledge/concepts/example.md')
    before=tree_hash(archive)
    js=PROBE

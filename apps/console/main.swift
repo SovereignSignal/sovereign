@@ -570,7 +570,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
               let root = Settings.archive, let requested = request["root"] as? String,
               Settings.archiveKey(root) == Settings.archiveKey(requested),
               let action = request["action"] as? String,
-              ["status", "browse", "configure", "backup", "verify", "restore"].contains(action) else {
+              ["status", "browse", "configure", "reconnect", "backup", "verify", "restore"].contains(action) else {
             fail("Select an archive before managing its backups."); return
         }
         var payload = request

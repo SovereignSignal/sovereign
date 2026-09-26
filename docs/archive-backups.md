@@ -45,7 +45,7 @@ A completed backup proves what was present on the authoritative host. It does no
 
 **Completed** means the encrypted saved bytes were opened again and the file inventory and hashes verified before publication. **Last attempt** can show a newer failure while the previous completed backup remains available. **Restore** records successful extraction into a separate folder; it does not claim a replacement host has been activated or live producers have resumed.
 
-Source changes detected during inventory or the second content check fail the backup with a retry message. No producer is paused automatically. A busy archive may need a quiet period before a backup completes.
+Source changes detected during collection or the second content check discard the incomplete attempt and retry once from a fresh inventory. Continued changes stop with a retry message. Storage and key errors are not retried. No producer is paused automatically. A busy archive may need a quiet period before a backup completes.
 
 ## Restore and authority transfer
 
@@ -70,3 +70,11 @@ Archive links are recorded without following them during collection. Their resol
 Run the release checks plus `tests/test_archive_backups.py` and `apps/console/test-archive-backups.py` against the packaged candidate. The native fixture driver supports `--app` and `--evidence`; its local, remote and narrow scenes use temporary homes, archives and a simulated SSH transport. No live producer is needed.
 
 Before a live rollout, record source versions, roles, pointers, producer IDs, permissions, schedules and delivery/acceptance checkpoints on the affected hosts. Install the compatible authoritative backend first, verify read-only capability, then enable the client UI. Compare the same inventory afterward and demonstrate direct destination backup and separate-folder recovery. Retain the previous package and configuration for rollback. Retiring older backup jobs is a separate reviewed action after the restore pilot succeeds.
+
+## Reconnecting a disk or NAS
+
+Connect the storage on the computer named above the backup controls, then refresh. If the mount returns at a different path, choose **Reconnect folder** and select the original backup folder. Preview checks the destination identity before saving the new path. The archive identity, key, backup files and receipts remain unchanged. Another folder or disk with no matching destination marker is refused. The remote folder picker offers **Connected drives** and **Home folder** shortcuts.
+
+Sovereign does not store NAS passwords or silently mount a share. Reconnection after an actual logout or reboot still depends on the computer's storage login. The interface explicitly shows that this release runs on demand; no new recurring job or retention deletion is installed.
+
+The saved-copy check confirms the latest file is present with its recorded size; it is not a new cryptographic integrity check. Use **Check saved backup** for that. **Latest backup recovery** reports a restore test only when the restore receipt matches that backup. A newer backup needs its own restore test; an older successful test remains visible as history.
