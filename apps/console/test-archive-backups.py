@@ -13,6 +13,13 @@ await wait(()=>document.querySelector('[data-ab-field="folder"]'));
 check('Notes workspace remains removed',!document.getElementById('notes-tab')&&!document.getElementById('editor'));
 check('Archive backup navigation selected',document.querySelector('#archive-backups-tab').getAttribute('aria-pressed')==='true');
 check('Archive backup independent of infrastructure monitor',document.querySelector('[data-goto-view="backups"]')?.textContent==='Infrastructure copies');
+check('Backup choices include external drive, NAS and folder',document.querySelectorAll('[data-ab-storage]').length===3);
+document.querySelector('[data-ab-storage="folder"]').click();
+check('Same disk limitation is explained',document.querySelector('.ab-storage').textContent.includes('same disk cannot protect'));
+document.querySelector('[data-ab-storage="external"]').click();
+check('External drive choice does not pretend to format storage',document.querySelector('.ab-storage').textContent.includes('does not format drives'));
+check('Protection summary offers first destination',document.querySelector('#ab-next').textContent==='Choose a destination');
+check('Offsite and independent key are explicitly unverified',document.querySelector('.ab-coverage').textContent.includes('Not verified here')&&document.querySelector('.ab-coverage').textContent.includes('Independent copy not verified'));
 const input=(field,value)=>{const e=document.querySelector('[data-ab-field="'+field+'"]');e.value=value;e.dispatchEvent(new Event('input',{bubbles:true}));};
 const preview=()=>document.querySelector('#ab-preview'),apply=()=>document.querySelector('#ab-apply');
 const rejected=replies.length;post({cmd:'archiveBackup',root:ARCHIVE,action:'configure',folder:FOLDER,key:KEY,apply:true});
@@ -32,10 +39,13 @@ if(SCENE==='narrow'){
  check('Backup preview includes files',replies.at(-1).files>0);apply().click();await wait(()=>replies.some(r=>r.state==='completed')&&!window.SovBackups.busy);
  check('Saved bytes authenticated',replies.find(r=>r.state==='completed')?.integrity_verified===true);
  check('Backup does not claim restore drill',!replies.find(r=>r.state==='completed')?.restore_tested);
+ check('Next action tests the saved backup',document.querySelector('#ab-next').textContent==='Test a restore');
+ check('Backup age is visible',document.querySelector('.ab-age').textContent.includes('Backup age at that check'));
  document.querySelector('[data-ab-action="restore"]').click();input('destination',RESTORE);preview().click();await wait(()=>!apply().disabled);apply().click();
  await wait(()=>replies.some(r=>r.state==='restored')&&!window.SovBackups.busy);
  check('Restore stays inactive',replies.find(r=>r.state==='restored')?.activation_required===true&&replies.find(r=>r.state==='restored')?.scheduled===false);
  check('Latest backup restore proof is visible',document.querySelector('.ab-card').textContent.includes('Restore tested'));
+ check('Successful same-disk restore still warns about disk failure',document.querySelector('.ab-readiness').textContent.includes('disk failure'));
  document.querySelector('[data-ab-action="reconnect"]').click();input('folder',FOLDER);preview().click();await wait(()=>!apply().disabled);apply().click();
  await wait(()=>replies.some(r=>r.state==='reconnected')&&!window.SovBackups.busy);
  check('Reconnect keeps successful restore proof',document.querySelector('.ab-card').textContent.includes('Restore tested'));
@@ -45,6 +55,7 @@ if(SCENE==='narrow'){
   document.querySelector('#ab-refresh').click();await wait(()=>!window.SovBackups.busy);
   check('Unreachable authority shows dated prior receipts',document.querySelector('.ab-card')?.textContent.includes('previously observed receipts')&&document.querySelector('.ab-card h3')?.textContent==='Destination status unavailable');
   check('Unreachable authority cannot fall back to local backup',!document.querySelector('#ab-apply'));
+  check('Unreachable authority cannot retain a healthy protection summary',document.querySelector('.ab-readiness').textContent.includes('fresh check'));
  }
 }
 post({cmd:'clientError',where:'archive-backups-qa',msg:JSON.stringify({checks,failures:Object.keys(checks).filter(k=>!checks[k])})});

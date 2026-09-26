@@ -5,12 +5,20 @@ The Backups tab protects the selected archive, its decisions and source-host ope
 ## First backup
 
 1. Open an archive and choose **Backups**.
-2. Choose an existing backup folder on another disk or a mounted NAS. For a connected archive, choose a folder reachable by its authoritative host; the app names that host above the controls.
+2. Choose **External drive**, **NAS or network folder**, or **Folder on this computer**, then select a backup folder. These choices guide the picker; they do not format storage or certify its physical location. External and network choices start at connected drives. For a connected archive, choose a folder reachable by its authoritative host; the app names that host above the controls. A drive attached only to the client cannot receive a backup from the authority.
 3. Choose where to keep the recovery key. An existing 32-byte owner-only key can be reused, or the app creates one at the chosen path. Keep an independent secure copy outside the archive and backup destination. Losing the key makes the encrypted backup unreadable.
 4. Preview and save the destination, then preview and run **Back up now**.
 5. Use **Restore to a new folder** to demonstrate recovery. Existing files are never overwritten.
 
 This first version manages one destination per archive and runs on demand. Changing the destination preserves previous backup files and archives their receipts locally. Additional destinations, schedules, retention and direct cloud-storage adapters are later work. No schedule is created by saving a destination.
+
+## Protection at a glance
+
+The opening summary offers one next action based on the last successful status observation: choose a destination, save a backup, test a restore, or reconnect and refresh. Missing files, unavailable hosts and older hosts without copy/recovery checks cannot show a successful protection summary. A successful same-filesystem restore still warns about disk failure. Different filesystem identifiers do not prove physical independence.
+
+Backup age is measured at the displayed status observation, not presented as a continuously live check. The collection start time marks the earliest work that may be absent from that backup. A passed restore test applies to that saved backup, not later changes or future recoverability.
+
+**What still needs attention** names manual operation, retained old backups, unverified offsite location, an unverified independent key copy, and producer delivery coverage. The producer review button opens the existing producer controls. This is an explicit coverage boundary, not a new producer-health check. A local folder is useful for a recovery rehearsal; an independent disk is needed for disk-failure protection. Cloud providers without a mounted filesystem are not supported by this picker.
 
 ## Hosts and connections
 

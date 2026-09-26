@@ -5,7 +5,9 @@
 # kept in the Dock). --open launches it. Ad-hoc signed: fine for a locally built app.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD="$HERE/build"; APP="$BUILD/Sovereign.app"
+# Keep preview bundles outside folders captured by archive producers when requested.
+BUILD="${SOV_CONSOLE_BUILD_DIR:-$HERE/build}"; APP="$BUILD/Sovereign.app"
+case "$BUILD" in /*) ;; *) echo "SOV_CONSOLE_BUILD_DIR must be absolute." >&2; exit 64;; esac
 INSTALL=0; OPEN=0; PREVIEW=0
 for a in "$@"; do case "$a" in --install) INSTALL=1;; --open) OPEN=1;; --preview) PREVIEW=1;; *) echo "unknown option: $a" >&2; exit 64;; esac; done
 if [ "$PREVIEW" -eq 1 ]; then APP="$BUILD/Sovereign Preview.app"; fi

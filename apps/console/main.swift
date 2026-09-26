@@ -159,6 +159,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             } else {
                 let panel = NSOpenPanel(); panel.canChooseDirectories = field == "folder"
                 panel.canChooseFiles = field != "folder"; panel.allowsMultipleSelection = false
+                if field == "folder" {
+                    panel.title = "Choose a backup folder"
+                    panel.canCreateDirectories = true
+                    panel.directoryURL = URL(fileURLWithPath: d["location"] as? String == "volumes" ? "/Volumes" : NSHomeDirectory())
+                }
                 if panel.runModal() == .OK, let url = panel.url { deliver("archiveBackupPicked", ["field": field, "path": url.path]) }
             }
         case "hubDefaults":
