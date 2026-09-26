@@ -148,12 +148,15 @@ def inventory(ctx):
         for current, dirs, files in os.walk(base, followlinks=False):
             current = Path(current)
             dirs[:] = sorted(d for d in dirs if d not in excluded)
-            for name in dirs:
+            for name in list(dirs):
                 if (current / name).is_symlink():
+                    if prefix == 'archive':
+                        dirs.remove(name); continue # recorded without following by link_inventory
                     raise ValueError('A linked directory cannot be backed up: ' + str(current / name))
             for name in sorted(files):
                 if name.endswith('.pyc') or name in ('operation.lock', '.DS_Store'): continue
                 p = current / name
+                if p.is_symlink() and prefix == 'archive': continue
                 # Bundled engines/runtime may use internal file aliases. Materialize
                 # only links confined to that explicit source tree, never archive links.
                 if p.is_symlink() and prefix != 'archive':
@@ -186,11 +189,30 @@ def directory_inventory(ctx):
         for current, dirs, _ in os.walk(directory(base), followlinks=False):
             current = Path(current)
             dirs[:] = sorted(d for d in dirs if d not in excluded)
+            if prefix == 'archive': dirs[:] = [d for d in dirs if not (current/d).is_symlink()]
             if any((current / d).is_symlink() for d in dirs):
                 raise ValueError('Linked directories cannot be backed up.')
             names.add(str(PurePosixPath(prefix) / current.relative_to(base)))
             if len(names) > MAX_ENTRIES: raise ValueError('Too many recovery directories.')
     return sorted(names)
+
+
+def link_inventory(ctx):
+    # Preserve references, never follow them while collecting archive content.
+    # Flatten their resolved target to a portable path confined to this archive.
+    root = ctx['root']; links = {}
+    for current, dirs, files in os.walk(root, followlinks=False):
+        dirs[:] = [d for d in dirs if d != 'repos']
+        for name in dirs + files:
+            path = Path(current)/name
+            if not path.is_symlink(): continue
+            try: target = path.resolve(strict=False)
+            except (RuntimeError,OSError): raise ValueError('A cyclic or unreadable archive link cannot be backed up.') from None
+            if not within(target,root): raise ValueError('An archive link leaves the archive: '+str(path))
+            links[str(PurePosixPath('archive')/path.relative_to(root))] = str(PurePosixPath('archive')/target.relative_to(root))
+            if len(links)>MAX_ENTRIES: raise ValueError('Too many archive links.')
+        dirs[:] = [d for d in dirs if not (Path(current)/d).is_symlink()]
+    return links
 
 
 @contextlib.contextmanager
@@ -288,7 +310,8 @@ def prepare(ctx, req):
             plan.update(config=config, key_hash=file_hash(Path(config['key'])))
         if action == 'backup':
             entries, size = inventory(ctx)
-            plan.update(files=len(entries), source_bytes=size,
+            links = link_inventory(ctx)
+            plan.update(files=len(entries)+len(links), source_bytes=size,
                         free_bytes=shutil.disk_usage(folder).free,
                         includes=['archive and Git history', 'governance state and source-host configuration', 'recovery engine and runtime'])
         else:
@@ -331,7 +354,7 @@ def publish(source, destination):
 def make_backup(ctx, config):
     folder = check_target(ctx, config); ident = uuid.uuid4().hex
     output = folder / (ident + '.sovbackup')
-    entries, size = inventory(ctx); directories = directory_inventory(ctx)
+    entries, size = inventory(ctx); directories = directory_inventory(ctx); links = link_inventory(ctx)
     # Plaintext staging stays in a private local temporary directory. Only
     # authenticated ciphertext is ever written to the selected destination.
     if shutil.disk_usage(folder).free < size + 128 * 1024 * 1024 or shutil.disk_usage(tempfile.gettempdir()).free < 2 * size + 128 * 1024 * 1024:
@@ -340,7 +363,7 @@ def make_backup(ctx, config):
         work = Path(work); plain = work / 'data.tar'; sealed = Path(encrypted_work) / 'encrypted'
         manifest = dict(version=FORMAT, archive_id=config['archive_id'], backup_id=ident, created=time.time(),
                         host=ctx['machine']['host'], mode=ctx['kind'], source_root=str(ctx['root']),
-                        scheduled=False, excludes=EXCLUDES, directories=directories, files={})
+                        scheduled=False, excludes=EXCLUDES, directories=directories, links=links, files={})
         with tarfile.open(plain, 'w') as tar:
             for name, (path, before) in sorted(entries.items()):
                 with safe_open(path) as f:
@@ -353,7 +376,7 @@ def make_backup(ctx, config):
             if len(raw)>MAX_MANIFEST: raise ValueError('Recovery manifest is too large.')
             h=tarfile.TarInfo('manifest.json');h.size=len(raw);h.mode=0o600;tar.addfile(h,io.BytesIO(raw))
         after,_=inventory(ctx)
-        if after != entries or directory_inventory(ctx) != directories: raise ValueError('Source inventory changed during backup. Retry when writers are idle.')
+        if after != entries or directory_inventory(ctx) != directories or link_inventory(ctx) != links: raise ValueError('Source inventory changed during backup. Retry when writers are idle.')
         for name,(path,before) in entries.items():
             with safe_open(path) as f:
                 reader=HashReader(f)
@@ -368,7 +391,7 @@ def make_backup(ctx, config):
         with open(sealed,'rb') as f: os.fsync(f.fileno())
         publish(sealed,output)
         result=dict(state='completed',backup=str(output),backup_id=ident,archive_id=config['archive_id'],
-                    finished=time.time(),files=len(entries),bytes=output.stat().st_size,
+                    finished=time.time(),files=len(entries)+len(links),bytes=output.stat().st_size,
                     sha256=file_hash(output),integrity_verified=True,restore_tested=False)
     atomic(ctx['store']/'last-success.json',result)
     return result
@@ -414,8 +437,26 @@ def inspect_tar(path, extract=None):
             or any(str(parent) in actual for parent in PurePosixPath(name).parents)):
             raise ValueError('Unsafe recovery directory.')
         seen.add(name)
+    links = metadata.get('links')
+    if not isinstance(links,dict) or len(links)>MAX_ENTRIES: raise ValueError('Invalid archive links.')
+    for name,target in links.items():
+        for value in (name,target):
+            if (not isinstance(value,str) or not value or any(x in ('','.','..') for x in value.split('/'))
+                or '\\' in value or any(ord(c)<32 for c in value) or PurePosixPath(value).parts[0]!='archive'):
+                raise ValueError('Unsafe archive link.')
+        if name=='archive' or name in actual or name in seen or target in links:
+            raise ValueError('Conflicting archive link.')
+        if any(str(parent) in links for parent in PurePosixPath(target).parents):
+            raise ValueError('Archive link target traverses another link.')
+    for name in list(actual)+list(seen)+list(links):
+        if any(str(parent) in links for parent in PurePosixPath(name).parents):
+            raise ValueError('Recovery entry traverses an archive link.')
     if extract:
         for name in directories: (extract/name).mkdir(parents=True,exist_ok=True,mode=0o700)
+        # All regular writes and validation finish before creating confined links.
+        for name,target in links.items():
+            path=extract/name;path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+            path.symlink_to(os.path.relpath(extract/target,path.parent))
     if 'archive/CLAUDE.md' not in actual: raise ValueError('Recovery archive is incomplete.')
     required = ('hub/config.json','hub/bin/sov','hub/python/bin/python3') if metadata.get('mode')=='managed' else ('engine/bin/sov','runtime/bin/python3')
     if any(x not in actual for x in required): raise ValueError('Recovery engine is incomplete.')

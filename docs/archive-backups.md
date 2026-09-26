@@ -61,9 +61,9 @@ Version 2 uses the existing native CryptoKit AES-GCM primitive with 4 MiB authen
 
 Encryption uses bounded memory. Creation stages plaintext in private local temporary storage and writes only ciphertext to the selected backup destination. Completed backups use an exclusive atomic rename, without requiring hard links. A filesystem that cannot provide this operation fails safely; actual NAS compatibility must be verified in a restore pilot.
 
-The implementation bounds payload to 1 TiB, files and directories to 500,000 each, and the manifest to 64 MiB. It requires additional local staging space, approximately twice the source size plus overhead, and destination space for the encrypted copy. These are safety ceilings, not a tested maximum-size claim. Acceptance includes a 129 MiB file, exceeding the earlier per-file capsule limit.
+The implementation bounds payload to 1 TiB, files, directories and internal links to 500,000 each, and the manifest to 64 MiB. It requires additional local staging space, approximately twice the source size plus overhead, and destination space for the encrypted copy. These are safety ceilings, not a tested maximum-size claim. Acceptance includes a 512 MiB file, exceeding the earlier per-file capsule limit.
 
-Linked archive entries are rejected. Internal file aliases in the bundled engine/runtime may be materialized only within their source tree. Directory links, unsafe restore paths and duplicate entries are rejected. The previous capsule format remains readable through `sov hub restore`; the new tab uses version 2.
+Archive links are recorded without following them during collection. Their resolved targets must stay inside the archive, including broken historical references. Recovery converts them into portable relative links only after all regular files have been validated and written. Links cannot escape the archive, be used as extraction parents or traverse other restored links. Internal file aliases in the bundled engine/runtime may be materialized only within their source tree. Engine directory links, unsafe restore paths and duplicate entries are rejected. The previous capsule format remains readable through `sov hub restore`; the new tab uses version 2.
 
 ## Validation and rollout
 

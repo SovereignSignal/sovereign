@@ -143,11 +143,11 @@ class ArchiveBackups(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Upgrade'):b.operate(dict(protocol=99,root=str(self.archive),action='status'))
     def test_source_larger_than_old_file_limit(self):
         self.configure();large=self.archive/'raw/large.md'
-        with large.open('wb') as f:f.truncate(129*1024*1024)
+        with large.open('wb') as f:f.truncate(512*1024*1024)
         plan=self.request('backup');self.assertGreater(plan['source_bytes'],128*1024*1024)
         saved=self.request('backup',True)
         self.request('restore',True,backup=saved['backup'],destination=str(self.restore),key=str(self.key))
-        self.assertEqual((self.restore/'archive/raw/large.md').stat().st_size,129*1024*1024)
+        self.assertEqual((self.restore/'archive/raw/large.md').stat().st_size,512*1024*1024)
 
     def test_reordered_and_cross_stream_frames_are_rejected(self):
         self.configure();plain=self.base/'plain';plain.write_bytes(b'a'*(5*1024*1024))
@@ -175,6 +175,32 @@ class ArchiveBackups(unittest.TestCase):
         env={k:v for k,v in os.environ.items() if k!='SOV_PYTHON_RUNTIME'}
         with patch.dict(os.environ,env,clear=True),patch.object(core,'python_runtime',side_effect=ValueError('No adjacent runtime')):
             self.assertEqual(b.recovery_runtime(),runtime)
+
+    def test_internal_file_directory_and_broken_links_roundtrip_without_following(self):
+        (self.archive/'note-link').symlink_to(self.note)
+        (self.archive/'directory-link').symlink_to('knowledge')
+        (self.archive/'broken-link').symlink_to('missing-historical-file')
+        saved=self.backup()
+        self.request('restore',True,backup=saved['backup'],destination=str(self.restore),key=str(self.key))
+        archive=self.restore/'archive'
+        self.assertEqual((archive/'note-link').read_bytes(),self.note.read_bytes())
+        self.assertEqual((archive/'note-link').resolve(),archive/'knowledge/concepts/decision.md')
+        self.assertEqual((archive/'directory-link').resolve(),archive/'knowledge')
+        self.assertTrue((archive/'broken-link').is_symlink());self.assertFalse((archive/'broken-link').exists())
+
+    def test_manifest_cannot_create_escaping_or_traversed_links(self):
+        saved=self.backup();plain=self.base/'plain.tar';b.crypt('open',self.key,Path(saved['backup']),plain)
+        for links in ({'archive/link':'outside'},{'archive/link':'archive/../outside'},
+                      {'archive/link':'archive/knowledge','archive/second':'archive/link/concepts'},
+                      {'archive/knowledge':'archive/raw'}):
+            bad=self.base/'bad-links.tar'
+            with tarfile.open(plain) as src,tarfile.open(bad,'w') as dst:
+                for member in src:
+                    raw=src.extractfile(member).read()
+                    if member.name=='manifest.json':
+                        metadata=json.loads(raw);metadata['links']=links;raw=json.dumps(metadata).encode();member.size=len(raw)
+                    dst.addfile(member,io.BytesIO(raw))
+            with self.assertRaises(ValueError):b.inspect_tar(bad)
 
     def test_template_state_and_checkpoints_restored_as_inactive_evidence(self):
         self.extra_patch.stop()

@@ -68,6 +68,7 @@ def main():
     key=hubhome/'recovery.key'
     bridge=folder/'fixture-ssh';backend=a.app/'Contents/Resources/backend/bin/sov-backup';runtime=a.app/'Contents/Resources/runtime/bin/python3'
     bridge.write_text('#!'+sys.executable+'\nimport os,sys,subprocess,json\nfrom pathlib import Path\nraw=sys.stdin.read()\nwith open('+repr(str(folder/'requests'))+',"a") as f:f.write(raw+"\\n")\nrequests=Path('+repr(str(folder/'requests'))+').read_text().splitlines()\nif json.loads(raw).get("action")=="status" and sum(json.loads(line).get("action")=="status" for line in requests)>=5:\n print(json.dumps({"protocol":1,"error":"Fixture authority unavailable"}));sys.exit(1)\nenv=dict(os.environ,HOME='+repr(str(hubhome))+')\nenv.pop("SOV_PYTHON_RUNTIME",None)\nr=subprocess.run(['+repr(str(runtime))+',"-I","-B",'+repr(str(backend))+',"--serve"],input=raw,text=True,env=env)\nsys.exit(r.returncode)\n');bridge.chmod(0o700);env['SOV_QA_ARCHIVE_BACKUP_SSH']=str(bridge)
+   (authoritative/'example-link').symlink_to('knowledge/concepts/example.md')
    before=tree_hash(archive)
    js=PROBE
    for token,value in [('ARCHIVE',str(archive)),('FOLDER',str(destination)),('KEY',str(key)),('RESTORE',str(restore)),('SCENE',scene)]:js=js.replace(token,json.dumps(value))
@@ -81,6 +82,8 @@ def main():
     assert not (home/'Library/LaunchAgents').exists()
     if scene!='narrow':
      assert (restore/'archive/knowledge/concepts/example.md').read_bytes()==(authoritative/'knowledge/concepts/example.md').read_bytes()
+     assert (restore/'archive/example-link').resolve()==restore/'archive/knowledge/concepts/example.md'
+     r[0]['checks']['Internal link stays inside restored archive']=True
      check=subprocess.run([str(restore/'runtime/bin/python3'),'-I','-B',str(restore/'engine/bin/sov-load'),'example','--root',str(restore/'archive')],capture_output=True,text=True)
      assert check.returncode==0 and 'fixture' in check.stdout.lower() if scene=='remote' else check.returncode==0 and 'Trusted note' in check.stdout,(check.stdout,check.stderr)
      r[0]['checks']['Restored engine loads context without installed source']=True
