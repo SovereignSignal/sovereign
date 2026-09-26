@@ -24,7 +24,7 @@ import time
 import uuid
 
 import brain_discovery
-from sovereign_intake.common import atomic, directory, exclusive, json_read, locked, read_under
+from sovereign_intake.common import atomic, directory, json_read, locked, read_under
 from . import core, recovery
 
 PROTOCOL = 1
@@ -373,6 +373,17 @@ def publish(source, destination):
         raise
 
 
+def write_new(path, data):
+    with tempfile.TemporaryDirectory(prefix='.sovereign-writing-', dir=path.parent) as work:
+        pending = Path(work) / 'pending'
+        with open(pending, 'xb') as f:
+            os.chmod(pending, 0o600)
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        publish(pending, path)
+
+
 def make_backup(ctx, config):
     folder = check_target(ctx, config); ident = uuid.uuid4().hex
     output = folder / (ident + '.sovbackup')
@@ -584,9 +595,9 @@ def operate(req, serve=False):
         if prepare(ctx,req)['token']!=req['token']:raise ValueError('Configuration changed. Preview again.')
         if action=='configure':
             folder=Path(plan['folder']);key=Path(plan['key'])
-            if plan['create_key']:exclusive(key,os.urandom(32))
+            if plan['create_key']:write_new(key,os.urandom(32))
             marker_id=plan['destination_id'] or uuid.uuid4().hex
-            if not plan['destination_id']:exclusive(folder/'.sovereign-backup-destination.json',json.dumps(dict(version=1,id=marker_id)).encode())
+            if not plan['destination_id']:write_new(folder/'.sovereign-backup-destination.json',json.dumps(dict(version=1,id=marker_id)).encode())
             old=configuration(ctx)
             recovered=json_read(ctx['root'].parent/'recovery.json',{})
             recovered_id=recovered.get('manifest',{}).get('archive_id')

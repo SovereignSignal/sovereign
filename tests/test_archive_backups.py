@@ -176,7 +176,7 @@ class ArchiveBackups(unittest.TestCase):
         return -1
 
     def test_smb_publication_roundtrip_without_exclusive_rename(self):
-        with patch.object(b.ctypes,'CDLL') as library:
+        with patch.object(b.ctypes,'CDLL') as library,patch.object(os,'link',side_effect=OSError(errno.ENOTSUP,'No hard links on SMB')):
             library.return_value.renamex_np.side_effect=self.unsupported_rename
             saved=self.backup()
         self.assertTrue(saved['integrity_verified'])
