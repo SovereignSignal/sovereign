@@ -343,7 +343,7 @@ body.hub-setup main,body.hub-setup.pinned main{grid-template-columns:1fr}body.hu
 <link rel="stylesheet" href="settings-view.css">
 </head>
 <body>
-<header class="shell-rail" aria-label="Primary navigation"><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="false">Home</button><button id="system-tab" aria-pressed="false">System</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="notes-tab" aria-pressed="false">Notes</button><button id="operations-tab" aria-pressed="true">Operations</button><button id="settings-tab" class="rail-gear" aria-pressed="false" title="Settings (⌘,)">⚙ Settings</button><button id="change" hidden>Open archive…</button></header>
+<header class="shell-rail" aria-label="Primary navigation"><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="false">Home</button><button id="system-tab" aria-pressed="false">System</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="operations-tab" aria-pressed="true">Operations</button><button id="settings-tab" class="rail-gear" aria-pressed="false" title="Settings (⌘,)">⚙ Settings</button><button id="change" hidden>Open archive…</button></header>
 <header id="operations-bar">
   <svg class="crown" id="home" viewBox="0 0 16 16" fill="currentColor" role="button" aria-label="Glance" tabindex="0"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>
   <h1 id="vault">Sovereign</h1>
@@ -1638,7 +1638,7 @@ window.onerror = function (msg, src, line, col) {
     if (e.key === "p") setPinned(!pinned);
   });
 
-  for (const name of ['home', 'system', 'notes']) document.getElementById(name+'-tab').onclick = () => {if(window.sovCanQuit())bridge({cmd:'navigate',page:'home',place:{view:name}})};
+  for (const name of ['home', 'system']) document.getElementById(name+'-tab').onclick = () => {if(window.sovCanQuit())bridge({cmd:'navigate',page:'home',place:{view:name}})};
   document.getElementById('review-tab').onclick = gotoGate;
   document.getElementById('change').onclick = () => bridge({cmd:'navigate',page:'home',place:{chooseArchive:true}});
   document.getElementById('operations-tab').onclick = () => setView('glance');

@@ -35,8 +35,8 @@
   assert('archive scope warning visible',host().textContent.includes('Their connections are hidden'));
   tab('inspect').click();
   assert('archive switch resets selected component',view().querySelector('.sv-inspect-detail').dataset.selection==='archive');
-  Home.archive(root);$('notes-tab').click();
-  assert('existing Notes navigation works',!$('workspace').hidden&&host().hidden);
+  Home.archive(root);$('home-tab').click();
+  assert('Home navigation works without Notes',!$('notes-tab')&&!host().hidden);
   $('system-tab').click();tab('world').click();
   assert('restored archive repopulates dynamic map',!!view().querySelector('[data-node="tool:read"]'));
   view().querySelector('[aria-label="Zoom in"]').click();view().querySelector('[aria-label="Fit environment"]').click();

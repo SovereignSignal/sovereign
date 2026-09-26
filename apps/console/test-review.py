@@ -82,15 +82,9 @@ if(scene==='states'){
 }
 report();
 '''
-DRAFT=r'''
-check('Draft kept in Notes',location.pathname.endsWith('/local.html')&&!document.getElementById('editor').hidden&&document.getElementById('body').value==='Do not lose this thought');
-check('Cancel guard asked once',window.__confirmCount===1);
-// Clear only the disposable draft so snapshot shutdown is not blocked.
-document.getElementById('body').value='';document.getElementById('title').value='';report();
-'''
 def main():
  p=argparse.ArgumentParser();p.add_argument('--evidence',required=True,type=Path);p.add_argument('--scenes',nargs='*');a=p.parse_args();a.evidence.mkdir(parents=True,exist_ok=True);reports=[]
- cases=[('home','dark','1200x800'),('system','light','900x600'),('menu','dark','720x460'),('draft','dark','900x600'),('states','dark','1200x800'),('states','light','720x460')]+[('layout',theme,size) for theme in ('light','dark') for size in ('1210x890','1100x600','1099x600','900x600','720x460')]
+ cases=[('home','dark','1200x800'),('system','light','900x600'),('menu','dark','720x460'),('states','dark','1200x800'),('states','light','720x460')]+[('layout',theme,size) for theme in ('light','dark') for size in ('1210x890','1100x600','1099x600','900x600','720x460')]
  for scene,theme,size in cases:
   if a.scenes and scene not in a.scenes:continue
   t=fixture.GateCheckTests();t.setUp();suite='com.sovereign.qa.review.'+uuid.uuid4().hex
@@ -105,9 +99,8 @@ def main():
    first="document.getElementById('review-tab').click();"
    if scene=='system':first="document.getElementById('system-tab').click();"+first
    if scene=='menu':first="window.webkit.messageHandlers.sov.postMessage({cmd:'showConsole',place:{view:'review'}});"
-   if scene=='draft':first="window.sovNewCapture();document.getElementById('title').value='Keep me';document.getElementById('body').value='Do not lose this thought';window.__confirmCount=0;window.confirm=()=>{window.__confirmCount++;return false};"+first
    name=scene+'-'+theme+'-'+size
-   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_GATE_HOME=str(home),SOV_QA_STATUS_COMMAND=str(status),SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR='',SOV_QA_JS=first,SOV_QA_JS_AFTER_ANCHOR=COMMON.replace('SCENE',json.dumps(scene)).replace('STATUS',json.dumps(data))+(DRAFT if scene=='draft' else PROBE))
+   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_GATE_HOME=str(home),SOV_QA_STATUS_COMMAND=str(status),SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR='',SOV_QA_JS=first,SOV_QA_JS_AFTER_ANCHOR=COMMON.replace('SCENE',json.dumps(scene)).replace('STATUS',json.dumps(data))+PROBE)
    cp=subprocess.run([str(HERE/'build/Sovereign.app/Contents/MacOS/Sovereign'),'-sov.archive',str(t.root)],env=env,capture_output=True,text=True,timeout=45)
    (a.evidence/(name+'.log')).write_text(cp.stderr);marker='client error in review-qa: ';result=[json.loads(x.split(marker,1)[1]) for x in cp.stderr.splitlines() if marker in x]
    assert cp.returncode==0 and len(result)==1,(scene,cp.stderr)

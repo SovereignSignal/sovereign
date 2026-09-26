@@ -4,7 +4,7 @@
 // small Glance panel (the same ui/index.html loaded with #glance) that shows the
 // numbers that move and opens the window at the right place. A bridge per web
 // view runs `sov`, streams command output, and hands JSON back. The app never
-// promotes knowledge automatically; local captures use the bundled archive engine.
+// promotes knowledge automatically; archive access uses the bundled engine.
 // The gate goes through `sov gate`, connectors through
 // `sov connect`, exactly as the terminal does.
 //
@@ -125,7 +125,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         case "chooseArchive":
             DispatchQueue.main.async { App.shared.chooseArchive(create: (d["create"] as? Bool) == true) }
         case "local":
-            guard let action = d["action"] as? String, ["list", "read", "capture", "context"].contains(action),
+            guard let action = d["action"] as? String, ["read", "context"].contains(action),
                   let root = Settings.archive else { return }
             var request = d
             request["root"] = root
@@ -1292,7 +1292,6 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
             let fileItem = NSMenuItem(); main.addItem(fileItem)
             let file = NSMenu(title: "File")
             file.addItem(withTitle: "Home", action: #selector(openHome), keyEquivalent: "1")
-            file.addItem(withTitle: "New Capture", action: #selector(newCapture), keyEquivalent: "n")
             file.addItem(withTitle: "New Archive…", action: #selector(newArchive), keyEquivalent: "")
             file.addItem(withTitle: "Open Archive…", action: #selector(openArchive), keyEquivalent: "o")
             fileItem.submenu = file
@@ -1340,7 +1339,6 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     @objc func refresh() { web.evaluateJavaScript("window.sovRefresh && window.sovRefresh();", completionHandler: nil) }
     @objc func openSettings() { showConsole(place: ["settings": true]) }
     @objc func openHome() { navigate(page: "home") }
-    @objc func newCapture() { navigate(page: "home", place: ["capture": true]) }
     @objc func newArchive() { navigate(page: "home", place: ["chooseArchive": true, "create": true]) }
     @objc func openArchive() { navigate(page: "home", place: ["chooseArchive": true, "create": false]) }
 }

@@ -1,12 +1,12 @@
 # Downloadable app preview
 
-Sovereign starts with one local archive. The Apple Silicon preview can create an archive, capture a note, search titles and contents, read notes, and open the underlying Markdown in a text editor. It bundles Python and requires no account, terminal setup, Git, Homebrew, Obsidian, or separate hub for those operations.
+Sovereign starts with one local archive. The Apple Silicon preview can create or open an archive, inspect system status, and review proposed knowledge. It bundles Python. Creating or opening a local archive needs no account, terminal setup, Git, Homebrew, Obsidian, or hub; connected status and proposal review use the configured services.
 
 The main window now opens on a unified Home with nodes, producers, contributions,
 and context preparation receipts. Home also shows connection warnings and contribution
 acceptance. Review owns the proposal queue, comparison, approval, rejection and
 conflict-resolution controls. Signal Night supplies the shared navy, amber and cyan
-palette. Notes opens the local reader and capture interface. Operations opens
+palette. Preparation records open in your default editor; archive files remain available in Finder. Operations opens
 connected setup, statistics and diagnostics in the same window. Home reads status from an
 existing installed `sov` command; it does not bundle or install fleet connectors.
 
@@ -32,9 +32,7 @@ Set `SOV_SIGN_ID` to the intended signing identity for a signed build. A signing
 ## Current boundary
 
 - Apple Silicon only. The native deployment target is macOS 13; the actual preview has been exercised on the development Mac, not yet every supported macOS version.
-- Local captures enter `raw/workspaces/owner`. There is no automatic promotion to trusted knowledge, AI generation, cloud sync, or backup setup in this first-run path.
-- Existing archives must contain all five folders. Opening one does not rewrite its organization. The local reader covers Markdown in raw, workstreams, and knowledge. It lists at most 500 matching notes, reports the full match count, and excludes linked files, hidden paths, cold storage, repositories, and notes larger than 2 MiB.
-- Captures are limited to 1 MiB and use exclusive writes. Credential recognition is a pattern-based safeguard, not a guarantee that all sensitive information is detected.
+- Existing archives must contain all five folders. Opening one does not rewrite its organization. The app does not include a notes browser or capture editor.
 - An existing nonempty or empty folder is refused by Create. Use Open for an existing archive. If creation fails partway, the chosen folder may contain an incomplete scaffold; the app does not delete it or bind it as a successful archive.
 
 ## Native verification
