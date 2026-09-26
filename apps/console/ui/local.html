@@ -29,7 +29,7 @@ function setView(next){
 $('home-tab').onclick=()=>setView('home');
 $('system-tab').onclick=()=>setView('system');
 $('review-tab').onclick=()=>setView('review');
-$('archive-backups-tab').onclick=()=>{if(leaveDraft())send({cmd:'navigate',page:'operations',place:{view:'recovery'}})};
+$('archive-backups-tab').onclick=()=>send({cmd:'navigate',page:'operations',place:{view:'recovery'}});
 $('operations-tab').onclick=()=>send({cmd:'navigate',page:'operations'});
 $('settings-tab').onclick=()=>send({cmd:'navigate',page:'operations',place:{settings:true}});
 Home.init({send,review:()=>setView('review'),openNote:path=>{if(root)readRequest=local('read',{path})},browse:()=>{if(root)send({cmd:'reveal',path:root})}});
