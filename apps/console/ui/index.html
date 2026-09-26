@@ -341,9 +341,10 @@ body.hub-setup main,body.hub-setup.pinned main{grid-template-columns:1fr}body.hu
 <link rel="stylesheet" href="shell.css">
 <link rel="stylesheet" href="operations-shell.css">
 <link rel="stylesheet" href="settings-view.css">
+<link rel="stylesheet" href="archive-backups.css">
 </head>
 <body>
-<header class="shell-rail" aria-label="Primary navigation"><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="false">Home</button><button id="system-tab" aria-pressed="false">System</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="notes-tab" aria-pressed="false">Notes</button><button id="operations-tab" aria-pressed="true">Operations</button><button id="settings-tab" class="rail-gear" aria-pressed="false" title="Settings (⌘,)">⚙ Settings</button><button id="change" hidden>Open archive…</button></header>
+<header class="shell-rail" aria-label="Primary navigation"><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="false">Home</button><button id="system-tab" aria-pressed="false">System</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="notes-tab" aria-pressed="false">Notes</button><button id="archive-backups-tab" aria-pressed="false">Backups</button><button id="operations-tab" aria-pressed="true">Operations</button><button id="settings-tab" class="rail-gear" aria-pressed="false" title="Settings (⌘,)">⚙ Settings</button><button id="change" hidden>Open archive…</button></header>
 <header id="operations-bar">
   <svg class="crown" id="home" viewBox="0 0 16 16" fill="currentColor" role="button" aria-label="Glance" tabindex="0"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>
   <h1 id="vault">Sovereign</h1>
@@ -372,7 +373,7 @@ body.hub-setup main,body.hub-setup.pinned main{grid-template-columns:1fr}body.hu
     <button data-view="lanes" aria-pressed="false">Lanes</button>
     <button data-view="tools" aria-pressed="false">Tools</button>
     <button data-view="jobs" aria-pressed="false">Hub</button>
-    <button data-view="backups" aria-pressed="false">Backups</button>
+    <button data-view="backups" aria-pressed="false">Infrastructure</button>
   </div>
   <span class="count" id="listcount"></span>
 </footer>
@@ -389,6 +390,7 @@ body.hub-setup main,body.hub-setup.pinned main{grid-template-columns:1fr}body.hu
 <script src="gate-model.js"></script>
 <script src="discovery-model.js"></script>
 <script src="hub-setup.js"></script>
+<script src="archive-backups.js"></script>
 <script src="settings-view.js"></script>
 <dialog id="device-dialog" aria-labelledby="device-dialog-title" aria-describedby="device-dialog-description">
   <h2 id="device-dialog-title">Disassociate device?</h2>
@@ -469,7 +471,7 @@ window.onerror = function (msg, src, line, col) {
   // ---------- top: header, needs, pulse ----------
   function renderTop() {
     const m = D?.machine || {}, h = hub(), obs = D?.obsidian || {};
-    $("#vault").textContent = view === "review" ? "Review" : "Operations";
+    $("#vault").textContent = view === "review" ? "Review" : view === "recovery" ? "Backups" : "Operations";
     $("#archive-name").textContent = selectedRoot?.split("/").pop() || "Open an archive";
     $("#meta").textContent = `${m.host || ""}${obs.sync ? " · obsidian " + obs.sync : ""}`;
     const hp = $("#hubpill"), j = h.jobs || {}, nightly = j.nightly || j["archivist-nightly"]; hp.style.opacity = "";
@@ -690,6 +692,7 @@ window.onerror = function (msg, src, line, col) {
     return { state, text: text.replace(/\.\.$/, ".") };
   }
   function renderVerdict() {
+    if(view==='recovery'){$('#verdict').className='idle';$('#vtext').textContent='Archive recovery and backup destinations';$('#vmeta').textContent='';return;}
     if(view==='setup'){$('#verdict').className='idle';$('#vtext').textContent='Review Hub changes before applying them.';$('#vmeta').textContent='';return;}
     const v = $("#verdict"); if (!v || !D) return;
     const q = reviewQueue();
@@ -920,6 +923,14 @@ window.onerror = function (msg, src, line, col) {
     document.body.classList.toggle('review',review);
     document.body.classList.toggle('discovering',view==='tools');
     document.body.classList.toggle('hub-setup',view==='setup');
+    document.body.classList.toggle('archive-backups-view',view==='recovery');
+    $('#archive-backups-tab').setAttribute('aria-pressed',String(view==='recovery'));
+    if(view==='recovery'&&!settingsOpen){
+      $('#review-intro').hidden=true;$('#review-tab').setAttribute('aria-pressed','false');$('#operations-tab').setAttribute('aria-pressed','false');
+      $('#rows').setAttribute('role','region');$('#rows').setAttribute('aria-label','Archive backups');$('#rows').removeAttribute('aria-activedescendant');
+      document.querySelectorAll('.seg button').forEach(b=>b.setAttribute('aria-pressed','false'));
+      SovBackups.mount($('#rows'),selectedRoot);footerMeta(0);return;
+    }
     $('#rows').setAttribute('role',settingsOpen||view==='setup'?'region':'listbox');
     if(settingsOpen){
       $('#review-intro').hidden=true;$('#rows').className='';
@@ -1077,7 +1088,7 @@ window.onerror = function (msg, src, line, col) {
     const refreshButton=$('#gate-refresh');if(refreshButton)refreshButton.onclick=()=>{gateChecks.clear();gotoGate();refresh()};
     const dismiss=$('#gate-dismiss');if(dismiss)dismiss.onclick=()=>notice.hidden=true;
   }
-  window.sovCanQuit=()=>{if(window.SovHub?.busy)return false;
+  window.sovCanQuit=()=>{if(window.SovHub?.busy||window.SovBackups?.busy)return false;
     if(pendingProducer?.running){$('#drawer').classList.add('open');return false;}
     if(!gatePending)return true;
     showGateNotice('running');return false;
@@ -1094,7 +1105,7 @@ window.onerror = function (msg, src, line, col) {
       ${health.failure_output?`<details><summary>View failure details</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(health.failure_output)}</pre></details>`:''}</div>`;
   }
   function renderInspector() {
-    if(view==='setup')return;
+    if(view==='setup'||view==='recovery')return;
     if(!settingsOpen&&view!=="review"&&view!=="tools"&&D?.machine?.connected===false){renderSetup(D);return;}
     if(splitReview())$("#inspector").setAttribute("aria-hidden","false");
     const box = $("#insp");
@@ -1641,6 +1652,7 @@ window.onerror = function (msg, src, line, col) {
   for (const name of ['home', 'system', 'notes']) document.getElementById(name+'-tab').onclick = () => {if(window.sovCanQuit())bridge({cmd:'navigate',page:'home',place:{view:name}})};
   document.getElementById('review-tab').onclick = gotoGate;
   document.getElementById('change').onclick = () => bridge({cmd:'navigate',page:'home',place:{chooseArchive:true}});
+  document.getElementById('archive-backups-tab').onclick=()=>setView('recovery');
   document.getElementById('operations-tab').onclick = () => setView('glance');
   function refresh() { bridge({ cmd: "status" }); }
   window.sovRefresh = refresh;
@@ -1660,6 +1672,7 @@ window.onerror = function (msg, src, line, col) {
     }
   };
   function deliverInner(kind, payload) {
+    if(kind.startsWith('archiveBackup')){SovBackups.deliver(kind,payload);return;}
     if(kind.startsWith('hub')){SovHub.deliver(kind,payload);return;}
     if(kind==='discovery'){
       if(payload.request!==discoveryRequest)return;

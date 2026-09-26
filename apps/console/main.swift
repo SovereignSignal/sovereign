@@ -94,6 +94,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     var gateBusy = false
     var hubBusy = false
     var hubReview: String?
+    var archiveBackupBusy = false
+    var archiveBackupReview: String?
     var backupBusy = false
     var appUpdateBusy = false
     var appUpdateProcess: Process?
@@ -143,6 +145,22 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             setBackupScope(d, generation: generation)
         case "deviceAssociation":
             setDeviceAssociation(d, generation: generation)
+        case "archiveBackup":
+            archiveBackup(d, generation: generation)
+        case "archiveBackupPick":
+            guard !archiveBackupBusy, let field = d["field"] as? String,
+                  ["folder", "key", "backup", "destination"].contains(field) else { return }
+            if field == "key" || field == "destination" {
+                let panel = NSSavePanel()
+                panel.title = field == "key" ? "Recovery key location" : "New restore folder"
+                panel.nameFieldStringValue = field == "key" ? "sovereign-recovery.key" : "Restored Sovereign"
+                panel.canCreateDirectories = true
+                if panel.runModal() == .OK, let url = panel.url { deliver("archiveBackupPicked", ["field": field, "path": url.path]) }
+            } else {
+                let panel = NSOpenPanel(); panel.canChooseDirectories = field == "folder"
+                panel.canChooseFiles = field != "folder"; panel.allowsMultipleSelection = false
+                if panel.runModal() == .OK, let url = panel.url { deliver("archiveBackupPicked", ["field": field, "path": url.path]) }
+            }
         case "hubDefaults":
             let home = App.shared.snapshotting ? ProcessInfo.processInfo.environment["SOV_QA_HUB_HOME"] ?? NSHomeDirectory() : NSHomeDirectory()
             deliver("hubDefaults", ["home": home])
@@ -546,6 +564,46 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         return true
     }
 
+    private func archiveBackup(_ request: [String: Any], generation: UUID) {
+        func fail(_ message: String) { deliver("archiveBackupResult", ["error": message, "request": request["request"] ?? ""], generation: generation) }
+        guard !archiveBackupBusy, let resources = Bundle.main.resourceURL,
+              let root = Settings.archive, let requested = request["root"] as? String,
+              Settings.archiveKey(root) == Settings.archiveKey(requested),
+              let action = request["action"] as? String,
+              ["status", "browse", "configure", "backup", "verify", "restore"].contains(action) else {
+            fail("Select an archive before managing its backups."); return
+        }
+        var payload = request
+        payload.removeValue(forKey: "cmd"); payload.removeValue(forKey: "request")
+        payload["protocol"] = 1; payload["root"] = root
+        var review = payload; review.removeValue(forKey: "apply"); review.removeValue(forKey: "token")
+        let reviewKey = generation.uuidString + ((try? JSONSerialization.data(withJSONObject: review, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? "")
+        let apply = payload["apply"] as? Bool == true
+        guard !apply || archiveBackupReview == reviewKey else { fail("Preview this exact backup operation before applying it."); return }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload), data.count <= 32768,
+              let json = String(data: data, encoding: .utf8) else { fail("The backup request is invalid."); return }
+        archiveBackupBusy = true
+        if !["status", "browse"].contains(action) { archiveBackupReview = nil }
+        let home = App.shared.snapshotting ? ProcessInfo.processInfo.environment["SOV_QA_HUB_HOME"] ?? NSHomeDirectory() : NSHomeDirectory()
+        var environment = ["HOME": home, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8",
+                           "SOV_PYTHON_RUNTIME": resources.appendingPathComponent("runtime").path]
+        if App.shared.snapshotting, let ssh = ProcessInfo.processInfo.environment["SOV_QA_ARCHIVE_BACKUP_SSH"] { environment["SOV_BACKUP_SSH"] = ssh }
+        let args = [resources.appendingPathComponent("runtime/bin/python3").path, "-I", "-B",
+                    resources.appendingPathComponent("backend/bin/sov-backup").path, "--request", json]
+        run(args, environment: environment, timeLimit: apply ? 7400 : 120, isolated: true) { out, _, code in
+            DispatchQueue.main.async {
+                self.archiveBackupBusy = false
+                var result = (out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any]
+                    ?? ["error": "The archive host did not return a result. Refresh to inspect its last attempt before retrying."]
+                result["request"] = request["request"] ?? ""; result["action"] = action; result["exit"] = code
+                if code == 0 && result["error"] == nil && !apply && !["status", "browse"].contains(action) && self.generation == generation {
+                    self.archiveBackupReview = reviewKey
+                }
+                self.deliver("archiveBackupResult", result, generation: generation)
+            }
+        }
+    }
+
     private func hubOperation(_ request: [String: Any], generation: UUID) {
         func fail(_ message: String) { deliver("hubResult", ["error": message, "request": request["request"] ?? ""], generation: generation) }
         guard !hubBusy, let resources = Bundle.main.resourceURL,
@@ -743,12 +801,12 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : "Diagnostics unavailable."
     }
 
-    func run(_ args: [String], environment extra: [String: String] = [:], timeLimit: Double? = nil, done: @escaping (String, String, Int32) -> Void) {
+    func run(_ args: [String], environment extra: [String: String] = [:], timeLimit: Double? = nil, isolated: Bool = false, done: @escaping (String, String, Int32) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: args[0])
             p.arguments = Array(args.dropFirst())
-            p.environment = self.env().merging(extra) { _, new in new }
+            p.environment = isolated ? extra : self.env().merging(extra) { _, new in new }
             let o = Pipe(), e = Pipe()
             p.standardOutput = o; p.standardError = e
             do { try p.run() } catch { done("", "\(error)", -1); return }

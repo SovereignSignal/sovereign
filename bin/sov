@@ -67,6 +67,7 @@ _harness_ids() {
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
+  backup) exec "$PYTHON" "$BIN/sov-backup" "$@";;
   hub)
     # The template-run hub (instance file, runner, jobs, kit, law) lives in sov-hub; the
     # app-installed managed hub keeps its commands on sov-managed-hub.
