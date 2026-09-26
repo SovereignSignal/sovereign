@@ -7,6 +7,7 @@ legacy capsule reader remains available through sov hub restore.
 """
 import contextlib
 import ctypes
+import errno
 import hashlib
 import io
 import json
@@ -341,14 +342,35 @@ def crypt(mode, key, source, dest):
 
 
 def publish(source, destination):
-    # macOS exclusive rename publishes complete bytes without requiring hard-link
-    # support from a mounted NAS. Unsupported filesystems fail without fallback.
+    # Prefer atomic publication. SMB can reject exclusive rename and hard links;
+    # exclusive creation still prevents replacing any existing backup there.
     rename = ctypes.CDLL(None, use_errno=True).renamex_np
     rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
     rename.restype = ctypes.c_int
-    if rename(os.fsencode(source), os.fsencode(destination), 0x00000004): # RENAME_EXCL
-        error = ctypes.get_errno()
+    if not rename(os.fsencode(source), os.fsencode(destination), 0x00000004): # RENAME_EXCL
+        return
+    error = ctypes.get_errno()
+    if error not in (errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS):
         raise OSError(error, os.strerror(error), str(destination))
+    expected = file_hash(source)
+    # A crash can leave an incomplete file, but never a success receipt. Opening
+    # any backup authenticates the terminal frame before extraction is allowed.
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    owned = os.fstat(fd)
+    try:
+        with os.fdopen(fd, 'wb') as output, safe_open(source) as input_file:
+            shutil.copyfileobj(input_file, output, BLOCK)
+            output.flush()
+            os.fsync(output.fileno())
+        if file_hash(destination) != expected:
+            raise ValueError('Saved backup differs from the verified encrypted source.')
+    except BaseException:
+        # Only clean up the file created by this invocation, never a replacement.
+        with contextlib.suppress(OSError):
+            current = os.lstat(destination)
+            if (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino):
+                os.unlink(destination)
+        raise
 
 
 def make_backup(ctx, config):

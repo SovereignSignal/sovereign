@@ -1,4 +1,5 @@
 import hashlib
+import errno
 import io
 import json
 import os
@@ -168,6 +169,54 @@ class ArchiveBackups(unittest.TestCase):
         destination=self.base/'existing';destination.write_bytes(b'previous')
         with self.assertRaises(FileExistsError):b.publish(source,destination)
         self.assertEqual(destination.read_bytes(),b'previous');self.assertEqual(source.read_bytes(),b'new')
+
+    @staticmethod
+    def unsupported_rename(*args):
+        b.ctypes.set_errno(errno.ENOTSUP)
+        return -1
+
+    def test_smb_publication_roundtrip_without_exclusive_rename(self):
+        with patch.object(b.ctypes,'CDLL') as library:
+            library.return_value.renamex_np.side_effect=self.unsupported_rename
+            saved=self.backup()
+        self.assertTrue(saved['integrity_verified'])
+        self.request('restore',True,backup=saved['backup'],destination=str(self.restore),key=str(self.key))
+        self.assertEqual((self.restore/'archive/knowledge/concepts/decision.md').read_bytes(),self.note.read_bytes())
+
+    def test_smb_publication_cannot_replace_file_or_symlink(self):
+        source=self.base/'ready';source.write_bytes(b'new')
+        destination=self.base/'existing';destination.write_bytes(b'previous')
+        alias=self.base/'alias';alias.symlink_to(destination)
+        with patch.object(b.ctypes,'CDLL') as library:
+            library.return_value.renamex_np.side_effect=self.unsupported_rename
+            for target in (destination,alias):
+                with self.assertRaises(FileExistsError):b.publish(source,target)
+        self.assertEqual(destination.read_bytes(),b'previous')
+        self.assertTrue(alias.is_symlink())
+
+    def test_smb_partial_write_preserves_previous_success(self):
+        self.backup();ctx=b.context(str(self.archive))
+        previous=(ctx['store']/'last-success.json').read_bytes()
+        files=set(self.folder.iterdir())
+        def interrupted(source,output,length):
+            output.write(b'partial ciphertext')
+            raise OSError(errno.ENOSPC,'Storage filled during write')
+        with patch.object(b.ctypes,'CDLL') as library,patch.object(b.shutil,'copyfileobj',side_effect=interrupted):
+            library.return_value.renamex_np.side_effect=self.unsupported_rename
+            with self.assertRaises(OSError):self.request('backup',True)
+        self.assertEqual((ctx['store']/'last-success.json').read_bytes(),previous)
+        self.assertEqual(set(self.folder.iterdir()),files)
+        self.assertEqual(json.loads((ctx['store']/'last-attempt.json').read_text())['state'],'failed')
+
+    def test_smb_publication_checks_saved_bytes(self):
+        source=self.base/'ready';source.write_bytes(b'validated ciphertext')
+        destination=self.base/'completed'
+        def corrupted(input_file,output,length):output.write(b'corrupt transfer')
+        with patch.object(b.ctypes,'CDLL') as library,patch.object(b.shutil,'copyfileobj',side_effect=corrupted):
+            library.return_value.renamex_np.side_effect=self.unsupported_rename
+            with self.assertRaisesRegex(ValueError,'differs'):b.publish(source,destination)
+        self.assertFalse(destination.exists())
+        self.assertEqual(source.read_bytes(),b'validated ciphertext')
 
     def test_ssh_template_discovers_app_runtime_without_inherited_environment(self):
         app=self.home/'Applications/Sovereign.app';runtime=app/'Contents/Resources/runtime'
