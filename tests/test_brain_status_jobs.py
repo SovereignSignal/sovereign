@@ -153,6 +153,19 @@ class Connected(unittest.TestCase):
         b.record({h: b.lane_run(c) for h, c in zip(self.IDS, cadences)})
         return b
 
+    def test_exit_zero_keeps_recent_errors_visible_without_claiming_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self.box(tmp)
+            token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+            (b.state / "lanes/claude-code.error.log").write_text("capture failed " + token + "\n")
+            d = b.status()
+            issue = next(n for n in d["needs_you"] if n.get("harness") == "claude-code")
+            self.assertIn("last run exited 0", issue["text"])
+            self.assertIn("skipped source does not verify recovery", issue["verify"])
+            self.assertIn("capture failed", issue["failure_output"])
+            self.assertNotIn(token, issue["failure_output"])
+            self.assertIn("[redacted", issue["failure_output"])
+
     def test_one_launchd_row_still_reports_every_tool_connected(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = self.box(tmp).status()

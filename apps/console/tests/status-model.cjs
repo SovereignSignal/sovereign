@@ -219,3 +219,21 @@ assert.equal(unknown.read.pct,null);
 assert.match(unknown.detail,/has not reported/);
 assert.ok(!/%/.test(unknown.headline),'no percentage invented from no data');
 console.log('Completeness: one honest share read, producers and gate beside it, nothing invented.');
+
+// Home must carry captured output for each grouped job and escape hostile log text.
+const output='<img src=x onerror=alert(1)>';
+const group=assess({hub:{jobs:{kit:{exit:65,health:{failure_output:output}},autocommit:{exit:1,health:{failure_output:'push failed'}}}}}).need.find(r=>r.group==='job-failed');
+assert.equal(group.members[0].failure_output,output);
+assert.equal(group.members[1].failure_output,'push failed');
+const issueContext={GLANCE:false,SovStatus:model,esc:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')};
+vm.createContext(issueContext);
+const html=fs.readFileSync(path.join(__dirname,'../ui/index.html'),'utf8');
+vm.runInContext(html.slice(html.indexOf('  function issueHTML(n)'),html.indexOf('  function glanceHome()')),issueContext);
+const rendered=issueContext.issueHTML(group);
+assert.ok(rendered.includes('kit')&&rendered.includes('autocommit')&&rendered.includes('push failed'));
+assert.ok(rendered.includes('&lt;img'));
+assert.ok(!rendered.includes('<img'));
+const local=assess({needs_you:[{kind:'job',why:'Recent error',failure_output:'capture failed'}]}).need[0];
+assert.equal(local.failure_output,'capture failed');
+assert.ok(issueContext.issueHTML(local).includes('capture failed'));
+console.log('Captured job output survives grouped and local alerts and is HTML-escaped.');

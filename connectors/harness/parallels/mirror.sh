@@ -38,11 +38,14 @@ ok=0; failed=0; lines=()
 in_guest_raw() {
   local try rc
   for try in 1 2; do
-    printf '%s\n' "$2" | "$PRLCTL" exec "$1" sh 2>/dev/null
+    # Publish only a completed attempt: concatenating a partial tar stream with
+    # its retry can make extraction fail or silently keep the partial archive.
+    printf '%s\n' "$2" | "$PRLCTL" exec "$1" sh >"$SOV_PRIVATE/guest.stdout" 2>"$SOV_PRIVATE/guest.stderr"
     rc=${PIPESTATUS[1]}
-    [ "$rc" -eq 0 ] && return 0
-    sleep 2
+    if [ "$rc" -eq 0 ]; then cat "$SOV_PRIVATE/guest.stdout"; return $?; fi
+    [ "$try" -eq 2 ] || sleep 2
   done
+  cat "$SOV_PRIVATE/guest.stderr" >&2
   return "$rc"
 }
 in_guest() { local out; out="$(in_guest_raw "$1" "$2")" || return $?; printf '%s' "$out" | tr -d '\r'; }
@@ -55,8 +58,12 @@ is_linux_os() { case "$1" in win*|macos*|other*|"") return 1;; *) return 0;; esa
 
 slug_of() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'; }
 
+if ! inventory="$("$PRLCTL" list -a -o name,status)"; then
+  echo "mirror: could not list Parallels guests; prior capture retained" >&2
+  exit 1
+fi
 rows=()
-while IFS= read -r row; do rows+=("$row"); done < <("$PRLCTL" list -a -o name,status 2>/dev/null | tail -n +2 \
+while IFS= read -r row; do rows+=("$row"); done < <(printf '%s\n' "$inventory" | tail -n +2 \
   | sed -E 's/[[:space:]]+(running|stopped|suspended|paused|starting|stopping|resetting|suspending|resuming|unknown)[[:space:]]*$/|\1/')
 
 for row in ${rows[@]+"${rows[@]}"}; do
@@ -91,7 +98,7 @@ for row in ${rows[@]+"${rows[@]}"}; do
     [ -n "$mems" ] || continue
     out="$DEST/$slug/claude-code/memory"; mkdir -p "$out" || { guest_failed=1; break; }
     script="cd '$home/.claude/projects' && tar -cf - --"; while IFS= read -r m; do script="$script '$m'"; done <<< "$mems"
-    if in_guest_raw "$name" "$script" | tar -xf - -C "$out" --exclude='*.jsonl' --exclude='.credentials.json' 2>/dev/null; then
+    if in_guest_raw "$name" "$script" | tar -xf - -C "$out" --exclude='*.jsonl' --exclude='.credentials.json'; then
       # <project>/memory/*.md -> <project>/*.md, the same shape the claude-code lane uses
       for p in "$out"/*/memory; do
         [ -d "$p" ] || continue
@@ -105,7 +112,7 @@ for row in ${rows[@]+"${rows[@]}"}; do
     if [ -n "$(in_guest "$name" "[ -d '$home/Claude' ] && find '$home/Claude' -type f -print -quit; true")" ]; then
       mkdir -p "$DEST/$slug/claude"
       in_guest_raw "$name" "cd '$home' && tar -cf - Claude" \
-        | tar -xf - -C "$DEST/$slug/claude" --strip-components=1 --exclude='*.jsonl' 2>/dev/null \
+        | tar -xf - -C "$DEST/$slug/claude" --strip-components=1 --exclude='*.jsonl' \
         || { guest_failed=1; echo "mirror: tar of Claude outputs from guest $name failed" >&2; }
     fi
   done <<< "$homes"

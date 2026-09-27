@@ -18,6 +18,10 @@ window.Home = (() => {
   function details(issue){
     const box=element('details',null,'home-issue');box.append(element('summary','Details'));
     for(const key of ['detail','why','action','verify'])if(issue?.[key])box.append(element('p',issue[key]));
+    for(const member of issue?.members||[issue])if(member?.failure_output){
+      box.append(element('strong',member.name||'Captured output'));
+      const output=element('pre',member.failure_output);output.style.whiteSpace='pre-wrap';output.style.overflowWrap='anywhere';box.append(output);
+    }
     const url=SovStatus.safeURL(issue?.url);if(url){const link=element('a','Open verification link');link.href=url;link.onclick=e=>{e.preventDefault();api.send({cmd:'openurl',url})};box.append(link)}
     if(issue?.action){const copy=element('button','Copy next step');copy.onclick=()=>{api.send({cmd:'copyText',text:issue.action});copy.textContent='Copied'};box.append(copy)}
     return box;

@@ -357,6 +357,22 @@ def _log_lines(path):
     return n, a
 
 
+def job_error_output(path):
+    """Bounded, redacted diagnostic output for the same log the job row names."""
+    if not path or os.path.islink(path) or not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, errors="replace") as stream:
+            raw = stream.read(65537)
+        if len(raw) > 65536:
+            return ""
+        from brain_redact import redact_text
+        clean, _ = redact_text(raw)
+        return "\n".join(clean.splitlines()[-35:])[:8000]
+    except OSError:
+        return ""
+
+
 def lane_log_info(h, manifest, runs=None):
     """The plist-shaped record the console already reads, sourced from the runner instead of a
     per-tool job. One log pair per lane, same path formula on both platforms, so a clean lane
@@ -1876,12 +1892,17 @@ def main():
                           "action": "Run: sudo xcodebuild -license accept   then: launchctl kickstart gui/$(id -u)/%s. Reconnecting any tool with sov connect points the job at the Command Line Tools interpreter, which an Xcode update cannot revoke." % j["label"],
                           "verify": "Refresh after the kickstart; the job's last exit is 0 and its lanes report a fresh run."})
         elif j.get("last_exit") not in (None, 0):
-            n = {"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], j.get("stderr") or "its log")}
+            n = {"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], j.get("stderr") or "its log"), "failure_output": job_error_output(j.get("stderr"))}
             if j.get("harness"):
                 n["harness"] = j["harness"]        # a lane row routes to the tool, not to the job list
             needs.append(n)
         elif j.get("stderr_lines") and (j.get("stderr_age_h") if j.get("stderr_age_h") is not None else 0) <= 24:
-            needs.append({"kind": "job", "text": "%s wrote %d line(s) to its error log in the last day." % (j["label"], j["stderr_lines"])})
+            needs.append({"kind": "job", "harness": j.get("harness"),
+                          "text": "%s: %s; error output was recorded within the last day." % (j["label"], "last run exited 0" if j.get("last_exit") == 0 else "last run status unknown"),
+                          "why": "The error log still contains recent output. A successful exit can include skipped sources, so it does not by itself verify the failed operation recovered.",
+                          "action": "Inspect the captured error output and verify the affected operation completes.",
+                          "verify": "Confirm a new capture from the affected source. A suspended or skipped source does not verify recovery." if j.get("harness") else "Confirm the operation named in the error completes successfully.",
+                          "failure_output": job_error_output(j.get("stderr"))})
     for l in lanes:
         sa, va = l.get("staging_age_h"), l.get("vault_age_h")
         if sa is not None and va is not None and va - sa > 1.0 and va > 2:

@@ -15,6 +15,7 @@ SHIM = r'''#!/bin/bash
 # fake prlctl: fixtures under $FAKE_PRL
 case "$1" in
   list) if [ "$2" = "-i" ]; then root="$FAKE_PRL/guests/${3// /_}"; printf 'OS: %s\n' "$(cat "$root/.os" 2>/dev/null || echo ubuntu)"; exit 0; fi
+        [ -f "$FAKE_PRL/.list_failure" ] && { echo 'guest inventory unavailable' >&2; exit 1; }
         printf 'NAME                             STATUS\n'; cat "$FAKE_PRL/list.txt";;
   exec) vm="$2"; shift 2
         root="$FAKE_PRL/guests/${vm// /_}"
@@ -24,6 +25,12 @@ case "$1" in
         # a guest marked flaky answers "Invalid argument" every time, like prlctl on a bad day
         [ -f "$root/.flaky" ] && { echo "PrlJob_GetResult: Invalid argument." >&2; exit 255; }
         script="$(cat)"
+        if [[ "$script" == *'tar -cf'* ]]; then
+          if [ -f "$root/.partial_once" ]; then
+            rm "$root/.partial_once"; printf 'partial archive'; echo 'transient transfer failure' >&2; exit 255
+          fi
+          [ -f "$root/.bad_archive" ] && { printf 'invalid archive'; exit 0; }
+        fi
         # a guest answer already carries $root; undo before rewriting so nothing doubles.
         # No escaped slashes: bash keeps a backslash literally in the replacement text.
         h=/home/; script="${script//$root$h/$h}"; script="${script//$h/$root$h}"
@@ -94,6 +101,41 @@ class ParallelsMirror(unittest.TestCase):
             self.assertFalse(any(n.endswith(".jsonl") for n in names))
             self.assertNotIn("SECRET", "".join(p.read_text() for p in lane.rglob("*") if p.is_file()))
 
+    def test_partial_archive_retry_publishes_only_the_successful_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp); fake = tmp / "fake"; fake.mkdir(); home = tmp / "home"; (home / "vault/raw/tools").mkdir(parents=True)
+            (fake / "list.txt").write_text("Alpha VM                         running\n")
+            guest(fake, "Alpha VM", memory={"project": {"MEMORY.md": "complete capture\n"}})
+            (fake / "guests/Alpha_VM/.partial_once").touch()
+            cp, lane = self.run_mirror(fake, tmp / "stage", home)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            self.assertEqual((lane / "alpha-vm/claude-code/memory/project/MEMORY.md").read_text(), "complete capture\n")
+            self.assertNotIn("transient transfer failure", cp.stderr)
+
+    def test_failed_inventory_retains_the_previous_capture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp); fake = tmp / "fake"; fake.mkdir(); home = tmp / "home"; (home / "vault/raw/tools").mkdir(parents=True)
+            (fake / ".list_failure").touch()
+            old = tmp / "stage/raw/tools/parallels-testbox/MANIFEST.md"
+            old.parent.mkdir(parents=True); old.write_text("previous successful capture\n")
+            cp, lane = self.run_mirror(fake, tmp / "stage", home)
+            self.assertNotEqual(cp.returncode, 0)
+            self.assertIn("guest inventory unavailable", cp.stderr)
+            self.assertEqual(old.read_text(), "previous successful capture\n")
+
+    def test_invalid_archive_reports_extraction_error_and_retains_capture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp); fake = tmp / "fake"; fake.mkdir(); home = tmp / "home"; (home / "vault/raw/tools").mkdir(parents=True)
+            (fake / "list.txt").write_text("Alpha VM                         running\n")
+            guest(fake, "Alpha VM", memory={"project": {"MEMORY.md": "new\n"}})
+            (fake / "guests/Alpha_VM/.bad_archive").touch()
+            old = tmp / "stage/raw/tools/parallels-testbox/MANIFEST.md"
+            old.parent.mkdir(parents=True); old.write_text("previous capture\n")
+            cp, lane = self.run_mirror(fake, tmp / "stage", home)
+            self.assertNotEqual(cp.returncode, 0)
+            self.assertIn("tar:", cp.stderr)
+            self.assertEqual(old.read_text(), "previous capture\n")
+
     def test_no_prlctl_means_nothing_to_do_not_a_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp); home = tmp / "home"; (home / "vault/raw/tools").mkdir(parents=True)
@@ -126,6 +168,7 @@ class ParallelsMirror(unittest.TestCase):
             cp, lane = self.run_mirror(fake, tmp / "stage", home)
             self.assertNotEqual(cp.returncode, 0, "a guest that cannot be read is a failed run, not a quiet zero")
             self.assertIn("prlctl exec failed", cp.stderr)
+            self.assertIn("PrlJob_GetResult: Invalid argument.", cp.stderr)
             self.assertFalse(lane.exists(), "a failed run publishes nothing; the prior capture is what stands")
 
 

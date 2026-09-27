@@ -19,7 +19,17 @@ const report=()=>post({cmd:'clientError',where:'transparency-qa',msg:JSON.string
 '''
 PROBE=r'''
 check('No horizontal overflow',document.documentElement.scrollWidth<=innerWidth);
-if(SCENE.startsWith('recovery')){
+if(SCENE==='job-output'){
+ const panel=document.querySelector('.home-attention');
+ const folds=[...panel.querySelectorAll('details')];
+ check('Error details start collapsed',folds.length===2&&folds.every(d=>!d.open));
+ for(const fold of folds)fold.querySelector('summary').click();
+ await pause(50);
+ check('Both grouped failures are visible',panel.textContent.includes('kit transfer failed')&&panel.textContent.includes('archive push failed'));
+ check('Local capture error is visible',panel.textContent.includes('guest archive failed'));
+ check('Diagnostic output is plain text',!panel.querySelector('img')&&panel.textContent.includes('<img'));
+ check('Diagnostics wrap without overflow',document.documentElement.scrollWidth<=innerWidth);
+}else if(SCENE.startsWith('recovery')){
  await wait(()=>!caption().includes('refreshing'));
  if(SCENE==='recovery-home'){
   check('Cleared blocker is outside attention',document.querySelector('.home-waiting')?.textContent.includes('autocommit')&&!document.querySelector('.home-attention')?.textContent.includes('autocommit'));
@@ -114,7 +124,7 @@ report();
 '''
 def main():
  p=argparse.ArgumentParser();p.add_argument('--evidence',required=True,type=Path);p.add_argument('--scenes',nargs='*');a=p.parse_args();a.evidence.mkdir(parents=True,exist_ok=True);results=[]
- cases=[('recovery-home','dark','900x600'),('recovery-retry','light','720x460'),('recovery-cancel','dark','900x600'),('first-load','dark','900x600'),('home','dark','1200x800'),('home','light','720x460'),('to-operations','dark','900x600'),('to-home','light','900x600'),('hub-jobs','dark','900x600'),('hub-jobs','light','720x460')]+[('concise',theme,size) for theme in ('dark','light') for size in ('1200x800','720x460')]+[('concise-backups','light','900x600'),('concise-mixed','dark','900x600'),('glance','dark','420x600'),('glance','light','420x600')]
+ cases=[('job-output','light','720x460'),('job-output','dark','1200x800'),('recovery-home','dark','900x600'),('recovery-retry','light','720x460'),('recovery-cancel','dark','900x600'),('first-load','dark','900x600'),('home','dark','1200x800'),('home','light','720x460'),('to-operations','dark','900x600'),('to-home','light','900x600'),('hub-jobs','dark','900x600'),('hub-jobs','light','720x460')]+[('concise',theme,size) for theme in ('dark','light') for size in ('1200x800','720x460')]+[('concise-backups','light','900x600'),('concise-mixed','dark','900x600'),('glance','dark','420x600'),('glance','light','420x600')]
  for scene,theme,size in cases:
   if a.scenes and scene not in a.scenes:continue
   with tempfile.TemporaryDirectory(prefix='sovereign-transparency-') as folder:
@@ -133,6 +143,10 @@ def main():
    if scene.startswith('recovery'):
     data.update(fleet={'hosts':[]},needs_you=[],backups={})
     data['hub']['jobs']={'autocommit':{'ts':data['generated_at'],'exit':1,'source':'hub-runner','schedule':'04:30 daily','cadence_s':86400,'health':{'state':'awaiting_verification','summary':'Previous blocker cleared; awaiting backup','checked_at':datetime.now().timestamp(),'verification_deadline':datetime.now().timestamp()+3600,'next_due':datetime.now().timestamp()+2700,'why':'The rejected files now pass. A successful backup is still unverified.','action':'Run backup now, or wait for the scheduled run.','verify':'A new completed run must succeed.','failure_output':'SECRET SCAN FAILED <img src=x onerror=alert(1)>','retry_supported':True}}}
+   if scene=='job-output':
+    data['needs_you']=[{'kind':'job','text':'Capture last exited 0; recent error output remains.','why':'Skipped sources do not verify recovery.','action':'Verify a new capture.','verify':'Capture the available guest.','failure_output':'guest archive failed'}]
+    data['fleet']={'hosts':[]};data['backups']={};data['hub']['pending']=0
+    data['hub']['jobs']={j:{'ts':data['generated_at'],'exit':1,'health':{'why':'Captured output is shown below.','action':'Inspect the failed destination.','verify':'A new run succeeds.','failure_output':output}} for j,output in [('kit','kit transfer failed <img src=x onerror=alert(1)>'),('autocommit','archive push failed')]}
    if scene=='hub-jobs':data['hub']['jobs']={'autocommit':{'ts':data['generated_at'],'exit':1,'source':'hub-runner','schedule':'04:30 daily','cadence_s':86400},'nightly':{'ts':None,'exit':None,'source':'hub-runner','schedule':'06:00 daily','cadence_s':86400}}
    (base/'status.json').write_text(json.dumps(data));(base/'count').write_text('0')
    command=base/'status'

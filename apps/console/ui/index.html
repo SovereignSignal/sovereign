@@ -897,10 +897,11 @@ window.onerror = function (msg, src, line, col) {
   function issueHTML(n) {
     if(GLANCE)return ''; // The compact menu opens the console for troubleshooting.
     const url=SovStatus.safeURL(n.url);
-    if(!['why','action','verify'].some(k=>n[k])&&!url)return '';
+    const failures=(n.members||[n]).filter(r=>r.failure_output).map(r=>`<p><strong>${esc(r.name||'Captured output')}</strong></p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(r.failure_output)}</pre>`).join('');
+    if(!['why','action','verify'].some(k=>n[k])&&!url&&!failures)return '';
     const keys = n.actionKind ? ['why','verify'] : ['why','action','verify'];
     const act = n.actionKind ? ` <button data-act="${esc(n.actionKind)}">${esc(n.action||'Do it')}</button>` : (n.action?` <button data-copy-step="${esc(n.action)}">Copy next step</button>`:'');
-    return `<details class="issue-details"><summary>Details</summary>${keys.filter(k=>n[k]).map(k=>`<p>${esc(n[k])}</p>`).join('')}${url?`<a href="${esc(url)}" data-status-url="${esc(url)}">Open verification link</a>`:''}${act}</details>`;
+    return `<details class="issue-details"><summary>Details</summary>${keys.filter(k=>n[k]).map(k=>`<p>${esc(n[k])}</p>`).join('')}${failures}${url?`<a href="${esc(url)}" data-status-url="${esc(url)}">Open verification link</a>`:''}${act}</details>`;
   }
   function glanceHome() {
     const A = assess();

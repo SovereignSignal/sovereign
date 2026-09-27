@@ -180,12 +180,12 @@ window.SovStatus = (() => {
     // needs: failures, unreachable, the gate, unprotected machines
     const localHubFailures = new Map(h.via === 'local' ? Object.entries(h.jobs||{}).filter(([,j])=>j.source==='hub-runner'&&j.ts&&j.exit!=null&&j.exit!==0).map(([k,j])=>['com.sovereign.hub.'+k,j]) : []);
     const coveredLocalJob = j => {const receipt=localHubFailures.get(j.label);return receipt && receipt.exit===j.last_exit && Number.isFinite(j.last_run) && Date.parse(receipt.ts)/1000===j.last_run;};
-    (D.needs_you || []).forEach((n, i) => { if(n.kind === "job" && (!n.host||n.host===m.host) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return; need.push({ state: "warn", name: n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: n.kind === "host" ? 0 : 1, cause: "need:" + n.kind, jump:n.host?{view:"hosts",id:n.host}:null }); });
+    (D.needs_you || []).forEach((n, i) => { if(n.kind === "job" && (!n.host||n.host===m.host) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return; need.push({ state: "warn", name: n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, failure_output:n.failure_output, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: n.kind === "host" ? 0 : 1, cause: "need:" + n.kind, jump:n.host?{view:"hosts",id:n.host}:null }); });
     (D.jobs || []).filter(j => !coveredLocalJob(j)).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
     Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k,j]) => {
       const health = hubJob(j,D), paused = health.state === 'paused', pending = paused || health.state === 'awaiting_verification';
       (pending ? waiting : need).push({state:health.tone,name:k,detail:j.health ? health.summary : `exited ${j.exit} on the hub`,
-        why:health.why,action:health.action,verify:health.verify,age_h:ago(j.ts),jump:{view:'jobs',id:'hub:job:'+k},order:0,
+        why:health.why,failure_output:health.failure_output,action:health.action,verify:health.verify,age_h:ago(j.ts),jump:{view:'jobs',id:'hub:job:'+k},order:0,
         cause:paused?'job-paused':pending?'job-verifying':'job-failed'});
     });
     if (h.jobs_error) need.push({ state: "warn", name: "Hub jobs", detail: h.jobs_error, jump: { view: "jobs" }, order: 0, cause: "hub-jobs-unknown" });
@@ -273,7 +273,7 @@ window.SovStatus = (() => {
     const needG = collapse(need, (cause, rows) => {
       const label = rows[0].causeLabel || (cause === "job-failed" ? "failed their last run" : cause === "unreachable" ? "are unreachable" : cause === "mirror-late" ? "are past twice their mirror cadence" : "need a look");
       return { state: rows.some(r => r.state === "down") ? "down" : "warn", name: `${rows.length} ${cause === "job-failed" || cause === "hub-job-late" ? "jobs" : "machines"}`,
-        detail: `${label}: ${rows.slice(0, 2).map(r => r.name).join(", ")}${rows.length > 2 ? " and " + (rows.length - 2) + " more" : ""}`, why:rows[0].why, action:'Inspect each listed item in Operations → '+(rows[0].jump?.view==='backups'?'Backups':rows[0].jump?.view==='hosts'?'Hosts':rows[0].jump?.view==='tools'?'Tools':'Jobs')+'. '+rows[0].action, verify:rows[0].verify, age_h: null, order: rows[0].order };
+        detail: `${label}: ${rows.slice(0, 2).map(r => r.name).join(", ")}${rows.length > 2 ? " and " + (rows.length - 2) + " more" : ""}`, why:rows.some(r=>r.failure_output)?'Recorded failure details for each job are shown below.':rows[0].why, action:'Inspect each listed item in Operations → '+(rows[0].jump?.view==='backups'?'Backups':rows[0].jump?.view==='hosts'?'Hosts':rows[0].jump?.view==='tools'?'Tools':'Jobs')+'. '+rows[0].action, verify:rows[0].verify, age_h: null, order: rows[0].order };
     }).sort((p, q) => p.order - q.order);
     const freshG = collapse(fresh, (cause, rows) => { const newest = Math.min(...rows.map(r => r.age_h == null ? Infinity : r.age_h));
       return { state: "live", name: `${rows.length} mirrors`, detail: `pulled on ${rows[0].host}, newest ${age(newest)} ago`, age_h: isFinite(newest) ? newest : null, order: 1 }; });
