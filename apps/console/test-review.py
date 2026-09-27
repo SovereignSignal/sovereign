@@ -28,6 +28,58 @@ check('Direct decision available',true);
 const rect=button().getBoundingClientRect();
 check('Decision button visible',rect.width>0&&rect.left>=0&&rect.right<=innerWidth&&rect.top>=0&&rect.bottom<=innerHeight);
 check('Inspector exposed to accessibility',document.getElementById('inspector').getAttribute('aria-hidden')!=='true');
+if(scene==='speed'){
+ const handler=window.webkit.messageHandlers.sov,original=handler.postMessage.bind(handler),requests=[];
+ handler.postMessage=m=>{
+  if(['status','gate','gateCheck'].includes(m.cmd)){
+   requests.push(m);
+   if(m.cmd==='gateCheck')setTimeout(()=>window.sovDeliver('gateCheck',{slug:m.slug,request:m.request,state:'ready',fingerprint:'a'.repeat(64)}),0);
+  }else original(m);
+ };
+ const queue=copy();queue.hub.proposals=Array.from({length:45},(_,i)=>({...data.hub.proposals[0],slug:'speed-'+i,title:'Proposal '+i}));queue.hub.pending=45;
+ deliver(JSON.parse(JSON.stringify(queue)));rows()[10].click();await wait(()=>button()&&!button().disabled);
+ const list=document.getElementById('rows');list.scrollTop=400;
+ const survivor=rows()[20],scroll=list.scrollTop;
+ const decide=async state=>{
+  await wait(()=>button()&&!button().disabled);
+  const action=state==='rejected'?document.querySelector('[data-act="gate"][data-verb="reject"]'):button();
+  const before=requests.filter(m=>m.cmd==='gate').length;
+  action.click();if(state==='rejected')action.click();
+  check('Decision sent '+before,requests.filter(m=>m.cmd==='gate').length===before+1);
+  const request=requests.filter(m=>m.cmd==='gate').at(-1);
+  const start=performance.now();window.sovDeliver('gateResult',{...request,state});
+  return {request,ms:performance.now()-start};
+ };
+ const approved=await decide('approved');
+ check('Only completed row removed',rows().length===44&&!list.querySelector('[data-id="p:speed-10"]'));
+ check('List nodes and scroll retained',survivor===list.querySelector('[data-id="p:speed-20"]')&&list.scrollTop===scroll);
+ check('Next proposal selected',list.querySelector('[aria-selected="true"]').dataset.id==='p:speed-11');
+ check('Queue count updated',document.getElementById('review-count').textContent==='44');
+ check('No full status request',!requests.some(m=>m.cmd==='status'));
+ check('Receipt handled within 100ms',approved.ms<100);
+ window.sovDeliver('gateResult',{...approved.request,state:'approved'});
+ check('Duplicate reply ignored',rows().length===44);
+ await decide('rejected');await decide('sync_pending');
+ check('Rapid decisions advance',rows().length===42&&list.querySelector('[aria-selected="true"]').dataset.id==='p:speed-13');
+ check('Sync warning visible',!!document.querySelector('#gate-notice.sync_pending'));
+ const failed=await decide('failed');
+ check('Failure stays selected without retry',rows().length===42&&button().disabled&&!!document.querySelector('#insp .failed'));
+ document.querySelector('[data-act="gate-check"]').click();
+ await decide('uncertain');
+ check('Uncertain result stays blocked',rows().length===42&&button().disabled&&!!document.querySelector('#insp .uncertain'));
+ check('Decisions never request status',!requests.some(m=>m.cmd==='status'));
+ deliver(JSON.parse(JSON.stringify(queue)));
+ check('Older status cannot restore completed rows',rows().length===42&&!list.querySelector('[data-id="p:speed-10"]')&&!list.querySelector('[data-id="p:speed-11"]')&&!list.querySelector('[data-id="p:speed-12"]'));
+ const changed=JSON.parse(JSON.stringify(queue));changed.hub.proposals[10].body='A new revision';deliver(changed);
+ check('New proposal revision can return',!!list.querySelector('[data-id="p:speed-10"]'));
+ const single=copy();single.hub.proposals=[{...data.hub.proposals[0],slug:'last'}];single.hub.pending=1;deliver(single);rows()[0].click();
+ await decide('approved');
+ check('Final receipt gives empty queue',rows().length===0&&document.getElementById('review-intro').textContent.includes('caught up')&&!button());
+ check('Empty queue needs no reload',!requests.some(m=>m.cmd==='status'));
+ single.hub.proposals=[{...data.hub.proposals[0],slug:'page-end'}];single.hub.pending=3;deliver(single);rows()[0].click();await decide('rejected');
+ check('Exhausted partial queue loads more',requests.filter(m=>m.cmd==='status').length===1&&document.getElementById('review-intro').textContent.includes('waiting to load'));
+ handler.postMessage=original;
+}
 if(scene==='layout'){
  // Reproduce a long proposal after the previous decision left a receipt banner.
  const notice=document.getElementById('gate-notice');notice.hidden=false;notice.className='gate-feedback approved';
@@ -84,7 +136,7 @@ report();
 '''
 def main():
  p=argparse.ArgumentParser();p.add_argument('--evidence',required=True,type=Path);p.add_argument('--scenes',nargs='*');a=p.parse_args();a.evidence.mkdir(parents=True,exist_ok=True);reports=[]
- cases=[('home','dark','1200x800'),('system','light','900x600'),('menu','dark','720x460'),('states','dark','1200x800'),('states','light','720x460')]+[('layout',theme,size) for theme in ('light','dark') for size in ('1210x890','1100x600','1099x600','900x600','720x460')]
+ cases=[('home','dark','1200x800'),('system','light','900x600'),('menu','dark','720x460'),('states','dark','1200x800'),('states','light','720x460'),('speed','dark','1200x800'),('speed','light','720x460')]+[('layout',theme,size) for theme in ('light','dark') for size in ('1210x890','1100x600','1099x600','900x600','720x460')]
  for scene,theme,size in cases:
   if a.scenes and scene not in a.scenes:continue
   t=fixture.GateCheckTests();t.setUp();suite='com.sovereign.qa.review.'+uuid.uuid4().hex

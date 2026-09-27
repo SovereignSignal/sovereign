@@ -35,7 +35,11 @@ if(scenario.startsWith('resolve')){
    if(scenario==='resolve-quit')window.webkit.messageHandlers.sov.postMessage({cmd:'qaQuit'});
    const expected=scenario==='resolve-fail'?'failed':'approved';await wait(()=>!!document.querySelector('#gate-notice.'+expected));
    checks.result=true;checks.noTerminalDump=!document.querySelector('#drawer.open');
-   if(scenario==='resolve-fail'){await wait(()=>!!start());checks.failedResolutionCanReviewAgain=true;}
+   if(scenario==='resolve-fail'){
+    checks.failedResolutionStaysVisible=!!document.querySelector('#insp .failed')&&approve().disabled;
+    document.querySelector('[data-act="gate-check"]').click();
+    await wait(()=>!!start());checks.failedResolutionCanReviewAgain=true;
+   }
  }
 }else if(scenario==='conflict'){
  checks.blocked=approve().disabled;checks.explanation=document.querySelector('#insp').textContent.includes('Two card types need reconciling');
@@ -71,6 +75,8 @@ if(scenario.startsWith('resolve')){
  if(scenario==='quit')checks.survivedNativeQuit=true;
  if(scenario==='timeout'){
    checks.quitReleased=window.sovCanQuit()===true;
+   checks.uncertainStaysVisible=!!document.querySelector('#insp .uncertain')&&approve().disabled;
+   document.querySelector('[data-act="gate-check"]').click();
    await wait(()=>!!document.querySelector('#insp .busy'));
    checks.retryBlocked=approve().disabled;
    await new Promise(r=>setTimeout(r,2800));

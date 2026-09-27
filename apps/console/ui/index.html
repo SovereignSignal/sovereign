@@ -918,6 +918,10 @@ window.onerror = function (msg, src, line, col) {
     const m = D?.machine || {}, meName = m.host || "here";
     $("#listcount").textContent = view === "review" ? SovStatus.caption(D) : view === "hosts" ? `${D.fleet?.hosts?.length||0} active · ${D.fleet?.disassociated?.length||0} disassociated` : view === "tools" ? `${n} tools on ${meName}` : (m.template_rev || "");
   }
+  function renderReviewIntro(q) {
+    $('#review-count').textContent=q.count||'';
+    $('#review-intro').innerHTML=`<div class="review-heading"><h2>${esc(q.title)}</h2>${q.count?`<span>${num(q.count)}</span>`:''}</div><p>${esc(q.message)}</p>${!q.available?`<button id="review-retry">${['no_archive','different_archive'].includes(q.state)?'Open archive…':'Refresh queue'}</button>`:''}`;
+  }
   function renderList() {
     const review=view==='review',q=reviewQueue();
     document.body.classList.toggle('review',review);
@@ -949,7 +953,7 @@ window.onerror = function (msg, src, line, col) {
     $('#review-count').textContent=q.count||'';
     $('#rows').setAttribute('aria-label',review?'Proposals awaiting your decision':'Records');
     const intro=$('#review-intro');intro.hidden=!review;
-    if(review)intro.innerHTML=`<div class="review-heading"><h2>${esc(q.title)}</h2>${q.count?`<span>${num(q.count)}</span>`:''}</div><p>${esc(q.message)}</p>${!q.available?`<button id="review-retry">${['no_archive','different_archive'].includes(q.state)?'Open archive…':'Refresh queue'}</button>`:''}`;
+    if(review)renderReviewIntro(q);
     if(!review&&view!=="tools"&&D?._status?.pending&&!D.machine){$('#rows').className='';$('#rows').textContent=SovStatus.caption(D);footerMeta(0);return;}
     if(!review&&view!=="tools"&&D?.error){$('#rows').className='';$('#rows').innerHTML='<div class="empty">System status unavailable. Use Refresh to try again.</div>';sel=null;footerMeta(0);return;}
 
@@ -1074,7 +1078,7 @@ window.onerror = function (msg, src, line, col) {
     bridge({ cmd: "setSettings", where, loginItem: $("#s-login").checked, refresh: +$("#s-refresh").value, defaultView: $("#s-view").value, closeQuits: $("#s-closequits").checked });
   }
 
-  const gateChecks = new Map(), gateResolutions = new Map(); let gatePending = null, gateRequest = 0;
+  const gateChecks = new Map(), gateResolutions = new Map(), gateCompleted = new Map(); let gatePending = null, gateRequest = 0;
   function requestGateCheck(slug) {
     if(gatePending||!canReview(slug))return;
     gateResolutions.delete(slug);const request='check-'+(++gateRequest);gateChecks.set(slug,{request,key:GateModel.reviewKey(D,slug),value:{state:'checking'}});
@@ -1603,7 +1607,7 @@ window.onerror = function (msg, src, line, col) {
         const fire=()=>{
           if(!canReview(slug)||gatePending||gateChecks.get(slug)?.value!==check)return;
           const request='gate-'+(++gateRequest);
-          gatePending={slug,verb,request,title:(hub().proposals||[]).find(p=>p.slug===slug)?.title||slug};showGateNotice('running');renderInspector();
+          gatePending={slug,verb,request,key:GateModel.reviewKey(D,slug),title:(hub().proposals||[]).find(p=>p.slug===slug)?.title||slug};showGateNotice('running');renderInspector();
           gatePending.timer=setTimeout(()=>{
             deliverInner('gateResult',{state:'uncertain',slug,request});
           },GateModel.decisionTimeoutMS);
@@ -1697,7 +1701,7 @@ window.onerror = function (msg, src, line, col) {
       return;
     }
     if(kind==='localState'){
-      if(selectedRoot!==(payload.root||null)){gateChecks.clear();gateResolutions.clear();sel=null;}
+      if(selectedRoot!==(payload.root||null)){gateChecks.clear();gateResolutions.clear();gateCompleted.clear();sel=null;}
       selectedRoot=payload.root||null;archiveKnown=true;$('#change').hidden=false;
       if(D){render(D);if(view==='review'&&!sel&&reviewQueue().available&&!gatePending)gotoGate();}
       return;
@@ -1710,15 +1714,45 @@ window.onerror = function (msg, src, line, col) {
       if(!gatePending||gatePending.request!==payload.request||gatePending.slug!==payload.slug)return;
       const finished=gatePending;clearTimeout(finished.timer);gatePending=null;gateChecks.delete(payload.slug);gateResolutions.delete(payload.slug);
       if(['approved','rejected','sync_pending'].includes(payload.state)){
-        const h=hub(),before=(h.proposals||[]).length;h.proposals=(h.proposals||[]).filter(p=>p.slug!==payload.slug);
+        gateCompleted.set(payload.slug,finished.key);
+        const h=hub(),before=(h.proposals||[]).length,index=(h.proposals||[]).findIndex(p=>p.slug===payload.slug);
+        h.proposals=(h.proposals||[]).filter(p=>p.slug!==payload.slug);
         if(h.proposals.length<before){h.pending=Math.max(0,(h.pending||before)-1);if(!h.pending)D.needs_you=(D.needs_you||[]).filter(n=>n.kind!=='gate');}
-        sel=null;renderTop();renderList();
+        // A confirmed receipt changes one row. Keep the list nodes and scroll position.
+        if(sel?.id==='p:'+payload.slug){
+          const next=h.proposals[Math.min(Math.max(index,0),h.proposals.length-1)];
+          sel=next?{view:'review',kind:'prop',id:'p:'+next.slug}:null;
+          $('#inspector').scrollTop=0;
+        }
+        if(view==='review'&&!settingsOpen){
+          const rows=$('#rows'),scroll=rows.scrollTop;
+          [...rows.querySelectorAll('[data-id]')].find(r=>r.dataset.id==='p:'+payload.slug)?.remove();
+          rows.querySelectorAll('[role=option]').forEach(r=>r.setAttribute('aria-selected',String(r.dataset.id===sel?.id)));
+          renderReviewIntro(reviewQueue());syncActive();rows.scrollTop=scroll;footerMeta(h.proposals.length);
+          if(!sel&&!splitReview())closeInspector();
+        }
+        renderTop();
+      }else{
+        // Keep an unconfirmed decision in place; only an explicit recheck can retry it.
+        gateChecks.set(payload.slug,{request:null,key:GateModel.reviewKey(D,payload.slug),value:payload});
       }
-      showGateNotice(payload.state,['approved','rejected'].includes(payload.state)?null:payload.detail,finished.title);renderInspector();refresh();return;
+      showGateNotice(payload.state,['approved','rejected'].includes(payload.state)?null:payload.detail,finished.title);renderInspector();commit();
+      // Status caps the loaded queue. Fetch another page only after it is exhausted.
+      if(!hub().proposals?.length&&hub().pending>0)refresh();
+      return;
     }
     if (kind === "status") {
       const resumeReview=view==='review'&&!reviewQueue().available;
       payload=SovStatus.retain(D,payload);
+      // A status probe started before a decision can return its old queue afterwards.
+      // Suppress only the exact completed proposal, and retire receipts on a fresh absence.
+      for(const [slug,key] of gateCompleted){
+        const incoming=GateModel.reviewKey(payload,slug);
+        if(incoming===key){
+          payload={...payload,hub:{...payload.hub,proposals:payload.hub.proposals.filter(p=>p.slug!==slug),pending:Math.max(0,payload.hub.pending-1)}};
+          if(!payload.hub.pending)payload.needs_you=(payload.needs_you||[]).filter(n=>n.kind!=='gate');
+        }else if(GateModel.queue(payload,selectedRoot,archiveKnown).available){gateCompleted.delete(slug);}
+      }
       if(!GateModel.queue(payload,selectedRoot,archiveKnown).available){gateChecks.clear();gateResolutions.clear();}
       if (GLANCE && payload.error) {D=payload;const g=$('#glance');g.hidden=false;g.innerHTML=`<div class="empty">${esc(payload.error)}</div><button id="g-refresh">Try again</button>`;return;}
       if(!gatePending)for(const [slug,entry] of gateChecks){
@@ -1776,7 +1810,7 @@ window.onerror = function (msg, src, line, col) {
       if (payload.sel) { const it = findRow(payload.sel.id); select(it ? it.kind : payload.sel.kind, payload.sel.id, true); }
     }
   };
-  function resetTimer() { clearInterval(timer); timer = setInterval(refresh, Math.max(15, S.refresh || 60) * 1000); }
+  function resetTimer() { clearInterval(timer); timer = setInterval(()=>{if(!gatePending)refresh();}, Math.max(15, S.refresh || 60) * 1000); }
 
   function renderSetup(d) {
     D = d;
