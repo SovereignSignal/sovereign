@@ -22,7 +22,7 @@ Run: spp3-brain-daily [--dry] [--preflight]
   --preflight  render every source against the last captured bytes and say
                whether a change is safe to ship. Reads only.
 """
-import os, re, sys, json, hashlib, subprocess, tempfile
+import os, re, sys, json, hashlib, subprocess, tempfile, time, atexit
 from datetime import datetime, timezone
 
 HOME    = os.path.expanduser("~")
@@ -363,16 +363,84 @@ def git(*args):
     return subprocess.run(["git", "-C", BRAIN] + list(args), capture_output=True, text=True)
 
 
+def publish_lock():
+    return os.path.join(BRAIN, ".git", "sov-publish.lock")
+
+
+def take_publish_lock():
+    """The lock every connector mirror takes before it touches this clone's index
+    (sov_git_lock in connectors/harness/_lib/mirror-common.sh), same contract:
+    mkdir is atomic, wait up to 60s, and a lock older than ten minutes belonged
+    to a dead run. Without it a mirror's staged files could ride into a capture
+    commit, now that a mirror's pending changes no longer stop this run."""
+    lock = publish_lock()
+    try:
+        if time.time() - os.stat(lock).st_mtime > 600:
+            log("reclaiming a publish lock left behind by a dead run")
+            os.rmdir(lock)
+    except OSError:
+        pass
+    for _ in range(30):
+        try:
+            os.mkdir(lock)
+            return True
+        except FileExistsError:
+            time.sleep(2)
+        except OSError as e:
+            log(f"ABORT: cannot take the publish lock: {e}")
+            return False
+    log("ABORT: publish lock still held after 60s by a connector mirror")
+    return False
+
+
+def mirror_owned():
+    """Folders under this lane that a connector mirror owns: LANE.md names them in
+    mirror_harnesses. The mirror commits them on its own tick, and its harness
+    hook appends between ticks (every Claude Code session start writes a line to
+    brain-load-usage.md), so an uncommitted change there is the mirror's business.
+    On 2026-09-28 a cron session at 11:30 left that line pending at 11:45 and the
+    old any-dirty-file check skipped the whole day."""
+    lane_rel = "raw/workspaces/" + BRANCH.split("/", 1)[1]
+    try:
+        m = re.search(r"^mirror_harnesses:\s*\[(.*)\]\s*$",
+                      read(os.path.join(BRAIN, lane_rel, "LANE.md")), re.M)
+    except OSError:
+        return ()
+    names = [h.strip() for h in m.group(1).split(",") if h.strip()] if m else []
+    return tuple(f"{lane_rel}/{h}/" for h in names)
+
+
+def foreign_changes():
+    """Uncommitted paths this producer does not expect: everything dirty outside
+    the mirror-owned folders. A rename names both ends, and both must be owned."""
+    fields = git("status", "--porcelain", "-z").stdout.split("\0")
+    paths, i = [], 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if not entry:
+            continue
+        paths.append(entry[3:])
+        if entry[0] in "RC" and i < len(fields):
+            paths.append(fields[i])
+            i += 1
+    owned = mirror_owned()
+    return [p for p in paths if not (owned and p.startswith(owned))]
+
+
 def refresh_lane():
     """Keep the READ wire current by fast-forwarding the lane onto the hub's main."""
     if git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != BRANCH:
         log(f"ABORT: clone is not on {BRANCH}")
         return False
-    if git("status", "--porcelain").stdout.strip():
-        log("ABORT: lane working tree is dirty — refusing to run")
+    foreign = foreign_changes()
+    if foreign:
+        log(f"ABORT: lane working tree is dirty — refusing to run ({', '.join(foreign[:3])})")
         return False
-    if git("fetch", "-q", "origin").returncode != 0:
-        log("ABORT: cannot reach the exchange")
+    f = git("fetch", "-q", "origin")
+    if f.returncode != 0:
+        # git's own words: on 2026-09-26 this was a changed host key, not a dead host
+        log(f"ABORT: cannot reach the exchange: {' '.join(f.stderr.split())}")
         return False
     m = git("merge", "--no-edit", "-q", "origin/main")
     if m.returncode != 0:
@@ -663,8 +731,12 @@ def main():
     if PREFLIGHT:
         return preflight(state)
 
-    if not DRY and not refresh_lane():
-        return 1
+    if not DRY:
+        if not take_publish_lock():
+            return 1
+        atexit.register(os.rmdir, publish_lock())
+        if not refresh_lane():
+            return 1
 
     changed = 0
     cov = {"documents": {"declared": len(SOURCES), "captured": 0, "unchanged": 0, "skipped": 0},
