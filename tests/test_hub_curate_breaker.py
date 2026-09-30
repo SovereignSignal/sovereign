@@ -51,8 +51,8 @@ def run_curate(tmp, pending, limit=50, **extra_env):
     tpl = root / "tpl" / "bin"
     tpl.mkdir(parents=True)
     (tpl / "curator-run").write_text(
-        "import os, sys\nprint('curator-run stub: %s :: %s :: cap=%s' % (sys.executable, ' '.join(sys.argv[1:]),"
-        " os.environ.get('ARCHIVIST_AUTO_PROMOTE_MAX')))\n")
+        "import os, sys\nprint('curator-run stub: %s :: %s :: cap=%s :: screen=%s' % (sys.executable, ' '.join(sys.argv[1:]),"
+        " os.environ.get('ARCHIVIST_AUTO_PROMOTE_MAX'), os.environ.get('CURATOR_SCREEN', '')))\n")
     shutil.copy2(ROOT / "bin" / "_sov-python.sh", tpl / "_sov-python.sh")
     env = dict(os.environ, SOVS_VAULT=str(root / "vault"), CURATOR_LANE="curator",
                SOV_TEMPLATE=str(root / "tpl"), SOV_PYTHON=sys.executable,
@@ -85,6 +85,20 @@ class TheBreakerSaysItTripped(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             self.assertNotIn(BREAKER, done.stdout)
             self.assertIn("--max 50", done.stdout, "the pass itself is unchanged")
+
+    def test_the_tick_screens_its_sources_like_the_nightly(self):
+        """The injection screen is opt-in (CURATOR_SCREEN) and only bin/hub/nightly set it.
+
+        From the 2026-09-21 cadence change to 2026-09-30 the two-hourly tick, which
+        does most of the judging, ran with the screen off, so its act-and-report
+        landings never passed the gate the gears basis assumes. A flag costs a card
+        its gears, never the card; the tick must set it exactly as the nightly does.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            done = run_curate(tmp, pending=0, limit=50, CURATOR_SCREEN="")
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertIn("screen=on", done.stdout,
+                          "the tick must hand curator-run CURATOR_SCREEN=on")
 
     def test_curator_run_starts_on_the_resolved_interpreter(self):
         """Not `#!/usr/bin/env python3`, which on a Mac is the Xcode shim."""
