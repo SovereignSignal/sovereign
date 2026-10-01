@@ -18,6 +18,14 @@ sov_parse_args "$@"
 sov_resolve
 sov_plan "hook       $HERE/session-start.py  (pre_llm_call -> ~/.hermes/config.yaml, consent -> shell-hooks-allowlist.json)" \
          "mirror     $HERE/mirror.sh  every ${INTERVAL}s in $RUNNER_LABEL (this machine's one connector job)"
+# hooks.py rewrites Hermes' own config. With no Hermes there is nothing to rewrite, and a
+# rebuild on a fresh machine met that as a Python traceback after the pointers were written.
+HERMES_DIR="${HERMES_HOME:-$HOME/.hermes}"
+if [ ! -f "$HERMES_DIR/config.yaml" ]; then
+  say; say "Hermes is not installed on this machine: $HERMES_DIR/config.yaml is missing."
+  say "Install Hermes and start it once, then run sov connect hermes again. Nothing was changed."
+  exit 1
+fi
 sov_write_pointers
 sov_link_bins
 chmod +x "$HERE/session-start.py" "$HERE/hooks.py"

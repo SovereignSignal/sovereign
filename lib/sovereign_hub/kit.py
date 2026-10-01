@@ -49,6 +49,11 @@ def inventory(inst, state, home):
         entries.append((name, Path(p).read_bytes()))
 
     add("state/hub.json", state / "hub.json")
+    # Its sibling says which machine is the hub (machine.role) and which tools are connected.
+    # Nothing in the rebuild steps writes the role, so without this a rebuilt hub is refused
+    # by the archive-backup server (found in the 2026-09-30 recovery rehearsal).
+    if (state / "connectors.json").is_file():
+        add("state/connectors.json", state / "connectors.json")
     for p in sorted(home.glob(".brain-*")):
         if p.is_file():
             add("pointers/" + p.name, p)

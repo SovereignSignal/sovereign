@@ -45,6 +45,18 @@ class Kit(unittest.TestCase):
         with self.assertRaises(ValueError):
             kit.inventory(bad, self.state, self.home)
 
+    def test_the_connector_manifest_rides_along_when_there_is_one(self):
+        """connectors.json is where a machine says it is the hub (machine.role), and only the
+        app's activation path writes that. The 2026-09-30 rebuild rehearsal followed
+        docs/hub-rebuild.md and ended with the role empty, which the archive-backup server
+        refuses. The kit already carries hub.json from the same folder; this is its sibling."""
+        names = [n for n, _ in kit.inventory(self.inst, self.state, self.home)]
+        self.assertNotIn("state/connectors.json", names, "a hub with no manifest has nothing to add")
+        body = '{"version":1,"machine":{"role":"hub"},"harnesses":{}}\n'
+        (self.state / "connectors.json").write_text(body)
+        got = dict(kit.inventory(self.inst, self.state, self.home))
+        self.assertEqual(got["state/connectors.json"].decode(), body)
+
     def test_build_seals_copies_keeps_and_restores_byte_for_byte(self):
         folder = Path(self.inst["snapshot"]["folder"]) / "hub-kit"
         kit.build(self.inst, self.state, self.home, ROOT, apply=False)

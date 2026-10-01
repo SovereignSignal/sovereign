@@ -290,6 +290,31 @@ class Refusals(unittest.TestCase):
                 self.assertIn("reserved", r.stderr)
 
 
+class HermesAbsent(unittest.TestCase):
+    """`sov connect hermes` rewrites Hermes' own config. On a machine with no Hermes there is
+    nothing to rewrite, and the 2026-09-30 rebuild rehearsal met that as a Python traceback
+    after the pointers had already been written."""
+
+    def test_no_hermes_is_a_sentence_not_a_traceback_and_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp)
+            r = b.connect("hermes")
+            self.assertNotEqual(r.returncode, 0, "a connector that cannot install must not exit clean")
+            self.assertIn("Hermes is not installed", r.stdout + r.stderr)
+            self.assertNotIn("Traceback", r.stdout + r.stderr)
+            self.assertFalse((b.home / ".brain-root").exists(), "nothing may be written before the refusal")
+            self.assertFalse((b.state / "connectors.json").exists(), "no lane may be declared")
+
+    def test_with_hermes_present_it_installs_as_before(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp)
+            (b.home / ".hermes").mkdir()
+            (b.home / ".hermes" / "config.yaml").write_text("model: local\n")
+            r = b.connect("hermes")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("hermes", b.manifest()["harnesses"])
+
+
 class Removal(unittest.TestCase):
     def test_disconnect_drops_the_lane_keeps_its_files_and_retires_its_error_log(self):
         with tempfile.TemporaryDirectory() as tmp:
