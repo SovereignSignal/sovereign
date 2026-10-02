@@ -34,10 +34,10 @@ await wait(()=>window.sovSnapshotReady());
 const errors=[];window.addEventListener('error',e=>errors.push(String(e.message)));
 const countError=()=>/^(?:console|script) error/i.test(document.getElementById('listcount').textContent);
 // Inject the historical defect into this disposable page to prove the assertion catches it.
-const saved=SovStatus.shortLabel;SovStatus.shortLabel=undefined;document.querySelector('.seg button[data-view="jobs"]').click()
+const saved=SovStatus.shortLabel;SovStatus.shortLabel=undefined;window.sovView('settings');document.querySelector('[data-goto-view="jobs"]').click()
 check('regression detector catches missing Hub helper',countError());SovStatus.shortLabel=saved;
-for(const theme of ['dark','light']){await change(theme);for(const view of ['glance','hosts','archive','lanes','tools','jobs','backups']){
- if(view==='glance')window.sovView(view);else document.querySelector('.seg button[data-view="'+view+'"]').click();await pause(60);check(theme+' '+view+' renders without script error',!countError());
+for(const theme of ['dark','light']){await change(theme);for(const view of ['sources','hosts','archive','discover','jobs','backups','recovery']){
+ window.sovView(view);await pause(60);check(theme+' '+view+' renders without script error',!countError());
  if(view==='jobs')check(theme+' Hub renders nested runner lanes',document.getElementById('rows').textContent.includes('Lanes inside'));
 }}
 check('no unexpected errors',errors.length===0);
@@ -48,7 +48,7 @@ check('Appearance preserves other unsaved settings',refresh===document.getElemen
 await change('light');check('menu or native changes synchronize setting',select.value==='light');report();
 '''
 SYSTEM=r'''
-await wait(()=>!document.getElementById('system-home').hidden);document.getElementById('system-tab').click();
+await wait(()=>!document.getElementById('system-home').hidden);window.sovView('system');
 const home=document.getElementById('system-home');
 for(const theme of ['dark','light']){
  await change(theme);const tab=name=>home.querySelector('[data-pane="'+name+'"]');tab('world').click();
@@ -67,7 +67,7 @@ document.querySelector('[data-pane="world"]').click();report();
 GATE=r'''
 await wait(()=>document.querySelector('[data-act="gate-resolve"]'));document.querySelector('[data-act="gate-resolve"]').click();
 const preview=document.getElementById('gate-resolution-preview'),comparison=document.getElementById('gate-comparison');
-for(const theme of ['dark','light']){await change(theme);check(theme+' review preview preserved',document.getElementById('gate-resolution-preview')===preview&&comparison===document.getElementById('gate-comparison')&&comparison.open);check(theme+' explicit decision retained',!!document.querySelector('[data-verb="resolve"]'))}
+for(const theme of ['dark','light']){await change(theme);check(theme+' review preview preserved',document.getElementById('gate-resolution-preview')===preview&&comparison===document.getElementById('gate-comparison')&&comparison.textContent.length>0);check(theme+' explicit decision retained',!!document.querySelector('[data-verb="resolve"]'))}
 report();
 '''
 
@@ -99,7 +99,7 @@ def main():
    base=Path(tmp);root=base/'Appearance QA';brain_local.create(root,REPO);root=root.resolve();brain_local.capture(root,'Existing note','Keep local content.')
    data={'machine':{'connected':True,'host':'QA Desk','vault':str(root),'vault_name':'Appearance QA'},'hub':{'reachable':True,'hub_host':'QA Hub','pending':0},'archive':{'cards':[]},'jobs':[{'label':'com.sov.connector.runner','last_exit':0},{'label':'collection','kick':'com.sov.connector.runner','last_exit':0}],'harnesses':[{'id':'reader','name':'QA Reader','state':'connected','hook_registered':True,'read':'hook','trusted':True,'lane':'reader','lane_dir':str(root/'raw/tools/reader')}],'fleet':{'hosts':[{'host':'QA Desk','net':{'online':True}}]},'needs_you':[]}
    command=base/'status';command.write_text('#!/bin/sh\ncat <<\'DATA\'\n'+json.dumps(data)+'\nDATA\n');command.chmod(0o700)
-   for scene,script,anchor in [('home',HOME,None),('persist',PERSIST,None),('navigation',"check('new document uses current theme',document.documentElement.dataset.theme==='dark');report();",'operations:view:glance'),('operations',OPS,'operations:view:jobs'),('system',SYSTEM,None)]:
+   for scene,script,anchor in [('home',HOME,None),('persist',PERSIST,None),('navigation',"check('new document uses current theme',document.documentElement.dataset.theme==='dark');report();",'operations:view:sources'),('operations',OPS,'operations:view:jobs'),('system',SYSTEM,None)]:
     if args.scenes and scene not in args.scenes:continue
     for size in (['900x600','720x460'] if scene in ['operations','system'] else ['900x600']):run(scene,root,command,script,size,anchor)
   if not args.scenes or 'gate' in args.scenes:

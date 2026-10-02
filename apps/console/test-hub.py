@@ -29,8 +29,8 @@ if(PHASE==='install'){
 }else{
  check('Separate apply is visible',apply().textContent==='Prepare Hub');
 }
-check('Setup banner makes no health claim',!document.querySelector('#vtext').textContent.includes('All good'));
-check('Hub tab selected',document.querySelector('[data-view="jobs"]').getAttribute('aria-pressed')==='true');
+check('Setup page makes no health claim',!document.querySelector('#verdict.show')&&!document.querySelector('main').textContent.includes('All good'));
+check('Hub setup sits under Settings',document.getElementById('settings-tab').getAttribute('aria-pressed')==='true'&&document.getElementById('vault').textContent==='Hub setup');
 if(PHASE==='preview')document.querySelector('#rows').scrollTop=document.querySelector('#rows').scrollHeight;
 check('No page overflow',document.documentElement.scrollWidth<=innerWidth);
 check('No list overflow',document.querySelector('#rows').scrollWidth<=document.querySelector('#rows').clientWidth);

@@ -1,19 +1,23 @@
-/* Settings pane: one readable column, not a drawer. Reuses the shell's tokens. */
-.set-pane{padding:26px 30px 40px;max-width:760px;min-width:0}
-.set-head{margin-bottom:30px}
-.set-head h1{font-size:26px;font-weight:450;letter-spacing:-.025em;margin:0 0 8px}
-.set-head p{font-size:12px;color:var(--muted);margin:0;line-height:1.7;max-width:60ch}
-.set-sect{border-top:1px solid var(--rule);padding:20px 0}
-.set-sect h2{font-size:12px;font-weight:500;margin:0 0 12px;color:var(--ink)}
-.set-sect h2 label{cursor:pointer}
-.set-lead{font-size:13px;line-height:1.7;margin:0 0 4px}
-.set-note{font-size:11px;line-height:1.7;color:var(--muted);margin:8px 0 0;max-width:66ch}
-.set-sect select{font-size:12px;border:1px solid var(--rule);background:var(--panel);color:var(--ink);padding:7px 9px;border-radius:5px;min-width:190px}
-.set-sect .radio,.set-sect .check{display:block;font-size:12px;margin:5px 0;cursor:pointer}
-.set-sect .acts{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
-.set-sect .acts button{font-size:11px}
-.set-pane .mono{font:11px var(--mono);color:var(--muted);overflow-wrap:anywhere}
-.set-save{margin-top:26px;padding-top:22px;border-top:1px solid var(--rule)}
+/* Settings pane: one row per setting. Its name, its value, its control. */
+.set-pane{padding:8px 24px 32px;max-width:820px;min-width:0}
+.set-sect{display:grid;grid-template-columns:120px minmax(0,1fr) auto;gap:4px 16px;align-items:center;min-height:48px;padding:10px 0;border-top:1px solid var(--rule-soft)}
+.set-sect:first-child{border-top:0}
+.set-sect h2{font:500 12.5px/18px var(--sans);margin:0;color:var(--ink)}
+.set-sect h2 label{cursor:pointer;font:inherit;color:inherit}
+.set-body{min-width:0}
+.set-lead{font-size:12.5px;line-height:18px;margin:0;color:var(--ink-2);overflow-wrap:anywhere}
+.set-note{font-size:11px;line-height:1.6;color:var(--muted);margin:4px 0 0;max-width:66ch}
+.set-sect select{font-size:12px;border:1px solid var(--rule);background:var(--panel);color:var(--ink);padding:5px 8px;border-radius:5px;min-width:150px}
+.set-sect .radio,.set-sect .check{display:flex;font-size:12.5px;margin:0;padding:0;cursor:pointer}
+.set-inline{display:flex;gap:16px;flex-wrap:wrap}
+.set-sect .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end;margin:0}
+.set-pane .mono{font:11.5px var(--mono);color:var(--ink-2);overflow-wrap:anywhere}
+.set-save{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:0;padding:12px 0;border-top:1px solid var(--rule-soft)}
+.set-more summary{cursor:pointer;font-size:12.5px;line-height:18px;color:var(--ink-2);width:fit-content}
+.set-sect .set-lead+.set-more summary{font-size:11px;color:var(--muted);margin-top:2px}
+.set-sect:has(.set-perms){align-items:start}
+.set-sect:has(.set-perms) .set-body{grid-column:2/-1}
+@media(max-width:800px){.set-sect{grid-template-columns:96px minmax(0,1fr) auto}.set-pane{padding:8px 16px 24px}}
 
 /* Permissions read as a table because the comparison between lanes is the point:
    contribute-only beside read-and-contribute, with any declared drift in line. */
@@ -32,8 +36,6 @@
 .set-finding.bad{color:var(--down)}
 
 @media(max-width:850px){
-  .set-pane{padding:20px 18px 32px}
-  .set-head h1{font-size:22px}
   .set-perms{font-size:10px}
   .set-perms th:nth-child(3),.set-perms td:nth-child(3){display:none}
 }

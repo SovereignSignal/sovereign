@@ -1,12 +1,18 @@
 'use strict';
-// The home consumes existing status and receipt contracts. It has no write commands.
+// Today answers one question: what needs me. Each thing is said once, as a name, a
+// short reason and where to go; the sentence that explains it opens under its row.
+// The only command it sends is the app's own update. Everything else is a jump.
 window.Home = (() => {
-  let api, root=null, status=null, context=null, pending=false, request=0, view='overview', selected=null, expanded=false;
+  let api, root=null, status=null, context=null, pending=false, request=0, view='overview', open=null;
   const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!=null)e.textContent=text;if(cls)e.className=cls;return e};
-  const validTime=value=>{const n=Date.parse(value);return Number.isFinite(n)?n:null};
-  const ago=value=>{const n=validTime(value);if(n===null)return 'time unknown';const min=Math.max(0,Math.round((Date.now()-n)/60000));return min<60?min+'m ago':min<1440?Math.floor(min/60)+'h ago':Math.floor(min/1440)+'d ago'};
-  const operations=(view,id,section)=>api.send({cmd:'navigate',page:'operations',place:{view,...(section?{section}:{}),...(id?{sel:{id}}:{})}});
-  function row(title,detail,state,click,action){const e=element(click?'button':'div',null,'home-row');e.append(element('i',null,'health-dot '+(state||'')));const body=element('span',null,'text');body.append(element('strong',title));if(detail)body.append(element('small',detail));e.append(body);if(click){e.append(element('span',action||'›',action?'home-action':'chevron'));e.onclick=click}return e}
+  const num=n=>Number(n).toLocaleString();
+  const plural=(n,word)=>n+' '+word+(n===1?'':'s');
+  // Jumps handed out by the status service and the shared assessment still use the
+  // names of the views these destinations replaced.
+  const PLACE={tools:'sources',lanes:'sources',glance:'sources'};
+  // A row's action names where it lands, in one word.
+  const DEST={jobs:'Jobs',backups:'Backups',recovery:'Backups',hosts:'Sources',sources:'Sources',tools:'Sources',lanes:'Sources',archive:'Library'};
+  const go=(view,id,section)=>api.elsewhere({view:PLACE[view]||view,...(section?{section}:{}),...(id?{sel:{id}}:{})});
   // Run a row's own action. The app cannot build from its own bundle, so an update hands
   // over this machine's source location; the updater refuses rather than guessing.
   function act(kind){
@@ -15,126 +21,100 @@ window.Home = (() => {
     if(!template){api.send({cmd:'clientError',error:"This machine's source location is not known, so there is nothing to build from."});return}
     api.send({cmd:'appUpdate',template});
   }
-  function details(issue){
-    const box=element('details',null,'home-issue');box.append(element('summary','Details'));
+  // The one place a sentence is allowed: what happened, why, what to do, how to tell it worked.
+  function detail(issue){
+    const box=element('div',null,'today-detail');
     for(const key of ['detail','why','action','verify'])if(issue?.[key])box.append(element('p',issue[key]));
     for(const member of issue?.members||[issue])if(member?.failure_output){
       box.append(element('strong',member.name||'Captured output'));
       const output=element('pre',member.failure_output);output.style.whiteSpace='pre-wrap';output.style.overflowWrap='anywhere';box.append(output);
     }
     const url=SovStatus.safeURL(issue?.url);if(url){const link=element('a','Open verification link');link.href=url;link.onclick=e=>{e.preventDefault();api.send({cmd:'openurl',url})};box.append(link)}
-    if(issue?.action){const copy=element('button','Copy next step');copy.onclick=()=>{api.send({cmd:'copyText',text:issue.action});copy.textContent='Copied'};box.append(copy)}
-    return box;
+    if(issue?.action&&!issue.actionKind){const copy=element('button','Copy next step');copy.onclick=()=>{api.send({cmd:'copyText',text:issue.action});copy.textContent='Copied'};box.append(copy)}
+    return box.childNodes.length?box:null;
   }
-  function observation(host){
-    const p=element('p',SovStatus.caption(status),'home-observation');p.setAttribute('role','status');host.append(p);
-    if(status?._status?.error)host.append(element('p',status._status.error,'home-banner'));
+  function headline(host,state,text){
+    const h=element('div',null,'today-headline');h.setAttribute('role','status');
+    h.append(element('i',null,'health-dot '+state),element('h2',text));host.append(h);
   }
-  function panel(title,count){const p=element('section',null,'home-panel'),h=element('h2',title);if(count!=null)h.append(element('span',String(count)));p.append(h);return p}
-  function message(p,text){p.append(element('p',text,'home-message'))}
-  function ageFromRun(h){if(h.run_age_h!=null&&Number.isFinite(h.run_age_h))return h.run_age_h;const match=String(h.last_run||'').match(/\d{4}-\d\d-\d\dT\S+/);const n=match&&validTime(match[0]);return n==null?null:Math.max(0,(Date.now()-n)/3600000)}
-  // How complete the archive is, above everything else, every time. The hub always
-  // reported these numbers and the app showed none of them: a row saying "open Review"
-  // while thousands of items sat unread. A bar rather than a sentence because the shape
-  // of what is left is the part worth seeing at a glance.
-  function coverage(host){
-    const c=SovStatus.assess(status||{}).completeness;if(!c)return;
-    const box=element('section',null,'home-coverage');
-    const head=element('div',null,'coverage-head');
-    head.append(element('strong',c.read.pct!=null?c.read.pct+'% read':'Coverage unknown'));
-    head.append(element('small',c.headline));
-    box.append(head);
-    if(c.read.total>0){
-      const bar=element('div',null,'coverage-bar');
-      const seg=(cls,n)=>{if(!n)return;const s=element('i',null,'coverage-seg '+cls);s.style.flexGrow=String(n);bar.append(s)};
-      // read, still to read, and the tail the nightly will never reach: three different
-      // kinds of incomplete, so they are three segments rather than one number.
-      seg('read',c.read.judged);seg('waiting',c.waiting);seg('unreachable',c.out_of_reach);
-      box.append(bar);
-      const legend=element('p',null,'coverage-legend');
-      legend.append(element('span',c.detail));
-      if(c.waiting)legend.append(element('span',' · '+c.waiting.toLocaleString()+' waiting'));
-      if(c.out_of_reach)legend.append(element('span',' · '+c.out_of_reach.toLocaleString()+' out of reach'));
-      box.append(legend);
-    } else box.append(element('p',c.detail,'coverage-legend'));
-    host.append(box);
+  function item(key,state,title,reason,label,run,body){
+    const wrap=element('div',null,'today-item'),row=element('div',null,'today-row'),main=element('button',null,'today-main');
+    main.append(element('i',null,'health-dot '+(state||'')),element('strong',title));
+    if(reason)main.append(element('span',reason,'reason'));
+    const jump=element('button',label+' →','today-go');jump.onclick=run;
+    row.append(main,jump);wrap.append(row);
+    if(body){
+      body.hidden=open!==key;main.setAttribute('aria-expanded',String(open===key));
+      main.onclick=()=>{open=open===key?null:key;render()};wrap.append(body);
+    }else main.onclick=run;
+    return wrap;
+  }
+  function tile(view,label,figure,unit,note,section){
+    const t=element('button',null,'fig-tile');t.append(element('span',label,'cap'));
+    const f=element('span',figure,'fig');if(unit)f.append(element('small',unit));
+    t.append(f,element('span',note,'fig-note'));t.onclick=()=>go(view,null,section);return t;
+  }
+  function today(host){
+    const machine=status?.machine||{},hub=status?.hub||{};
+    if(!status||(!status.machine&&!status.error)){headline(host,'','Checking…');host.append(element('p',SovStatus.caption(status),'home-message'));return}
+    if(status.error){headline(host,'down','Status unavailable');host.append(element('div',status.error+' Your local archive is still available.','home-banner'));return}
+    if(status._status?.error)host.append(element('div',status._status.error,'home-banner'));
+    if(root&&machine.vault&&root!==machine.vault)host.append(element('div',`You opened ${root.split('/').pop()}. What is shown here belongs to ${machine.vault_name||'another archive'} (${machine.vault}). Opening an archive does not connect it.`,'home-banner'));
+    if(!machine.connected){
+      headline(host,'','Not connected');
+      const connect=element('button','Connect tools');connect.onclick=()=>go('sources');host.append(connect);return;
+    }
+    const assessment=SovStatus.assess(status,localStorage),needs=assessment.need;
+    const refused=(status.clients||hub.clients||[]).filter(c=>c.state==='error'||c.state==='rejected'),count=needs.length+refused.length;
+    headline(host,refused.length||needs.some(n=>n.state==='down')?'down':count?'warn':'live',
+      count?`${plural(count,'thing')} need${count===1?'s':''} you`:'All clear');
+    if(count){
+      const list=element('div',null,'plain-list today-needs');
+      for(const c of refused)list.append(item('intake:'+c.client_id,'down',c.client_id,'intake failed','Sources',()=>api.map(),
+        detail({detail:'Intake needs attention: '+(c.reason||'see rejected items in the hub receipt.'),why:'What this client sent was received but not imported into raw.',verify:'Refresh after the next intake; the client reports imported.'})));
+      for(const need of needs){
+        const source=need.need!=null?status.needs_you[need.need]:null,gate=source?.kind==='gate';
+        const groupViews=[...new Set((need.members||[]).map(member=>member.jump?.view))];
+        const jump=need.jump||(groupViews.length===1&&groupViews[0]?{view:groupViews[0]}:null)||{view:source?.harness?'sources':source?.kind==='job'?'jobs':'sources',id:source?.harness};
+        if(gate)list.append(item('gate',need.state,plural(hub.pending||0,'proposal'),'waiting','Review',()=>api.review(),null));
+        // A row that can do the thing says so on the row; nobody should go looking for a button.
+        else if(need.actionKind)list.append(item(need.cause||need.name,need.state,need.name,SovStatus.brief(need),need.action||'Do it',()=>act(need.actionKind),detail(need)));
+        else {
+          // The status service names a job only inside its sentence; lift the label out as the row's name.
+          const name=source?.kind==='job'&&!source.host?SovStatus.shortLabel(String(need.detail||'').split(/[:\s]/)[0])||need.name:need.name;
+          list.append(item((need.cause||'')+':'+need.name+':'+(need.need??''),need.state,name,SovStatus.brief(need)||need.detail,DEST[jump.view]||'Open',()=>go(jump.view,jump.id),detail(need)));
+        }
+      }
+      host.append(list);
+    }
+    // What the system is working on by itself. The reading queue has its own figure below.
+    const watching=assessment.waiting.filter(w=>!['queue-waiting','queue-stranded'].includes(w.cause));
+    if(watching.length){
+      host.append(element('div','Watching','cap today-cap'));
+      const list=element('div',null,'plain-list today-waiting');
+      for(const w of watching)list.append(item('w:'+w.name,'',w.name,SovStatus.brief(w)||w.detail,DEST[w.jump.view]||'Open',()=>go(w.jump.view,w.jump.id),detail(w)));
+      host.append(list);
+    }
+    const a=status.archive||{},c=assessment.completeness,bk=status.backups||{},tiles=element('div',null,'tiles4 today-tiles');
+    const added=(a.cards||[]).filter(card=>card.week===SovStatus.week(new Date())).length;
+    tiles.append(tile('archive','Cards',a.total!=null?num(a.total):'–','',a.total!=null?'+'+added+' this week':'not reported'));
+    tiles.append(tile('archive','Read',c.read.pct!=null?String(c.read.pct):'–',c.read.pct!=null?'%':'',c.waiting?num(c.waiting)+' waiting':c.read.total?'nothing waiting':'not reported','judge'));
+    const quiet=c.producers.total-c.producers.delivering;
+    tiles.append(tile('sources','Sources',c.producers.total?String(c.producers.delivering):'–',c.producers.total?' of '+c.producers.total:'',c.producers.total?(quiet?quiet+' quiet':'all delivering'):'none yet'));
+    const snap=bk.snapshots?.newest_age_h,behind=(bk.remotes||[]).filter(r=>r.ahead>0).length;
+    const [n,unit]=snap==null?['–','']:snap<1?[String(Math.max(1,Math.round(snap*60))),'m ago']:snap<48?[String(Math.round(snap)),'h ago']:[String(Math.round(snap/24)),'d ago'];
+    tiles.append(tile('recovery','Backup',n,unit,(bk.remotes||[]).length?(behind?(behind===1?'1 copy':behind+' copies')+' behind':'copies current'):'not reported'));
+    host.append(tiles);
   }
   function render(){
     if(!api)return;const host=document.getElementById('system-home');host.replaceChildren();host.classList.toggle('system-mode',view==='system');
-    if(view==='system'){
-      const lead=element('div',null,'home-lead'),intro=element('div');intro.append(element('h1','System'));
-      const refresh=element('button',pending?'Checking…':'Refresh status');refresh.disabled=pending;refresh.onclick=()=>Home.refresh();lead.append(intro,refresh);host.append(lead);
-      const badge=document.getElementById('review-count');if(badge)badge.textContent=GateModel.queue(status,root).count||'';
-      observation(host);if(!status?.machine&&!status?.error)return;
-      const environment=element('div');host.append(environment);SystemView.render(environment,{root,status,context},{browse:api.browse,review:api.review,openNote:api.openNote,operations});return;
-    }
-    const lead=element('div',null,'home-lead'),intro=element('div');intro.append(element('h1','Your system'));
-    const machine=status?.machine||{},hub=status?.hub||{};
-    intro.append(element('p',status?.error?'System status unavailable. Your local archive is still available.':machine.connected?`${machine.vault_name||'Connected archive'} · ${machine.host||'this device'}`:'Open an archive and see which tools are connected.'));
-    const refresh=element('button',pending?'Checking…':'Refresh status');refresh.disabled=pending;refresh.onclick=()=>Home.refresh();lead.append(intro,refresh);host.append(lead);
-    observation(host);if(!status?.machine&&!status?.error)return;
-    coverage(host);
-    if(machine.role){const mode=machine.client_mode==='contribute-only'?'Contribute only':machine.client_mode==='read-and-contribute'?'Read and contribute':machine.role==='client'?'Mode not declared':'';host.append(element('p',(machine.host||'This machine')+' · '+(machine.role==='hub'?'Hub':'Client')+(mode?' / '+mode:''),'home-subhead'))}
-    if(root&&machine.vault&&root!==machine.vault)host.append(element('div',`You are browsing ${root.split('/').pop()}. Connections below belong to ${machine.vault_name||'another archive'} (${machine.vault}). Opening an archive does not connect it to these tools.`,'home-banner'));
-    if(status?.error)host.append(element('div',status.error,'home-banner'));
+    api.chrome({view,pending,status});
     const badge=document.getElementById('review-count');if(badge)badge.textContent=GateModel.queue(status,root).count||'';
-    if(!root&&!machine.connected&&!status?.error)return;
-    const grid=element('div',null,'home-grid');host.append(grid);
-    const nodes=status?.fleet?.hosts||[],tools=(status?.harnesses||[]).filter(h=>h.state!=='removed'&&(h.detected||h.state==='connected'||h.state==='partial'||h.runs_on||h.hub_installed));
-    const assessment=SovStatus.assess(status||{},localStorage),needs=assessment.need,deliveries=status?.backups?.lanes||[];
-    const attention=panel('Needs your attention',needs.length||null);
-    for(const need of needs){
-      const source=need.need!=null?status.needs_you[need.need]:null;
-      const gate=source?.kind==='gate';
-      const cause=need.cause||need.group;
-      const title=gate?`${hub.pending||'New'} proposals`:cause==='job-failed'?`${need.name} failed`:cause==='no-backup'?`${need.name}: no backup recorded`:need.name;
-      const groupViews=[...new Set((need.members||[]).map(member=>member.jump?.view))];
-      const jump=need.jump||(groupViews.length===1&&groupViews[0]?{view:groupViews[0]}:null)||{view:source?.harness?'tools':source?.kind==='job'?'jobs':'glance',id:source?.harness};
-      const action=gate?'Review':jump.view==='jobs'?(jump.id?'View job':'View jobs'):jump.view==='backups'?'View backups':jump.view==='hosts'?(jump.id?'View device':'View devices'):jump.view==='tools'?'View tools':'Open details';
-      // A row that can DO the thing says so on the row. "Update available … Open details"
-      // asks the reader to go looking for a button, which is how a thing that is one click
-      // away reads as a thing you have to go and find out about.
-      if(need.actionKind){
-        attention.append(row(title,need.detail,need.state,()=>act(need.actionKind),need.action||'Do it'));
-      } else {
-        attention.append(row(title,gate||['job-failed','no-backup'].includes(cause)?'':need.detail,need.state,()=>gate?api.review():operations(jump.view,jump.id),action));
-      }
-      if(!gate)attention.append(details(need));
-    }
-    if(!needs.length)message(attention,!status||status.error?'Waiting for a successful status check.':hub.reachable===true?'No attention items reported by the connected system.':'No local attention items reported. Hub review status is unverified.');
-
-    if(assessment.waiting.length){
-      const watching=panel('Awaiting verification',assessment.waiting.length);watching.classList.add('home-waiting');
-      for(const issue of assessment.waiting){watching.append(row(issue.name,issue.detail,'',()=>operations(issue.jump.view,issue.jump.id),'View job'));watching.append(details(issue))}
-      grid.append(watching);
-    }
-    const clients=status?.clients||hub.clients||[];
-    const incoming=panel('Contributions',(deliveries.length+clients.length)||null);
-    for(const c of clients){const record=element('div',null,'home-intake');record.append(element('h3',c.client_id+' · Client / Contribute only'));for(const [label,value] of [['Collection (client reported)',c.collected_at],['Received by hub',c.received_at],['Imported into raw',c.imported_at]]){const stage=element('div',label,'home-stage');stage.append(element('small',value?ago(value):'Not reported'));record.append(stage)}record.append(element('p',c.state==='error'||c.state==='rejected'?'Intake needs attention: '+(c.reason||'See rejected items in the hub receipt.'):'Intake: '+(c.state||'not reported')+'. Promotion requires curation and review.'));incoming.append(record)}
-    for(const lane of deliveries){const accepted=lane.delivery==='accepted';incoming.append(row(lane.lane,accepted?'Accepted by the hub · source '+ago(lane.pushed):lane.delivery==='waiting'?'Published · waiting for hub acceptance':SovStatus.contributionIssue(lane).text,accepted?'live':lane.delivery==='waiting'?'warn':'idle',()=>operations('backups','bk:lane:'+lane.lane)));if(!accepted&&lane.delivery!=='waiting')incoming.append(details(SovStatus.contributionIssue(lane)))}
-    if(!deliveries.length&&!clients.length)message(incoming,hub.reachable===true?'No contribution acceptance records were returned.':'Check the hub to verify which contributions have been accepted.');
-    attention.classList.add('home-attention');incoming.classList.add('home-contributions');
-    const connections=panel('Nodes',nodes.length||null);connections.classList.add('home-nodes');
-    for(const n of (expanded?nodes:nodes.slice(0,4))){const state=n.net?.online===true?'live':n.net?.online===false?'down':'';const label=state==='live'?'Reachable':state==='down'?'Unreachable':'Reachability unknown';const count=(n.harnesses||[]).length;connections.append(row(n.host,`${label} · ${count} producer${count===1?'':'s'}`,state,()=>operations('hosts',n.host)))}
-    if(nodes.length>4){const toggle=element('button',expanded?'Show fewer nodes':'Show all '+nodes.length+' nodes','home-node-toggle');toggle.onclick=()=>{expanded=!expanded;render()};connections.append(toggle)}
-    if(!nodes.length)message(connections,'No nodes reported. A local archive can be used independently.');grid.append(connections);
-    const producers=panel('Tools & producers',tools.length||null);producers.classList.add('home-tools');
-    for(const t of tools){const ah=ageFromRun(t),cad=(t.cadence_s||900)/3600,failed=(t.job?.last_exit!=null&&t.job.last_exit!==0)||/^FAILED\b/.test(String(t.last_status||''))||/Failed:\s*[1-9]\d*/i.test(String(t.last_run||''));const health=failed?'down':ah!=null&&ah>cad?'warn':ah!=null?'live':'';
-      const prepared=root===machine.vault?(context?.receipts||[]).find(r=>r.producer.split('/').pop()===t.lane):null;
-      const read=t.read==='none'?'Collection only':t.trusted===false?'Context access not trusted':t.hook_registered===true?(t.read==='instruction'?'Context instructions configured':'Context hook configured'):'Context setup unverified';
-      const item=row(t.name||t.id,`${t.state||'Setup unknown'}${t.runs_on?' on '+t.runs_on:''} · ${read}\n${failed?'Last collection failed':ah==null?'Collection time unknown':'Collection '+(ah<1?Math.round(ah*60)+'m':Math.floor(ah)+'h')+' ago'}${prepared?' · '+prepared.topic+' prepared '+ago(prepared.prepared_at):''}`,health,()=>{selected=t.id;render()});item.setAttribute('aria-pressed',String(selected===t.id));producers.append(item)}
-    if(!tools.length)message(producers,'No connected tools reported. Existing connector setup is available in Operations.');grid.prepend(connections,producers);
-    const tool=tools.find(t=>t.id===selected),allReceipts=context?.receipts||[];
-    const receipts=tool?(root===machine.vault&&tool.lane?allReceipts.filter(r=>r.producer.split('/').pop()===tool.lane):[]):allReceipts;
-    const packs=panel(tool?'Context / '+(tool.name||tool.id):'Context prepared',tool?receipts.length:context?.total);packs.classList.add('home-packs');
-    if(tool){const b=element('button','Tool details');b.onclick=()=>operations('tools',tool.id);packs.append(b);const all=element('button','All context');all.onclick=()=>{selected=null;render()};packs.append(all)}
-    for(const [title,sub] of [['Preparation',receipts.length?'Receipts available below':'No matching receipt'],['Delivery unconfirmed','No receipt from the consuming tool'],['Loading unconfirmed','No model-session acknowledgement']]){const stage=element('div',title,'home-stage');stage.append(element('small',sub));packs.append(stage)}
-    message(packs,'Receipts establish preparation only. Delivery to the tool and loading into a model are unverified.');
-    if(root)packs.append(element('div',`${root.split('/').pop()} · ${context?.observed_at?'receipts checked '+ago(context.observed_at):'checking receipts…'}`,'home-subhead'));
-    const list=element('div',null,'home-context');
-    for(const r of receipts)list.append(row(r.topic,`${r.producer} · ${r.cards} cards · ${ago(r.prepared_at)}${r.test?' · test receipt':''}`,null,()=>api.openNote(r.path)));
-    packs.append(list);if(!receipts.length)message(packs,context?.error||(!root?'Open an archive to inspect its context receipts.':'No readable preparation receipts in this archive. Delivery and loading remain unverified.'));
-    if(context?.skipped)message(packs,`${context.skipped} receipt file(s) could not be read safely.`);if(context?.limited)message(packs,'Showing the latest 100 producer receipts.');grid.append(packs,incoming);grid.prepend(attention);const waitingPanel=grid.querySelector(".home-waiting");if(waitingPanel)attention.after(waitingPanel);
+    if(view!=='system')return today(host);
+    if(!status?.machine&&!status?.error){host.append(element('p','Checking…','home-message'));return}
+    if(status._status?.error)host.append(element('div',status._status.error,'home-banner'));
+    const environment=element('div');host.append(environment);
+    SystemView.render(environment,{root,status,context},{browse:api.browse,review:api.review,openNote:api.openNote,operations:go});
   }
-  return {init(options){api=options;render()},view(value){view=value;render()},archive(value){root=value;context=null;selected=null;render()},context(value){context=value;render()},status(value){if(value.request!==request)return;pending=value._status?.pending===true;status=SovStatus.retain(status,value);render()},refresh(){if(pending)return;pending=true;if(status)status={...status,_status:{...status._status,pending:true,stale:true}};render();api.send({cmd:'status',request:++request})}};
+  return {init(options){api=options;render()},view(value){view=value;render()},archive(value){root=value;context=null;open=null;render()},context(value){context=value;render()},status(value){if(value.request!==request)return;pending=value._status?.pending===true;status=SovStatus.retain(status,value);render()},refresh(){if(pending)return;pending=true;if(status)status={...status,_status:{...status._status,pending:true,stale:true}};render();api.send({cmd:'status',request:++request})}};
 })();

@@ -11,8 +11,8 @@ const wait=async fn=>{for(let n=0;n<2500;n++){if(fn())return;await pause(40)}thr
 const replies=[],deliver=window.sovDeliver;window.sovDeliver=(kind,p)=>{if(kind==='archiveBackupResult')replies.push(p);deliver(kind,p)};
 await wait(()=>document.querySelector('[data-ab-field="folder"]'));
 check('Notes workspace remains removed',!document.getElementById('notes-tab')&&!document.getElementById('editor'));
-check('Archive backup navigation selected',document.querySelector('#archive-backups-tab').getAttribute('aria-pressed')==='true');
-check('Archive backup independent of infrastructure monitor',document.querySelector('[data-goto-view="backups"]')?.textContent==='Infrastructure copies');
+check('Archive backup navigation selected',document.querySelector('#backups-tab').getAttribute('aria-pressed')==='true'&&document.querySelector('#controls [data-view="recovery"]').getAttribute('aria-pressed')==='true');
+check('Archive backup independent of infrastructure monitor',document.querySelector('#controls [data-view="backups"]')?.textContent==='Copies');
 check('Backup choices include external drive, NAS and folder',document.querySelectorAll('[data-ab-storage]').length===3);
 document.querySelector('[data-ab-storage="folder"]').click();
 check('Same disk limitation is explained',document.querySelector('.ab-storage').textContent.includes('same disk cannot protect'));
@@ -75,7 +75,7 @@ def main():
    home=folder/'home';home.mkdir();destination=folder/'Backup';destination.mkdir();key=home/'recovery.key';restore=folder/'Restored'
    status=folder/'status';status.write_text('#!/bin/sh\necho \'{"machine":{"connected":false},"needs_you":[],"hub":{},"fleet":{"hosts":[]}}\'\n');status.chmod(0o700)
    suite='com.sovereign.qa.archive-backups.'+uuid.uuid4().hex
-   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(status),SOV_QA_HUB_HOME=str(home),SOV_APPEARANCE='dark' if scene=='narrow' else 'light',SOV_WINDOW='720x520' if scene=='narrow' else '1100x800',SOV_SNAPSHOT=str(a.evidence/(scene+'.png')),SOV_SNAPSHOT_DELAY='5',SOV_SNAPSHOT_ANCHOR='',SOV_QA_JS="document.getElementById('archive-backups-tab').click()")
+   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(status),SOV_QA_HUB_HOME=str(home),SOV_APPEARANCE='dark' if scene=='narrow' else 'light',SOV_WINDOW='720x520' if scene=='narrow' else '1100x800',SOV_SNAPSHOT=str(a.evidence/(scene+'.png')),SOV_SNAPSHOT_DELAY='5',SOV_SNAPSHOT_ANCHOR='',SOV_QA_JS="document.getElementById('backups-tab').click()")
    authoritative=archive
    if scene=='remote':
     hubhome=folder/'hub-home';hubhome.mkdir();hubstate=hubhome/'.local/state/sovereign';hubstate.mkdir(parents=True)

@@ -37,9 +37,10 @@ window.GateModel = (() => {
     if(!known)return blocked('loading','Opening Review','Reading the selected archive.');
     if(!root)return blocked('no_archive','Open an archive to review','Choose the archive whose knowledge you want to review.');
     if(!status)return blocked('loading','Checking your review queue','Waiting for the connected system to report its proposals.');
-    if(status._status?.pending||status._status?.stale)return blocked('unavailable','Review status unavailable',status._status.error||'Checking the current queue. Previous observations cannot authorize a decision.');
+    if(status._status?.pending&&!status._status?.error)return blocked('loading','Checking your review queue','Earlier observations cannot authorize a decision.');
+    if(status._status?.pending||status._status?.stale)return blocked('unavailable','Review status unavailable',status._status.error||'Refresh to read the current queue. Earlier observations cannot authorize a decision.');
     if(status.error)return blocked('unavailable','Review status unavailable','Refresh to reconnect. Your last observation cannot confirm which proposals are still waiting.');
-    if(status.machine?.connected!==true)return blocked('not_connected','Review is not connected','This archive can hold local notes. Connect its review service in Operations to receive proposals.');
+    if(status.machine?.connected!==true)return blocked('not_connected','Review is not connected','This archive can hold local notes. Connect its review service in Settings to receive proposals.');
     if(status.machine?.vault!==root)return blocked('different_archive','This archive has a different connection','The connected system belongs to another archive. Open that archive to review its proposals.');
     const h=status.hub||{};
     if(h.reachable!==true)return blocked('offline','Review service unavailable','Reconnect to the approval machine, then refresh. Its current queue is unverified.');

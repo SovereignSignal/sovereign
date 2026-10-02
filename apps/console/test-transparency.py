@@ -14,26 +14,29 @@ const checks={},post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=m
 const check=(name,ok)=>{checks[name]=!!ok};
 const wait=async fn=>{for(let n=0;n<160;n++){if(fn())return;await pause(50)}throw Error('Timed out: '+fn)};
 const text=()=>document.body.textContent;
-const caption=()=>document.querySelector('.home-observation')?.textContent||document.getElementById('vmeta')?.textContent||'';
+const caption=()=>document.getElementById('seen')?.title||document.getElementById('vmeta')?.title||'';
+const needs=()=>document.querySelector('.today-needs');
 const report=()=>post({cmd:'clientError',where:'transparency-qa',msg:JSON.stringify({checks,failures:Object.keys(checks).filter(k=>!checks[k])})});
 '''
 PROBE=r'''
 check('No horizontal overflow',document.documentElement.scrollWidth<=innerWidth);
 if(SCENE==='job-output'){
- const panel=document.querySelector('.home-attention');
- const folds=[...panel.querySelectorAll('details')];
- check('Error details start collapsed',folds.length===2&&folds.every(d=>!d.open));
- for(const fold of folds)fold.querySelector('summary').click();
- await pause(50);
- check('Both grouped failures are visible',panel.textContent.includes('kit transfer failed')&&panel.textContent.includes('archive push failed'));
- check('Local capture error is visible',panel.textContent.includes('guest archive failed'));
- check('Diagnostic output is plain text',!panel.querySelector('img')&&panel.textContent.includes('<img'));
+ const folds=()=>[...needs().querySelectorAll('.today-detail')];
+ check('Error details start collapsed',folds().length===2&&folds().every(d=>d.hidden));
+ check('Both grouped failures are carried',needs().textContent.includes('kit transfer failed')&&needs().textContent.includes('archive push failed'));
+ check('Local capture error is carried',needs().textContent.includes('guest archive failed'));
+ needs().querySelector('.today-main').click();await pause(50);
+ const open=needs().querySelector('.today-detail:not([hidden])');
+ check('A detail opens under its row',!!open&&open.getBoundingClientRect().height>0);
+ check('Diagnostic output is plain text',!needs().querySelector('img')&&needs().textContent.includes('<img'));
  check('Diagnostics wrap without overflow',document.documentElement.scrollWidth<=innerWidth);
 }else if(SCENE.startsWith('recovery')){
  await wait(()=>!caption().includes('refreshing'));
  if(SCENE==='recovery-home'){
-  check('Cleared blocker is outside attention',document.querySelector('.home-waiting')?.textContent.includes('autocommit')&&!document.querySelector('.home-attention')?.textContent.includes('autocommit'));
-  check('Waiting gives a clear state and action',document.querySelector('.home-waiting')?.textContent.includes('Previous blocker cleared')&&document.querySelector('.home-waiting')?.textContent.includes('View job'));
+  const watching=document.querySelector('.today-waiting');
+  check('Cleared blocker is outside attention',watching?.textContent.includes('autocommit')&&!needs()?.textContent.includes('autocommit'));
+  check('Nothing waiting on the owner reads as clear',document.querySelector('.today-headline h2').textContent==='All clear');
+  check('Waiting gives a clear state and action',watching?.textContent.includes('verifying')&&watching?.textContent.includes('Previous blocker cleared')&&watching?.textContent.includes('Jobs'));
  }else{
   await wait(()=>document.querySelector('[data-id="hub:job:autocommit"]'));
   const item=document.querySelector('[data-id="hub:job:autocommit"]');item.click();await pause(100);
@@ -53,26 +56,29 @@ if(SCENE==='job-output'){
  check('No null exit or retired job shown',!text().includes('exit null')&&!document.querySelector('[data-id="hub:job:vault-autocommit"]'));
  nightly.click();await pause(100);
  check('Drawer names actual schedule',text().includes('06:00 daily'));
- check('Receipt does not claim job is stopped',text().includes('a job may currently be running'));
+ check('Receipt does not claim job is stopped',text().includes('only a completed receipt establishes the outcome'));
 }else if(SCENE==='glance'){
  check('Compact menu is active',document.body.classList.contains('glance'));
  check('Menu keeps status rows without troubleshooting paragraphs',document.querySelector('.g-row.need')&&!document.querySelector('.issue-details'));
  check('Full console remains available',!!document.getElementById('g-console'));
 }else if(SCENE==='concise-mixed'){
- check('Mixed tools and hosts open Operations overview',location.pathname.endsWith('/index.html')&&document.querySelector('.glance-home')&&document.getElementById('operations-tab').getAttribute('aria-pressed')==='true');
- document.querySelector('[data-group="mirror-late"]').click();await pause(50);
- check('Mixed group retains both destination types',document.getElementById('insp').textContent.includes('local-tool')&&document.getElementById('insp').textContent.includes('remote-tool on remote'));
+ const group=[...document.querySelectorAll('.today-item')].find(r=>r.textContent.includes('2 machines'));
+ check('Mixed tools and hosts stay one row on Today',location.pathname.endsWith('/local.html')&&!!group&&document.querySelectorAll('.today-needs .today-item').length===1);
+ check('Mixed group retains both destination types',group.textContent.includes('local-tool')&&group.textContent.includes('remote-tool on remote'));
+ check('A mixed group lands on Sources',group.querySelector('.today-go').textContent.includes('Sources'));
 }else if(SCENE==='concise-backups'){
  check('View backups opens Backups',location.pathname.endsWith('/index.html')&&document.querySelector('[data-view="backups"][aria-pressed="true"]'));
 }else if(SCENE==='concise'){
- const panel=document.querySelector('.home-attention'),rows=[...panel.querySelectorAll('.home-row')],folds=[...panel.querySelectorAll('details')];
- check('Three concise attention rows',rows.length===3&&panel.getBoundingClientRect().height<320);
- check('No diagnostic paragraphs shown by default',folds.length===2&&folds.every(d=>!d.open&&d.getBoundingClientRect().height<45)&&[...panel.querySelectorAll('details p')].every(p=>{const r=p.getBoundingClientRect();return !p.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}));
- check('Short statuses and named actions',rows.some(r=>r.textContent.includes('autocommit failed')&&r.textContent.includes('View job'))&&rows.some(r=>r.textContent.includes('9 proposals')&&r.textContent.includes('Review'))&&rows.some(r=>r.textContent.includes('6 machines: no backup recorded')&&r.textContent.includes('View backups')));
- const fold=folds[0];fold.querySelector('summary').click();await pause(50);
- check('Details expand to observed result and guidance',fold.open&&fold.textContent.includes('exited 1')&&fold.querySelector('p').getBoundingClientRect().height>0);
+ const rows=[...needs().querySelectorAll('.today-row')],folds=[...needs().querySelectorAll('.today-detail')];
+ check('Three concise attention rows',rows.length===3&&needs().getBoundingClientRect().height<160);
+ check('No diagnostic paragraphs shown by default',folds.length===2&&folds.every(d=>d.hidden));
+ check('Short statuses and named actions',rows.some(r=>r.textContent.includes('autocommit')&&r.textContent.includes('failed')&&r.textContent.includes('Jobs'))&&rows.some(r=>r.textContent.includes('9 proposals')&&r.textContent.includes('Review'))&&rows.some(r=>r.textContent.includes('6 machines')&&r.textContent.includes('no backup')&&r.textContent.includes('Backups')));
+ const item=()=>[...needs().querySelectorAll('.today-item')].find(r=>r.textContent.includes('autocommit'));
+ item().querySelector('.today-main').click();await pause(50);
+ const fold=item().querySelector('.today-detail');
+ check('Details expand to observed result and guidance',!fold.hidden&&fold.textContent.includes('exited 1')&&fold.querySelector('p').getBoundingClientRect().height>0);
  check('Copy guidance is available only in details',fold.querySelector('button')?.textContent==='Copy next step');
- fold.querySelector('summary').click();check('Details collapse again',!fold.open);
+ item().querySelector('.today-main').click();await pause(50);check('Details collapse again',item().querySelector('.today-detail').hidden);
 }else if(SCENE==='first-load'){
  check('First load states native budget',caption().includes('up to 6 seconds'));
  check('No false empty environment',!text().includes('0 devices')&&!text().includes('No matching connector environment'));
@@ -80,25 +86,25 @@ if(SCENE==='job-output'){
  check('Slow first result renders',true);
  check('Elapsed status time shown',caption().includes('Status took'));
 }else if(SCENE==='home'){
- const attention=document.querySelector('.home-attention'),grid=document.querySelector('.home-grid');
- check('Attention is first in DOM',grid.firstElementChild===attention);
- check('Attention is above receipts',attention.getBoundingClientRect().top<document.querySelector('.home-packs').getBoundingClientRect().top);
- check('Troubleshooting is collapsed by default',[...attention.querySelectorAll('details')].every(d=>!d.open));
- const disclosure=attention.querySelector('details');disclosure.querySelector('summary').click();await pause(50);
- check('Details open on request',disclosure.open&&disclosure.querySelector('p').getBoundingClientRect().height>0);
- for(const term of ['Tailscale SSH','within its 1 second','Refresh;'])check('Retains guidance '+term,attention.textContent.includes(term));
- check('Unknown contribution explained without alarm',document.querySelector('.home-contributions').textContent.includes('Hub acceptance is unknown')&&!attention.textContent.includes('Hub acceptance is unknown'));
- check('Link is an anchor',attention.querySelector('a')?.href==='https://example.com/recheck');
- check('Copy step is available',[...attention.querySelectorAll('button')].some(b=>b.textContent==='Copy next step'));
- check('Source text cannot inject HTML',!attention.querySelector('img'));
- const link=attention.querySelector('a');check('Link keyboard reachable',link.tabIndex===0);
- document.getElementById('system-tab').click();
+ check('Attention is first',document.getElementById('system-home').querySelector('.plain-list')===needs());
+ check('Attention is above the figures',needs().getBoundingClientRect().top<document.querySelector('.today-tiles').getBoundingClientRect().top);
+ check('Troubleshooting is collapsed by default',[...needs().querySelectorAll('.today-detail')].every(d=>d.hidden));
+ needs().querySelector('.today-main').click();await pause(50);
+ const disclosure=needs().querySelector('.today-detail:not([hidden])');
+ check('Details open on request',!!disclosure&&disclosure.querySelector('p').getBoundingClientRect().height>0);
+ for(const term of ['Tailscale SSH','within its 1 second','Refresh;'])check('Retains guidance '+term,needs().textContent.includes(term));
+ check('Unknown contribution is not attention',!needs().textContent.includes('Hub acceptance is unknown')&&!needs().textContent.includes('older-service'));
+ check('Link is an anchor',needs().querySelector('a')?.href==='https://example.com/recheck');
+ check('Copy step is available',[...needs().querySelectorAll('button')].some(b=>b.textContent==='Copy next step'));
+ check('Source text cannot inject HTML',!needs().querySelector('img'));
+ const link=needs().querySelector('a');check('Link keyboard reachable',link.tabIndex===0);
+ window.sovView('system');
  check('System has observed devices',text().includes('2 devices'));
  window.sovRefresh();await pause(150);
  check('Pending keeps devices',text().includes('2 devices')&&caption().includes('refreshing'));
  await wait(()=>!caption().includes('refreshing'));
  check('Failed refresh keeps devices',text().includes('2 devices')&&caption().includes('refresh failed'));
- check('Failed refresh gives next step',text().includes('Check the connection in Operations'));
+ check('Failed refresh gives next step',text().includes('Check the connection in Sources'));
  window.sovRefresh();await pause(150);check('Retry keeps devices',text().includes('2 devices'));
  await wait(()=>caption().includes('refresh failed'));
  check('Timeout names budget and probe',text().includes('status probe did not finish within 4 seconds'));
@@ -106,16 +112,13 @@ if(SCENE==='job-output'){
  window.sovRefresh();await wait(()=>!caption().includes('refreshing'));
  check('Recovery clears failure',text().includes('2 devices')&&!caption().includes('refresh failed'));
 }else if(SCENE==='to-operations'){
- check('Operations document loaded',location.pathname.endsWith('/index.html'));
+ check('Sources document loaded',location.pathname.endsWith('/index.html')&&document.getElementById('sources-tab').getAttribute('aria-pressed')==='true');
  check('Cached data survives document swap',text().includes('worker')&&caption().includes('refreshing'));
- const disclosure=document.querySelector('.issue-details');check('Operations details are collapsed',disclosure&&!disclosure.open);
- disclosure.querySelector('summary').click();await pause(50);
- check('Operations retains troubleshooting on demand',disclosure.open&&disclosure.querySelector('p').getBoundingClientRect().height>0&&disclosure.textContent.includes('Refresh;'));
  await wait(()=>!caption().includes('refreshing'));
  check('New document receives in-flight result',!caption().includes('refresh failed')&&text().includes('worker'));
 }else if(SCENE==='to-home'){
  check('Home document loaded',location.pathname.endsWith('/local.html'));
- check('System route restored',document.getElementById('system-tab').getAttribute('aria-pressed')==='true');
+ check('Map route restored',document.getElementById('sources-tab').getAttribute('aria-pressed')==='true'&&!!document.querySelector('.sv'));
  check('Environment survives return navigation',text().includes('2 devices')&&caption().includes('refreshing'));
  await wait(()=>!caption().includes('refreshing'));
  check('Returning page receives pending result',text().includes('2 devices'));
@@ -153,10 +156,9 @@ def main():
    # A single process fixture, so timeout cleanup can be checked by PID.
    behavior="time.sleep(4)" if scene=='first-load' else "\nif n==2: time.sleep(1); sys.exit(7)\nif n==3: time.sleep(9)" if scene=='home' else "\nif n==2: time.sleep(4)"
    command.write_text('#!'+sys.executable+'\nimport os,json,time,sys\nfrom pathlib import Path\nb=Path(__file__).parent\nn=int((b/"count").read_text())+1\n(b/"count").write_text(str(n))\n(b/"pid").write_text(str(os.getpid()))\n'+behavior+'\nprint((b/"status.json").read_text())\n');command.chmod(0o700)
-   anchor='operations:view:jobs' if scene in ('hub-jobs','recovery-retry','recovery-cancel') else 'operations:view:glance' if scene=='to-operations' else 'home:view:system' if scene=='to-home' else ''
-   before="document.getElementById('system-tab').click();" if scene=='first-load' else "document.getElementById('operations-tab').click();" if scene=='to-home' else "window.sovRefresh();" if scene=='to-operations' else 'void 0'
-   if scene=='concise-backups':before="(async()=>{for(let n=0;n<100;n++){const b=[...document.querySelectorAll('.home-attention .home-row')].find(b=>b.textContent.includes('View backups'));if(b){b.click();return}await new Promise(r=>setTimeout(r,50))}})();"
-   if scene=='concise-mixed':before="(async()=>{for(let n=0;n<100;n++){const b=[...document.querySelectorAll('.home-attention .home-row')].find(b=>b.textContent.includes('Open details'));if(b){b.click();return}await new Promise(r=>setTimeout(r,50))}})();"
+   anchor='operations:view:jobs' if scene in ('hub-jobs','recovery-retry','recovery-cancel') else 'operations:view:hosts' if scene=='to-operations' else 'home:view:system' if scene=='to-home' else ''
+   before="window.sovView('system');" if scene=='first-load' else "document.getElementById('sources-tab').click();" if scene=='to-home' else "window.sovRefresh();" if scene=='to-operations' else 'void 0'
+   if scene=='concise-backups':before="(async()=>{for(let n=0;n<100;n++){const b=[...document.querySelectorAll('.today-needs .today-item')].find(b=>b.textContent.includes('no backup'));if(b){b.querySelector('.today-go').click();return}await new Promise(r=>setTimeout(r,50))}})();"
    name=scene+'-'+theme+'-'+size
    env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(command),SOV_QA_STATUS_BUDGET='6' if scene!='home' else '4',SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='3.2',SOV_SNAPSHOT_ANCHOR=anchor,SOV_QA_JS=before,SOV_QA_JS_AFTER_ANCHOR=COMMON+PROBE.replace('SCENE',json.dumps(scene)))
    if scene.startswith('recovery'):

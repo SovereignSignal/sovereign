@@ -37,34 +37,13 @@
   .num, .val, .n, .tile b { font-variant-numeric: tabular-nums; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-  header { flex: none; display: flex; align-items: center; gap: var(--s2); height: 44px;
-    padding: 0 var(--s3) 0 80px; border-bottom: 1px solid var(--rule-soft); }
-  header .crown { cursor: pointer; }
   .crown { width: 16px; height: 16px; color: var(--ink); flex: none; }
-  header h1 { margin: 0 var(--s1) 0 0; font: 600 var(--t-title)/var(--lh-title) var(--sans); letter-spacing: 0; white-space: nowrap; }
-  #verdict { flex: none; display: flex; align-items: center; gap: var(--s2); height: var(--h-verdict); padding: 0 var(--s3);
-    background: var(--panel); border-bottom: 1px solid var(--rule-soft); }
-  #verdict.down { box-shadow: inset 3px 0 0 var(--down); }
-  #verdict .vdot { width: 10px; height: 10px; border-radius: 50%; background: var(--idle); flex: none;
-    box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--idle) 30%, transparent); }
-  #verdict.live .vdot { background: var(--live); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--live) 30%, transparent); }
-  #verdict.warn .vdot { background: var(--warn); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--warn) 30%, transparent); }
-  #verdict.down .vdot { background: var(--down); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--down) 30%, transparent); }
-  #verdict .vtext { flex: 1; min-width: 0; font: 500 var(--t-verdict)/var(--lh-verdict) var(--sans); color: var(--ink);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #verdict .vmeta { font: 10.5px var(--mono); color: var(--faint); white-space: nowrap; }
-  footer#switch { flex: none; display: flex; align-items: center; gap: var(--s3); height: var(--h-footer); padding: 0 var(--s3);
-    border-top: 1px solid var(--rule-soft); background: var(--ground); }
-  footer#switch .nav { display: inline-flex; gap: 2px; }
-  footer#switch .nav button { color: var(--faint); font-size: 11px; padding: 0 4px; }
-  footer#switch .seg { display: inline-flex; gap: var(--s3); background: transparent; border: 0; border-radius: 0; padding: 0; height: 100%; }
-  footer#switch .seg button { border: 0; background: transparent; padding: 0 var(--s2); border-radius: 0; height: 100%;
-    font: 500 11.5px var(--mono); letter-spacing: -0.01em; color: var(--muted); box-shadow: none; position: relative; }
-  footer#switch .seg button[aria-pressed="true"] { color: var(--ink); background: transparent; box-shadow: inset 0 -2px 0 var(--brass); }
-  footer#switch .count { font: var(--t-caption)/var(--lh-caption) var(--mono); color: var(--faint); margin-left: auto; white-space: nowrap; }
-  header .meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  header .grow { flex: 1; min-width: 0; }
+  /* The status line appears only when status itself failed; a healthy app has no banner. */
+  #verdict { display: none; align-items: center; gap: var(--s2); padding: 9px 24px;
+    background: var(--panel); border-bottom: 1px solid var(--rule-soft); box-shadow: inset 3px 0 0 var(--down); }
+  #verdict.show { display: flex; }
+  #verdict .vdot { width: 8px; height: 8px; border-radius: 50%; background: var(--down); flex: none; }
+  #verdict .vtext { flex: 1; min-width: 0; font: 500 12.5px/18px var(--sans); color: var(--ink); overflow-wrap: anywhere; }
   .hubpill { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 10.5px;
     color: var(--ink-2); background: var(--panel); border: 1px solid var(--rule); border-radius: 999px;
     padding: 3px 10px; white-space: nowrap; }
@@ -194,7 +173,7 @@
 
   /* Glance: the small box. The same page, loaded with #glance, in a menu-bar popover. */
   #glance { display: none; }
-  body.glance header, body.glance main, body.glance #drawer, body.glance #verdict, body.glance footer#switch { display: none; }
+  body.glance header, body.glance main, body.glance #drawer, body.glance #verdict { display: none; }
   body.glance #glance { display: flex; flex-direction: column; height: 100%; }
   body.glance.qa #glance { padding-top: 22px; }
   .g-head { display: flex; align-items: center; gap: var(--s2); height: 40px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--rule-soft); }
@@ -231,52 +210,6 @@
   label.radio input, label.check input { width: auto; margin: 0; }
   @media (max-width: 900px) { #pulse .tile .s { display: none; } }
 
-  /* the archive as a picture */
-  .dash { padding: 4px 16px 24px; }
-  .panel { padding: 12px 0 10px; border-bottom: 1px solid var(--rule-soft); }
-  .panel:last-child { border-bottom: 0; }
-  .p-head { display: flex; align-items: baseline; gap: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-bottom: 8px; }
-  .p-head b { font: 600 15px var(--mono); color: var(--ink); letter-spacing: -0.02em; }
-  .p-row { display: flex; gap: 28px; align-items: stretch; }
-  .p-col { min-width: 0; } .p-col.grow { flex: 1; }
-  .stack.big { height: 14px; gap: 2px; margin: 0 0 8px; border-radius: 4px; }
-  .sg { border: 0; padding: 0; min-width: 3px; border-radius: 0; cursor: pointer; display: block; height: 100%; }
-  .sg.s1 { background: var(--series-1); } .sg.s2 { background: var(--series-2); } .sg.s3 { background: var(--series-3); } .sg.s4 { background: var(--series-4); }
-  .sg:hover { filter: brightness(1.15); }
-  .legend .lg { border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer; }
-  .legend .lg:hover { color: var(--ink); }
-  .cols { display: flex; align-items: flex-end; gap: 6px; height: 128px; }
-  .col { flex: 1; min-width: 0; display: block; height: 128px; border: 0; background: transparent; padding: 0; cursor: pointer; }
-  .col .tot { display: block; font: 10px var(--mono); color: var(--muted); text-align: center; height: 14px; line-height: 14px; }
-  .col .stk { display: flex; flex-direction: column-reverse; gap: 2px; height: 100px; }
-  .col .stk i { display: block; border-radius: 0; }
-  .col .stk i:last-child { border-radius: 3px 3px 0 0; }
-  .col .stk i.s1 { background: var(--series-1); } .col .stk i.s2 { background: var(--series-2); } .col .stk i.s3 { background: var(--series-3); } .col .stk i.s4 { background: var(--series-4); }
-  .col:hover .bar i { filter: brightness(1.15); }
-  .col .lbl { display: block; font: 10px var(--mono); color: var(--faint); text-align: center; height: 14px; line-height: 14px; white-space: nowrap; }
-  .chart { border: 0; background: transparent; padding: 0; cursor: pointer; display: block; border-radius: 6px; }
-  .chart:hover { background: var(--sunk); }
-  .keep .lab { font: 10px var(--mono); fill: var(--muted); } .keep .lab.hot { fill: var(--brass); font-weight: 600; }
-  .keep .ax { font: 10px var(--mono); fill: var(--faint); }
-  .hbar { display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; border: 0; background: transparent; padding: 0;
-    font-family: var(--mono); color: var(--ink-2); cursor: pointer; text-align: left; }
-  .hbar .l { width: 96px; flex: none; font-size: 11.5px; }
-  .hbar .track { flex: 0 0 34%; height: 8px; border-radius: 3px; background: var(--rule); overflow: hidden; }
-  .hbar .track i { display: block; height: 100%; background: var(--brass); border-radius: 3px; }
-  .hbar .n { width: 42px; text-align: right; font-size: 11.5px; font-variant-numeric: tabular-nums; }
-  .hbar .p { width: 36px; color: var(--muted); font-size: 10.5px; }
-  .hbar .x { flex: 1; min-width: 0; color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .hbar:hover .l { color: var(--ink); }
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .dash .tile { display: flex; flex-direction: column; gap: 4px; padding: 9px 11px; border: 1px solid var(--rule); border-radius: 8px;
-    background: var(--panel); text-align: left; cursor: pointer; min-width: 0; }
-  .dash .tile b { font: 600 16px var(--mono); color: var(--ink); letter-spacing: -0.02em; }
-  .dash .tile .l { font-size: 11px; color: var(--muted); }
-  .dash .tile .meter { width: 100%; }
-  .dash .tile .p { font: 10.5px var(--mono); color: var(--faint); }
-  .dash .tile:hover { border-color: var(--faint); }
-  @media (max-width: 760px) { .tiles { grid-template-columns: repeat(2, 1fr); } .p-row { flex-direction: column; } }
-
   .insp input.secret { width: 100%; box-sizing: border-box; font: 12px var(--mono); padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sunk); color: var(--ink); }
   .insp input.secret:focus { outline: 2px solid var(--brass); outline-offset: 1px; }
   .insp .secret-help { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
@@ -286,23 +219,6 @@
   .ha input { font: 12px var(--mono); padding: 5px 7px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sunk); color: var(--ink); }
   .code-line { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sunk); }
   .code-line code { flex: 1; font: 12px var(--mono); color: var(--ink); user-select: all; -webkit-user-select: all; }
-
-  /* the glance: three columns, the frame never scrolls, each column does */
-  .glance-home { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); padding: var(--s3); height: 100%; min-height: 0; }
-  .gcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--col-shadow); overflow: hidden; }
-  .gcol .gh { flex: none; display: flex; align-items: center; height: 28px; padding: 0 var(--s3); font: 500 var(--t-caption)/var(--lh-caption) var(--mono);
-    text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--rule-soft); }
-  .gcol .gh .n { margin-left: auto; color: var(--ink-2); letter-spacing: 0; font-variant-numeric: tabular-nums; }
-  .gcol .gb { flex: 1; min-height: 0; overflow: auto; }
-  .gcol .empty { padding: var(--s3); font: var(--t-body)/var(--lh-body) var(--sans); color: var(--muted); }
-  .gcol.bare { box-shadow: none; }
-  .gcol .row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 12px; grid-template-areas: "dot name age chev" ". desc desc desc";
-    column-gap: var(--s2); row-gap: 1px; height: auto; min-height: 44px; padding: 6px var(--s2) 6px var(--s3); align-items: center; }
-  .gcol .row .dot { grid-area: dot; } .gcol .row .name { grid-area: name; width: auto; overflow: hidden; text-overflow: ellipsis; }
-  .gcol .row .num { grid-area: age; } .gcol .row .chev { grid-area: chev; }
-  .gcol .row .desc { grid-area: desc; white-space: normal; font: var(--t-caption)/var(--lh-caption) var(--sans); color: var(--ink-2);
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  @media (max-width: 760px) { .glance-home { grid-template-columns: 1fr; } }
 
   #drawer { position: fixed; left: 0; right: 0; bottom: 0; transform: translateY(100%);
     transition: transform var(--dur) var(--ease); background: var(--panel); border-top: 1px solid var(--rule); box-shadow: var(--shadow); z-index: 30; }
@@ -342,19 +258,17 @@ body.hub-setup main,body.hub-setup.pinned main{grid-template-columns:1fr}body.hu
 <link rel="stylesheet" href="operations-shell.css">
 <link rel="stylesheet" href="settings-view.css">
 <link rel="stylesheet" href="archive-backups.css">
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
-<header class="shell-rail" aria-label="Primary navigation"><strong style="display:flex;align-items:center;gap:8px"><svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>Sovereign</strong><span id="archive-name">Your archive, on your Mac</span><button id="home-tab" aria-pressed="false">Home</button><button id="system-tab" aria-pressed="false">System</button><button id="review-tab" aria-pressed="false">Review <span id="review-count"></span></button><button id="archive-backups-tab" aria-pressed="false">Backups</button><button id="operations-tab" aria-pressed="true">Operations</button><button id="settings-tab" class="rail-gear" aria-pressed="false" title="Settings (⌘,)">⚙ Settings</button><button id="change" hidden>Open archive…</button></header>
-<header id="operations-bar">
-  <svg class="crown" id="home" viewBox="0 0 16 16" fill="currentColor" role="button" aria-label="Glance" tabindex="0"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>
-  <h1 id="vault">Sovereign</h1>
-  <div class="meta grow" id="meta">reading status…</div>
-  <span class="hubpill" id="hubpill"><span class="dot"></span>hub</span>
-  <button id="refresh" title="Refresh (⌘R)">Refresh</button>
-  <button id="gear" class="quiet" title="Settings (⌘,)" aria-label="Settings">⚙</button>
+<nav class="shell-rail" aria-label="Primary navigation"></nav>
+<header class="top" id="operations-bar">
+  <h1 id="vault">Sovereign</h1><span class="sub" id="listcount"></span><span class="grow"></span>
+  <span class="controls" id="controls"></span><span class="seen" id="vmeta"></span>
+  <button class="quiet" id="refresh" title="Refresh (⌘R)" aria-label="Refresh">↻</button>
 </header>
 
-<div id="verdict" role="status"><span class="vdot"></span><span class="vtext" id="vtext">reading status…</span><span class="vmeta" id="vmeta"></span></div>
+<div id="verdict" role="status"><span class="vdot"></span><span class="vtext" id="vtext"></span></div>
 <div id="glance" hidden></div>
 <div id="gate-notice" role="status" aria-live="polite" hidden></div>
 
@@ -365,18 +279,6 @@ body.hub-setup main,body.hub-setup.pinned main{grid-template-columns:1fr}body.hu
   </div>
   <aside id="inspector" aria-label="Detail"><div class="pad" id="insp"></div></aside>
 </main>
-<footer id="switch">
-  <span class="nav"><button id="back" class="quiet" aria-label="Back" title="Back (⌘[)" disabled>◀</button><button id="fwd" class="quiet" aria-label="Forward" title="Forward (⌘])" disabled>▶</button></span>
-  <div class="seg" role="group" aria-label="View">
-    <button data-view="hosts" aria-pressed="true">Hosts</button>
-    <button data-view="archive" aria-pressed="false">Archive</button>
-    <button data-view="lanes" aria-pressed="false">Lanes</button>
-    <button data-view="tools" aria-pressed="false">Tools</button>
-    <button data-view="jobs" aria-pressed="false">Hub</button>
-    <button data-view="backups" aria-pressed="false">Infrastructure</button>
-  </div>
-  <span class="count" id="listcount"></span>
-</footer>
 
 <div id="drawer">
   <div class="bar"><b id="drawer-title">Output</b><span class="state" id="drawer-state"></span>
@@ -387,6 +289,7 @@ body.hub-setup main,body.hub-setup.pinned main{grid-template-columns:1fr}body.hu
 </div>
 
 <script src="status-model.js"></script>
+<script src="shell.js"></script>
 <script src="gate-model.js"></script>
 <script src="discovery-model.js"></script>
 <script src="hub-setup.js"></script>
@@ -413,7 +316,7 @@ window.onerror = function (msg, src, line, col) {
   let pendingGoto = null, selectedRoot = null, archiveKnown = false;
   const reviewQueue = () => GateModel.queue(D, selectedRoot, archiveKnown);
   const canReview = slug => view === "review" && reviewQueue().proposals.some(p => p.slug === slug);
-  let D = null, view = "glance", sel = null, pendingConnect = null, pinned = false, armed = null;
+  let D = null, view = "sources", sel = null, pendingConnect = null, pinned = false, armed = null;
   const GLANCE = location.hash.startsWith("#glance");
   document.body.classList.toggle("glance", GLANCE);
   if (location.hash === "#glance-qa") document.body.classList.add("qa");
@@ -450,16 +353,6 @@ window.onerror = function (msg, src, line, col) {
       pulls: h.projects != null ? h.projects + " project" + (h.projects === 1 ? "" : "s") + ", " + h.md_files + " files"
            : (h.md_files != null ? h.md_files + " files" : null) };
   }
-  function wireMark(t, local) {
-    const r = local && local.read === "none" ? "none" : local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
-    const w = runDot(t.run, intervalOf(local));
-    const rt = r === "none" ? "no read wire (pull only)" : `${t.reads} preparation receipts this week; delivery and loading unverified`;
-    return `<span class="wm" title="${esc(t.id)} · ${rt} · mirror ${age(t.run)} ago"><i class="${r}"></i><i class="${w}"></i></span>`;
-  }
-  function meter(share, cls) {
-    const w = Math.round(Math.min(1, Math.max(0, share || 0)) * 100);
-    return `<span class="meter"><i class="${cls || ""}" style="width:${share ? Math.max(4, w) : 0}%"></i></span>`;
-  }
   function sparkline(pts) {
     // keep rate by week: 2px line in the de-emphasis hue, the latest week in brass with a surface ring
     if (!pts || pts.length < 2) return "";
@@ -469,16 +362,25 @@ window.onerror = function (msg, src, line, col) {
   }
 
   // ---------- top: header, needs, pulse ----------
+  // Each destination, the views that belong to it, and what the header says there.
+  const PAGE = { review: "review", sources: "sources", hosts: "sources", discover: "sources", archive: "library", recovery: "backups", backups: "backups", jobs: "settings", setup: "settings" };
+  const TITLE = { review: "Review", sources: "Sources", hosts: "Sources", discover: "Add a source", archive: "Library", recovery: "Backups", backups: "Backups", jobs: "Jobs", setup: "Hub setup" };
+  // Jumps handed out by the status service, the shared assessment and saved preferences
+  // still use the names of the views these destinations replaced.
+  const RENAMED = { tools: "sources", lanes: "sources" };
+  const segment = (pairs) => `<span class="seg" role="group">${pairs.map(([v, label]) => `<button data-view="${v}" aria-pressed="${String(v === view)}">${label}</button>`).join("")}</span>`;
   function renderTop() {
-    const m = D?.machine || {}, h = hub(), obs = D?.obsidian || {};
-    $("#vault").textContent = view === "review" ? "Review" : view === "recovery" ? "Backups" : "Operations";
-    $("#archive-name").textContent = selectedRoot?.split("/").pop() || "Open an archive";
-    $("#meta").textContent = `${m.host || ""}${obs.sync ? " · obsidian " + obs.sync : ""}`;
-    const hp = $("#hubpill"), j = h.jobs || {}, nightly = j.nightly || j["archivist-nightly"]; hp.style.opacity = "";
-    if (h.reachable) hp.innerHTML = `${dot("live", "hub online")}hub ${esc(((h.via || "").startsWith("ssh ") ? h.via.slice(4) : (h.hub_host || "here")).toLowerCase())}${nightly ? " · nightly " + clock(nightly.ts) : ""}`;
-    else if (h.reachable === false) hp.innerHTML = `${dot("down", "hub offline")}hub silent`;
-    else hp.innerHTML = `${dot("", "hub unchecked")}hub unchecked`;
-
+    const page = settingsOpen ? "settings" : PAGE[view];
+    $("#vault").textContent = settingsOpen ? "Settings" : TITLE[view] || "Sovereign";
+    SovShell.select(page);
+    SovShell.archive(selectedRoot?.split("/").pop(), !D || D.error || D._status?.error ? "" : D.machine?.connected ? "live" : "");
+    $("#controls").innerHTML = settingsOpen ? ""
+      : view === "discover" ? `<button data-view="sources">Done</button>`
+      : page === "sources" ? segment([["sources", "Tools"], ["hosts", "Devices"], ["system", "Map"]]) + `<button data-view="discover">Add</button>`
+      : page === "backups" ? segment([["recovery", "Archive"], ["backups", "Copies"]])
+      : view === "jobs" ? `<button data-view="setup">Hub setup…</button><button data-act="open-settings">Settings</button>`
+      : view === "setup" ? `<button data-view="jobs">Jobs</button>` : "";
+    $("#vmeta").textContent = SovStatus.seen(D); $("#vmeta").title = SovStatus.caption(D);
     renderVerdict();
   }
 
@@ -535,86 +437,58 @@ window.onerror = function (msg, src, line, col) {
     return its;
   }
 
+  // The Library: what the archive holds. Magnitude only, so one hue; every mark has its
+  // number beside it and opens the cards behind it.
   function renderDash() {
     const a = arch(), h = hub(), cards = a.cards || [], total = a.total || 0;
     if (!total) return `<div class="empty">${esc(a.error ? "Archive could not be read: " + a.error : "No cards yet.")}</div>`;
-    const W = Math.max(320, ($("#rows").clientWidth || 800) - 32);
     const open = (id) => `data-open="${esc(id)}"`;
+    const rank = (id, label, n, max) => `<button class="lib-rank" ${open(id)} title="${esc(label)}: ${num(n)} cards, ${pct(n, total)}"><span class="l">${esc(label)}</span><span class="trk"><i style="width:${(n / max * 100).toFixed(1)}%"></i></span><span class="v">${num(n)}</span></button>`;
+    const order = Object.entries(a.by_type || {}).sort((x, y) => y[1] - x[1]), maxT = Math.max(1, ...order.map(x => x[1]));
+    const byType = `<section data-dash="composition"><span class="cap">By type</span>${order.map(([t, n]) => rank("type:" + t, t, n, maxT)).join("")}</section>`;
 
-    // composition: one bar, the whole archive, labels on the marks
-    const order = Object.entries(a.by_type || {}).sort((x, y) => y[1] - x[1]);
-    const comp = `<section class="panel" data-dash="composition">
-      <div class="p-head"><b>${num(total)} cards</b><span>the trusted layer, by type</span></div>
-      <div class="stack big" role="img" aria-label="${esc(order.map(([t, n]) => n + " " + t).join(", "))}">${order.map(([t, n]) => `<button class="sg ${SERIES[t] || "s4"}" style="flex:${n}" ${open("type:" + t)} title="${esc(t)}: ${num(n)} cards, ${pct(n, total)}"></button>`).join("")}</div>
-      <div class="legend">${order.map(([t, n]) => `<button class="lg" ${open("type:" + t)}><i class="${SERIES[t] || "s4"}"></i>${esc(t)} ${num(n)} · ${pct(n, total)}</button>`).join("")}</div></section>`;
+    // one series, so no legend: the peak and the latest week carry their numbers
+    const per = lastWeeks(14).map(w => ({ key: w.key, date: w.date, n: cards.filter(c => c.week === w.key).length }));
+    const maxN = Math.max(1, ...per.map(w => w.n)), peak = per.findIndex(w => w.n === maxN);
+    const bars = per.map((w, i) => `<button class="lib-bar" ${open("week:" + w.key)} title="${esc(w.key.replace("-W", " week "))}: ${w.n} cards"><i style="height:${(w.n / maxN * 100).toFixed(1)}%">${i === peak || i === per.length - 1 ? `<b>${w.n}</b>` : ""}</i></button>`).join("");
+    const axis = per.map((w, i) => `<span>${i === 0 || per[i - 1].date.getMonth() !== w.date.getMonth() ? monthOf(w.date) : ""}</span>`).join("");
+    const added = `<section data-dash="weeks"><span class="cap">Added per week</span><div class="lib-weeks">${bars}</div><div class="lib-axis">${axis}</div></section>`;
 
-    // the pulse: cards landed per week, and the judge's keep rate over the same weeks
-    const weeks = lastWeeks(14);
-    const perWeek = weeks.map(w => { const cs = cards.filter(c => c.week === w.key), bt = {}; cs.forEach(c => bt[c.type] = (bt[c.type] || 0) + 1); return { key: w.key, date: w.date, n: cs.length, bt }; });
-    const maxN = Math.max(1, ...perWeek.map(w => w.n));
-    const peaks = perWeek.map((w, i) => [w.n, i]).sort((x, y) => y[0] - x[0]).slice(0, 3).filter(x => x[0] > 0).map(x => x[1]);
-    const cols = perWeek.map((w, i) => {
-      const segs = order.map(([t]) => w.bt[t] ? `<i class="${SERIES[t] || "s4"}" style="height:${(w.bt[t] / maxN * 100).toFixed(1)}%"></i>` : "").join("");
-      const lbl = (i === 0 || perWeek[i - 1].date.getMonth() !== w.date.getMonth()) ? monthOf(w.date) : "";
-      return `<button class="col" ${open("week:" + w.key)} title="${esc(w.key.replace("-W", " week "))}: ${w.n} cards landed"><span class="tot">${peaks.includes(i) ? w.n : ""}</span><span class="stk">${segs}</span><span class="lbl">${lbl}</span></button>`;
-    }).join("");
-    const jw = ((h.judge || {}).weeks) || [], byKey = {}; jw.forEach(x => byKey[x.week] = x);
-    const have = weeks.map((w, i) => { const x = byKey[w.key]; return x && x.judged ? { i, v: 100 * x.kept / x.judged, x } : null; }).filter(Boolean);
-    let line = `<div class="empty" style="padding:24px 0">no judgments yet</div>`;
-    if (have.length >= 2) {
-      const cw = Math.max(180, Math.round(W * 0.36)), ch = 128, pad = 16, top = 22, bottom = 18;
-      const X = (i) => pad + i * (cw - 2 * pad) / (weeks.length - 1), Y = (v) => top + (100 - v) / 100 * (ch - top - bottom);
-      const step = (cw - 2 * pad) / (weeks.length - 1);
-      const d = have.map((p, k) => (k ? "L" : "M") + X(p.i).toFixed(1) + " " + Y(p.v).toFixed(1)).join(" ");
-      const first = have[0], lastp = have[have.length - 1];
-      line = `<svg class="keep" width="${cw}" height="${ch}" viewBox="0 0 ${cw} ${ch}" role="img" aria-label="keep rate by week, ${Math.round(first.v)}% to ${Math.round(lastp.v)}%">
-        <path d="${d}" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-        ${have.map(p => `<rect x="${(X(p.i) - step / 2).toFixed(1)}" y="0" width="${step.toFixed(1)}" height="${ch}" fill="transparent"><title>${esc(p.x.week.replace("-W", " week "))}: ${num(p.x.kept)} of ${num(p.x.judged)} kept, ${Math.round(p.v)}%</title></rect>`).join("")}
-        <circle cx="${X(lastp.i).toFixed(1)}" cy="${Y(lastp.v).toFixed(1)}" r="3.5" fill="var(--brass)" stroke="var(--panel)" stroke-width="2"/>
-        <text x="${X(first.i).toFixed(1)}" y="${(Y(first.v) - 8).toFixed(1)}" class="lab" text-anchor="middle">${Math.round(first.v)}%</text>
-        <text x="${X(lastp.i).toFixed(1)}" y="${(Y(lastp.v) - 9).toFixed(1)}" class="lab hot" text-anchor="middle">${Math.round(lastp.v)}%</text>
-        ${weeks.map((w, i) => (i === 0 || weeks[i - 1].date.getMonth() !== w.date.getMonth()) ? `<text x="${X(i).toFixed(1)}" y="${ch - 4}" class="ax" text-anchor="middle">${monthOf(w.date)}</text>` : "").join("")}
-      </svg>`;
-    }
-    const pulse = `<section class="panel" data-dash="judge"><div class="p-row">
-      <div class="p-col grow"><div class="p-head"><span>cards landed, by week</span></div><div class="cols">${cols}</div></div>
-      <div class="p-col"><div class="p-head"><span>the judge, keep rate</span></div><button class="chart" ${open("judge")} title="the judge">${line}</button></div>
-    </div></section>`;
+    // how much of what arrives has been read, and how much of that was kept
+    const st = h.status || {}, cov = st.coverage || {}, jw = ((h.judge || {}).weeks) || [], last = jw[jw.length - 1];
+    const read = cov.processable ? Math.round(100 * (cov.judged_ever || 0) / cov.processable) : null;
+    const fig = (id, label, value, unit, note) => `<button class="fig-tile" ${open(id)}><span class="cap">${label}</span><span class="fig">${esc(value)}${unit ? `<small>${unit}</small>` : ""}</span><span class="fig-note">${esc(note)}</span></button>`;
+    const judge = `<section class="tiles4" data-dash="judge">
+      ${fig("judge", "Read", read == null ? "–" : String(read), read == null ? "" : "%", cov.processable ? num(cov.judged_ever) + " of " + num(cov.processable) : "not reported")}
+      ${fig("judge", "Kept", last && last.judged ? String(Math.round(100 * last.kept / last.judged)) : "–", last && last.judged ? "%" : "", "this week")}
+      ${fig("judge", "Waiting", num(st.deferred ?? cov.unjudged_in_window ?? 0), "", "not read yet")}
+      ${fig("judge", "Out of reach", num(cov.stranded_pre_watermark ?? 0), "", "before the start")}</section>`;
 
-    // sources: ranked bars, honest at any width
-    const bs = a.by_src || {};
-    const desk = bs.desk || 0, unat = (bs.web || 0) + (bs.legacy || 0) + (bs.other || 0);
-    const prod = Object.entries(bs).filter(([x]) => !PRODUCER_X.includes(x)).sort((x, y) => y[1] - x[1]);
-    const prodN = prod.reduce((acc, [, n]) => acc + n, 0), maxS = Math.max(desk, prodN, unat, 1);
-    const hbar = (id, label, n, extra) => `<button class="hbar" ${open(id)} title="${esc(label)}: ${num(n)} cards, ${pct(n, total)}"><span class="l">${esc(label)}</span><span class="track"><i style="width:${(n / maxS * 100).toFixed(1)}%"></i></span><span class="n">${num(n)}</span><span class="p">${pct(n, total)}</span><span class="x">${extra || ""}</span></button>`;
-    const src = `<section class="panel" data-dash="sources"><div class="p-head"><span>where it comes from</span></div>
-      ${hbar("desk", "your desk", desk)}
-      ${hbar("producers", "producers", prodN, prod.slice(0, 4).map(([x, n]) => esc(x) + " " + n).join(" · ") + (prod.length > 4 ? ` · +${prod.length - 4} more` : ""))}
-      ${hbar("unattributed", "unattributed", unat)}</section>`;
+    const bs = a.by_src || {}, desk = bs.desk || 0, unat = (bs.web || 0) + (bs.legacy || 0) + (bs.other || 0);
+    const prodN = Object.entries(bs).filter(([x]) => !PRODUCER_X.includes(x)).reduce((acc, [, n]) => acc + n, 0), maxS = Math.max(desk, prodN, unat, 1);
+    const from = `<section data-dash="sources"><span class="cap">From</span>${rank("desk", "your desk", desk, maxS)}${rank("producers", "sources", prodN, maxS)}${rank("unattributed", "unattributed", unat, maxS)}</section>`;
+    const ends = [["orphans", "nothing links in", (a.orphans || []).length], ["zerolink", "links to nothing", (a.zero_link || []).length], ["dangling", "broken links", (a.dangling || []).length], ["long", "over 450 words", (a.over_length || []).length]];
+    const maxE = Math.max(1, ...ends.map(e => e[2]));
+    const loose = `<section data-dash="health"><span class="cap">Loose ends</span>${ends.map(([id, label, n]) => rank(id, label, n, maxE)).join("")}</section>`;
 
-    // health: four figures with a meter that carries severity
-    const tile = (id, n, label, share) => {
-      const cls = share == null ? "" : share > 0.3 ? "down" : share > 0.1 ? "warn" : "";
-      return `<button class="tile" ${open(id)}><b>${num(n)}</b><span class="l">${esc(label)}</span>${share != null ? `<span class="meter"><i class="${cls}" style="width:${(Math.min(1, share) * 100).toFixed(0)}%"></i></span><span class="p">${pct(n, total)} of cards</span>` : `<span class="p">&nbsp;</span>`}</button>`;
-    };
-    const health = `<section class="panel" data-dash="health"><div class="p-head"><span>how well it hangs together</span></div><div class="tiles">
-      ${tile("orphans", (a.orphans || []).length, "no inbound links", (a.orphans || []).length / total)}
-      ${tile("zerolink", (a.zero_link || []).length, "link to nothing", (a.zero_link || []).length / total)}
-      ${tile("dangling", (a.dangling || []).length, "dangling targets", null)}
-      ${tile("long", (a.over_length || []).length, "over 450 words", (a.over_length || []).length / total)}</div></section>`;
-    return `<div class="dash">${comp}${pulse}${src}${health}</div>`;
+    const vault = (D.obsidian || {}).vault_name;
+    const recent = cards.filter(c => Number.isFinite(c.age_d)).sort((x, y) => x.age_d - y.age_d).slice(0, 6);
+    const card = (c) => { const inner = `<b>${esc(c.title || c.slug)}</b><span class="tag">${esc(c.type || "")}</span><span class="age">${c.age_d < 1 ? "today" : Math.round(c.age_d) + "d"}</span>`;
+      return vault ? `<button class="lib-card" data-act="openurl" data-url="obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(c.rel || "knowledge/" + c.slug)}" title="Open in Obsidian">${inner}</button>` : `<div class="lib-card">${inner}</div>`; };
+    const list = recent.length ? `<section data-dash="recent"><span class="cap">Recent</span><div class="plain-list">${recent.map(card).join("")}</div></section>` : "";
+    return `<div class="dash lib"><div class="lib-two">${byType}${added}</div>${judge}<div class="lib-two">${from}${loose}</div>${list}</div>`;
   }
   let discovery=null, discoveryRequest=null, discoveryQuery='', discoveryFilter='all';
   function scanTools(){
     if(discoveryRequest)return;
     const request=String(Date.now())+Math.random();discoveryRequest=request;
     bridge({cmd:'discover',request});
-    if(view==='tools')renderList();
-    setTimeout(()=>{if(discoveryRequest===request){discoveryRequest=null;discovery={error:'Discovery could not finish. Try Scan again.'};if(view==='tools'){renderList();renderInspector();}}},12000);
+    if(view==='discover')renderList();
+    setTimeout(()=>{if(discoveryRequest===request){discoveryRequest=null;discovery={error:'Discovery could not finish. Try Scan again.'};if(view==='discover'){renderList();renderInspector();}}},12000);
   }
   function discoveredTools(){return SovDiscovery.filter(SovDiscovery.candidates(discovery,D),discoveryQuery,discoveryFilter);}
   function discoveryToolbar(){
-    return `<div class="discovery-toolbar"><h2>Discover tools</h2><p class="prose">Find tools on this Mac and choose which contribute to your archive. Connecting shows a preview first.</p>
+    return `<div class="discovery-toolbar">
       <div class="acts"><input type="search" id="discovery-search" aria-label="Search discovered tools" placeholder="Search tools" value="${esc(discoveryQuery)}">
       <select id="discovery-filter" aria-label="Filter discovered tools">${[['all','All found'],['available','Available connectors'],['connected','Configured'],['unsupported','No connector yet']].map(([v,l])=>`<option value="${v}" ${discoveryFilter===v?'selected':''}>${l}</option>`).join('')}</select>
       <button data-act="scan-tools" ${discoveryRequest?'disabled':''}>${discoveryRequest?'Scanning…':'Scan again'}</button></div>
@@ -630,16 +504,11 @@ window.onerror = function (msg, src, line, col) {
       ${o.evidence?.length?`<details><summary>Where it was found · ${o.evidence.length}</summary>${o.evidence.map(e=>`<p class="discovery-evidence"><span>${esc(e.kind)}</span><code>${esc(e.path)}</code></p>`).join('')}</details>`:''}
       ${o.aliases?.length?`<p class="prose">Also recognized as ${esc(o.aliases.join(', '))}. Uses the same producer.</p>`:''}</div>
       ${o.connector?`<div class="sect"><h2>Archive connection</h2><p class="prose">${setup?'Set up producers for your archive to connect this tool.':!ready?'Refresh the configured archive to check this producer before changing it.':o.active?`Collection is configured ${h.runs_on?'on '+esc(h.runs_on):'on this Mac'}.`:h.detected===false?'Open the tool once to finish its setup, then refresh the connection status.':'A connector is available. Review its collection and context setup before adding it.'}</p>
-      ${setup?'<button data-goto-view="lanes">Set up producers…</button>':!ready?'<button id="discovery-status-refresh">Refresh connection status</button>':''}
+      ${setup?'<button data-goto-view="sources">Sources</button>':!ready?'<button id="discovery-status-refresh">Refresh connection status</button>':''}
       ${add&&h.secret?.env?`<label>${esc(h.secret.label||h.secret.env)}<input type="password" id="secret-${esc(o.connector)}" data-env="${esc(h.secret.env)}" autocomplete="off" spellcheck="false"></label>${h.secret.help?`<p class="prose">${esc(h.secret.help)}</p>`:''}`:''}
       ${add?`<button class="brass" data-act="discover-add" data-harness="${esc(o.connector)}">${h.state==='removed'?'Add again…':'Add producer…'}</button>`:''}</div>
       ${ready?`<button data-act="producer-details" data-harness="${esc(o.connector)}">Producer details</button>`:''}
       ${ready&&o.active?producerActions(h):''}`:`<div class="sect"><h2>No connector yet</h2><p class="prose">Sovereign recognizes this tool, but cannot collect from it or configure context for it yet.</p></div>`}`;
-  }
-  function producerToolbar(){
-    const available=(D.harnesses||[]).filter(h=>h.state!=="connected"&&h.detected!==false);
-    return `<div class="sect" style="padding:16px"><p class="prose">Add or remove producers. Saved history stays.</p><button data-act="discover-tools">Discover tools</button>
-      ${available.length?`<div class="acts"><select id="producer-choice" aria-label="Producer to add">${available.map(h=>`<option value="${esc(h.id)}">${esc(h.name)}${h.runs_on?' · '+esc(h.runs_on):''}</option>`).join('')}</select><button class="brass" data-act="add-producer">Add producer…</button></div>`:''}</div>`;
   }
   function producerActions(h){
     if(!h)return '';
@@ -649,28 +518,52 @@ window.onerror = function (msg, src, line, col) {
   }
   function items() {
     if (view === "review") return reviewQueue().proposals.map(p => ({kind:"prop",id:"p:"+p.slug,o:p}));
-    if (view === "tools") return discoveredTools().map(t=>({kind:"candidate",id:t.id,o:t}));
+    if (view === "discover") return discoveredTools().map(t=>({kind:"candidate",id:t.id,o:t}));
     if (!D || D.error) return [];
     if (view === "archive") return archiveItems();
-    if (view === "glance") return [];
     if (view === "hosts") return hostItems();
-    if (view === "lanes") return [
-      {kind:"head",id:"producer-heading",label:"Producers",n:"collection and context"},
-      ...(D.harnesses||[]).map(h=>({kind:"tool",id:h.id,o:{name:h.name,connector:h.id,detected:h.detected}})),
-      {kind:"head",id:"history-heading",label:"Lane history",n:"saved contributions"},
-      ...(D.lanes || []).map(l => ({ kind: "lane", id: l.lane, o: l }))];
+    if (view === "sources") return sourceItems();
     if (view === "backups") return backupItems();
     return hubItems();
   }
+  // ---------- sources: every tool and lane that feeds the archive, worst first ----------
+  // Lateness uses the same rule as the shared assessment: past its cadence is late,
+  // past twice its cadence is silent.
+  function sourceState(it) {
+    if (it.kind === "tool") {
+      const h = localTool(it.id) || {}, run = hz(h).run, cad = intervalOf(h) / 3600;
+      const failed = (h.job?.last_exit != null && h.job.last_exit !== 0) || /^FAILED\b/.test(String(h.last_status || ""));
+      if (h.state === "removed") return { dot: "", word: "removed", rank: 4, age: run };
+      if (failed) return { dot: "down", word: "failed", rank: 0, age: run };
+      if (h.state !== "connected") return { dot: "warn", word: h.state || "unknown", rank: 1, age: run };
+      if (run != null && !h.runs_on && run > 2 * cad) return { dot: "down", word: "silent", rank: 0, age: run };
+      if (run != null && !h.runs_on && run > cad) return { dot: "warn", word: "late", rank: 1, age: run };
+      return { dot: run == null ? "" : "live", word: "", rank: 2, age: run };
+    }
+    const l = it.o, a = l.vault_age_h, delivery = ((D.backups || {}).lanes || []).find(x => x.lane === l.lane)?.delivery;
+    if (l.retired) return { dot: "", word: "removed", rank: 4, age: a };
+    if (delivery === "waiting") return { dot: "warn", word: "awaiting hub", rank: 1, age: a };
+    if (a == null) return { dot: "", word: "", rank: 3, age: a };
+    return a <= 48 ? { dot: "live", word: "", rank: 2, age: a } : { dot: "warn", word: "quiet", rank: 1, age: a };
+  }
+  function sourceItems() {
+    const hs = (D.harnesses || []).filter(h => ["connected", "partial", "removal incomplete", "removed"].includes(h.state) || h.job_loaded || h.hub_installed);
+    const mine = new Set(hs.map(h => h.lane).filter(Boolean));
+    const all = [...hs.map(h => ({ kind: "tool", id: h.id, o: { name: h.name, connector: h.id, detected: h.detected } })),
+                 ...(D.lanes || []).filter(l => !mine.has(l.lane)).map(l => ({ kind: "lane", id: l.lane, o: l }))];
+    all.forEach(it => { it.s = sourceState(it); });
+    const name = (it) => String((it.kind === "tool" ? it.o.name : it.o.lane) || "");
+    all.sort((x, y) => x.s.rank - y.s.rank || name(x).localeCompare(name(y)));
+    const live = all.filter(it => it.s.rank < 4), gone = all.filter(it => it.s.rank === 4);
+    return gone.length ? [...live, { kind: "head", id: "h-removed", section: "removed", label: "Removed", n: String(gone.length) }, ...gone] : live;
+  }
   // ---------- one assessment: what needs you, what is fresh, what is stale ----------
   // Cadence per kind; a thing past its cadence is stale, past twice it needs you (down).
-  let lastAssess = null;
   function assess() {
-    lastAssess = SovStatus.assess(D, localStorage);
-    for(const item of lastAssess.need)if(D?.needs_you?.[item.need]?.kind === "gate")item.detail = "Open Review to compare proposals and decide what to keep.";
+    const A = SovStatus.assess(D, localStorage);
     const badge = document.getElementById("review-count");
     if (badge) badge.textContent = reviewQueue().count || "";
-    return lastAssess;
+    return A;
   }
   // ---------- the verdict: one sentence, the worst state on screen ----------
   function verdictSentence() {
@@ -692,14 +585,11 @@ window.onerror = function (msg, src, line, col) {
     return { state, text: text.replace(/\.\.$/, ".") };
   }
   function renderVerdict() {
-    if(view==='recovery'){$('#verdict').className='idle';$('#vtext').textContent='Archive recovery and backup destinations';$('#vmeta').textContent='';return;}
-    if(view==='setup'){$('#verdict').className='idle';$('#vtext').textContent='Review Hub changes before applying them.';$('#vmeta').textContent='';return;}
     const v = $("#verdict"); if (!v || !D) return;
-    const q = reviewQueue();
-    const { state, text } = view === "review" ? {state:q.available?"idle":"warn",text:selectedRoot?"Reviewing " + selectedRoot.split("/").pop():"Choose an archive to get started."} : D.error||D._status?.error ? {state:"down",text:D.error||D._status.error} : D._status?.pending ? {state:"warn",text:SovStatus.caption(D)} : verdictSentence();
-    v.className = state; $("#vtext").textContent = text;
-    $("#vmeta").textContent = SovStatus.caption(D);
-    bridge({ cmd: "verdict", ...((D._status?.pending||D._status?.error)?{state,text}:view === "review" && !D.error ? verdictSentence() : D.error ? {state:"down",text:D.error} : {state,text}) });
+    const failed = D.error || D._status?.error;
+    v.className = failed ? "down show" : ""; $("#vtext").textContent = failed || "";
+    // The menu-bar crown still carries the one-sentence verdict.
+    bridge({ cmd: "verdict", ...(failed ? { state: "down", text: failed } : D._status?.pending ? { state: "warn", text: SovStatus.caption(D) } : verdictSentence()) });
   }
   // ---------- hosts by role: the hub, this machine, producers, the rest ----------
   function hostItems() {
@@ -812,172 +702,120 @@ window.onerror = function (msg, src, line, col) {
   }
   const selectable = (it) => it.kind !== "head" && it.kind !== "quiet";
 
-  let contribMax = 1;
-  function contribCell(n) {
-    const w = Math.round(Math.min(1, n / contribMax) * 100);
-    return `<span class="contrib" title="${n} trusted card${n === 1 ? "" : "s"} traced to this producer">
-      <span class="meter"><i style="width:${n ? Math.max(6, w) : 0}%"></i></span>
-      <span class="n ${n ? "" : "zero"}">${n || "–"}</span></span>`;
-  }
+  // A row is a dot, a name, where it is, at most a two-word state and an age. The dot
+  // already says healthy, so a state word appears only when there is something to add.
+  const tagClass = { live: "on", warn: "mid", down: "off" };
+  const SAID_BY_DOT = new Set(["current", "connected", "Succeeded", "clear", "accepted", "backed up", "judging"]);
+  const stateTag = (word, cls) => `<span class="state">${word ? `<span class="tag ${cls || ""}">${esc(word)}</span>` : ""}</span>`;
   function rowHTML(it) {
     const o = it.o;
     if (it.kind === "head") return `<span class="name">${esc(it.label)}</span><span class="desc"></span><span class="num">${esc(it.n || "")}</span>`;
     if (it.kind === "quiet") return `<span class="desc">${esc(it.text)}</span>`;
-    if (it.kind === "arch") {
-      return `<span class="name" style="width:172px">${esc(it.label)}</span>
-        <span class="desc">${esc(it.desc || "")}</span>
-        ${meter(it.share, it.cls)}
-        <span class="num" style="width:58px">${esc(it.n)}</span>
-        <span class="chev">${it.list.length || it.extra.dangling || it.extra.kv ? "›" : ""}</span>`;
-    }
     if (it.kind === "prop") {
       const p = o, conf = (p.confidence || "").toLowerCase();
       return `${dot(conf === "high" ? "live" : conf === "med" ? "warn" : "", conf ? conf + " confidence" : "confidence unknown")}
-        <span class="review-card"><strong>${esc(p.title || p.slug)}</strong><small>${esc(p.type || 'Type unknown')} · ${esc(conf || 'Unknown')} confidence${p.update_of?' · Update':''}${p.hold?' · Held for you':''}${p.flags?.length?' · Review flags':''}</small></span>
-        <span class="num">${age(p.age_h)}</span><span class="chev">›</span>`;
+        <span class="review-card"><strong>${esc(p.title || p.slug)}</strong><small>${esc(p.type || "type unknown")} · ${p.update_of ? "update" : "new"}${p.hold ? " · held" : ""}${p.flags?.length ? " · flagged" : ""}</small></span>
+        <span class="num">${age(p.age_h)}</span>`;
     }
     if (it.kind === "host") {
       const m = o.meta || {}, net = o.net || {};
-      if(o.associated===false)return `${dot('', 'disassociated')}<span class="name" style="width:138px">${esc(o.host)}</span><span class="desc">Disassociated · history retained</span><span class="chev">›</span>`;
-      const hs = (o.harnesses || []).map(hz);
-      const isMe = o.host === (D.machine || {}).host;
+      if(o.associated===false)return `${dot('', 'disassociated')}<span class="title mono">${esc(o.host)}</span><span class="where">history kept</span>${stateTag("disassociated")}<span class="num" style="width:52px"></span><span class="num" style="width:40px"></span><span class="chev">›</span>`;
+      const tools = (o.harnesses || []).length;
       const ages = (o.lanes || []).map(l => l.newest_age_h).filter(x => x != null);
       const newest = ages.length ? Math.min.apply(null, ages) : null;
-      const strip = hs.length ? hs.map(t => wireMark(t, isMe ? localTool(t.id) : null)).join("") : `<span class="none">no tools</span>`;
       return `${dot(net.online == null ? "" : net.online ? "live" : "down", net.online == null ? "network unknown" : net.online ? "online" : "offline")}
-        <span class="name" style="width:138px">${esc(o.host)}</span>
-        <span class="desc">${esc([m.kind, m.where].filter(Boolean).join(" · "))}</span>
-        ${m.identity && m.identity !== domIdentity ? `<span class="tag">${esc(m.identity)}</span>` : ""}
-        <span class="strip">${strip}</span>
-        ${contribCell((o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0))}
-        <span class="num" style="width:40px">${age(newest)}</span>
+        <span class="title mono" style="flex:0 0 168px">${esc(o.host)}</span>
+        <span class="where">${esc([m.kind, m.where].filter(Boolean).join(" · "))}</span>
+        ${net.online === false ? stateTag("unreachable", "off") : stateTag(m.identity && m.identity !== domIdentity ? m.identity : "")}
+        <span class="num" style="width:52px">${tools ? tools + (tools === 1 ? " tool" : " tools") : ""}</span>
+        <span class="num" style="width:40px">${newest == null ? "" : age(newest)}</span>
         <span class="chev">›</span>`;
     }
     if (it.kind === "backup" || it.kind === "hub") {
+      const healthy = o.state === "live";
       return `${dot(o.state, o.stateText)}
-        <span class="name" style="width:230px">${esc(o.label)}</span>
-        <span class="desc">${esc(o.desc)}</span>
-        <span class="tag ${o.state === "live" ? "on" : o.state === "down" ? "off" : o.state === "warn" ? "mid" : ""}">${esc(o.stateText)}</span>
-        <span class="num" style="width:40px">${o.age_h == null ? "–" : age(o.age_h)}</span>
+        <span class="title mono">${esc(o.label)}</span>
+        <span class="where">${esc(healthy && o.desc === "Last run succeeded" ? "" : o.desc)}</span>
+        ${stateTag(healthy && SAID_BY_DOT.has(o.stateText) ? "" : o.stateText, tagClass[o.state])}
+        <span class="num" style="width:40px">${o.age_h == null ? "" : age(o.age_h)}</span>
         <span class="chev">›</span>`;
     }
-    if (it.kind === "lane") {
-      const r = (o.read || "none").replace(/\s*\(.*\)$/, "");
-      return `${dot(o.retired ? "" : freshDot(o.vault_age_h), o.vault_age_h == null ? "age unknown" : o.vault_age_h <= 24 ? "fresh" : o.vault_age_h <= 168 ? "this week" : "stale")}
-        <span class="name" style="width:160px">${esc(o.lane)}</span>
-        <span class="desc">${esc(o.retired ? "Removed · history preserved" : o.producer || "")}</span>
-        <span class="tag ${r === "none" ? "" : "on"}">${esc(r)}</span>
-        ${contribCell(o.cards || 0)}
-        <span class="num" style="width:40px">${age(o.vault_age_h)}</span>
+    if (it.kind === "lane" || it.kind === "tool") {
+      const s = it.s || sourceState(it), h = it.kind === "tool" ? localTool(it.id) : null;
+      const where = it.kind === "tool" ? (h?.runs_on || (D.machine || {}).host || "") : (o.host || "");
+      return `${dot(s.dot, s.word || "delivering")}
+        <span class="title${it.kind === "lane" ? " mono" : ""}">${esc(it.kind === "tool" ? o.name : o.lane)}</span>
+        <span class="where">${esc(where)}</span>
+        ${stateTag(s.word, tagClass[s.dot])}
+        <span class="num" style="width:40px">${s.age == null ? "" : age(s.age)}</span>
         <span class="chev">›</span>`;
     }
     if (it.kind === "candidate") {
-      return `${dot(o.state==='Connected'?'live':'',o.state)}<span class="discovery-name"><strong>${esc(o.name)}</strong><small>${esc(o.found)}</small></span><span class="tag ${o.state==='Connected'?'on':''}">${esc(o.state)}</span><span class="chev">›</span>`;
-    }
-    if (it.kind === "tool") {
-      const h = o.connector ? localTool(o.connector) : null;
-      const state = h ? h.state : (o.detected ? "no connector" : o.detected === null ? "cloud" : "not here");
-      const cls = state === "connected" ? "on" : state === "partial" ? "mid" : state === "not connected" ? "off" : "";
-      const t = h ? hz(h) : null;
-      return `${dot(state === "connected" ? "live" : o.detected ? "warn" : "", state)}
-        <span class="name" style="width:174px">${esc(o.name)}</span>
-        <span class="desc">${esc(h ? "lane " + h.lane : (o.note || ""))}</span>
-        <span class="tag ${cls}">${esc(state)}</span>
-        <span class="strip">${t ? wireMark(t, h) : ""}</span>
-        <span class="num" style="width:40px">${t ? age(t.run) : ""}</span>
-        <span class="chev">›</span>`;
+      return `${dot(o.state==='Connected'?'live':'',o.state)}<span class="discovery-name"><strong>${esc(o.name)}</strong><small>${esc(o.found)}</small></span>${stateTag(o.state,o.state==='Connected'?'on':'')}<span class="chev">›</span>`;
     }
     const j = o;
     return `${dot(j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down", j.last_exit === 0 ? "last run ok" : j.last_exit == null ? "no run yet" : "last run failed")}
-      <span class="name" style="flex:1;min-width:0">${esc(j.label)}</span>
-      <span class="num" style="width:90px">${esc((j.schedule || "").replace("every ", ""))}</span>
-      <span class="tag ${j.stderr_lines ? "mid" : ""}">${j.stderr_lines == null ? "no log" : j.stderr_lines + " err"}</span>
+      <span class="title mono">${esc(SovStatus.shortLabel(j.label))}</span>
+      <span class="where">${esc(j.schedule || "")}</span>
+      ${stateTag(j.last_exit ? "failed" : j.stderr_lines ? j.stderr_lines + " err" : "", j.last_exit ? "off" : "mid")}
+      <span class="num" style="width:40px"></span>
       <span class="chev">›</span>`;
   }
-  function issueHTML(n) {
-    if(GLANCE)return ''; // The compact menu opens the console for troubleshooting.
-    const url=SovStatus.safeURL(n.url);
-    const failures=(n.members||[n]).filter(r=>r.failure_output).map(r=>`<p><strong>${esc(r.name||'Captured output')}</strong></p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(r.failure_output)}</pre>`).join('');
-    if(!['why','action','verify'].some(k=>n[k])&&!url&&!failures)return '';
-    const keys = n.actionKind ? ['why','verify'] : ['why','action','verify'];
-    const act = n.actionKind ? ` <button data-act="${esc(n.actionKind)}">${esc(n.action||'Do it')}</button>` : (n.action?` <button data-copy-step="${esc(n.action)}">Copy next step</button>`:'');
-    return `<details class="issue-details"><summary>Details</summary>${keys.filter(k=>n[k]).map(k=>`<p>${esc(n[k])}</p>`).join('')}${failures}${url?`<a href="${esc(url)}" data-status-url="${esc(url)}">Open verification link</a>`:''}${act}</details>`;
-  }
-  function glanceHome() {
-    const A = assess();
-    if (window.__qaEmpty === "needs") A.need = [];                    // design QA: the empty state
-    const rowHTML = (r) => `<div class="row" role="option" tabindex="0" ${r.need != null ? `data-need="${r.need}"` : r.group ? `data-group="${esc(r.group)}"` : `data-jump="${esc(JSON.stringify(r.jump))}"`}>${dot(r.state, r.state)}<span class="name">${esc(r.name)}</span><span class="num">${r.age_h != null ? age(r.age_h) : ""}</span><span class="chev">›</span><span class="desc">${esc(r.detail)}</span></div>${issueHTML(r)}`;
-    const col = (title, rows, empty) => `<section class="gcol${rows.length ? "" : " bare"}"><div class="gh">${title}<span class="n">${rows.length}</span></div><div class="gb">${rows.length ? rows.map(rowHTML).join("") : `<div class="empty">${empty}</div>`}</div></section>`;
-    return `<div class="glance-home">${col("Needs you", A.need, "nothing waiting")}${A.waiting.length?col("Awaiting verification",A.waiting,""):""}${col("Fresh", A.fresh, "nothing new since your last look")}${col("Stale", A.stale, "nothing stale")}</div>`;
-  }
-  function renderGroupDrawer(g) {
-    settingsOpen = false; sel = null;
-    $("#insp").innerHTML = head(esc(g.name + " " + g.detail.split(":")[0]), esc(`${g.members.length} items, worst first`)) + `
-      <div class="sect"><h2>Each one</h2>${g.members.map(r => `<div class="row" role="option" tabindex="0" data-jump="${esc(JSON.stringify(r.jump))}" style="padding-left:0">${dot(r.state, r.state)}<span class="name" style="width:auto">${esc(r.name)}</span><span class="desc">${esc(r.detail)}</span><span class="num">${r.age_h != null ? age(r.age_h) : ""}</span><span class="chev">›</span></div>`).join("")}</div>`;
-  }
+  // The header's one line of summary for the view on screen.
   function footerMeta(n) {
-    const m = D?.machine || {}, meName = m.host || "here";
-    $("#listcount").textContent = view === "review" ? SovStatus.caption(D) : view === "hosts" ? `${D.fleet?.hosts?.length||0} active · ${D.fleet?.disassociated?.length||0} disassociated` : view === "tools" ? `${n} tools on ${meName}` : (m.template_rev || "");
+    let text = "";
+    if (settingsOpen || !D) text = "";
+    else if (view === "review") { const q = reviewQueue(); text = q.count ? q.count + " waiting" : ""; }
+    else if (view === "sources") { const all = sourceItems().filter(selectable), live = all.filter(i => i.s.dot === "live").length, down = all.filter(i => i.s.dot === "down").length;
+      text = `${live} delivering${down ? " · " + down + " silent" : ""}`; }
+    else if (view === "hosts") { const gone = D.fleet?.disassociated?.length || 0; text = `${D.fleet?.hosts?.length || 0} active${gone ? " · " + gone + " disassociated" : ""}`; }
+    else if (view === "discover") text = `${n} found`;
+    else if (view === "archive") text = arch().total ? num(arch().total) + " cards" : "";
+    else if (view === "jobs") text = `${n} jobs`;
+    $("#listcount").textContent = text;
   }
+  // The queue says what it is only when it is not simply a list of proposals: empty,
+  // partly loaded, or not safe to decide from.
   function renderReviewIntro(q) {
     $('#review-count').textContent=q.count||'';
-    $('#review-intro').innerHTML=`<div class="review-heading"><h2>${esc(q.title)}</h2>${q.count?`<span>${num(q.count)}</span>`:''}</div><p>${esc(q.message)}</p>${!q.available?`<button id="review-retry">${['no_archive','different_archive'].includes(q.state)?'Open archive…':'Refresh queue'}</button>`:''}`;
+    const intro=$('#review-intro'),plain=q.available&&q.state==='ready'&&q.proposals.length>=q.count;
+    intro.hidden=plain;
+    intro.innerHTML=plain?'':`<div class="review-heading"><h2>${esc(q.title)}</h2></div><p>${esc(q.message)}</p>${!q.available&&q.state!=='loading'?`<button id="review-retry">${['no_archive','different_archive'].includes(q.state)?'Open archive…':'Refresh queue'}</button>`:''}`;
   }
   function renderList() {
-    const review=view==='review',q=reviewQueue();
+    const review=view==='review'&&!settingsOpen,q=reviewQueue();
     document.body.classList.toggle('review',review);
-    document.body.classList.toggle('discovering',view==='tools');
-    document.body.classList.toggle('hub-setup',view==='setup');
-    document.body.classList.toggle('archive-backups-view',view==='recovery');
-    $('#archive-backups-tab').setAttribute('aria-pressed',String(view==='recovery'));
-    if(view==='recovery'&&!settingsOpen){
-      $('#review-intro').hidden=true;$('#review-tab').setAttribute('aria-pressed','false');$('#operations-tab').setAttribute('aria-pressed','false');
-      $('#rows').setAttribute('role','region');$('#rows').setAttribute('aria-label','Archive backups');$('#rows').removeAttribute('aria-activedescendant');
-      document.querySelectorAll('.seg button').forEach(b=>b.setAttribute('aria-pressed','false'));
-      SovBackups.mount($('#rows'),selectedRoot);footerMeta(0);return;
-    }
-    $('#rows').setAttribute('role',settingsOpen||view==='setup'?'region':'listbox');
-    if(settingsOpen){
-      $('#review-intro').hidden=true;$('#rows').className='';
-      $('#rows').setAttribute('aria-label','Settings');$('#rows').removeAttribute('aria-activedescendant');
-      document.querySelectorAll('.shell-rail button[aria-pressed]').forEach(b=>b.setAttribute('aria-pressed',String(b.id==='settings-tab')));
-      SovSettings.mount($('#rows'),{S,D,root:selectedRoot,pinned});footerMeta(0);return;
-    }
-    if(view==='setup'){
-      $('#review-intro').hidden=true;$('#review-tab').setAttribute('aria-pressed','false');$('#operations-tab').setAttribute('aria-pressed','true');
-      $('#rows').setAttribute('aria-label','Hub setup and recovery');$('#rows').removeAttribute('aria-activedescendant');
-      document.querySelectorAll('.seg button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.view==='jobs')));
-      SovHub.mount($('#rows'),selectedRoot);footerMeta(0);return;
-    }
-    $('#review-tab').setAttribute('aria-pressed',String(review));
-    $('#operations-tab').setAttribute('aria-pressed',String(!review));
+    document.body.classList.toggle('queue-empty',review&&!q.proposals.length);
+    document.body.classList.toggle('discovering',view==='discover'&&!settingsOpen);
+    document.body.classList.toggle('hub-setup',view==='setup'&&!settingsOpen);
+    document.body.classList.toggle('archive-backups-view',view==='recovery'&&!settingsOpen);
+    document.body.classList.toggle('single',settingsOpen||view==='recovery'||view==='setup');
+    document.body.dataset.view=settingsOpen?'settings':view;
     $('#review-count').textContent=q.count||'';
-    $('#rows').setAttribute('aria-label',review?'Proposals awaiting your decision':'Records');
-    const intro=$('#review-intro');intro.hidden=!review;
+    const rows=$('#rows');
+    $('#review-intro').hidden=true;rows.className='';
+    const region=(label)=>{rows.setAttribute('role','region');rows.setAttribute('aria-label',label);rows.removeAttribute('aria-activedescendant');};
+    if(settingsOpen){region('Settings');SovSettings.mount(rows,{S,D,root:selectedRoot,pinned});footerMeta(0);return;}
+    if(view==='recovery'){region('Archive backups');SovBackups.mount(rows,selectedRoot);footerMeta(0);return;}
+    if(view==='setup'){region('Hub setup and recovery');SovHub.mount(rows,selectedRoot);footerMeta(0);return;}
+    rows.setAttribute('role','listbox');rows.setAttribute('aria-label',review?'Proposals awaiting your decision':'Records');
     if(review)renderReviewIntro(q);
-    if(!review&&view!=="tools"&&D?._status?.pending&&!D.machine){$('#rows').className='';$('#rows').textContent=SovStatus.caption(D);footerMeta(0);return;}
-    if(!review&&view!=="tools"&&D?.error){$('#rows').className='';$('#rows').innerHTML='<div class="empty">System status unavailable. Use Refresh to try again.</div>';sel=null;footerMeta(0);return;}
-
-    if (!review && view!=="tools" && D?.machine?.connected === false) {renderSetup(D);return;}
-    if (view === "glance") { $("#rows").className = "home"; $("#rows").innerHTML = D ? glanceHome() : ""; document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", "false")); footerMeta(0); syncActive(); return; }
-    $("#rows").className = "";
+    if(!review&&view!=="discover"&&D?._status?.pending&&!D.machine){rows.innerHTML='<div class="empty">Checking…</div>';footerMeta(0);return;}
+    if(!review&&view!=="discover"&&D?.error){rows.innerHTML='<div class="empty">System status unavailable. Use Refresh to try again.</div>';sel=null;footerMeta(0);return;}
+    if (!review && view!=="discover" && D?.machine?.connected === false) {renderSetup(D);return;}
     const list = items();
     if (view === "hosts") {
-      contribMax = Math.max(1, ...list.filter(selectable).map(i => (i.o.lanes || []).reduce((a, l) => a + (l.cards || 0), 0)));
       const ids = {}; list.filter(selectable).forEach(i => { const id = (i.o.meta || {}).identity; if (id) ids[id] = (ids[id] || 0) + 1; });
       domIdentity = Object.keys(ids).sort((x, y) => ids[y] - ids[x])[0] || null;
     }
-    else if (view === "lanes") contribMax = Math.max(1, ...list.filter(selectable).map(i => i.o.cards || 0));
     const n = list.filter(selectable).length;
-    if(review&&!n&&!splitReview()&&!settingsOpen){$('#inspector').classList.remove('open');$('#inspector').setAttribute('aria-hidden','true');}
     footerMeta(n);
-    document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
     if (sel && (sel.view !== view || !list.some(i => i.id === sel.id))) sel = null;
-    const shown = view === "archive" ? list.filter(i => i.kind === "head" || i.kind === "quiet") : list;
+    const shown = view === "archive" ? [] : list;
     const rowsHTML = shown.map((it, i) => selectable(it)
       ? `<div class="row ${it.kind==='candidate'?'discovery-row':''}" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
       : `<div class="row ${it.kind}" id="r${i}" ${it.kind === "head" ? `data-section="${esc(it.section)}"` : ""} aria-hidden="true">${rowHTML(it)}</div>`).join("");
-    $("#rows").innerHTML = (view === "jobs" ? `<div class="sect" style="padding:16px"><button class="brass" data-goto-view="setup">Hub setup and recovery…</button></div>` : view === "lanes" ? producerToolbar() : view === "tools" ? discoveryToolbar() : "") + (rowsHTML || (view === "archive" ? "" : (view === "review" ? "" : `<div class="empty">${view==='tools'?(discoveryRequest?'Scanning…':'No tools match this view.'):'Nothing here yet.'}</div>`))) + (view === "archive" ? renderDash() : "");
+    rows.innerHTML = (view === "discover" ? discoveryToolbar() : "") + (rowsHTML || (view === "archive" || review ? "" : `<div class="empty">${view==='discover'?(discoveryRequest?'Scanning…':'No tools match this view.'):'Nothing here yet.'}</div>`)) + (view === "archive" ? renderDash() : "");
     syncActive();
   }
   function syncActive() {
@@ -1072,11 +910,62 @@ window.onerror = function (msg, src, line, col) {
   let saving = false;
   function saveSettings() {
     saving = true;
-    const where = (document.querySelector('input[name="where"]:checked') || {}).value || S.where;
+    const where = (document.querySelector('input[name="set-where"]:checked') || {}).value || S.where;
     const wantPin = $("#s-pin").checked;
     if (wantPin !== pinned) setPinned(wantPin);
     $("#s-state").textContent = "Saving…";
-    bridge({ cmd: "setSettings", where, loginItem: $("#s-login").checked, refresh: +$("#s-refresh").value, defaultView: $("#s-view").value, closeQuits: $("#s-closequits").checked });
+    bridge({ cmd: "setSettings", where, loginItem: $("#s-login").checked, refresh: +$("#s-refresh").value, closeQuits: $("#s-closequits").checked });
+  }
+
+  // A card's text is material that came in through raw. Every character is escaped
+  // first; only headings, list items, bold and code are then given back as markup,
+  // so nothing a proposal contains can become an element.
+  function mdBlocks(text) {
+    const out = []; let para = [];
+    const flush = () => { if (para.length) { out.push(para.join(" ")); para = []; } };
+    for (const line of String(text || "").replace(/\r/g, "").split("\n")) {
+      if (!line.trim()) flush();
+      else if (/^\s*(#{1,6}\s|[-*]\s|\d+\.\s)/.test(line)) { flush(); out.push(line.trim()); }
+      else para.push(line.trim());
+    }
+    flush();
+    return out.length && /^#\s/.test(out[0]) ? out.slice(1) : out;   // the title is already the heading above
+  }
+  const mdInline = (text) => esc(text).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  function mdBlock(block, cls) {
+    const h = /^#{1,6}\s+(.*)$/.exec(block), li = /^(?:[-*]|\d+\.)\s+(.*)$/.exec(block);
+    return `<div class="blk ${cls || ""}">${h ? `<h4>${mdInline(h[1])}</h4>` : li ? `<ul><li>${mdInline(li[1])}</li></ul>` : `<p>${mdInline(block)}</p>`}</div>`;
+  }
+  // Which blocks of the current card survive into the proposal: a longest common
+  // subsequence over whole blocks. A card is one screen, so the table is small.
+  function diffBlocks(a, b) {
+    const n = a.length, m = b.length;
+    if (n * m > 250000) return [...a.map(x => ["del", x]), ...b.map(x => ["add", x])];
+    const t = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) t[i][j] = a[i] === b[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
+    const out = []; let i = 0, j = 0;
+    while (i < n && j < m) { if (a[i] === b[j]) { out.push(["same", a[i]]); i++; j++; } else if (t[i + 1][j] >= t[i][j + 1]) out.push(["del", a[i++]]); else out.push(["add", b[j++]]); }
+    while (i < n) out.push(["del", a[i++]]);
+    while (j < m) out.push(["add", b[j++]]);
+    return out;
+  }
+  // What changed, with one block of context either side and longer unchanged runs folded.
+  function changesHTML(current, proposed, unfolded) {
+    const d = diffBlocks(mdBlocks(current), mdBlocks(proposed)), changed = (k) => !!d[k] && d[k][0] !== "same", out = [];
+    for (let k = 0; k < d.length; k++) {
+      if (unfolded || changed(k) || changed(k - 1) || changed(k + 1)) { out.push(mdBlock(d[k][1], d[k][0] === "same" ? "" : d[k][0])); continue; }
+      let e = k; while (e < d.length && !changed(e) && !changed(e - 1) && !changed(e + 1)) e++;
+      if (e - k < 3) { for (; k < e; k++) out.push(mdBlock(d[k][1])); k--; continue; }
+      out.push(`<button class="fold" data-act="review-unfold">${e - k} unchanged</button>`); k = e - 1;
+    }
+    return { html: out.join(""), adds: d.filter(x => x[0] === "add").length, dels: d.filter(x => x[0] === "del").length };
+  }
+  let reviewTab = null; const reviewUnfolded = new Set();
+  function stepReview(by) {
+    const list = reviewQueue().proposals; if (!list.length || !window.sovCanQuit()) return;
+    const at = list.findIndex(x => sel && sel.id === "p:" + x.slug), next = list[Math.max(0, Math.min(list.length - 1, (at < 0 ? 0 : at + by)))];
+    select("prop", "p:" + next.slug, true);
+    const el = document.querySelector('.row[data-id="' + CSS.escape("p:" + next.slug) + '"]'); if (el) scrollRowsTo(el, true);
   }
 
   const gateChecks = new Map(), gateResolutions = new Map(), gateCompleted = new Map(); let gatePending = null, gateRequest = 0;
@@ -1098,7 +987,7 @@ window.onerror = function (msg, src, line, col) {
     if(!gatePending)return true;
     showGateNotice('running');return false;
   };
-  const splitReview=()=>view==="review"&&matchMedia("(min-width:1100px)").matches;
+  const splitReview=()=>view==="review";   // the queue and the proposal are always side by side
   let backupPending=false,backupResult=null;
   let appUpdatePending=false,appUpdateResult=null;
   function backupActions(o){
@@ -1111,7 +1000,7 @@ window.onerror = function (msg, src, line, col) {
   }
   function renderInspector() {
     if(view==='setup'||view==='recovery')return;
-    if(!settingsOpen&&view!=="review"&&view!=="tools"&&D?.machine?.connected===false){renderSetup(D);return;}
+    if(!settingsOpen&&view!=="review"&&view!=="discover"&&D?.machine?.connected===false){renderSetup(D);return;}
     if(splitReview())$("#inspector").setAttribute("aria-hidden","false");
     const box = $("#insp");
     const it = sel ? items().find(i => i.id === sel.id) : null;
@@ -1141,22 +1030,30 @@ window.onerror = function (msg, src, line, col) {
       const existing = check?.existing || [], shown = check?.proposal || p;
       const resolvable=GateModel.canResolve(check,gatePending), resolving=resolvable&&gateResolutions.get(p.slug)===check.fingerprint;
       const retained=existing[0]?.type;
-      box.innerHTML = head(esc(shown.title || p.slug), `${esc(shown.type || '?')} · ${esc(p.confidence || '?')} confidence`, p.hold ? 'held' : '') +
-        `<section class="gate-feedback ${esc(state)}" role="status"><h2>${esc(title)}</h2><p>${esc(message)}</p>
-        ${!['checking','running'].includes(state)?`<button data-act="gate-check" data-slug="${esc(p.slug)}" ${gatePending?'disabled':''}>Check again</button>`:''}
-        ${existing.length?'<button data-act="gate-compare">Compare cards</button>':''}
-        ${['type_conflict','update_conflict','resolution_pending'].includes(state)?`<button data-act="gate-copy" data-slug="${esc(p.slug)}">${state==='resolution_pending'?'Copy recovery request':'Copy resolution request'}</button>`:''}
-        ${check?.detail?`<details><summary>Technical details</summary><pre>${esc(check.detail)}</pre></details>`:''}</section>`+
-        (resolving?`<section class="gate-feedback" id="gate-resolution-preview"><h2>Review update as ${esc(retained)}</h2><p>Keep the existing classification: <strong>${esc(retained)}</strong>. The proposed content below will replace the current card. Review both versions for any detail you want to retain.</p><p>Both originals will be saved before approval. Nothing changes until you choose Approve update.</p><button data-act="gate-cancel-resolution" data-slug="${esc(p.slug)}">Cancel resolution</button></section>`:'')+
-        `${p.reason?`<div class="prose">${esc(p.reason)}</div>`:''}`+
+      const queue=reviewQueue().proposals, at=queue.findIndex(x=>x.slug===p.slug);
+      const body=check?.proposal?.body || p.body || '';
+      const tab=existing.length?(reviewTab||'changes'):'proposed';
+      const changes=existing.length?changesHTML(existing[0].body,body,reviewUnfolded.has(p.slug)):null;
+      const update=existing.length||p.update_of;
+      const tone=state==='ready'?'live':['checking','running','busy'].includes(state)?'':['failed','unavailable','missing','invalid','changed','uncertain'].includes(state)?'down':'warn';
+      const proposed=mdBlocks(body).map(b=>mdBlock(b)).join('')||'<p>(empty)</p>';
+      box.innerHTML =
+        `<div class="rv-head"><div class="rv-title"><h2>${esc(shown.title || p.slug)}</h2>
+          <div class="rv-sub"><span class="tag">${esc(shown.type || '?')}</span><span class="tag ${update?'hold':'on'}">${update?'update':'new'}</span>${p.hold?'<span class="tag hold">held</span>':''}<span>${esc(p.confidence || '?')} confidence · ${age(p.age_h)}</span></div></div>
+          <div class="rv-pos"><span>${at+1} of ${queue.length}</span><button class="quiet" data-act="review-prev" title="Previous (K)" aria-label="Previous proposal">↑</button><button class="quiet" data-act="review-next" title="Next (J)" aria-label="Next proposal">↓</button></div></div>`+
+        (p.reason||shown.source?`<div class="rv-why">${p.reason?`<span class="cap">Why</span><p>${esc(p.reason)}</p>`:''}${shown.source?`<span class="rv-src">${esc(shown.source)}</span>`:''}</div>`:'')+
+        (['ready','checking'].includes(state)?'':`<section class="rv-state ${esc(state)}" role="status"><h3>${esc(title)}</h3><p>${esc(message)}</p>
+          ${['type_conflict','update_conflict','resolution_pending'].includes(state)?`<button class="quiet" data-act="gate-copy" data-slug="${esc(p.slug)}">${state==='resolution_pending'?'Copy recovery request':'Copy resolution request'}</button>`:''}
+          ${check?.detail?`<details><summary>Technical details</summary><pre>${esc(check.detail)}</pre></details>`:''}</section>`)+
+        (resolving?`<section class="rv-state calm" id="gate-resolution-preview"><p>Keep the existing classification: <strong>${esc(retained)}</strong>. The proposed content replaces the current card. Both originals are saved first; nothing changes until you approve.</p><button class="quiet" data-act="gate-cancel-resolution" data-slug="${esc(p.slug)}">Cancel</button></section>`:'')+
         `${p.hold?`<div class="note">Held for you: ${esc(p.hold)}</div>`:''}`+
         `${(p.flags||[]).length?`<div class="note">${esc(p.flags.join(', '))}: requires your review.</div>`:''}`+
         (check?.review_notes||[]).map(note=>`<div class="note">${esc(note)}</div>`).join('')+
-        `<div class="sect"><h2>Proposed card</h2><div class="card-body">${esc(check?.proposal?.body || p.body || '(empty)')}</div></div>`+
-        (existing.length?`<details id="gate-comparison" class="gate-comparison" ${resolving?'open':''}><summary>Existing cards · ${existing.length}</summary>${existing.map(c=>`<section><h2>${esc(c.title)}</h2><p class="mono">${esc(c.path)}</p><div class="card-body">${esc(c.body)}</div></section>`).join('')}</details>`:'')+
-        `<div class="sect">${kv([['from',shown.source],['waiting',age(p.age_h)]])}</div>`+
-        `<div class="acts">${resolvable ? `<button class="brass" data-act="${resolving?'gate':'gate-resolve'}" data-verb="resolve" data-slug="${esc(p.slug)}">${resolving?'Approve update as '+esc(retained):'Resolve and review'}</button>` : `<button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}" ${GateModel.canApprove(check,gatePending)?'':'disabled'}>${state==='running'?'Saving…':'Approve'}</button>`}
-        <button class="danger" data-act="gate" data-verb="reject" data-slug="${esc(p.slug)}" ${GateModel.canReject(check,gatePending)?'':'disabled'}>Reject</button>
+        (existing.length?`<div class="rv-tabs" role="tablist">${[['changes','Changes'],['proposed','Proposed'],['current','Current']].map(([k,label])=>`<button role="tab" data-tab="${k}" aria-selected="${String(tab===k)}">${label}</button>`).join('')}<span class="rv-stat">+${changes.adds} −${changes.dels}</span></div>`:'')+
+        `<div class="rv-card" id="${tab==='proposed'?'gate-proposed':'gate-comparison'}">${tab==='changes'?changes.html:tab==='current'?existing.map(c=>`<p class="mono rv-path">${esc(c.path)}</p>${mdBlocks(c.body).map(b=>mdBlock(b)).join('')}`).join(''):proposed}</div>`+
+        `<div class="acts">${resolvable ? `<button class="brass" data-act="${resolving?'gate':'gate-resolve'}" data-verb="resolve" data-slug="${esc(p.slug)}">${resolving?'Approve update as '+esc(retained):'Resolve and review'}</button>` : `<button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}" ${GateModel.canApprove(check,gatePending)?'':'disabled'}>${state==='running'?'Saving…':'Approve'}</button>`}<kbd title="Approve">⌘↵</kbd>
+        <button class="danger" data-act="gate" data-verb="reject" data-slug="${esc(p.slug)}" ${GateModel.canReject(check,gatePending)?'':'disabled'}>Reject</button><kbd title="Reject, pressed twice">R</kbd>
+        <button class="quiet rv-check ${esc(state)}" data-act="gate-check" data-slug="${esc(p.slug)}" title="${esc(message)}" ${['checking','running'].includes(state)||gatePending?'disabled':''}>${dot(tone,title)}${state==='checking'?'Checking…':state==='running'?'Saving…':state==='ready'?'Checked':'Check again'}</button>
         ${shown.source?obsBtn(shown.source.replace(/\.md$/,''),'Open source'):''}</div>`;
       return;
     }
@@ -1189,7 +1086,7 @@ window.onerror = function (msg, src, line, col) {
       box.innerHTML = head(esc(o.label), esc(o.desc), o.tag) + backupScopeActions(o) + `
         <div class="sect"><h2>Where it stands</h2>${kv(o.detail.map(([k, v]) => [k, v == null ? "–" : String(v)]))}</div>
         <div class="sect"><h2>What it means</h2><div class="prose">${esc(o.note)}</div></div>${backupActions(o)}
-        ${o.gate || o.goto ? `<div class="acts">${o.gate ? `<button class="brass" data-act="gotogate">Open the gate</button>` : ""}${o.goto ? `<button data-goto-view="${o.goto === "backups" ? "backups" : "archive"}" data-goto-sec="${esc(o.goto)}">${o.goto === "backups" ? "Backups view" : "Archive view"}</button>` : ""}</div>` : ""}`;
+        ${o.gate || o.goto ? `<div class="acts">${o.gate ? `<button class="brass" data-act="gotogate">Open Review</button>` : ""}${o.goto ? `<button data-goto-view="${o.goto === "backups" ? "backups" : "archive"}" data-goto-sec="${esc(o.goto)}">${o.goto === "backups" ? "Copies" : "Library"}</button>` : ""}</div>` : ""}`;
       return;
     }
     if (it.kind === "lane") {
@@ -1293,24 +1190,18 @@ window.onerror = function (msg, src, line, col) {
     const p = place();
     if (samePlace(hist.stack[hist.i], p)) return;
     hist.stack = hist.stack.slice(0, hist.i + 1); hist.stack.push(p); hist.i = hist.stack.length - 1;
-    updateNav();
   }
   function applyPlace(p) {
     settingsOpen = !!p.settings; view = p.view; renderTop();
     sel = p.sel ? { view: p.view, kind: p.sel.kind, id: p.sel.id } : null;
     renderList(); renderInspector();
-    if(view==='tools'&&!discovery)scanTools();
+    if(view==='discover'&&!discovery)scanTools();
     if (splitReview() || p.settings || (p.open && sel) || pinned) openInspector();
     else { $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
-    $("#rows").scrollTop = p.scroll || 0; syncActive(); updateNav();
+    $("#rows").scrollTop = p.scroll || 0; syncActive();
   }
   function back() { if (window.sovCanQuit() && hist.i > 0) { hist.i--; applyPlace(hist.stack[hist.i]); } }
   function forward() { if (window.sovCanQuit() && hist.i < hist.stack.length - 1) { hist.i++; applyPlace(hist.stack[hist.i]); } }
-  function updateNav() {
-    const b = $("#back"), f = $("#fwd");
-    if (b) b.disabled = hist.i <= 0;
-    if (f) f.disabled = hist.i >= hist.stack.length - 1;
-  }
   window.sovBack = back;
 
   // ---------- glance: the small box ----------
@@ -1339,7 +1230,7 @@ window.onerror = function (msg, src, line, col) {
         ${needs.filter(n => n.cause !== "need:gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.jump ? {view:n.jump.view,sel:{id:n.jump.id}} : {view:'glance'}))}"><span class="l">${esc(n.name)}</span><span class="s wrap">${esc(n.detail)}</span><span class="chev">›</span></button>`).join("")}
         ${assessment.waiting.map(n => row({view:'jobs',sel:{id:n.jump.id}},n.name,'Awaiting verification','')).join('')}
       </div>
-      <div class="g-foot"><span class="meta">${esc(m.host || "")} · ${esc(SovStatus.caption(D))}</span><span class="sp"></span><button class="brass" id="g-console">Open console</button></div>`;
+      <div class="g-foot"><span class="meta">${esc(m.host || "")} · ${esc(SovStatus.caption(D))}</span><span class="sp"></span><button class="brass" id="g-console">Open Sovereign</button></div>`;
     requestAnimationFrame(() => bridge({ cmd: "glanceSize", h: Math.ceil(g.scrollHeight) }));
   }
 
@@ -1347,11 +1238,13 @@ window.onerror = function (msg, src, line, col) {
     D = d;
     if (GLANCE) return renderGlance();
     renderTop(); renderList(); renderInspector();
-    if(view==='tools'&&!discovery)scanTools();
+    if(view==='discover'&&!discovery)scanTools();
     if (hist.i < 0) commit();
   }
-  const findRow = (id) => items().find(i => i.id === id);
+  // A lane that a tool on this machine owns is listed as that tool.
+  const findRow = (id) => { const list = items(); return list.find(i => i.id === id) || list.find(i => i.kind === "tool" && localTool(i.id)?.lane === id); };
   function select(kind, id, open) {
+    if (!sel || sel.id !== id) reviewTab = null;
     sel = { view, kind, id };
     document.querySelectorAll(".row[role=option]").forEach(r => r.setAttribute("aria-selected", String(r.dataset.id === id)));
     syncActive();
@@ -1375,8 +1268,12 @@ window.onerror = function (msg, src, line, col) {
   }
   function setView(v, opts) {
     if(!window.sovCanQuit())return;
+    v = RENAMED[v] || v;
+    // Today and the map of sources live in the other document.
+    if (v === "glance" || v === "today" || v === "home") return bridge({ cmd: "navigate", page: "home", place: { view: "home" } });
+    if (v === "system") return bridge({ cmd: "navigate", page: "home", place: { view: "system" } });
     view = v; sel = null; settingsOpen = false; renderTop(); renderList(); renderInspector();
-    if(v==='tools'&&!discovery)scanTools();
+    if(v==='discover'&&!discovery)scanTools();
     if (opts && opts.section) { const h = document.querySelector('[data-dash="' + opts.section + '"], .row.head[data-section="' + opts.section + '"]'); if (h) scrollRowsTo(h); }
     if (opts && opts.open) { const first = items().find(selectable); if (first) return select(first.kind, first.id, true); }
     if (!(opts && opts.silent)) commit();
@@ -1384,7 +1281,6 @@ window.onerror = function (msg, src, line, col) {
   window.sovSnapshotReady = () => !!D && archiveKnown && !pendingGoto;
   window.sovView = (v) => {   // design QA: "archive", "archive+open", "archive+open:orphans", "settings", "...+back"
     const parts = String(v).split("+"), name = parts[0];
-    if (name === "home") return bridge({cmd: "navigate", page: "home"});
     if (name === "settings") return openSettings();
     const mode = parts.find(p => p.startsWith("open")) || "", id = mode.includes(":") ? mode.slice(mode.indexOf(":") + 1) : "";
     const at = parts.find(p => p.startsWith("at:")), conn = parts.find(p => p.startsWith("connect:"));
@@ -1500,28 +1396,12 @@ window.onerror = function (msg, src, line, col) {
 
     const association=e.target.closest('[data-act="device-disassociate"],[data-act="device-restore"]');
     if(association)return deviceAssociation(association.dataset.host,association.dataset.act==='device-restore');
-    const seg = e.target.closest(".seg button"); if (seg) return setView(seg.dataset.view);
-    const link = e.target.closest('[data-status-url]');
-    if(link){e.preventDefault();const url=SovStatus.safeURL(link.dataset.statusUrl);if(url)bridge({cmd:'openurl',url});return;}
-    const step = e.target.closest('[data-copy-step]');
-    if(step){bridge({cmd:'copyText',text:step.dataset.copyStep});step.textContent='Copied';return;}
-    const need = e.target.closest("[data-need]");
-    if (need) { const n = (D.needs_you || [])[+need.dataset.need];
-      if (n && n.harness) { setView("tools"); select("tool", n.harness, true); }
-      else if (n && n.kind === "gate") gotoGate();
-      else if (n && n.host) {setView('hosts');select('host',n.host,true);}
-      else if (n && ['hypervisor','contribution'].includes(n.kind)) setView('backups');
-      else if (n && n.kind === "job") setView("jobs");
-      return; }
+    const nav = e.target.closest("#controls [data-view]"); if (nav) return setView(nav.dataset.view);
+    const tab = e.target.closest("[data-tab]"); if (tab) { reviewTab = tab.dataset.tab; renderInspector(); return; }
     const chip = e.target.closest("[data-goto]");
-    if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s", { silent: true }); const it = findRow(p[1]); select(it ? it.kind : p[0], p[1], true); return; }
+    if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s", { silent: true }); const it = findRow(p[1]); if (it) select(it.kind, it.id, true); else commit(); return; }
     const grow = e.target.closest(".g-row[data-place]");
     if (grow) { let pl = null; try { pl = JSON.parse(grow.dataset.place); } catch (x) {} return bridge({ cmd: "showConsole", place: pl }); }
-    const grp = e.target.closest("[data-group]");
-    if (grp && lastAssess) { const g = [...lastAssess.need, ...lastAssess.fresh].find(r => r.group === grp.dataset.group); if (g) { renderGroupDrawer(g); openInspector(); commit(); } return; }
-    const jmp = e.target.closest("[data-jump]");
-    if (jmp) { let p = {}; try { p = JSON.parse(jmp.dataset.jump); } catch (x) {} setView(p.view, { silent: true }); const it = findRow(p.id); if (it) select(it.kind, it.id, true); else commit(); return; }
-    if (e.target.closest("#home")) return setView("glance");
     const opn = e.target.closest("[data-open]");
     if (opn) { const it = findRow(opn.dataset.open); if (it) select(it.kind, it.id, true); return; }
     const b = e.target.closest("button");
@@ -1530,9 +1410,10 @@ window.onerror = function (msg, src, line, col) {
                                                // above its declaration is a ReferenceError,
                                                // which killed every data-act button.
       if (b.id === "refresh" || b.id === "g-refresh" || b.id === "err-refresh") return refresh();
-      if (b.id === "back") return back();
-      if (b.id === "fwd") return forward();
-      if (b.id === "gear" || b.id === "settings-tab") return openSettings();
+      if (act === "open-settings") return openSettings();
+      if (act === "review-next") return stepReview(1);
+      if (act === "review-prev") return stepReview(-1);
+      if (act === "review-unfold") { reviewUnfolded.add(sel.id.slice(2)); renderInspector(); return; }
       if (b.id === "set-change") return bridge({ cmd: "chooseArchive" });
       if (b.id === "set-reveal") return bridge({ cmd: "reveal" });
       if (b.id === "set-update") {
@@ -1541,21 +1422,20 @@ window.onerror = function (msg, src, line, col) {
         SovSettings.note("set-update-state", "Building\u2026"); return bridge({ cmd: "appUpdate", template });
       }
       if (b.id === "g-gear") return bridge({ cmd: "showConsole", place: { settings: true } });
-      if (b.id === "g-console") return bridge({ cmd: "showConsole", place: { view: S.defaultView || "archive" } });
+      if (b.id === "g-console") return bridge({ cmd: "showConsole", place: { view: "today" } });
       if (b.id === "s-save") return saveSettings();
       if (b.id === "pin") return setPinned(!pinned);
       if (b.id === "insp-close") { pinned ? setPinned(false) : closeInspector(); commit(); return; }
       if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
       if (b.id === "drawer-apply") { if(pendingProducer)return producer(pendingProducer.harness,pendingProducer.action,true); if (pendingHost) return hostAdd(pendingHost.host, true); if (pendingConnect) connect(pendingConnect.harness, true); return; }
-      if(act==='discover-tools')return setView('tools');
+      if(act==='discover-tools')return setView('discover');
       if(act==='scan-tools')return scanTools();
-      if(act==='producer-details'){setView('lanes');return select('tool',b.dataset.harness,true);}
+      if(act==='producer-details'){setView('sources');if(findRow(b.dataset.harness))select('tool',b.dataset.harness,true);return;}
       if(b.id==='discovery-status-refresh')return refresh();
       if(act==='discover-add'){
         const f=document.getElementById('secret-'+b.dataset.harness);
         return producer(b.dataset.harness,'add',false,f?.value?{secret:f.value}:{});
       }
-      if(act === "add-producer")return select("tool",$("#producer-choice").value,true);
       if(act === "remove-producer")return producer(b.dataset.harness,"remove",false);
       if (act === "hostadd") return hostAdd(b.dataset.host, false);
       if (b.id === 'review-retry') return ['no_archive','different_archive'].includes(reviewQueue().state)?bridge({cmd:'navigate',page:'home',place:{chooseArchive:true}}):refresh();
@@ -1593,8 +1473,7 @@ window.onerror = function (msg, src, line, col) {
       if (act === "openurl") return bridge({ cmd: "openurl", url: b.dataset.url });
       if (act === "clearlog") return armOrFire(b, "Clear log", () => { openDrawer("Clear log", false); bridge({ cmd: "clearlog", path: b.dataset.path }); });
       if (act === 'gate-check') { requestGateCheck(b.dataset.slug); renderInspector(); return; }
-      if (act === 'gate-compare') { const comparison=$('#gate-comparison'); if(comparison){comparison.open=true;comparison.scrollIntoView({block:'start'});} return; }
-      if (act === 'gate-resolve') { const slug=b.dataset.slug,check=gateChecks.get(slug)?.value;if(canReview(slug)&&GateModel.canResolve(check,gatePending)){gateResolutions.set(slug,check.fingerprint);renderInspector();$('#gate-resolution-preview')?.scrollIntoView({block:'start'});}return; }
+      if (act === 'gate-resolve') { const slug=b.dataset.slug,check=gateChecks.get(slug)?.value;if(canReview(slug)&&GateModel.canResolve(check,gatePending)){gateResolutions.set(slug,check.fingerprint);reviewTab='changes';renderInspector();$('#gate-resolution-preview')?.scrollIntoView({block:'start'});}return; }
       if (act === 'gate-cancel-resolution') {gateResolutions.delete(b.dataset.slug);renderInspector();return;}
       if (act === 'gate-copy') {
         const check=gateChecks.get(b.dataset.slug)?.value;
@@ -1621,11 +1500,6 @@ window.onerror = function (msg, src, line, col) {
     const row = e.target.closest(".row[role=option]");
     if (row) { const it = items().find(i => i.id === row.dataset.id); if (it) select(it.kind, it.id, true); }
   }
-  document.addEventListener("keydown", (e) => {
-    const need = e.target.closest && e.target.closest("[data-need]");
-    if (need && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); need.click(); }
-  });
-
   $("#rows").addEventListener("keydown", (e) => {
     const dom = new Set([...document.querySelectorAll(".row[role=option]")].map(r => r.dataset.id));
     const list = items().filter(i => selectable(i) && dom.has(i.id)); if (!list.length) return;
@@ -1647,18 +1521,26 @@ window.onerror = function (msg, src, line, col) {
     if ((e.metaKey || e.ctrlKey) && e.key === "[") { e.preventDefault(); back(); }
     if ((e.metaKey || e.ctrlKey) && e.key === "]") { e.preventDefault(); forward(); }
     if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); openSettings(); }
+    // Approving puts a card into trusted knowledge, so its key takes a modifier.
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && view === "review" && !settingsOpen) { e.preventDefault(); $('#insp [data-act="gate"]:not(.danger), #insp [data-act="gate-resolve"]')?.click(); }
     if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !pinned) { closeInspector(); commit(); } }
     if (typing || e.metaKey || e.ctrlKey) return;
-    if (/^[1-6]$/.test(e.key)) setView(["hosts", "archive", "lanes", "tools", "jobs", "backups"][+e.key - 1]);
-    if (e.key === "0") setView("glance");
+    if (GLANCE) return;   // the menu-bar panel has its own rows, and no rail to walk
+    if (/^[1-5]$/.test(e.key)) return document.getElementById(["today", "review", "sources", "library", "backups"][+e.key - 1] + "-tab").click();
+    if (view === "review" && !settingsOpen) {
+      if (e.key === "j") return stepReview(1);
+      if (e.key === "k") return stepReview(-1);
+      if (e.key === "r") return $('#insp [data-act="gate"][data-verb="reject"]')?.click();   // arms on the first press, fires on the second
+    }
     if (e.key === "p") setPinned(!pinned);
   });
 
-  for (const name of ['home', 'system']) document.getElementById(name+'-tab').onclick = () => {if(window.sovCanQuit())bridge({cmd:'navigate',page:'home',place:{view:name}})};
-  document.getElementById('review-tab').onclick = gotoGate;
+  SovShell.mount(GLANCE ? null : PAGE[view], (to) => {
+    if (to === "settings") return openSettings();
+    if (to === "review") return gotoGate();
+    setView({ today: "today", sources: "sources", library: "archive", backups: "recovery" }[to]);
+  });
   document.getElementById('change').onclick = () => bridge({cmd:'navigate',page:'home',place:{chooseArchive:true}});
-  document.getElementById('archive-backups-tab').onclick=()=>setView('recovery');
-  document.getElementById('operations-tab').onclick = () => setView('glance');
   function refresh() { bridge({ cmd: "status" }); }
   window.sovRefresh = refresh;
   // Anything thrown inside a call the app injects reaches window.onerror as a bare
@@ -1682,7 +1564,7 @@ window.onerror = function (msg, src, line, col) {
     if(kind==='discovery'){
       if(payload.request!==discoveryRequest)return;
       discoveryRequest=null;discovery=payload;
-      if(view==='tools'){renderList();renderInspector();}
+      if(view==='discover'){renderList();renderInspector();}
       return;
     }
     if(kind==='backupScope'){
@@ -1703,7 +1585,7 @@ window.onerror = function (msg, src, line, col) {
     }
     if(kind==='localState'){
       if(selectedRoot!==(payload.root||null)){gateChecks.clear();gateResolutions.clear();gateCompleted.clear();sel=null;}
-      selectedRoot=payload.root||null;archiveKnown=true;$('#change').hidden=false;
+      selectedRoot=payload.root||null;archiveKnown=true;
       if(D){render(D);if(view==='review'&&!sel&&reviewQueue().available&&!gatePending)gotoGate();}
       return;
     }
@@ -1768,6 +1650,7 @@ window.onerror = function (msg, src, line, col) {
                         : payload.verification || 'Refresh to see the installed version.');
       // Keep the request pending until completion or failure.
       renderInspector();
+      if (settingsOpen) SovSettings.note("set-update-state", appUpdateResult);
       if (payload.state === 'current' || payload.error) setTimeout(refresh, 1500);
     } else if (kind === "backupResult") {
       backupPending=false;
@@ -1797,7 +1680,7 @@ window.onerror = function (msg, src, line, col) {
     } else if (kind === "settings") {
       S = Object.assign({}, S, payload);
       const first = !gotSettings; gotSettings = true;
-      if (first && !GLANCE && !D && S.defaultView) view = S.defaultView;
+      if (first && !GLANCE && !D && S.defaultView) { const saved = RENAMED[S.defaultView] || S.defaultView; if (PAGE[saved]) view = saved; }
       resetTimer();
       if (settingsOpen) { renderInspector(); const st = $("#s-state"); if (st && saving) st.textContent = payload.error ? "" : "Saved"; }
       saving = false;
@@ -1808,18 +1691,15 @@ window.onerror = function (msg, src, line, col) {
       if (payload.snapshot) return window.sovView(payload.snapshot);
       if (payload.view === "review" && !payload.sel) return gotoGate();
       if (payload.view) setView(payload.view, { section: payload.section, silent: !!payload.sel });
-      if (payload.sel) { const it = findRow(payload.sel.id); select(it ? it.kind : payload.sel.kind, payload.sel.id, true); }
+      if (payload.sel && PAGE[view]) { const it = findRow(payload.sel.id); if (it) select(it.kind, it.id, true); else commit(); }
     }
   };
   function resetTimer() { clearInterval(timer); timer = setInterval(()=>{if(!gatePending)refresh();}, Math.max(15, S.refresh || 60) * 1000); }
 
   function renderSetup(d) {
     D = d;
-    $("#vault").textContent = "Sovereign";
-    $("#meta").textContent = "this machine is not connected to an archive yet";
-    $("#hubpill").innerHTML = `${dot("", "not connected")}not connected`;
-    $("#verdict").className = "idle"; $("#vtext").textContent = "Connect tools when you are ready.";
-    $("#rows").innerHTML = `<div class="empty">No lanes yet.<p><button class="brass" data-goto-view="setup">Hub setup and recovery…</button></p></div>`;
+    $("#listcount").textContent = "not connected";
+    $("#rows").innerHTML = `<div class="empty">Nothing connected yet.<p><button class="brass" data-goto-view="setup">Hub setup…</button></p></div>`;
     $("#insp").innerHTML = `<div class="insp-title">Connect this machine</div>
       <div class="insp-sub">Point it at an archive once. Every tool found here gets both wires: it reads the archive when a session starts, and its notes flow back to its own lane.</div>
       <div class="sect"><h2>Setup</h2>
@@ -1836,11 +1716,8 @@ window.onerror = function (msg, src, line, col) {
     };
   }
 
-  let rsz = null;
   new ResizeObserver(() => {
     if(view==="review")$("#inspector").setAttribute("aria-hidden",String(!splitReview()&&!$("#inspector").classList.contains("open")));
-    if (view !== "archive" || !D) return;
-    clearTimeout(rsz); rsz = setTimeout(() => { const d = document.querySelector(".dash"); if (d) d.outerHTML = renderDash(); }, 120);
   }).observe($("#rows"));
   bridge({ cmd: "localState" });
   bridge({ cmd: "settings" });

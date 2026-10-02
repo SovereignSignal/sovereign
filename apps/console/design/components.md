@@ -2,10 +2,35 @@
 
 Measurements are in CSS px at 1x. Every colour and size is a token from `tokens.css`. States keep their meaning; only their dress changes.
 
-## Header (36)
+The page frame, rows and words follow `README.md` (2026-10-02). The sections below marked
+*Glance* describe the menu-bar panel, which keeps its earlier frame.
+
+## Page header (52)
+Title `--t-title`+2 semibold `--ink`; one line of summary in sans `--muted`; right: the
+page's own controls, the observed time in mono caption `--faint` (full caption in its
+tooltip), Refresh as a quiet glyph. Bottom rule 1 px `--rule`. No verdict bar: a status
+failure is the only banner, 3 px left rule in `--down`.
+
+## Row (36)
+Dot 7 px | name (sans medium, or mono for an identifier) | where (mono `--faint`) | state
+slot 112 px, right-aligned, empty when the dot already says it | age mono caption `--faint`
+| chevron. Hover `--sunk`; selected `--sel` with a 2 px `--brass` rule on the left edge.
+
+## Figure tile
+Label mono caption uppercase `--muted`; figure 24/30 semibold with its unit in 13 px
+`--muted`; one note line in `--muted`. Four across, two across under 780 px.
+
+## Review
+Queue 236 px (320 from 1100 px, 200 under 800 px) beside the proposal. Proposal: title
+17/22 semibold, type and update tags, confidence and age; the judge's reason in a
+`--sunk` block labelled Why; a tab strip in the Footer switch style (mono 11.5, 2 px
+`--brass` underline); the card in sans body; a sticky decision row. Added blocks carry a
+`--live` rule and 11% wash, removed blocks a `--down` rule, 10% wash and strike-through.
+
+## Glance header (36)
 Crown glyph 16 px in `--ink`, instance name `--t-title` semibold `--ink`, then meta in mono `--t-caption` `--faint` (host, revision, sync line, clock). Right: hub pill (mono caption, 1 px `--rule`, radius `--radius-tag`, dot 6 px), Refresh as a text button, settings glyph. Bottom rule 1 px `--rule-soft`.
 
-## Verdict bar (44)
+## Glance verdict (44)
 Left padding `--s3`. Dot 10 px in the state colour with a 1 px lighter ring of the same hue at 30% alpha. Sentence `--t-verdict` medium `--ink`, single line, ellipsis. Right: last refresh in mono caption `--faint`. When the state is `down`, a 3 px left rule in `--down` spans the bar. Background `--panel`; no wash.
 
 ## Column (three, equal)

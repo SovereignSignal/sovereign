@@ -1,19 +1,20 @@
 /* Primary navigation shared by every full-window page. */
-body>.shell-rail{grid-column:1;grid-row:1/-1;height:auto;padding:35px 13px 18px;display:flex;flex-direction:column;align-items:stretch;gap:7px;background:var(--sunk);border-right:1px solid var(--rule);border-bottom:0}
-body>.shell-rail strong{font-size:15px;margin:0 7px 27px;font-weight:500}
-body>.shell-rail strong svg{color:var(--brass)}
-body>.shell-rail button{border:0;background:transparent;padding:11px 12px;text-align:left;font:400 12px var(--sans);color:var(--ink);border-radius:4px}
-body>.shell-rail button[aria-pressed="true"]{background:var(--sel);color:var(--ink)}
-body>.shell-rail #archive-name{order:10;margin: auto 7px 0;padding-top:22px;border-top:1px solid var(--rule);font:11px/1.6 var(--mono);white-space:normal;overflow-wrap:anywhere}
-body>.shell-rail #change{order:11;font-size:11px;color:var(--muted);padding-left:7px}
-#review-count{font:11px var(--mono);float:right;color:var(--muted);margin:0;background:var(--panel);padding:1px 5px;border-radius:3px}
-
-@media(max-width:900px){body>.shell-rail{padding-left:9px;padding-right:9px}}
-
+body>.shell-rail{grid-column:1;grid-row:1/-1;display:flex;flex-direction:column;align-items:stretch;gap:2px;padding:30px 10px 10px;background:var(--sunk);border-right:1px solid var(--rule);min-height:0;min-width:0}
+.shell-rail .brand{display:flex;align-items:center;gap:8px;font:500 15px/20px var(--sans);color:var(--ink);margin:0 8px 22px}
+.shell-rail .brand svg{color:var(--brass);flex:none}
+body>.shell-rail button{display:flex;align-items:center;gap:9px;width:100%;border:0;background:transparent;padding:8px 10px;border-radius:5px;text-align:left;font:400 12.5px/18px var(--sans);color:var(--ink-2);cursor:pointer;filter:none}
+body>.shell-rail button svg{flex:none;color:var(--faint)}
+body>.shell-rail button:hover{color:var(--ink)}
+body>.shell-rail button[aria-pressed="true"]{background:var(--sel);color:var(--ink);font-weight:500}
+body>.shell-rail button[aria-pressed="true"] svg{color:var(--brass)}
+#review-count{margin-left:auto;font:11px/14px var(--mono);color:var(--ink);background:var(--panel);padding:1px 5px;border-radius:3px}
 #review-count:empty{display:none}
+.shell-rail .sp{flex:1}
+.shell-rail .dot{width:7px;height:7px;border-radius:50%;background:var(--idle);flex:none}
+.shell-rail .dot.live{background:var(--live)}.shell-rail .dot.warn{background:var(--warn)}.shell-rail .dot.down{background:var(--down)}
 
-/* Settings sits with the navigation but is not one of the views, so it takes the
-   foot of the rail above the archive name, separated by its own rule. */
-body>.shell-rail .rail-gear{order:9;margin-top:auto;color:var(--muted);font-size:11.5px}
-body>.shell-rail .rail-gear:hover{color:var(--ink)}
-body>.shell-rail #archive-name{margin-top:14px}
+/* The open archive sits under Settings, separated by its own rule. Clicking it opens another. */
+body>.shell-rail #change{margin-top:6px;padding:12px 4px 8px;border-top:1px solid var(--rule);border-radius:0;font-size:11px;color:var(--muted);gap:7px}
+#archive-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+@media(max-width:900px){body>.shell-rail{padding-left:7px;padding-right:7px}}

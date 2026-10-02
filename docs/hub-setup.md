@@ -1,6 +1,6 @@
 # Local Hub setup and recovery
 
-The macOS app can prepare one independent Hub from an existing archive. Open **Operations → Hub → Hub setup and recovery**. Every change starts with a preview. Preparing the Hub copies its tools and Python runtime into the chosen folder, creates a curator lane, and leaves schedules inactive.
+The macOS app can prepare one independent Hub from an existing archive. Open **Settings → Jobs → Hub setup…**. Every change starts with a preview. Preparing the Hub copies its tools and Python runtime into the chosen folder, creates a curator lane, and leaves schedules inactive.
 
 This package supports Apple silicon Macs running macOS 13 or later. Install a local model server separately and choose a model it already has. The endpoint must be loopback HTTP; cloud models, credentials, proxies and redirects are refused in managed curation. The model check confirms availability, not judgment quality. Calibrate a real model before relying on its proposals.
 

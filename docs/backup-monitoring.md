@@ -1,6 +1,6 @@
 # VM backup monitoring
 
-Operations → Backups reads Proxmox over the existing SSH connection. It asks
+Backups → Copies reads Proxmox over the existing SSH connection. It asks
 Proxmox for enabled backup storage and lists each storage's backup content,
 including NFS/NAS and Proxmox Backup Server storage. Enabled jobs are matched to
 the guests returned by each job's `included_volumes` endpoint. A job elsewhere

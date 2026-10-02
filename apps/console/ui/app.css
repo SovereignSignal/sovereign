@@ -1,0 +1,38 @@
+/* One frame for every page: the rail, a header, a body.
+ *
+ * A row is a dot, a name, where it is, at most a two-word state and an age.
+ * Sentences live in the detail that opens when a row is chosen, once. Nothing
+ * states its status twice, and how long a status check took is not content. */
+
+.top{display:flex;align-items:center;gap:10px;height:52px;padding:0 14px 0 24px;border-bottom:1px solid var(--rule);min-width:0}
+.top h1{font:600 16px/22px var(--sans);letter-spacing:-.01em;margin:0;white-space:nowrap;color:var(--ink)}
+.top .sub{color:var(--muted);font:12.5px/18px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.top .grow{flex:1;min-width:0}
+.top .controls{display:flex;align-items:center;gap:8px;flex:none}
+.top .seen{font:11px/14px var(--mono);color:var(--faint);white-space:nowrap}
+.top button{font:500 12px/16px var(--sans);color:var(--ink-2);background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.top button:hover{border-color:var(--faint);color:var(--ink);filter:none}
+.top button.quiet{border-color:transparent;background:transparent;color:var(--muted);padding:5px 7px}
+.top button.brass{background:var(--brass);border-color:var(--brass);color:#17140A;font-weight:600}
+.top .seg{display:inline-flex;gap:0;padding:2px;border:1px solid var(--rule);border-radius:6px;background:var(--sunk)}
+.top .seg button{border:0;background:transparent;font:500 12px/16px var(--sans);color:var(--muted);padding:4px 10px;border-radius:4px;box-shadow:none}
+.top .seg button[aria-pressed="true"]{background:var(--panel);color:var(--ink)}
+@media(max-width:780px){.top{padding-left:16px}.top .seen{display:none}}
+
+/* shared marks */
+.cap{font:500 11px/14px var(--mono);text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.age{font:11px/14px var(--mono);color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+kbd{font:10px/14px var(--mono);color:var(--faint);border:1px solid var(--rule);border-radius:3px;padding:0 4px}
+
+/* A list: one bordered panel, rows separated by soft rules. */
+.plain-list{border:1px solid var(--rule);border-radius:6px;background:var(--panel);overflow:hidden}
+.plain-list>*+*{border-top:1px solid var(--rule-soft)}
+
+/* A figure with its label above and one short note below. */
+.tiles4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.fig-tile{display:block;text-align:left;border:1px solid var(--rule);border-radius:6px;background:var(--panel);padding:12px 14px 13px;cursor:pointer;color:inherit;font:inherit;min-width:0}
+.fig-tile:hover{border-color:var(--faint);filter:none}
+.fig-tile .fig{display:block;font:600 24px/30px var(--sans);letter-spacing:-.02em;margin:6px 0 2px;font-variant-numeric:tabular-nums;color:var(--ink);white-space:nowrap}
+.fig-tile .fig small{font:500 13px/18px var(--sans);color:var(--muted);letter-spacing:0}
+.fig-tile .fig-note{display:block;color:var(--muted);font-size:12px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:780px){.tiles4{grid-template-columns:repeat(2,minmax(0,1fr))}}

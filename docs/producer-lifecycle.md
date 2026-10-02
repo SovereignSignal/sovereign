@@ -1,6 +1,6 @@
 # Producer lifecycle
 
-Operations → Lanes lists supported producers above their saved lane history. Add producer opens the chosen connector. Each producer has a Remove producer action with a dry-run preview and a separate apply button. Removed producers can be added again.
+Sources lists every connected tool and lane, worst first; a removed producer stays under Removed with its history. Add opens the list of tools found on this Mac, where a connector is chosen. Each producer has a Remove producer action with a dry-run preview and a separate apply button. Removed producers can be added again.
 
 This manages the existing connector catalog: Claude Code, Codex, Cowork, Cursor, Hermes, Windsurf, Orca and Notion. Desktop connectors run on this Mac. Notion uses the existing cloud installer on the configured Hub. Historical lanes owned by another machine identify that owner; local controls do not revoke remote intake access or delete lane history.
 
@@ -21,7 +21,7 @@ Validation:
 
 ## Discovery
 
-Operations → Tools scans known local app bundles, command locations and configuration paths. Lanes has a persistent Discover tools entry point. Search and filters distinguish available connectors, configured producers and tools without connectors. Evidence is expandable. Configuration alone can be left behind after uninstalling software and is labelled accordingly. Notion is a cloud service; Hermes desktop and agent detections share one producer.
+Sources → Add scans known local app bundles, command locations and configuration paths. Search and filters distinguish available connectors, configured producers and tools without connectors. Evidence is expandable. Configuration alone can be left behind after uninstalling software and is labelled accordingly. Notion is a cloud service; Hermes desktop and agent detections share one producer.
 
 The bundled scanner uses the existing known-tools catalog. It checks file metadata only, never executes detected commands or opens tool data, and runs independently of system status and the Hub. Permission failures are reported. Scan again repeats this local inspection; it does not run collectors or install software.
 

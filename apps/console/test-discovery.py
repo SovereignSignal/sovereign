@@ -44,7 +44,7 @@ await wait(()=>scans.length>count);check('Scan completes independently',!documen
 window.sovDeliver('discovery',{request:'old-response',tools:[]});check('Old scan reply ignored',row('gemini-cli'));
 check('No page overflow',document.documentElement.scrollWidth<=innerWidth);
 check('No list overflow',document.querySelector('#rows').scrollWidth<=document.querySelector('#rows').clientWidth);
-if(PHASE==='flow'){row('windsurf').click();check('Producer diagnostics accessible',document.querySelector('[data-act="producer-details"]'));document.querySelector('[data-act="producer-details"]').click();check('Producer details opens lane inspector',document.querySelector('#insp').textContent.includes('Read wire'));window.sovView('tools');}
+if(PHASE==='flow'){row('windsurf').click();check('Producer diagnostics accessible',document.querySelector('[data-act="producer-details"]'));document.querySelector('[data-act="producer-details"]').click();check('Producer details opens lane inspector',document.querySelector('#insp').textContent.includes('Read wire'));window.sovView('discover');}
 row('windsurf').click();
 post({cmd:'clientError',where:'discovery-qa',msg:JSON.stringify({checks,failures:Object.keys(checks).filter(k=>!checks[k])})});
 '''
@@ -67,7 +67,7 @@ def main():
    if phase=='offline':data={'error':'Fixture status unavailable','machine':{'connected':False}}
    (base/'status.json').write_text(json.dumps(data));(base/'calls.jsonl').write_text('')
    suite='com.sovereign.qa.discovery.'+uuid.uuid4().hex
-   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(status),SOV_QA_PRODUCER_COMMAND=str(command),SOV_QA_DISCOVERY_HOME=str(home),SOV_APPEARANCE='light' if phase=='flow' else 'dark',SOV_WINDOW='1000x700' if phase=='flow' else '720x460',SOV_SNAPSHOT=str(a.evidence/(phase+'.png')),SOV_SNAPSHOT_DELAY='2',SOV_SNAPSHOT_ANCHOR='operations:view:tools',SOV_QA_JS_AFTER_ANCHOR=PROBE.replace('PHASE',json.dumps(phase)))
+   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(status),SOV_QA_PRODUCER_COMMAND=str(command),SOV_QA_DISCOVERY_HOME=str(home),SOV_APPEARANCE='light' if phase=='flow' else 'dark',SOV_WINDOW='1000x700' if phase=='flow' else '720x460',SOV_SNAPSHOT=str(a.evidence/(phase+'.png')),SOV_SNAPSHOT_DELAY='2',SOV_SNAPSHOT_ANCHOR='operations:view:discover',SOV_QA_JS_AFTER_ANCHOR=PROBE.replace('PHASE',json.dumps(phase)))
    try:
     cp=subprocess.run([str(HERE/'build/Sovereign.app/Contents/MacOS/Sovereign'),'-sov.archive',str(archive)],env=env,capture_output=True,text=True,timeout=45)
     (a.evidence/(phase+'.log')).write_text(cp.stderr)

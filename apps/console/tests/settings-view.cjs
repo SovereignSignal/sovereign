@@ -129,11 +129,11 @@ test('lane names are escaped, never injected', () => {
 });
 
 test('preferences reflect what is saved, not defaults', () => {
-  const html = paint({ S: { appearance: 'dark', where: 'menubar', closeQuits: true, loginItem: true, refresh: 300, defaultView: 'lanes', loginState: 'on' }, pinned: true });
+  const html = paint({ S: { appearance: 'dark', where: 'menubar', closeQuits: true, loginItem: true, refresh: 300, loginState: 'on' }, pinned: true });
   assert(html.includes('value="dark" selected'));
   assert(html.includes('value="menubar" checked'));
   assert(html.includes('id="s-closequits" checked') && html.includes('id="s-login" checked'));
-  assert(html.includes('value="300" selected') && html.includes('value="lanes" selected'));
+  assert(html.includes('value="300" selected'));
   assert(html.includes('id="s-pin" checked'));
   assert(html.includes('Registered with macOS'));
 });
@@ -145,6 +145,19 @@ test('mounting twice does not duplicate the pane', () => {
 
 test('the pane never posts on its own', () => {
   assert.equal(sent.length, 0);
+});
+
+test('the scheduled work has a door here and a count', () => {
+  const html = paint({ D: { hub: { jobs: { nightly: {}, curate: {} } }, jobs: [{ label: 'a' }, { label: 'b', kick: 'a' }] } });
+  assert(html.includes('3 scheduled'));
+  assert(html.includes('data-goto-view="jobs"') && html.includes('data-goto-view="setup"'));
+});
+
+test('permissions stay closed until one has an open question', () => {
+  const settled = paint({ D: { lanes: [{ lane: 'a', read: 'none' }] } });
+  assert(settled.includes('<details class="set-more"><summary>1 source</summary>'));
+  const drift = paint({ D: { lanes: [{ lane: 'a', read: 'none', findings: [{ level: 'warn', text: 'unsettled' }] }] } });
+  assert(drift.includes('<details class="set-more" open><summary>1 source · 1 to settle</summary>'));
 });
 
 console.log(checks + ' settings view checks passed.');

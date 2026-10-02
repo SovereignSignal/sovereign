@@ -396,7 +396,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         let deadline = DispatchWorkItem { [weak self] in
             guard let self = self, self.statusRun == runID else { return }
             self.statusRun = nil
-            self.sendStatus(pending: false, error: "The connected-system status probe did not finish within \(Int(self.statusBudget)) seconds. Check the connection in Operations, then refresh to confirm a new observation.")
+            self.sendStatus(pending: false, error: "The connected-system status probe did not finish within \(Int(self.statusBudget)) seconds. Check the connection in Sources, then refresh to confirm a new observation.")
         }
         statusTimer = deadline
         DispatchQueue.main.asyncAfter(deadline: .now() + statusBudget, execute: deadline)
@@ -415,7 +415,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                     self.statusCache = value
                     self.sendStatus(pending: false)
                 } else {
-                    self.sendStatus(pending: false, error: "System status could not be read (exit \(code)). Check the connection in Operations and refresh to confirm a new observation.", detail: detail)
+                    self.sendStatus(pending: false, error: "System status could not be read (exit \(code)). Check the connection in Sources and refresh to confirm a new observation.", detail: detail)
                 }
             }
         }
@@ -1316,7 +1316,11 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         if qaGlance { return }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if let place = place { navigate(page: "operations", place: place) }
+        // Today lives in the other document; every other place is a view of this one.
+        if let place = place {
+            if (place["view"] as? String) == "today" { navigate(page: "home", place: ["view": "home"]) }
+            else { navigate(page: "operations", place: place) }
+        }
     }
 
     // Only quit on close when the owner asked for it, and only when there is no menu bar
@@ -1354,7 +1358,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         if localMode {
             let fileItem = NSMenuItem(); main.addItem(fileItem)
             let file = NSMenu(title: "File")
-            file.addItem(withTitle: "Home", action: #selector(openHome), keyEquivalent: "1")
+            file.addItem(withTitle: "Today", action: #selector(openHome), keyEquivalent: "")
             file.addItem(withTitle: "New Archive…", action: #selector(newArchive), keyEquivalent: "")
             file.addItem(withTitle: "Open Archive…", action: #selector(openArchive), keyEquivalent: "o")
             fileItem.submenu = file

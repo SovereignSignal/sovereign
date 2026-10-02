@@ -17,9 +17,10 @@ const report=()=>post({cmd:'clientError',where:'review-qa',msg:JSON.stringify({s
 PROBE=r'''
 check('Review primary page',location.pathname.endsWith('/index.html')&&document.body.classList.contains('review'));
 check('Review selected',document.getElementById('review-tab').getAttribute('aria-pressed')==='true');
-check('System still reachable',!!document.getElementById('system-tab'));
-check('Operations deselected',document.getElementById('operations-tab').getAttribute('aria-pressed')==='false');
-check('Operations subtabs hidden',getComputedStyle(document.querySelector('#switch .seg')).display==='none');
+check('Sources still reachable',!!document.getElementById('sources-tab'));
+check('Library deselected',document.getElementById('library-tab').getAttribute('aria-pressed')==='false');
+check('One frame, no second navigation',!document.getElementById('switch')&&!document.querySelector('#controls .seg'));
+check('Queue and proposal side by side',(()=>{const q=document.getElementById('listpane').getBoundingClientRect(),d=document.getElementById('inspector').getBoundingClientRect();return q.right<=d.left+1&&q.width>=180&&d.width>=300})());
 check('Title and badge',document.getElementById('vault').textContent==='Review'&&document.getElementById('review-count').textContent==='1');
 check('Readable queue',rows().length===1&&rows()[0].textContent.includes('A useful decision'));
 check('No horizontal overflow',document.documentElement.scrollWidth<=innerWidth);
@@ -87,10 +88,10 @@ if(scene==='layout'){
  const inspector=document.getElementById('inspector');
  check('Approve, Reject and Open source are all present',['Approve','Reject','Open source'].every(label=>[...inspector.querySelectorAll('.acts button')].some(b=>b.textContent.trim()===label)));
  const visibleActions=()=>{
-  const bounds=inspector.getBoundingClientRect(),footer=document.getElementById('switch').getBoundingClientRect();
+  const bounds=inspector.getBoundingClientRect();
   return [...inspector.querySelectorAll('.acts button')].every(b=>{
    const r=b.getBoundingClientRect();
-   return r.width>0&&r.top>=bounds.top&&r.bottom<=Math.min(bounds.bottom,footer.top)&&r.left>=bounds.left&&r.right<=bounds.right&&
+   return r.width>0&&r.top>=bounds.top&&r.bottom<=Math.min(bounds.bottom,innerHeight)&&r.left>=bounds.left&&r.right<=bounds.right&&
     [r.top+2,r.bottom-2].every(y=>b.contains(document.elementFromPoint(r.left+r.width/2,y)));
   });
  };
@@ -104,7 +105,7 @@ if(scene==='layout'){
 }
 if(scene==='states'){
  const receive=window.sovDeliver;let checkedAway=false;window.sovDeliver=(kind,payload)=>{if(kind==='gateCheck')checkedAway=true;receive(kind,payload)};
- document.querySelector('[data-act="gate-check"]').click();document.getElementById('operations-tab').click();await wait(()=>checkedAway);window.sovDeliver=receive;document.getElementById('review-tab').click();await wait(()=>button()&&!button().disabled);
+ document.querySelector('[data-act="gate-check"]').click();document.getElementById('library-tab').click();await wait(()=>checkedAway);window.sovDeliver=receive;document.getElementById('review-tab').click();await wait(()=>button()&&!button().disabled);
  check('Returning during a check stays usable',true);
  const stale=button();
  deliver({error:'Offline fixture'});
@@ -124,9 +125,9 @@ if(scene==='states'){
  check('Verified empty queue',document.getElementById('review-intro').textContent.includes('caught up')&&!button());
  check('Empty detail gives no impossible instruction',document.getElementById('insp').textContent.includes('No proposal is available to inspect.'));
  deliver({machine:{connected:false}});check('Local only is not empty',document.getElementById('review-intro').textContent.includes('not connected'));
- deliver(copy());document.getElementById('operations-tab').click();window.sovView('archive');
- check('Operations keeps archive statistics',!!document.querySelector('.dash'));
- check('Operations has no second queue',rows().length===0&&!button());
+ deliver(copy());document.getElementById('library-tab').click();
+ check('Library keeps archive statistics',!!document.querySelector('.dash'));
+ check('Library has no second queue',rows().length===0&&!button());
  document.getElementById('review-tab').click();await wait(()=>button()&&!button().disabled);
  check('Recovered queue rechecked',rows().length===1);
  document.getElementById('rows').focus();document.getElementById('rows').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));
@@ -149,7 +150,7 @@ def main():
    status=home/'status';status.write_text('#!/bin/sh\ncat <<\'DATA\'\n'+json.dumps(data)+'\nDATA\n');status.chmod(0o700)
    before=(t.proposals/(t.slug+'.md')).read_bytes()
    first="document.getElementById('review-tab').click();"
-   if scene=='system':first="document.getElementById('system-tab').click();"+first
+   if scene=='system':first="window.sovView('system');"+first
    if scene=='menu':first="window.webkit.messageHandlers.sov.postMessage({cmd:'showConsole',place:{view:'review'}});"
    name=scene+'-'+theme+'-'+size
    env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_GATE_HOME=str(home),SOV_QA_STATUS_COMMAND=str(status),SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR='',SOV_QA_JS=first,SOV_QA_JS_AFTER_ANCHOR=COMMON.replace('SCENE',json.dumps(scene)).replace('STATUS',json.dumps(data))+PROBE)

@@ -28,14 +28,14 @@ if(PHASE==='disassociate'){
  button().click();document.querySelector('#device-confirm').click();await wait(restore);
  check('Disassociated group visible',document.querySelector('#rows').textContent.includes('Disassociated devices'));
  check('Inactive device has neutral row',!document.querySelector('.row[data-id="retired-worker"] .dot.down'));
- check('Offline alert removed',!document.querySelector('#vtext').textContent.includes('retired-worker'));
+ check('Offline alert removed',!document.querySelector('.row[data-id="retired-worker"]').textContent.includes('unreachable'));
  check('Restore action available',!!restore());
  window.sovRefresh();await pause(350);check('Refresh preserves disassociation',!!restore());
 }else if(PHASE==='restore'){
  await wait(restore);check('Disassociation survives app restart',!!restore());restore().click();await wait(button);
- await wait(()=>!document.getElementById('vmeta').textContent.includes('refreshing'));
+ await wait(()=>!document.getElementById('vmeta').textContent.includes('checking'));
  check('Restore returns device to active list',!document.querySelector('#rows').textContent.includes('Disassociated devices'));
- check('Offline warning returns after restore',document.querySelector('#vtext').textContent.includes('retired-worker'));
+ check('Offline warning returns after restore',document.querySelector('.row[data-id="retired-worker"]').textContent.includes('unreachable')&&!!document.querySelector('.row[data-id="retired-worker"] .dot.down'));
 }else if(PHASE==='other-archive'){
  await wait(button);check('Choice does not leak into another archive',!!button()&&!restore());
 }else if(PHASE==='dialog'){

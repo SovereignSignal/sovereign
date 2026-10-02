@@ -225,15 +225,26 @@ const output='<img src=x onerror=alert(1)>';
 const group=assess({hub:{jobs:{kit:{exit:65,health:{failure_output:output}},autocommit:{exit:1,health:{failure_output:'push failed'}}}}}).need.find(r=>r.group==='job-failed');
 assert.equal(group.members[0].failure_output,output);
 assert.equal(group.members[1].failure_output,'push failed');
-const issueContext={GLANCE:false,SovStatus:model,esc:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')};
-vm.createContext(issueContext);
-const html=fs.readFileSync(path.join(__dirname,'../ui/index.html'),'utf8');
-vm.runInContext(html.slice(html.indexOf('  function issueHTML(n)'),html.indexOf('  function glanceHome()')),issueContext);
-const rendered=issueContext.issueHTML(group);
-assert.ok(rendered.includes('kit')&&rendered.includes('autocommit')&&rendered.includes('push failed'));
-assert.ok(rendered.includes('&lt;img'));
-assert.ok(!rendered.includes('<img'));
+// Today renders these as text nodes, so hostile log text stays text; tests/home.js and the
+// job-output scene check that in the real DOM. Here the data must simply arrive intact.
 const local=assess({needs_you:[{kind:'job',why:'Recent error',failure_output:'capture failed'}]}).need[0];
 assert.equal(local.failure_output,'capture failed');
-assert.ok(issueContext.issueHTML(local).includes('capture failed'));
-console.log('Captured job output survives grouped and local alerts and is HTML-escaped.');
+console.log('Captured job output survives grouped and local alerts.');
+
+// A row's reason is two or three words; the sentence stays in its detail.
+assert.equal(model.brief(group),'failed');
+assert.equal(model.brief({cause:'need:gate'}),'waiting');
+assert.equal(model.brief({cause:'unreachable'}),'unreachable');
+assert.equal(model.brief({cause:'need:host'}),'unreachable');
+assert.equal(model.brief({cause:'mirror-late',age_h:240}),'silent 10d');
+assert.equal(model.brief({cause:'mirror-late',age_h:null}),'late');
+assert.equal(model.brief({cause:'no-backup'}),'no backup');
+assert.equal(model.brief({cause:'need:job',detail:'runner: last run exited 0; error output was recorded'}),'errors logged');
+assert.equal(model.brief({cause:'need:job',detail:'runner last exited 1'}),'failed');
+assert.equal(model.brief({detail:'pushed, awaiting hub acceptance'}),'awaiting hub');
+assert.equal(model.brief({cause:'something-new',detail:'A whole sentence.'}),'');
+assert.equal(model.seen({}),'checking…');
+assert.equal(model.seen({machine:{},_status:{pending:true}}),'checking…');
+assert.equal(model.seen({machine:{},_status:{error:'probe failed'}}),'refresh failed');
+assert.match(model.seen({machine:{},generated_at:new Date().toISOString()}),/\d/);
+console.log('Short reasons and observed time: known causes have a short form, unknown ones fall back to their sentence.');

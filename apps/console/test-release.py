@@ -17,22 +17,27 @@ def probe(theme,view,live=False):
  checks.noNotes=!document.getElementById('notes-tab')&&!document.getElementById('editor');
  checks.rail=!!document.querySelector('.shell-rail')&&getComputedStyle(document.querySelector('.shell-rail')).display!=='none';
  checks.noHorizontalOverflow=document.documentElement.scrollWidth<=innerWidth;
- checks.page=['operations','review'].includes(view)?location.pathname.endsWith('/index.html'):location.pathname.endsWith('/local.html');
- const isOps=view==='operations';
- checks.selectedTab=document.getElementById((isOps?'operations':view)+'-tab').getAttribute('aria-pressed')==='true';
+ checks.page=['sources','review'].includes(view)?location.pathname.endsWith('/index.html'):location.pathname.endsWith('/local.html');
+ const tab={home:'today',system:'sources'}[view]||view;
+ checks.selectedTab=document.getElementById(tab+'-tab').getAttribute('aria-pressed')==='true';
+ checks.fiveDestinations=[...document.querySelectorAll('.shell-rail [data-nav]')].map(b=>b.dataset.nav).join()==='today,review,sources,library,backups,settings';
+ checks.oneFrame=!!document.querySelector('header.top h1')&&!document.getElementById('switch')&&!document.querySelector('.hubpill');
  let count=Number(document.getElementById('review-count').textContent||0),unknown=[];
- if(isOps){const col=document.querySelector('.glance-home .gcol');checks.glance=!!col;
-  checks.attentionCount=!!col&&(live||Number(col.querySelector('.n').textContent)===4);
-  unknown=[...(col?.querySelectorAll('.row')||[])].filter(e=>/acceptance.*(?:unverified|not reported|unknown)|not been verified/.test(e.textContent)).map(e=>e.textContent);
+ if(view==='sources'){
+  checks.heading=document.getElementById('vault').textContent==='Sources';
+  checks.faces=[...document.querySelectorAll('#controls .seg [data-view]')].map(b=>b.dataset.view).join()==='sources,hosts,system';
  }else if(view==='review'){
   checks.queueCount=document.querySelectorAll('#rows [data-id^="p:"]').length===count;
   checks.reviewHeading=document.getElementById('vault').textContent==='Review';
-  checks.noOperationsTabs=getComputedStyle(document.querySelector('#switch .seg')).display==='none';
+  checks.sideBySide=!live||count===0||(()=>{const q=document.getElementById('listpane').getBoundingClientRect(),d=document.getElementById('inspector').getBoundingClientRect();return q.right<=d.left+1&&d.width>300})();
  }else if(view==='system')checks.systemVisible=!!document.querySelector('.sv');
  else {checks.homeVisible=!document.getElementById('system-home').hidden;
-  const panel=document.querySelector('.home-attention');
-  unknown=[...panel.querySelectorAll('.home-row')].filter(e=>/acceptance.*(?:unverified|not reported|unknown)|not been verified/.test(e.textContent)).map(e=>e.textContent);
-  if(!live)checks.unknownIdle=!![...document.querySelectorAll('.home-contributions .home-row')].find(e=>e.textContent.includes('Hub acceptance is unknown')&&e.querySelector('.idle'));
+  const rows=[...document.querySelectorAll('.today-needs .today-item')];
+  checks.headline=!!document.querySelector('.today-headline h2');
+  checks.attentionCount=live||(rows.length===4&&document.querySelector('.today-headline h2').textContent==='4 things need you');
+  checks.figures=document.querySelectorAll('.today-tiles .fig-tile').length===4;
+  // A lane whose acceptance is unknown is not something that needs the owner.
+  unknown=rows.filter(e=>/unknown-producer|acceptance.*(?:unverified|not reported|unknown)|not been verified/.test(e.textContent)).map(e=>e.textContent);
  }
  checks.noUnknownAttention=unknown.length===0;
  if(!live)checks.expectedCount=count===2;
@@ -48,11 +53,11 @@ def main():
   brain_local.capture(archive,'A useful decision','Local notes remain portable Markdown.')
   fixture={'version':'QA','generated_at':datetime.now(timezone.utc).isoformat(),'machine':{'connected':True,'host':'studio','vault':str(archive),'vault_name':'QA archive','hub_pointer':'hub:/archive'},'hub':{'reachable':True,'pending':2,'proposals':[{'slug':'first','title':'A useful decision','type':'concept'},{'slug':'second','title':'Keep this finding','type':'entity'}]},'needs_you':[{'kind':'gate','text':'2 proposals ready for review'}],'jobs':[{'label':'collection-test','last_exit':1}],'fleet':{'hosts':[{'host':'studio','net':{'online':True}},{'host':'worker','net':{'online':False}}]},'archive':{'cards':[]},'harnesses':[], 'backups':{'lanes':[{'lane':'unknown-producer'},{'lane':'waiting-producer','delivery':'waiting'},{'lane':'accepted-producer','delivery':'accepted','pushed':datetime.now(timezone.utc).isoformat()}]}}
   command=base/'status';command.write_text('#!/bin/sh\ncat <<\'STATUS\'\n'+json.dumps(fixture)+'\nSTATUS\n');command.chmod(0o700)
-  cases=[('dark','900x600','home','operations')] if args.live else [(theme,size,first,second) for theme in ['dark','light'] for size in ['900x600','720x460'] for first,second in [('home','review'),('system','operations')]]
+  cases=[('dark','900x600','home','sources')] if args.live else [(theme,size,first,second) for theme in ['dark','light'] for size in ['900x600','720x460'] for first,second in [('home','review'),('system','sources')]]
   for theme,size,first,second in cases:
    name=('live-' if args.live else '')+theme+'-'+size
    snap=args.evidence/(name+'-'+first+'.png')
-   env=dict(os.environ,SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(snap),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR=('operations:view:glance' if second=='operations' else 'operations:view:'+second),SOV_QA_JS='window.sovView('+json.dumps(first)+');setTimeout(()=>{'+probe(theme,first,args.live)+'},1500);',SOV_QA_JS_AFTER_ANCHOR="for(let n=0;n<100&&/refreshing|up to \\d+ seconds/.test(document.getElementById('vmeta')?.textContent||'');n++)await new Promise(r=>setTimeout(r,50));"+probe(theme,second,args.live))
+   env=dict(os.environ,SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(snap),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR='operations:view:'+second,SOV_QA_JS='window.sovView('+json.dumps(first)+');setTimeout(()=>{'+probe(theme,first,args.live)+'},1500);',SOV_QA_JS_AFTER_ANCHOR="for(let n=0;n<100&&/checking/.test(document.getElementById('vmeta')?.textContent||'');n++)await new Promise(r=>setTimeout(r,50));"+probe(theme,second,args.live))
    if not args.live:env['SOV_QA_STATUS_COMMAND']=str(command)
    # CLI defaults override the archive for this process without persisting preferences.
    result=subprocess.run([str(app),'-sov.archive',str(archive)],env=env,capture_output=True,text=True,timeout=45)

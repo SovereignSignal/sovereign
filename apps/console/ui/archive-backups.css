@@ -1,5 +1,5 @@
 body.archive-backups-view main{grid-template-columns:1fr}body.archive-backups-view #inspector{display:none}
-.archive-backups{max-width:900px}.archive-backups h3{font:550 15px/1.4 var(--sans);margin:22px 0 8px;color:var(--ink)}
+.archive-backups{max-width:900px;padding-top:4px}.archive-backups .ab-readiness{margin-top:12px}.archive-backups h3{font:550 15px/1.4 var(--sans);margin:22px 0 8px;color:var(--ink)}
 .ab-card{margin:20px 0;padding:0 18px 16px;border:1px solid var(--rule);border-radius:8px;background:var(--panel)}
 .ab-card dl{display:grid;grid-template-columns:minmax(120px,1fr) 2fr;gap:8px;font:12px/1.5 var(--sans)}.ab-card dt{color:var(--muted)}.ab-card dd{margin:0;overflow-wrap:anywhere}
 .ab-path{overflow-wrap:anywhere}.ab-actions{margin:24px 0 8px}.ab-actions button[aria-pressed=true]{background:var(--sel)}

@@ -12,18 +12,22 @@
  * else is read from the status the app already has. Saving is explicit, except
  * appearance, which applies immediately because a theme you must confirm reads
  * as broken.
+ *
+ * Each setting is one row: its name, its value, its control. Evidence and the
+ * permissions table open on request, so the pane reads at a glance.
  */
 window.SovSettings = (() => {
   let host = null, ctx = {};
   const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const post = o => window.webkit.messageHandlers.sov.postMessage(o);
-  const sect = (title, body, note, acts) => `<div class="set-sect"><h2>${title}</h2>${body}${note ? `<p class="set-note">${note}</p>` : ""}${acts ? `<div class="acts">${acts}</div>` : ""}</div>`;
+  const sect = (title, body, note, acts) => `<div class="set-sect"><h2>${title}</h2><div class="set-body">${body}${note ? `<p class="set-note">${note}</p>` : ""}</div>${acts ? `<div class="acts">${acts}</div>` : ""}</div>`;
+  const more = (summary, body, open) => `<details class="set-more"${open ? " open" : ""}><summary>${summary}</summary>${body}</details>`;
 
-  /* The app's own currency, in the same words the Home row uses. The revisions
-     are evidence and sit under the sentence, never in place of it. */
+  /* The app's own currency, in the same words the Today row uses. The revisions
+     are evidence and sit behind the sentence, never in place of it. */
   function appSection(D) {
     const a = (D && D.machine && D.machine.app) || {}, src = String((D && D.machine && D.machine.template_rev) || "").split(" ")[0];
-    if (!a.installed) return sect("This app", `<p class="set-lead">Sovereign is running from a build this machine cannot identify.</p>`, "Install once from this machine's source and it will be able to check itself from then on.");
+    if (!a.installed) return sect("Version", `<p class="set-lead">Sovereign is running from a build this machine cannot identify.</p>`, "Install once from this machine's source and it will be able to check itself from then on.");
     const name = `Sovereign ${esc(a.version || "?")} build ${esc(a.build || "?")}`;
     const commit = String(a.source_commit || "").replace("+local", "");
     let lead, action = true, why = "";
@@ -31,15 +35,22 @@ window.SovSettings = (() => {
     else if (!src) { lead = `${name} cannot be checked right now.`; why = "This machine's source revision could not be read, so there is nothing to compare against."; action = false; }
     else if (commit !== src) { lead = `A newer version is ready to install. You are running ${name}.`; why = `Built from source ${esc(commit)}; this machine's source is now ${esc(src)}.`; }
     else { lead = `${name} is the newest build of this machine's source.`; why = `Built from source ${esc(src)}, which is what this machine has.`; action = false; }
-    return sect("This app", `<p class="set-lead">${lead}</p>`, why,
-      `${action ? `<button class="brass" id="set-update">Update now</button>` : `<button id="set-update">Check again</button>`}<span class="pulls" id="set-update-state" aria-live="polite"></span>`);
+    return sect("Version", `<p class="set-lead">${lead}</p>${more("Details", `<p class="set-note">${why}</p>`)}<span class="pulls" id="set-update-state" aria-live="polite"></span>`, "",
+      action ? `<button class="brass" id="set-update">Update now</button>` : `<button id="set-update">Check again</button>`);
   }
 
   function archiveSection(root) {
     return sect("Archive",
-      root ? `<p class="set-lead">Open: <span class="mono">${esc(root)}</span></p>` : `<p class="set-lead">No archive is open.</p>`,
-      "Your notes and captures live here. Opening a different archive does not move or copy anything.",
-      `<button id="set-change">${root ? "Open a different archive…" : "Open an archive…"}</button>${root ? `<button id="set-reveal">Show in Finder</button>` : ""}`);
+      root ? `<p class="set-lead"><span class="mono">${esc(root)}</span></p>` : `<p class="set-lead">No archive is open.</p>`, "",
+      `<button id="set-change">${root ? "Change…" : "Open an archive…"}</button>${root ? `<button id="set-reveal">Show in Finder</button>` : ""}`);
+  }
+
+  /* The scheduled work behind the archive. It is engine-room detail, so it has a
+     door here and no place in the navigation. */
+  function jobsSection(D) {
+    const n = Object.keys((D && D.hub && D.hub.jobs) || {}).length + ((D && D.jobs) || []).filter(j => !j.kick).length;
+    return sect("Jobs", `<p class="set-lead">${n ? n + " scheduled" : "None reported"}</p>`, "",
+      `<button data-goto-view="jobs">View</button><button data-goto-view="setup">Hub setup…</button>`);
   }
 
   /* What each producer may do, in one table. A lane's permissions are declared
@@ -47,7 +58,7 @@ window.SovSettings = (() => {
      and read-and-contribute side by side instead of opening seven files. */
   function permissionSection(D) {
     const lanes = (D && D.lanes || []).filter(l => l.lane && l.associated !== false);
-    if (!lanes.length) return sect("What each producer may do", `<p class="set-lead">No producer lanes are declared for this archive.</p>`, "Lanes appear here once a producer is onboarded.");
+    if (!lanes.length) return sect("Permissions", `<p class="set-lead">No producer lanes are declared for this archive.</p>`);
     // `read` carries its mechanism in parentheses and `read_scope` is sometimes the
     // bare boolean `true` rather than a scope, which rendered as "reads true". Say
     // what is actually known: the scope when there is one, else the mechanism.
@@ -86,25 +97,24 @@ window.SovSettings = (() => {
     const rows = groups.map(([where, ls]) =>
       `<tr class="set-host"><th colspan="6">${esc(where)}<small>${ls.length} lane${ls.length === 1 ? "" : "s"}</small></th></tr>`
       + ls.map(row).join("")).join("");
-    return sect("What each producer may do",
-      `<table class="set-perms"><tr><th>lane</th><th>where</th><th>permission</th><th>writes by</th><th>gear</th><th>drift</th></tr>${rows}</table>`,
-      "A lane that reads nothing cannot see your knowledge layer; it may only send. Gear is how far the curator may act on that lane without asking you first.");
+    // An open question opens the table; a settled one stays behind its count.
+    const open = lanes.filter(l => (l.findings || []).some(f => f.level === "warn" || f.level === "bad")).length;
+    return sect("Permissions", more(`${lanes.length} source${lanes.length === 1 ? "" : "s"}${open ? ` · ${open} to settle` : ""}`,
+      `<table class="set-perms"><tr><th>lane</th><th>where</th><th>permission</th><th>writes by</th><th>gear</th><th>drift</th></tr>${rows}</table>
+       <p class="set-note">A lane that reads nothing cannot see your knowledge layer; it may only send. Gear is how far the curator may act on that lane without asking you first.</p>`, open > 0));
   }
 
   function prefsSection(S, pinned) {
     const pick = (id, label, values, current, render) => sect(`<label for="${id}">${label}</label>`,
       `<select id="${id}">${values.map(v => `<option value="${esc(v)}" ${String(current) === String(v) ? "selected" : ""}>${esc(render(v))}</option>`).join("")}</select>`);
-    const where = v => `<label class="radio"><input type="radio" name="set-where" value="${v}" ${S.where === v ? "checked" : ""}> ${v === "dock" ? "Dock" : v === "menubar" ? "Menu bar only" : "Dock and menu bar"}</label>`;
+    const where = v => `<label class="radio"><input type="radio" name="set-where" value="${v}" ${S.where === v ? "checked" : ""}> ${v === "dock" ? "Dock" : v === "menubar" ? "Menu bar" : "Both"}</label>`;
     const login = S.loginState === "on" ? "Registered with macOS." : S.loginState === "off" ? "Not registered." : String(S.loginState || "");
     return sect(`<label for="s-appearance">Appearance</label>`,
-             `<select id="s-appearance">${["system", "dark", "light"].map(v => `<option value="${v}" ${(S.appearance || "system") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select>`,
-             "System follows your Mac. Appearance changes save immediately.")
-      + sect("Where the app lives", ["dock", "menubar", "both"].map(where).join(""), "The menu bar puts a crown up top; click it for the glance panel. Menu bar only hides the Dock icon.")
-      + sect("Closing the window", `<label class="check"><input type="checkbox" id="s-closequits" ${S.closeQuits ? "checked" : ""}> Quit Sovereign when the window closes</label>`,
-             "Off, the window closes and Sovereign keeps watching in the background; open it again from the Dock or the crown.")
-      + sect("Startup", `<label class="check"><input type="checkbox" id="s-login" ${S.loginItem ? "checked" : ""}> Open at login</label>`, esc(login))
+             `<select id="s-appearance">${["system", "dark", "light"].map(v => `<option value="${v}" ${(S.appearance || "system") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select>`)
+      + sect("Shows in", `<div class="set-inline">${["dock", "menubar", "both"].map(where).join("")}</div>`)
+      + sect("On close", `<label class="check"><input type="checkbox" id="s-closequits" ${S.closeQuits ? "checked" : ""}> Quit Sovereign</label>`)
+      + sect("At login", `<label class="check"><input type="checkbox" id="s-login" ${S.loginItem ? "checked" : ""}> Open Sovereign</label>`, esc(login))
       + pick("s-refresh", "Refresh every", [30, 60, 300, 900], S.refresh, v => v < 60 ? v + " seconds" : (v / 60) + " minute" + (v > 60 ? "s" : ""))
-      + pick("s-view", "Open on", ["glance", "hosts", "archive", "lanes", "tools", "jobs", "backups"], S.defaultView, v => v === "jobs" ? "Hub" : v[0].toUpperCase() + v.slice(1))
       + sect("Detail panel", `<label class="check"><input type="checkbox" id="s-pin" ${pinned ? "checked" : ""}> Keep it open beside the list</label>`);
   }
 
@@ -113,13 +123,13 @@ window.SovSettings = (() => {
     const { S = {}, D = null, root = null, pinned = false } = ctx;
     host.className = "";
     host.innerHTML = `<div class="set-pane">
-      <div class="set-head"><h1>Settings</h1><p>This app, this archive, and what each producer is allowed to do. Preferences are saved on this Mac.</p></div>
       ${archiveSection(root)}
       ${appSection(D)}
-      ${permissionSection(D)}
       ${prefsSection(S, pinned)}
       ${S.error ? `<div class="note">${esc(S.error)}</div>` : ""}
-      <div class="acts set-save"><button class="brass" id="s-save">Save settings</button><span class="pulls" id="s-state" aria-live="polite"></span></div>
+      <div class="acts set-save"><button class="brass" id="s-save">Save</button><span class="pulls" id="s-state" aria-live="polite"></span></div>
+      ${jobsSection(D)}
+      ${permissionSection(D)}
     </div>`;
   }
 

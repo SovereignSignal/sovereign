@@ -1,6 +1,6 @@
 # Device associations in the Mac app
 
-In Operations → Hosts, select a device and choose **Disassociate device…**. Confirm to remove it from the active device map, counts, connectivity warnings and device-specific backup/contribution warnings. Past notes stay in the archive. The current device and configured Hub cannot be disassociated.
+In Sources → Devices, select a device and choose **Disassociate device…**. Confirm to remove it from the active device map, counts, connectivity warnings and device-specific backup/contribution warnings. Past notes stay in the archive. The current device and configured Hub cannot be disassociated.
 
 Disassociated devices stay in a separate section of Hosts. **Associate again** restores the device to the active view, including any current warnings. The choice survives refresh, rediscovery and app restart; restoring it does not require connecting to the device.
 

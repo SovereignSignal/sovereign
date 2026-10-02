@@ -189,7 +189,7 @@ window.SovStatus = (() => {
         cause:paused?'job-paused':pending?'job-verifying':'job-failed'});
     });
     if (h.jobs_error) need.push({ state: "warn", name: "Hub jobs", detail: h.jobs_error, jump: { view: "jobs" }, order: 0, cause: "hub-jobs-unknown" });
-    hosts.filter(x => x.net && x.net.online === false && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Operations → Hosts.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
+    hosts.filter(x => x.net && x.net.online === false && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Sources → Devices.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
     const hubName = h.hub_host || (m.hub_pointer || '').split(':')[0];
     if (h.reachable === false && !(D.needs_you||[]).some(n=>n.kind==='hub') && !hosts.some(x => x.host === hubName && x.net?.online === false))
       need.push({state:'down',name:'Hub',detail:'unreachable; review and acceptance could not be checked',jump:{view:'jobs'},order:0});
@@ -199,7 +199,7 @@ window.SovStatus = (() => {
         jump:{view:'backups',id:'bk:host:'+x.host},order:2,cause:b.issue,
         causeLabel:b.issue==='no-backup'?'have no completed backup':b.issue==='backup-unknown'?'have unknown backup status':b.issue==='backup-unscheduled'?'have no backup schedule':'have stale backups',
         why:b.issue==='backup-unknown'?(x.backup_errors||[]).join(' ')||b.text:b.text,
-        action:'Open Operations → Backups and inspect this VM’s storage and job coverage in Proxmox.',
+        action:'Open Backups → Copies and inspect this VM’s storage and job coverage in Proxmox.',
         verify:'Refresh after the storage check or next successful backup; confirm the recorded backup and schedule coverage.'});
     });
     // cadence: mirrors here, mirrors on every host, producer pushes, hub jobs, the snapshot
@@ -248,16 +248,16 @@ window.SovStatus = (() => {
     try { storage.setItem("sov.online", JSON.stringify(now)); } catch (e) {}
     // Derived alerts follow the same explanation contract as service-produced rows.
     for(const r of [...need,...stale]){
-      const place=r.jump?.view==='tools'?'Tools':r.jump?.view==='hosts'?'Hosts':r.jump?.view==='backups'?'Backups':'Jobs';
+      const place=r.jump?.view==='tools'?'Sources':r.jump?.view==='hosts'?'Sources → Devices':r.jump?.view==='backups'?'Backups → Copies':'Settings → Jobs';
       const guidance=r.cause==='no-backup'?
-        ['The node returned no recorded backup dump for this VM. A configured job alone does not prove a completed backup.', 'Open Operations → Backups and inspect this VM’s backup job and last dump. Arrange a backup with the node administrator if none exists.', 'Refresh after the next successful backup; the VM shows a recent last backup age.']:
+        ['The node returned no recorded backup dump for this VM. A configured job alone does not prove a completed backup.', 'Open Backups → Copies and inspect this VM’s backup job and last dump. Arrange a backup with the node administrator if none exists.', 'Refresh after the next successful backup; the VM shows a recent last backup age.']:
         r.detail==='pushed, awaiting hub acceptance'?
-        ['The source commit has been published but is not yet included in the hub’s observed main branch.', 'Open Operations → Backups, select this contribution lane and inspect its source commit and exchange status.', 'Refresh after the hub accepts the source commit; the lane reads accepted.']:
+        ['The source commit has been published but is not yet included in the hub’s observed main branch.', 'Open Backups → Copies, select this contribution lane and inspect its source commit and exchange status.', 'Refresh after the hub accepts the source commit; the lane reads accepted.']:
         r.cause==='unreachable'||r.name==='Hub'?
-        ['The network or hub status check did not succeed; the underlying cause is unconfirmed.', 'Open Operations → Hosts and check this device’s power, network and configured connection.', 'Refresh; the device reports reachable and the hub returns a current queue.']:
+        ['The network or hub status check did not succeed; the underlying cause is unconfirmed.', 'Open Sources → Devices and check this device’s power, network and configured connection.', 'Refresh; the device reports reachable and the hub returns a current queue.']:
         r.need!=null?
-        ['This older status report did not provide a separate cause.', 'Open Operations → '+place+' and inspect the reported condition. Ask the status-service maintainer to supply diagnostic details if the summary is insufficient.', 'Refresh after resolving the reported condition; this attention item clears.']:
-        ['The latest recorded run or contribution does not meet the reported result or cadence.', 'Open Operations → '+place+' and inspect '+r.name+' and its most recent log or contribution record.', 'Refresh after a successful run or contribution; its result and observation time meet the reported cadence.'];
+        ['This older status report did not provide a separate cause.', 'Open '+place+' and inspect the reported condition. Ask the status-service maintainer to supply diagnostic details if the summary is insufficient.', 'Refresh after resolving the reported condition; this attention item clears.']:
+        ['The latest recorded run or contribution does not meet the reported result or cadence.', 'Open '+place+' and inspect '+r.name+' and its most recent log or contribution record.', 'Refresh after a successful run or contribution; its result and observation time meet the reported cadence.'];
       r.why ||= guidance[0];r.action ||= guidance[1];r.verify ||= guidance[2];
     }
     fresh.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
@@ -273,7 +273,7 @@ window.SovStatus = (() => {
     const needG = collapse(need, (cause, rows) => {
       const label = rows[0].causeLabel || (cause === "job-failed" ? "failed their last run" : cause === "unreachable" ? "are unreachable" : cause === "mirror-late" ? "are past twice their mirror cadence" : "need a look");
       return { state: rows.some(r => r.state === "down") ? "down" : "warn", name: `${rows.length} ${cause === "job-failed" || cause === "hub-job-late" ? "jobs" : "machines"}`,
-        detail: `${label}: ${rows.slice(0, 2).map(r => r.name).join(", ")}${rows.length > 2 ? " and " + (rows.length - 2) + " more" : ""}`, why:rows.some(r=>r.failure_output)?'Recorded failure details for each job are shown below.':rows[0].why, action:'Inspect each listed item in Operations → '+(rows[0].jump?.view==='backups'?'Backups':rows[0].jump?.view==='hosts'?'Hosts':rows[0].jump?.view==='tools'?'Tools':'Jobs')+'. '+rows[0].action, verify:rows[0].verify, age_h: null, order: rows[0].order };
+        detail: `${label}: ${rows.slice(0, 2).map(r => r.name).join(", ")}${rows.length > 2 ? " and " + (rows.length - 2) + " more" : ""}`, why:rows.some(r=>r.failure_output)?'Recorded failure details for each job are shown below.':rows[0].why, action:'Inspect each listed item in '+(rows[0].jump?.view==='backups'?'Backups → Copies':rows[0].jump?.view==='hosts'?'Sources → Devices':rows[0].jump?.view==='tools'?'Sources':'Settings → Jobs')+'. '+rows[0].action, verify:rows[0].verify, age_h: null, order: rows[0].order };
     }).sort((p, q) => p.order - q.order);
     const freshG = collapse(fresh, (cause, rows) => { const newest = Math.min(...rows.map(r => r.age_h == null ? Infinity : r.age_h));
       return { state: "live", name: `${rows.length} mirrors`, detail: `pulled on ${rows[0].host}, newest ${age(newest)} ago`, age_h: isFinite(newest) ? newest : null, order: 1 }; });
@@ -330,8 +330,39 @@ window.SovStatus = (() => {
     if(lane.acceptance_issue)return lane.acceptance_issue;
     return {text:'Hub acceptance is unknown for '+lane.lane+'.',
       why:lane.delivery==='unknown'?'The hub could not verify whether the source commit is included.':'The connected status service did not report an acceptance result.',
-      action:'Open Operations → Backups and inspect this lane’s source commit and hub connection. If the service is older, ask its maintainer to update it, then refresh.',
+      action:'Open Backups → Copies and inspect this lane’s source commit and hub connection. If the service is older, ask its maintainer to update it, then refresh.',
       verify:'The lane reports accepted or waiting after refresh. Only accepted confirms inclusion on the hub.'};
   }
-  return {assess, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations};
+  // A row's reason in two or three words. The sentence stays in its detail, said once.
+  // No short form means the caller shows the sentence clipped to one line.
+  function brief(r) {
+    const c = r.cause || r.group || "";
+    if (c === "need:gate") return "waiting";
+    if (c === "unreachable" || c === "need:host" || r.name === "Hub") return "unreachable";
+    // A job the status service reports: it either failed, or ran and wrote to its error log.
+    if (c === "need:job") return /error output/.test(r.detail || "") ? "errors logged" : /last exited|failed/.test(r.detail || "") ? "failed" : "";
+    if (c === "job-failed") return "failed";
+    if (["mirror-late", "lane-late", "hub-job-late", "snapshot-late"].includes(c)) return r.age_h != null ? "silent " + age(r.age_h) : "late";
+    if (c === "no-backup") return "no backup";
+    if (c === "backup-stale") return "backup stale";
+    if (c === "backup-unscheduled") return "not scheduled";
+    if (c === "backup-unknown") return "backup unknown";
+    if (c === "app-behind") return "ready to install";
+    if (c === "app-unstamped" || c === "app-source-unknown") return "cannot be checked";
+    if (c === "permission-drift") return "permission unsettled";
+    if (c === "job-paused") return "paused";
+    if (c === "job-verifying") return "verifying";
+    if (c === "hub-jobs-unknown") return "unknown";
+    if (r.detail === "pushed, awaiting hub acceptance") return "awaiting hub";
+    return "";
+  }
+  // When the status on screen was observed, as a clock time. The full caption (how long
+  // ago, how long the check took) is evidence for a tooltip, never a line of the page.
+  function seen(status) {
+    const s = status?._status || {}, stamp = Date.parse(s.observed_at || status?.generated_at);
+    if ((!status?.machine && !status?.error) || s.pending) return "checking…";
+    if (s.error || status?.error) return "refresh failed";
+    return Number.isFinite(stamp) ? new Date(stamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+  }
+  return {assess, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, week: isoWeekKey};
 })();

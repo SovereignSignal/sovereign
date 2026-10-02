@@ -10,9 +10,8 @@ const checks={},check=(n,x)=>{checks[n]=!!x},post=o=>window.webkit.messageHandle
 const wait=async fn=>{for(let i=0;i<200;i++){if(fn())return;await pause(40)}throw Error('Timed out: '+fn+'; replies='+JSON.stringify(replies)+'; drawer='+document.querySelector('#drawer-log')?.textContent)};
 const replies=[],deliver=window.sovDeliver;window.sovDeliver=(kind,p)=>{if(kind==='log'&&p.state==='end')replies.push(p);deliver(kind,p)};
 const apply=()=>document.querySelector('#drawer-apply'),remove=()=>document.querySelector('[data-act="remove-producer"]');
-check('All catalog producers listed',document.querySelector('[data-id="codex"]')&&document.querySelector('[data-id="windsurf"]'));
-check('History remains visible',document.querySelector('[data-id="windsurf-qa"]'));
-check('Add producer entry point',document.querySelector('[data-act="add-producer"]'));
+check('Connected source listed once, with its lane',document.querySelector('[data-id="windsurf"]')&&!document.querySelector('[data-id="windsurf-qa"]'));
+check('Add entry point',document.querySelector('#controls [data-view="discover"]')?.textContent==='Add');
 if(PHASE==='flow'){
  const base={cmd:'producer',action:'remove',harness:'windsurf',root:ROOT_PATH,apply:true};
  post(base);await wait(()=>replies.length===1);check('Apply without review rejected',replies[0].exit!==0);
@@ -21,11 +20,11 @@ if(PHASE==='flow'){
  remove().click();check('Apply disabled during preview',apply().disabled);await wait(()=>!apply().disabled);
  check('Explicit removal label',apply().textContent==='Remove producer');apply().click();await wait(()=>replies.length===5);
  await wait(()=>document.querySelector('[data-id="windsurf"]')?.textContent.includes('removed'));
- check('History retained after removal',document.querySelector('[data-id="windsurf-qa"]'));
+ check('History retained after removal',document.querySelector('[data-section="removed"]')&&document.querySelector('[data-id="windsurf"]')&&document.querySelector('#insp').textContent.includes('history is preserved'));
  document.querySelector('#drawer-close').click();document.querySelector('[data-id="windsurf"]').click();
  document.querySelector('[data-act="connect"]').click();await wait(()=>replies.length===6);
  check('Add has its own review',!apply().disabled&&apply().textContent==='Add producer');apply().click();await wait(()=>replies.length===7);
- await wait(()=>document.querySelector('[data-id="windsurf"]')?.textContent.includes('connected'));check('Reconnect visible',true);
+ await wait(()=>document.querySelector('[data-id="windsurf"]')&&!document.querySelector('[data-id="windsurf"]').textContent.includes('removed'));check('Reconnect visible',!document.querySelector('[data-section="removed"]'));
 }else{
  remove().click();await wait(()=>replies.length===1);
  if(PHASE==='failure')check('Failed preview cannot apply',apply().disabled&&replies[0].exit!==0);
@@ -64,7 +63,7 @@ def main():
    (base/'status.json').write_text(json.dumps(data));(base/'calls.jsonl').write_text('')
    if phase=='failure':(base/'fail').touch()
    suite='com.sovereign.qa.producers.'+uuid.uuid4().hex
-   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(status),SOV_QA_PRODUCER_COMMAND=str(command),SOV_APPEARANCE='light',SOV_WINDOW='1000x700' if phase=='flow' else '720x460',SOV_SNAPSHOT=str(args.evidence/(phase+'.png')),SOV_SNAPSHOT_DELAY='2',SOV_SNAPSHOT_ANCHOR='operations:view:lanes+open:windsurf',SOV_QA_JS_AFTER_ANCHOR=PROBE.replace('PHASE',json.dumps(phase)).replace('ROOT_PATH',json.dumps(str(archive))))
+   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(status),SOV_QA_PRODUCER_COMMAND=str(command),SOV_APPEARANCE='light',SOV_WINDOW='1000x700' if phase=='flow' else '720x460',SOV_SNAPSHOT=str(args.evidence/(phase+'.png')),SOV_SNAPSHOT_DELAY='2',SOV_SNAPSHOT_ANCHOR='operations:view:sources+open:windsurf',SOV_QA_JS_AFTER_ANCHOR=PROBE.replace('PHASE',json.dumps(phase)).replace('ROOT_PATH',json.dumps(str(archive))))
    try:
     cp=subprocess.run([str(HERE/'build/Sovereign.app/Contents/MacOS/Sovereign'),'-sov.archive',str(archive)],env=env,capture_output=True,text=True,timeout=45)
     (args.evidence/(phase+'.log')).write_text(cp.stderr)

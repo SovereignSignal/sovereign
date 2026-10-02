@@ -1107,7 +1107,7 @@ def fleet_needs(fleet):
         rows.append({"kind": "host", "host": host["host"],
                      "text": "This device cannot currently reach %s." % host["host"],
                      "why": cause,
-                     "action": "Check the device is powered on and connected to its network%s. Open Operations → Hosts and inspect %s, then refresh." %
+                     "action": "Check the device is powered on and connected to its network%s. Open Sources → Devices and inspect %s, then refresh." %
                                (" with Tailscale signed in" if via == "tailscale" else "", host["host"]),
                      "verify": "Refresh; %s reports reachable. This verifies connectivity only; collection and hub acceptance have their own records." % host["host"]})
     return rows
@@ -1123,7 +1123,7 @@ def contribution_issues(backups):
                  "why": lane.get("acceptance_reason") or
                         ("The hub could not verify whether the source commit is included." if lane.get("delivery") == "unknown" else
                          "The connected status service did not report an acceptance result."),
-                 "action": "Open Operations → Backups and inspect this lane's source commit and hub connection. If the service is older, ask its maintainer to update it, then refresh.",
+                 "action": "Open Backups → Copies and inspect this lane's source commit and hub connection. If the service is older, ask its maintainer to update it, then refresh.",
                  "verify": "The lane reports accepted or waiting after refresh. Only accepted confirms inclusion on the hub."}
         lane["acceptance_issue"] = issue
         rows.append(issue)
@@ -1157,19 +1157,19 @@ def explain_needs(rows):
     guidance = {
         "configuration": ("The local machine role configuration is invalid.", "Repair the local connectors.json machine declaration, then request status again.", "Status reports the declared role without a configuration error."),
         "client-intake": ("The contribution intake reported a delivery or validation failure.", "Inspect the client receipt and retry after resolving its reported cause.", "Refresh status; delivery and hub import each show their own successful receipt."),
-        "hub": ("The configured hub did not return status; its governance state is unknown.", "Open Operations → Hosts, inspect the configured hub and restore its connection, then refresh.", "Refresh; the hub reports reachable and Review shows a current queue."),
+        "hub": ("The configured hub did not return status; its governance state is unknown.", "Open Sources → Devices, inspect the configured hub and restore its connection, then refresh.", "Refresh; the hub reports reachable and Review shows a current queue."),
         "gate": ("Proposals are waiting for an owner decision.", "Open Sovereign → Review to compare and decide (or curator-approve on the hub).", "After your decision, refresh Review; the handled proposal leaves the waiting queue."),
-        "harness": ("The context connection needs the setup step described above.", "Open Operations → Tools, select this tool and follow the setup step above.", "Start a fresh tool session and refresh; its context hook is trusted and a new preparation receipt appears. Model use still requires separate evidence."),
-        "mirror-missing": ("The declared mirror executable is missing.", "Open Operations → Tools for this lane and repair its connector installation.", "After the next connector tick, refresh; the lane records a successful run."),
-        "lane-refused": ("The lane declaration does not fit the runner's execution limits.", "Inspect this lane's declaration in Operations → Tools. Correct the reported limit before the next connector tick.", "After the next tick, refresh; the lane is visited and no longer refused."),
-        "lane-timeout": ("The lane exceeded its configured execution budget.", "Open Operations → Tools for this lane and inspect its error log to resolve the blocking operation.", "After the next connector tick, refresh; the lane finishes within its budget."),
-        "lane-silent": ("The runner has not visited this enabled lane within its cadence.", "Inspect the lane error log named above in Operations → Tools and verify its runner declaration.", "After the next tick, refresh; the lane's checked time advances within its cadence."),
-        "runner-standing-down": ("A previous connector tick still holds the runner lock.", "Open Operations → Jobs and inspect the connector runner log. Identify the still-running operation before any restart.", "Refresh after the next tick; it finishes and the stand-down count stops growing."),
-        "runner-stalled": ("The connector runner has not recorded a completed tick within its cadence.", "Open Operations → Jobs and inspect the connector runner's loaded state and error log.", "After the next tick, refresh; the runner has a recent finish time and its lanes are visited."),
-        "relay": ("The source and destination observations show an incomplete file relay.", "Open Operations → Backups and inspect the relay's source paths and error log. Restore a missing source or review the removal command above if intentional.", "After the next relay run, refresh; the vault copy catches up and the source error clears."),
+        "harness": ("The context connection needs the setup step described above.", "Open Sources, select this tool and follow the setup step above.", "Start a fresh tool session and refresh; its context hook is trusted and a new preparation receipt appears. Model use still requires separate evidence."),
+        "mirror-missing": ("The declared mirror executable is missing.", "Open Sources for this lane and repair its connector installation.", "After the next connector tick, refresh; the lane records a successful run."),
+        "lane-refused": ("The lane declaration does not fit the runner's execution limits.", "Inspect this lane's declaration in Sources. Correct the reported limit before the next connector tick.", "After the next tick, refresh; the lane is visited and no longer refused."),
+        "lane-timeout": ("The lane exceeded its configured execution budget.", "Open Sources for this lane and inspect its error log to resolve the blocking operation.", "After the next connector tick, refresh; the lane finishes within its budget."),
+        "lane-silent": ("The runner has not visited this enabled lane within its cadence.", "Inspect the lane error log named above in Sources and verify its runner declaration.", "After the next tick, refresh; the lane's checked time advances within its cadence."),
+        "runner-standing-down": ("A previous connector tick still holds the runner lock.", "Open Settings → Jobs and inspect the connector runner log. Identify the still-running operation before any restart.", "Refresh after the next tick; it finishes and the stand-down count stops growing."),
+        "runner-stalled": ("The connector runner has not recorded a completed tick within its cadence.", "Open Settings → Jobs and inspect the connector runner's loaded state and error log.", "After the next tick, refresh; the runner has a recent finish time and its lanes are visited."),
+        "relay": ("The source and destination observations show an incomplete file relay.", "Open Backups → Copies and inspect the relay's source paths and error log. Restore a missing source or review the removal command above if intentional.", "After the next relay run, refresh; the vault copy catches up and the source error clears."),
         "xcode-license": ("The job's program is the /usr/bin/python3 Xcode shim, which refuses to run until the current Xcode license is accepted.", "Run sudo xcodebuild -license accept, then launchctl kickstart the named job. Reconnect a tool with sov connect to point the job at the Command Line Tools interpreter.", "Refresh after the kickstart; the job's last exit is 0 and its lanes report a fresh run."),
-        "job": ("The scheduled job reported a failure or recent error-log output.", "Open Operations → Jobs, select the named job and inspect its error log before retrying.", "After the next successful run, refresh and confirm exit 0; inspect remaining log warnings separately."),
-        "not-connected": ("No connected-system archive is configured on this device.", "Use your local archive, or open Operations → Tools to configure an optional connection.", "After connecting, refresh; the intended archive and tool appear.")}
+        "job": ("The scheduled job reported a failure or recent error-log output.", "Open Settings → Jobs, select the named job and inspect its error log before retrying.", "After the next successful run, refresh and confirm exit 0; inspect remaining log warnings separately."),
+        "not-connected": ("No connected-system archive is configured on this device.", "Use your local archive, or open Sources to configure an optional connection.", "After connecting, refresh; the intended archive and tool appear.")}
     for row in rows:
         if row.get("kind") in guidance:
             for key, value in zip(("why", "action", "verify"), guidance[row["kind"]]):

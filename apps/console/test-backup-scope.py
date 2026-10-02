@@ -33,7 +33,7 @@ if(PHASE==='exclude'){
  check('Local scope explanation visible',document.querySelector('#insp').textContent.includes('Saved for this archive on this Mac'));
  button().click();await wait(()=>button()?.textContent==='Require backup');
  check('Excluded row remains visible and neutral',row().textContent.includes('not required')&&!row().querySelector('.dot.down'));
- check('Backup warning cleared',!document.querySelector('#vtext').textContent.includes('no backup'));
+ check('Backup warning cleared',!/not scheduled|unprotected/.test(row().textContent));
  window.sovRefresh();await pause(500);check('Refresh retains scope',button()?.textContent==='Require backup');
 }else if(PHASE==='restore'){
  check('Exclusion survives restart',button().textContent==='Require backup');

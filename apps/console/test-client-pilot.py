@@ -7,16 +7,12 @@ HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[1];sys.path.insert(0,str(
 import brain_local
 PROBE=r'''
 const checks={},check=(k,v)=>checks[k]=!!v,post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
-for(let i=0;i<100&&!document.querySelector('.home-intake');i++)await pause(50);
-let card=document.querySelector('.home-intake');
-check('Client and mode visible',card?.textContent.includes('Worker-QA · Client / Contribute only'));
-check('Collection is client reported',card?.textContent.includes('Collection (client reported)'));
-check('Hub receipt and raw import separate',card?.textContent.includes('Received by hub')&&card?.textContent.includes('Imported into raw'));
-check('Missing import never claims completion',SCENE==='received'?card?.textContent.includes('Not reported'):true);
-check('Failure remains visible',SCENE==='error'?card?.textContent.includes('Intake needs attention'):true);
-check('Promotion remains separate',SCENE==='imported'?card?.textContent.includes('Promotion requires curation and review'):true);
-check('Home has no horizontal overflow',document.documentElement.scrollWidth<=innerWidth);
-document.getElementById('system-tab').click();
+for(let i=0;i<100&&!document.querySelector('.today-headline');i++)await pause(50);
+const today=document.getElementById('system-home');
+check('A failed intake needs the owner',SCENE==='error'?today.textContent.includes('Worker-QA')&&today.textContent.includes('intake failed')&&today.textContent.includes('Intake needs attention'):true);
+check('A healthy intake is not attention',SCENE==='error'?true:!today.textContent.includes('Worker-QA'));
+check('Today has no horizontal overflow',document.documentElement.scrollWidth<=innerWidth);
+window.sovView('system');
 let view=document.querySelector('.sv');
 check('Explicit hub label visible',view.textContent.includes('Hub · This device'));
 check('Explicit client label visible',view.textContent.includes('Client · Not checked'));
@@ -27,6 +23,7 @@ view.querySelector('[data-pane="inspect"]').click();
 view=document.querySelector('.sv');
 check('Inspect shows client mode',view.textContent.includes('Contribute only'));
 check('Inspect shows receipt evidence',view.textContent.includes('Received by hub'));
+check('Import is claimed only when it happened',SCENE==='imported'?view.textContent.includes('Imported into raw'):true);
 check('No page overflow in Inspect',document.documentElement.scrollWidth<=innerWidth);
 post({cmd:'clientError',where:'client-pilot-qa',msg:JSON.stringify({checks,failures:Object.keys(checks).filter(k=>!checks[k])})});
 '''

@@ -8,14 +8,14 @@ spec=importlib.util.spec_from_file_location('gate_fixture',HERE/'tests/test_gate
 QA=r'''
 const scenario=SCENARIO,fixtureStatus=STATUS,checks={};
 const wait=async(test)=>{for(let i=0;i<180;i++){if(test())return;await new Promise(r=>setTimeout(r,50))}throw Error('Timed out waiting for '+scenario+': '+document.querySelector('#insp').textContent.slice(0,1400))};
-await wait(()=>document.querySelector('.gate-feedback')&&!document.querySelector('#insp .checking'));
+await wait(()=>document.querySelector('#insp .rv-check')&&!document.querySelector('#insp .checking'));
 const approve=()=>document.querySelector('[data-act="gate"][data-verb="approve"]');
 checks.rail=!!document.querySelector('.shell-rail');checks.noHorizontalOverflow=document.documentElement.scrollWidth<=innerWidth;
 checks.flagsRetained=document.querySelector('#insp').textContent.includes('needs-source-review');
 if(scenario.startsWith('resolve')){
  const start=()=>document.querySelector('[data-act="gate-resolve"]');
  checks.resolveAvailable=!!start();checks.noPrematureApproval=!document.querySelector('[data-act="gate"][data-verb="resolve"]');
- start().click();checks.preview=!!document.querySelector('#gate-resolution-preview');checks.currentCardOpen=document.querySelector('#gate-comparison').open;
+ start().click();checks.preview=!!document.querySelector('#gate-resolution-preview');checks.currentCardShown=document.querySelector('[data-tab="changes"]').getAttribute('aria-selected')==='true'&&document.querySelector('#gate-comparison').textContent.includes('Existing detail');
  checks.typeExplained=document.querySelector('#gate-resolution-preview').textContent.includes('Keep the existing classification: concept');
  checks.originalsExplained=document.querySelector('#gate-resolution-preview').textContent.includes('Both originals');
  checks.flagsStillVisible=document.querySelector('#insp').textContent.includes('needs-source-review');checks.safeRendering=!document.querySelector('#insp img');
@@ -31,7 +31,7 @@ if(scenario.startsWith('resolve')){
  }else{
    const action=document.querySelector('[data-act="gate"][data-verb="resolve"]');action.click();action.click();
    checks.running=!!document.querySelector('#gate-notice.running');checks.quitProtected=window.sovCanQuit()===false;
-   document.getElementById('operations-tab').click();checks.navigationProtected=document.body.classList.contains('review');
+   document.getElementById('library-tab').click();checks.navigationProtected=document.body.classList.contains('review');
    if(scenario==='resolve-quit')window.webkit.messageHandlers.sov.postMessage({cmd:'qaQuit'});
    const expected=scenario==='resolve-fail'?'failed':'approved';await wait(()=>!!document.querySelector('#gate-notice.'+expected));
    checks.result=true;checks.noTerminalDump=!document.querySelector('#drawer.open');
@@ -43,8 +43,10 @@ if(scenario.startsWith('resolve')){
  }
 }else if(scenario==='conflict'){
  checks.blocked=approve().disabled;checks.explanation=document.querySelector('#insp').textContent.includes('Two card types need reconciling');
- document.querySelector('[data-act="gate-compare"]').click();checks.comparison=document.querySelector('#gate-comparison').open;
- checks.bothCards=document.querySelector('#gate-comparison').textContent.includes('Existing detail');checks.safeRendering=!document.querySelector('#insp img');
+ checks.changesFirst=document.querySelector('[data-tab="changes"]').getAttribute('aria-selected')==='true'&&document.querySelector('#gate-comparison .blk.del').textContent.includes('Existing detail');
+ document.querySelector('[data-tab="current"]').click();checks.comparison=document.querySelector('[data-tab="current"]').getAttribute('aria-selected')==='true';
+ checks.bothCards=document.querySelector('#gate-comparison').textContent.includes('Existing detail');
+ document.querySelector('[data-tab="proposed"]').click();checks.proposedAlone=document.querySelector('#gate-proposed').textContent.includes('Reviewed content')&&!document.querySelector('#gate-proposed').textContent.includes('Existing detail');checks.safeRendering=!document.querySelector('#insp img');
  checks.resolutionRequest=!!document.querySelector('[data-act="gate-copy"]');document.querySelector('#inspector').scrollTop=0;
 }else if(scenario==='refresh'){
  checks.initialReady=!approve().disabled;
@@ -67,7 +69,7 @@ if(scenario.startsWith('resolve')){
  }
  const action=['reject','repeat-reject'].includes(scenario)?document.querySelector('[data-verb="reject"]'):approve();action.click();if(['reject','repeat-reject'].includes(scenario))action.click();else action.click();
  checks.running=!!document.querySelector('#gate-notice.running');checks.quitProtected=window.sovCanQuit()===false;
-   document.getElementById('operations-tab').click();checks.navigationProtected=document.body.classList.contains('review');
+   document.getElementById('library-tab').click();checks.navigationProtected=document.body.classList.contains('review');
  if(scenario==='quit')window.webkit.messageHandlers.sov.postMessage({cmd:'qaQuit'});
  const expected=['approve','quit'].includes(scenario)?'approved':['reject','repeat-reject'].includes(scenario)?'rejected':scenario==='timeout'?'uncertain':'failed';
  await wait(()=>document.querySelector('#gate-notice.'+expected));checks.result=true;

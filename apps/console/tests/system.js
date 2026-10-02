@@ -1,7 +1,7 @@
 (()=>{
  const checks=[],failures=[],assert=(name,ok)=>{checks.push(name);if(!ok)failures.push(name);},$=id=>document.getElementById(id),host=()=>$('system-home'),view=()=>host().querySelector('.sv'),tab=id=>view().querySelector('.sv-tab[data-pane="'+id+'"]');
  try{
-  $('system-tab').click();
+  window.sovView('system');
   assert('four native panes exist',view().querySelectorAll('.sv-tab').length===4);
   assert('Environment is a spatial SVG view',!!view().querySelector('.sv-world-map'));
   assert('archive and independent devices come from data',host().textContent.includes('Independent QA')&&host().textContent.includes('Worker-QA'));
@@ -35,9 +35,10 @@
   assert('archive scope warning visible',host().textContent.includes('Their connections are hidden'));
   tab('inspect').click();
   assert('archive switch resets selected component',view().querySelector('.sv-inspect-detail').dataset.selection==='archive');
-  Home.archive(root);$('home-tab').click();
-  assert('Home navigation works without Notes',!$('notes-tab')&&!host().hidden);
-  $('system-tab').click();tab('world').click();
+  Home.archive(root);$('today-tab').click();
+  assert('Today navigation works without Notes',!$('notes-tab')&&!host().hidden&&$('today-tab').getAttribute('aria-pressed')==='true');
+  window.sovView('system');tab('world').click();
+  assert('the map is a face of Sources',$('sources-tab').getAttribute('aria-pressed')==='true'&&!!document.querySelector('#controls [data-view="system"][aria-pressed="true"]'));
   assert('restored archive repopulates dynamic map',!!view().querySelector('[data-node="tool:read"]'));
   view().querySelector('[aria-label="Zoom in"]').click();view().querySelector('[aria-label="Fit environment"]').click();
   assert('Fit contains the map within its viewport',view().querySelector('.sv-world-map').getBoundingClientRect().width<=view().querySelector('.sv-map-scroll').clientWidth+1);

@@ -122,7 +122,7 @@ the observer; it is not evidence of a physical System Settings toggle.
 Run `python3 apps/console/test-appearance.py --evidence /path/to/evidence` against
 the built candidate. It covers appearance persistence, rejected invalid values,
 live updates in both web views, draft focus/selection, unchanged proposal previews,
-map colors, Flow bounds and every Operations tab. The Hub check injects the old
+map colors, Flow bounds and every view of Sources, Library, Backups and Jobs. The Hub check injects the old
 missing-helper defect into a disposable page and verifies the error is detected.
 The ordinary release, System and gate fixture suites remain applicable.
 

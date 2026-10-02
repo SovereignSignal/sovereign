@@ -1,9 +1,34 @@
 # Sovereign interface contract
 
-One application, one source checkout, one installed `Sovereign.app`. Home, System, Review and
-Operations share the same left navigation rail and native window.
-Operations keeps its internal Hosts, Archive, Lanes, Tools, Hub and Backups tabs.
+One application, one source checkout, one installed `Sovereign.app`. Five destinations
+share one left rail and one page frame, and each answers one question:
+
+| Destination | Question | Holds |
+|---|---|---|
+| Today | What needs me? | One headline, the things that need the owner, four figures |
+| Review | What do I decide? | The proposal queue beside one proposal |
+| Sources | What feeds the archive? | Tools, Devices, and the Map |
+| Library | What do I have? | Cards by type, by week, by origin; loose ends |
+| Backups | Is it safe? | The archive backup, and the copies and machine images |
+
+Settings sits at the foot of the rail with the open archive. Jobs, Hub setup and
+Permissions are reached from Settings; they are the engine room, not destinations.
 The compact menu-bar Glance is the only separate frame.
+
+## Words
+
+The interface was measured at about 4,500 words across twelve screens on 2026-09-30.
+These rules are what brought it to about a tenth of that, and they are part of the contract:
+
+- A row is a dot, a name, where it is, at most a two-word state, and an age.
+- A sentence about a thing lives in the detail that opens when its row is chosen, once.
+- Nothing states its status twice. A green dot is the healthy state; a state word
+  appears only when it adds something the dot does not say.
+- One noun per thing. A tool or lane that feeds the archive is a source; a machine is a
+  device; a note in the trusted layer is a card.
+- How long ago status was read, and how long the check took, is evidence. It lives in
+  the tooltip on the observed time, never in a line of the page.
+- A row's action names where it lands, in one word.
 
 ## Appearance and shell
 
@@ -11,18 +36,19 @@ Signal Night is the default: midnight navy, warm amber actions and restrained cy
 context indicators. `NSApp.effectiveAppearance` supplies `data-theme` to both pages
 at document start. `SOV_APPEARANCE=light|dark` explicitly overrides the default for
 native QA. Loading, alerts and the window ground follow that same appearance.
-Light uses paper ground, white panels and graphite ink. There is no appearance
-picker in this release; the explicit override is a launch environment setting.
+Light uses paper ground, white panels and graphite ink. Settings offers System, Dark
+and Light; the explicit override remains a launch environment setting for QA.
 
 Default window: 900 × 600 pt. Minimum: 720 × 460 pt. Rail width is 170 pt, 140 pt at
-narrow sizes. Content scrolls within its pane. Nodes stay visible on Home with an
-expansion control. Selecting a tool filters its context receipts. Review contains
-attention items and contributions. Archive files remain available in Finder; preparation records open in the default editor.
-No conversational suggestion cards on Home.
+narrow sizes. Every page has the same 52 pt header: its title, one line of summary,
+its own controls, the time status was observed and Refresh. Content scrolls within its
+pane. Archive files remain available in Finder; preparation records open in the default
+editor. No conversational suggestion cards anywhere.
 
-`ui/shell.css` defines the shared rail; `home.css` and `operations-shell.css` define
-the page layouts. `design/tokens.css` supplies all palette roles. Cyan is for context
-indicators only. Categorical series, in order:
+`ui/shell.js` and `ui/shell.css` define the shared rail; `ui/app.css` defines the page
+frame and the shared marks; `home.css` and `operations-shell.css` define the page layouts. `design/tokens.css` supplies all palette roles. Cyan is for context
+indicators only. A chart that shows magnitude alone uses Series 1 and prints its
+numbers beside its marks. Categorical series, in order:
 
 | Appearance | Panel | Series 1 | Series 2 | Series 3 |
 |---|---|---|---|---|
@@ -35,13 +61,13 @@ The crown is the product mark. Archive and machine names come from status.
 
 ## Status and evidence
 
-`ui/status-model.js` supplies one assessment to Home, Review, full-window Operations
-and menu-bar Glance. The Review count equals the grouped Needs you count for the
-same status payload. Counts represent attention items, not individual proposals.
+`ui/status-model.js` supplies one assessment to Today, Review, Sources and the menu-bar
+Glance, so no two places can disagree. Today's headline counts attention items, not
+individual proposals; the Review badge counts proposals.
 
 - Explicit `delivery: accepted` establishes hub acceptance; waiting warns.
-- Missing or unrecognized delivery is idle: “acceptance not reported by this status
-  version”. It never enters Needs you or a verdict solely because it is unknown.
+- Missing or unrecognized delivery is idle. It never enters Today or a verdict solely
+  because it is unknown.
 - Job failures and unreachable hosts retain their alerts. A separately unreachable
   hub is also an alert, without duplicating its offline fleet-host row.
 - Node reachability is a network observation. Hook configuration is setup evidence.
@@ -51,21 +77,32 @@ same status payload. Counts represent attention items, not individual proposals.
 - Tool receipts require a matching archive and producer lane. Opening another local
   archive shows the mismatch and never implies connection to the fleet.
 
-Home reads the installed status command and bundled local archive API. Approvals,
-connection changes and schedules require an explicit action in Operations. Draft
-protection and stale-response guards apply across navigation.
+Today reads the installed status command and bundled local archive API. Its only
+command is the app's own update; every other row is a jump. Approvals happen in
+Review; connection changes in Sources; schedules in Settings. Stale-response guards
+apply across navigation.
 
-## Operations and compact Glance
+## Today and compact Glance
 
-The resting Operations view answers what needs me, what is fresh, what is stale.
-Its three columns retain grouped rows and drill-downs. Worst state comes first in
-the verdict: failed jobs or unreachable hosts; other attention items; overdue
-observations; otherwise a fresh fact. Cadence is per kind, never one global age.
-Unknown acceptance is not a failed or late delivery observation.
+Today answers what needs me. Worst state comes first: failed jobs or unreachable
+devices; other attention items. A row's sentence, its cause, the next step and how to
+tell it worked open under the row. Work the system is doing by itself appears under
+Watching, never in the count. Cadence is per kind, never one global age. Unknown
+acceptance is not a failed or late delivery observation. Status failures are the only
+banner; a healthy app has none.
 
 The menu-bar Glance retains its compact header, verdict, operational summary rows,
 footer, keyboard shortcuts and drawer behavior. It does not show the full-window
 rail. Neither frame changes approval, capture or producer write contracts.
+
+## Review
+
+The queue and one proposal sit side by side at every window size. An update opens on
+Changes: the current card's blocks against the proposal's, with unchanged runs folded.
+Proposed and Current are one tab away. Card text is escaped before any markup is
+restored, and only headings, list items, bold and code are restored. J and K move
+through the queue. R arms Reject and a second press fires it. Approve takes ⌘↵, because
+it puts a card into trusted knowledge.
 
 ## Approval decisions
 
@@ -85,7 +122,7 @@ moved and the destination to match the reviewed content. Commit or push trouble
 is reported separately as a saved decision with sync needing attention. Lost
 connections and timeouts remain unconfirmed until the queue is checked again.
 Repeat clicks are blocked during execution. Navigation and native normal quit
-consult the pending-decision guard in both Home and Operations. At 120 seconds,
+consult the pending-decision guard in both documents. At 120 seconds,
 the interface releases that guard and reports an unconfirmed result; it does not
 claim cancellation. Late replies cannot overwrite this result. The native bridge
 keeps blocking new gate actions while its command is still running, and the
@@ -116,8 +153,9 @@ override is accepted only during snapshot QA.
 `test-home.py` exercises native rendering, labels, safe text, draft preservation,
 stale replies and a capture/read roundtrip in a disposable archive.
 `tests/status-model.cjs` covers unknown/waiting/accepted lanes and real failures.
-`test-release.py --evidence <folder>` captures light and dark Home, Review, System
-and Operations at both supported sizes, checking themes, rails and attention counts.
+`test-release.py --evidence <folder>` captures light and dark Today, Review, the Map
+and Sources at both supported sizes, checking themes, the rail's five destinations,
+the single frame and attention counts.
 Use `--live` for a screenshot against the installed status command.
 
 Snapshot anchors accept `view:<name>[+open:<id>]` on the current page and
