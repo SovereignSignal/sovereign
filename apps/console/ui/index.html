@@ -810,7 +810,8 @@ window.onerror = function (msg, src, line, col) {
     }
     const n = list.filter(selectable).length;
     footerMeta(n);
-    if (sel && (sel.view !== view || !list.some(i => i.id === sel.id))) sel = null;
+    // A queue that cannot be read says nothing about which proposals remain: keep the open one.
+    if (sel && (sel.view !== view || (!review || q.available) && !list.some(i => i.id === sel.id))) sel = null;
     const shown = view === "archive" ? [] : list;
     const rowsHTML = shown.map((it, i) => selectable(it)
       ? `<div class="row ${it.kind==='candidate'?'discovery-row':''}" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
@@ -1629,7 +1630,10 @@ window.onerror = function (msg, src, line, col) {
       return;
     }
     if (kind === "status") {
-      const resumeReview=view==='review'&&!reviewQueue().available;
+      // Before every probe the bridge re-sends the observation already on screen, marked
+      // pending. It changes the refreshing caption only: queue, selection, checks and forms stay.
+      if(!GLANCE&&payload._status?.pending&&!payload._status.error&&payload.machine&&D?.machine){const s={...D,_status:{...D._status,...payload._status}};$("#vmeta").textContent=SovStatus.seen(s);$("#vmeta").title=SovStatus.caption(s);return;}
+      const resumeReview=view==='review'&&!sel&&!reviewQueue().available;
       payload=SovStatus.retain(D,payload);
       // A status probe started before a decision can return its old queue afterwards.
       // Suppress only the exact completed proposal, and retire receipts on a fresh absence.
@@ -1646,7 +1650,7 @@ window.onerror = function (msg, src, line, col) {
         if(entry.key!==GateModel.reviewKey(payload,slug)){gateChecks.delete(slug);gateResolutions.delete(slug);}
       }
       render(payload);
-      if(resumeReview&&view==='review'&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
+      if(resumeReview&&view==='review'&&!settingsOpen&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
     } else if (kind === "appUpdateResult") {
       appUpdatePending = payload.state === 'started';
