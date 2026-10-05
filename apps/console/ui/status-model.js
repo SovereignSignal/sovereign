@@ -189,10 +189,16 @@ window.SovStatus = (() => {
     // job's one row: red and first when it failed, named and landing on the job.
     const here = n => !n.host || n.host === m.host, labelOf = n => String(n.text || "").split(/[:\s]/)[0];
     const jobRow = n => (n.kind === "job" || n.kind === "xcode-license") && here(n) && !!labelOf(n), named = new Set((D.needs_you || []).filter(jobRow).map(labelOf));
-    (D.needs_you || []).forEach((n, i) => { if(n.kind === "job" && here(n) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return;
+    (D.needs_you || []).forEach((n, i) => { if(n.kind === "client-intake" || n.kind === "job" && here(n) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return;
       const job = jobRow(n), failed = n.kind === "xcode-license" || n.kind === "job" && / last exited /.test(n.text || "");
       need.push({ state: failed ? "down" : "warn", name: job ? shortLabel(labelOf(n)) : n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, failure_output:n.failure_output, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: failed || n.kind === "host" ? 0 : 1, cause: "need:" + n.kind,
         jump: job ? (n.harness ? {view:"tools",id:n.harness} : {view:"jobs",id:labelOf(n)}) : n.host?{view:"hosts",id:n.host}:null }); });
+    // A client whose intake failed is one row, from the clients list, which disassociation
+    // filters; the service's own client-intake row names it only inside a sentence.
+    (D.clients || h.clients || []).filter(c => c.state === "error" || c.state === "rejected").forEach(c => need.push({ state: "down", name: String(c.client_id || "unknown"),
+      detail: "Intake needs attention: " + (c.reason || "see rejected items in the hub receipt."), why: "What this client sent was received but not imported into raw.",
+      action: "Open Sources → Map and inspect this client and its hub intake receipt. Correct the source or intake connection, then rerun the configured intake job.",
+      verify: "Refresh after the next intake; the client reports imported.", age_h: null, jump: { view: "system" }, order: 0, cause: "intake-failed", causeLabel: "had their intake fail" }));
     (D.jobs || []).filter(j => !coveredLocalJob(j) && !named.has(j.label)).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
     Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k,j]) => {
       const health = hubJob(j,D), paused = health.state === 'paused', pending = paused || health.state === 'awaiting_verification';
@@ -354,6 +360,7 @@ window.SovStatus = (() => {
     // A job the status service reports: it either failed, or ran and wrote to its error log.
     if (c === "need:job") return /error output/.test(r.detail || "") ? "errors logged" : /last exited|failed/.test(r.detail || "") ? "failed" : "";
     if (c === "job-failed") return "failed";
+    if (c === "intake-failed") return "intake failed";
     if (["mirror-late", "lane-late", "hub-job-late", "snapshot-late"].includes(c)) return r.age_h != null ? "silent " + age(r.age_h) : "late";
     if (c === "no-backup") return "no backup";
     if (c === "backup-stale") return "backup stale";

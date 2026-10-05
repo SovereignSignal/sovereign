@@ -294,3 +294,14 @@ for(const row of [{kind:'job',text:runnerLabel+' last exited 1. Check /tmp/runne
 // A job with only recent error output stays amber.
 assert.equal(assess({machine:{host:'here'},jobs:[{label:runnerLabel,last_exit:0}],needs_you:[{kind:'job',text:runnerLabel+': last run exited 0; error output was recorded within the last day.'}]}).need[0].state,'warn');
 console.log('A failed local job is one row, named by its job, red and first.');
+// A refused client intake is one row, named by its client, and gone with its device.
+const refusedClient={machine:{host:'here',vault:'/a',connected:true},clients:[{client_id:'field-laptop',state:'rejected',reason:'git_fetch_failed'},{client_id:'desk',state:'imported'}],
+ needs_you:[{kind:'client-intake',text:'Client intake needs attention: field-laptop',why:'w',action:'a',verify:'v'}]};
+const intake=assess(refusedClient).need;
+assert.equal(intake.length,1,'one refused client, one row');
+assert.equal(intake[0].name,'field-laptop');assert.equal(intake[0].state,'down');assert.equal(model.brief(intake[0]),'intake failed');
+assert.match(intake[0].detail,/git_fetch_failed/);
+assert.equal(assess({...refusedClient,clients:undefined,hub:{clients:refusedClient.clients}}).need.length,1,'the hub list serves an older status');
+const disassociated=model.associations({...refusedClient,device_associations:{available:true,scope:'/a',disassociated:['field-laptop']}});
+assert.equal(assess(disassociated).need.length,0,'a disassociated client raises nothing');
+console.log('A refused client intake is one row, and disassociation hides it.');

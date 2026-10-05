@@ -11,8 +11,9 @@ window.Home = (() => {
   // names of the views these destinations replaced.
   const PLACE={tools:'sources',lanes:'sources',glance:'sources'};
   // A row's action names where it lands, in one word.
-  const DEST={jobs:'Jobs',backups:'Backups',recovery:'Backups',hosts:'Sources',sources:'Sources',tools:'Sources',lanes:'Sources',archive:'Library'};
-  const go=(view,id,section)=>api.elsewhere({view:PLACE[view]||view,...(section?{section}:{}),...(id?{sel:{id}}:{})});
+  const DEST={jobs:'Jobs',backups:'Backups',recovery:'Backups',hosts:'Sources',sources:'Sources',tools:'Sources',lanes:'Sources',system:'Sources',archive:'Library'};
+  // The Map is a face of Sources that lives in this document.
+  const go=(view,id,section)=>view==='system'?api.map():api.elsewhere({view:PLACE[view]||view,...(section?{section}:{}),...(id?{sel:{id}}:{})});
   // Run a row's own action. The app cannot build from its own bundle, so an update hands
   // over this machine's source location; the updater refuses rather than guessing.
   function act(kind){
@@ -64,14 +65,11 @@ window.Home = (() => {
       headline(host,'','Not connected');
       const connect=element('button','Connect tools');connect.onclick=()=>go('sources');host.append(connect);return;
     }
-    const assessment=SovStatus.assess(status,localStorage),needs=assessment.need;
-    const refused=(status.clients||hub.clients||[]).filter(c=>c.state==='error'||c.state==='rejected'),count=needs.length+refused.length;
-    headline(host,refused.length||needs.some(n=>n.state==='down')?'down':count?'warn':'live',
+    const assessment=SovStatus.assess(status,localStorage),needs=assessment.need,count=needs.length;
+    headline(host,needs.some(n=>n.state==='down')?'down':count?'warn':'live',
       count?`${plural(count,'thing')} need${count===1?'s':''} you`:'All clear');
     if(count){
       const list=element('div',null,'plain-list today-needs');
-      for(const c of refused)list.append(item('intake:'+c.client_id,'down',c.client_id,'intake failed','Sources',()=>api.map(),
-        detail({detail:'Intake needs attention: '+(c.reason||'see rejected items in the hub receipt.'),why:'What this client sent was received but not imported into raw.',verify:'Refresh after the next intake; the client reports imported.'})));
       for(const need of needs){
         const source=need.need!=null?status.needs_you[need.need]:null,gate=source?.kind==='gate';
         const groupViews=[...new Set((need.members||[]).map(member=>member.jump?.view))];
