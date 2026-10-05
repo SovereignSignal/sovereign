@@ -8,6 +8,7 @@ legacy capsule reader remains available through sov hub restore.
 import contextlib
 import ctypes
 import errno
+import fcntl
 import hashlib
 import io
 import json
@@ -62,8 +63,20 @@ def file_hash(path):
     return h.hexdigest()
 
 
+def on_disk(folder):
+    """The folder's own spelling. Case, Unicode form and firmlinks give one folder many
+    spellings; its store key and the archive's textual checks need the one on disk."""
+    if not hasattr(fcntl, 'F_GETPATH'):
+        return folder
+    fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        return Path(os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b'\0', 1)[0]))
+    finally:
+        os.close(fd)
+
+
 def context(root):
-    root = directory(absolute(root))
+    root = on_disk(directory(absolute(root)))
     for required in ('CLAUDE.md', 'knowledge', 'raw', 'workstreams'):
         if not (root / required).exists():
             raise ValueError('Select a Sovereign archive.')

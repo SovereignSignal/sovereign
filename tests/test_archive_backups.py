@@ -207,6 +207,16 @@ class ArchiveBackups(unittest.TestCase):
                 self.assertTrue(b.operate(dict(protocol=1,root=str(root),action='status'))['remote'],pointer)
             hub.unlink();(state/'connectors.json').write_text(json.dumps({'machine':{'role':'hub'}}))
             self.assertEqual(b.operate(dict(protocol=1,root=str(root),action='status'),serve=True)['root'],str(root))
+    def test_hub_serves_one_store_however_the_request_spells_the_archive(self):
+        # A forwarded root that differs from the hub's own only by case, Unicode form or a
+        # firmlink is the same archive: same receipts, never a second, empty configuration.
+        self.configure();state=self.home/'state'
+        (self.home/'.brain-root').write_text(str(self.archive));(state/'connectors.json').write_text(json.dumps({'machine':{'role':'hub'}}))
+        own=b.operate(dict(protocol=1,root=str(self.archive),action='status'),serve=True)
+        for spelling in self.spellings(self.archive):
+            served=b.operate(dict(protocol=1,root=spelling,action='status'),serve=True)
+            self.assertEqual(len(served['destinations']),1,spelling);self.assertEqual(served.get('archive_id'),own.get('archive_id'),spelling)
+        self.assertEqual(len(list((state/'archive-backups').iterdir())),1,'one archive, one store')
     def test_folder_problems_are_sentences_not_codes(self):
         import contextlib
         link=self.base/'alias';link.symlink_to(self.folder)
