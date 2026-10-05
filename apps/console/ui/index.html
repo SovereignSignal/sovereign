@@ -1183,6 +1183,7 @@ window.onerror = function (msg, src, line, col) {
         ${j.stderr_lines && j.stderr_age_h > 24 ? `<div class="prose" style="color:var(--muted);margin-top:6px">Older than a day, so it is history rather than a task.</div>` : ""}</div>
       <div class="acts">
         <button data-act="kickstart" data-label="${esc(j.kick || j.label)}"${j.harness && j.kick && j.kick !== j.label ? ` data-lane="${esc(j.harness)}"` : ""}>Run now</button>
+        ${j.last_output ? `<button data-act="open" data-path="${esc(j.last_output)}">Open output</button>` : ""}
         ${j.stderr ? `<button data-act="open" data-path="${esc(j.stderr)}">Open log</button>` : ""}
         ${j.stderr_lines && /\.log$/.test(j.stderr || "") ? `<button class="danger" data-act="clearlog" data-path="${esc(j.stderr)}">Clear log</button>` : ""}</div>`;
   }
