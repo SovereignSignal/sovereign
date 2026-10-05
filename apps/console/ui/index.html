@@ -1294,9 +1294,11 @@ window.onerror = function (msg, src, line, col) {
   }
   // A bare name is a row id first (a tool), then a lane; "lane:<name>" is that lane. A lane
   // that a tool on this machine owns is listed as that tool, and a guest's sub-lane
-  // (parallels-<host>/<guest>) as the lane it sits in.
-  const findRow = (id, list = items()) => { const lane = String(id).replace(/^lane:/, "");
-    return list.find(i => i.id === id) || list.find(i => i.kind === "tool" && localTool(i.id)?.lane === lane) || list.find(i => i.id === "lane:" + lane)
+  // (parallels-<host>/<guest>) as the lane it sits in. A tool with no row of its own stands for
+  // its own lane, never for a lane that only shares its name (the hub's hermes lane is not the
+  // Hermes agent).
+  const findRow = (id, list = items()) => { const tool = !/^lane:/.test(id) && localTool(id), lane = tool ? tool.lane || "" : String(id).replace(/^lane:/, "");
+    return list.find(i => i.id === id) || (lane && (list.find(i => i.kind === "tool" && localTool(i.id)?.lane === lane) || list.find(i => i.id === "lane:" + lane)))
       || (lane.includes("/") ? findRow(lane.split("/")[0], list) : undefined); };
   function select(kind, id, open) {
     if (!sel || sel.id !== id) reviewTab = null;
