@@ -33,8 +33,9 @@ window.SovBackups=(()=>{
     if(apply)payload.token=result?.token;
     pending={request,op,apply};ready=false;post(payload);render();
   }
+  // #rows hosts every view, so a reply that lands after the owner moved on must not paint into another one.
   function render(){
-    if(!host?.isConnected)return;
+    if(!host?.isConnected||document.body.dataset.view!=='recovery')return;
     const dest=state?.destinations?.[0],busy=!!pending,remote=state?.remote,owner=state?.executor||state?.host;
     const hasState=state&&!state.error;
     const assessment=protection(state);

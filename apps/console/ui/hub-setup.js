@@ -22,8 +22,9 @@ window.SovHub=(()=>{
     else if(operation==='status')lines=Object.entries(p.receipts||{}).map(([name,v])=>name+': '+(v.state||(v.exit==null?'completed':'exit '+v.exit)));
     return lines.length?'<ul>'+lines.filter(Boolean).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'';
   }
+  // #rows hosts every view, so a reply that lands after the owner moved on must not paint into another one.
   function render(){
-    if(!host?.isConnected)return;
+    if(!host?.isConnected||document.body.dataset.view!=='setup')return;
     host.className='';
     host.innerHTML=`<div class="hub-form"><h2>Hub setup and recovery</h2><p>Archive: ${esc(root||'Open an archive first')}</p><label>Operation<select id="hub-operation" ${pending?'disabled':''}>${Object.entries(names).map(([k,n])=>`<option value="${k}" ${operation===k?'selected':''}>${n}</option>`).join('')}</select></label><p>${esc(explanations[operation])}</p><div class="fields">${fields[operation].map(f=>f==='job'?`<label>Job<select data-hub-field="job" ${pending?'disabled':''}><option value="nightly" ${values.job==='nightly'?'selected':''}>Curation</option><option value="audit" ${values.job==='audit'?'selected':''}>Structural audit</option></select></label>`:`<label>${esc(labels[f])}<input data-hub-field="${f}" value="${esc(values[f])}" ${pending?'disabled':''} autocomplete="off" spellcheck="false">${['config','key-file','capsule','folder'].includes(f)?`<button data-hub-pick="${f}" ${pending?'disabled':''}>Choose…</button>`:''}</label>`).join('')}</div>${operation==='activate'?`<label class="check"><input id="hub-single" type="checkbox" ${pending?'disabled':''} ${values.singleHub?'checked':''}>This will be the only active Hub for this archive.</label>`:''}<div class="acts"><button class="brass" id="hub-preview" ${pending||!root?'disabled':''}>${pending?'Working…':['status','doctor'].includes(operation)?'Check':'Preview'}</button><button id="hub-apply" ${!ready||pending?'disabled':''}>${esc(names[operation])}</button><button data-goto-view="jobs" ${pending?'disabled':''}>Back to Hub</button></div><p role="status">${pending?'The Hub operation is running.':result?.error?esc(result.error):result?.applied?(result.exit?'Failed':'Completed')+'. Review the result below.':ready?'Review the exact changes below, then apply.':''}</p>${summary(result)}${result?`<details><summary>Technical details</summary><pre aria-label="Hub operation result">${esc(JSON.stringify(result,null,2))}</pre></details>`:''}</div>`;
   }
@@ -44,7 +45,7 @@ window.SovHub=(()=>{
     if(b.id==='hub-apply'&&ready&&!pending)request(true);
     if(b.dataset.hubPick)post({cmd:'hubPick',field:b.dataset.hubPick,directory:b.dataset.hubPick==='folder'});
   });
-  return {get busy(){return !!pending;},mount(el,archive){const mounted=host===el&&root===archive&&el.querySelector('.hub-form');host=el;if(root!==archive){root=archive;ready=false;result=null;}if(!mounted)render();if(!home)post({cmd:'hubDefaults'});},deliver(kind,p){
+  return {get busy(){return !!pending;},mount(el,archive){const mounted=host===el&&root===archive&&el.querySelector('#hub-operation');host=el;if(root!==archive){root=archive;ready=false;result=null;}if(!mounted)render();if(!home)post({cmd:'hubDefaults'});},deliver(kind,p){
     if(kind==='hubDefaults'){home=p.home;values.destination||=home+'/Sovereign Hub';values.config||=values.destination+'/config.json';render();}
     if(kind==='hubPicked'){values[p.field]=p.path;ready=false;render();}
     if(kind==='hubResult'){if(!pending||p.request!==pending.request)return;const previous=pending;pending=null;result=p;ready=p.exit===0&&!p.error&&!previous?.apply&&!['status','doctor'].includes(previous?.command);if(p.applied&&p.config?.destination)values.config=p.config.destination+'/config.json';render();}

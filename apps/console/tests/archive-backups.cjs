@@ -1,5 +1,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-const context=vm.createContext({window:{},document:{addEventListener(){}},Date,Number});
+// The real module with a stub host and bridge. Clicks reach its document listener as they would in the page.
+const listeners={},sent=[];let uuid=0;
+const context=vm.createContext({window:{webkit:{messageHandlers:{sov:{postMessage:o=>sent.push(o)}}}},
+  document:{addEventListener(k,f){listeners[k]=f},querySelector:()=>null,body:{dataset:{view:'recovery'}}},crypto:{randomUUID:()=>'r'+(++uuid)},Date,Number,Object,String});
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/archive-backups.js'),'utf8'),context);
 const {protection,age}=context.window.SovBackups;
 const state=d=>({observed_at:2000,destinations:d?[d]:[]});
@@ -25,3 +28,20 @@ assert.equal(age(1000,173800),'2 days old');
 assert.equal(age(2000,1000),'Age unavailable');
 assert.equal(age(undefined,2000),'Age unavailable');
 console.log('Archive backup protection: unavailable, unconfigured, missing, legacy, untested, same-disk, restored and age states passed.');
+
+const backups=context.window.SovBackups;
+const host={isConnected:true,className:'',innerHTML:'',querySelector(s){return this.innerHTML.includes(s.replace(/^#/,'id="').replace(/^\./,''))?{}:null}};
+const last=()=>sent[sent.length-1];
+const click=(id,dataset={})=>listeners.click({target:{closest:()=>({id,dataset})}});
+const remote={remote:true,executor:'Hub-A',home:'/Users/owner',observed_at:2000,destinations:[{...saved,folder:'/Volumes/Disk/Backups',key:'/Users/owner/k.key',latest_restored:false}]};
+
+// A reply that lands after the owner has moved on stays out of the page that now holds the pane.
+backups.mount(host,'/archive/A');
+assert.equal(last().action,'status');
+context.document.body.dataset.view='settings';host.innerHTML='<div class="set-pane">Settings</div>';
+backups.deliver('archiveBackupResult',{request:last().request,...remote});
+assert.equal(host.innerHTML,'<div class="set-pane">Settings</div>');
+context.document.body.dataset.view='recovery';backups.mount(host,'/archive/A');
+assert.match(host.innerHTML,/Destination connected/,'coming back shows the reply that arrived meanwhile');
+console.log('Archive backups: a late reply never paints over another view.');
+
