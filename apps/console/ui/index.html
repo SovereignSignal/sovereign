@@ -1655,7 +1655,12 @@ window.onerror = function (msg, src, line, col) {
     if (kind === "status") {
       // Before every probe the bridge re-sends the observation already on screen, marked
       // pending. It changes the refreshing caption only: queue, selection, checks and forms stay.
-      if(!GLANCE&&payload._status?.pending&&!payload._status.error&&payload.machine&&D?.machine){const s={...D,_status:{...D._status,...payload._status}};$("#vmeta").textContent=SovStatus.seen(s);$("#vmeta").title=SovStatus.caption(s);return;}
+      // A device association or backup scope saved on this Mac rides along and applies at once.
+      if(!GLANCE&&payload._status?.pending&&!payload._status.error&&payload.machine&&D?.machine){
+        const local=v=>JSON.stringify([v.device_associations,v.backup_scope]),s={...D,_status:{...D._status,...payload._status}};
+        if(local(payload)!==local(D))payload={...payload,_status:D._status};
+        else{$("#vmeta").textContent=SovStatus.seen(s);$("#vmeta").title=SovStatus.caption(s);return;}
+      }
       const resumeReview=view==='review'&&!sel&&!reviewQueue().available;
       payload=SovStatus.retain(D,payload);
       // A status probe started before a decision can return its old queue afterwards.
