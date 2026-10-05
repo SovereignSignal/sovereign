@@ -31,7 +31,7 @@ window.SovBackups=(()=>{
     const request=crypto.randomUUID();const payload={cmd:'archiveBackup',protocol:1,root,action:op,apply,request,...extra};
     if(fields[op])for(const f of fields[op])payload[f]=values[f];
     if(apply)payload.token=result?.token;
-    pending={request,op,apply};ready=false;post(payload);render();
+    pending={request,op,apply,root};ready=false;post(payload);render();
   }
   // #rows hosts every view, so a reply that lands after the owner moved on must not paint into another one.
   function render(){
@@ -91,10 +91,12 @@ window.SovBackups=(()=>{
     if(b.id==='ab-use-folder'){values[browser.field]=browser.folder;browser=null;ready=false;result=null;render();}
     if(b.id==='ab-close-browser'){browser=null;render();}
   });
-  return {protection,age,get busy(){return !!pending;},mount(el,archive){const changed=root!==archive;host=el;if(changed){root=archive;action='configure';storage='external';state=null;result=null;ready=false;browser=null;for(const k in values)values[k]='';}render();if(!state&&!pending&&root)send('status');},deliver(kind,p){
+  return {protection,age,get busy(){return !!pending?.apply;},mount(el,archive){const changed=root!==archive;host=el;if(changed){root=archive;action='configure';storage='external';state=null;result=null;ready=false;browser=null;for(const k in values)values[k]='';}render();if(!state&&!pending&&root)send('status');},deliver(kind,p){
     if(kind==='archiveBackupPicked'){if(p.field in values){values[p.field]=p.path;ready=false;result=null;render();}return;}
     if(kind!=='archiveBackupResult'||p.request!==pending?.request)return;
     const old=pending;pending=null;
+    // Reads do not hold navigation, so another archive may be open by the time one answers.
+    if(old.root!==root){render();if(!state&&root)send('status');return;}
     if(old.op==='status'){const initial=!state;state=p.error?{...state,...p}:p;const d=p.destinations?.[0];values.folder=d?.folder||values.folder;values.key=d?.key||values.key||(p.home?p.home+'/sovereign-recovery.key':'');values.backup=d?.last_success?.backup_id?d.folder+'/'+d.last_success.backup_id+'.sovbackup':values.backup;if(d&&(initial||result?.state==='configured'||result?.state==='reconnected'))action='backup';render();return;}
     if(old.op==='browse'){if(p.error)result=p;else browser={...browser,...p};render();return;}
     result=p;ready=!old.apply&&!p.error&&p.exit===0&&!!p.token;

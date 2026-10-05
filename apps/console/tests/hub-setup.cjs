@@ -37,3 +37,21 @@ assert.match(host.innerHTML,/id="hub-operation"/);
 assert.match(status(),/Review the exact changes/,'coming back shows the reply that arrived meanwhile');
 console.log('Hub setup: a late reply never paints over another view, and Backups is not mistaken for it.');
 
+// A preview or check never holds navigation or quit; only an apply does.
+click('hub-preview');
+assert.equal(hub.busy,false,'a preview does not hold the owner');
+hub.deliver('hubResult',{request:sent.filter(m=>m.cmd==='hubOperation').pop().request,applied:false,exit:0,job:'nightly'});
+click('hub-apply');
+assert.equal(hub.busy,true,'an apply holds the owner');
+hub.deliver('hubResult',{request:sent.filter(m=>m.cmd==='hubOperation').pop().request,applied:true,exit:0,job:'nightly'});
+assert.equal(hub.busy,false);
+
+// A preview for one archive that answers after another was opened cannot be applied to it.
+click('hub-preview');
+req=sent.filter(m=>m.cmd==='hubOperation').pop();
+hub.mount(host,'/other');
+hub.deliver('hubResult',{request:req.request,applied:false,exit:0,job:'nightly'});
+assert.doesNotMatch(status(),/Review the exact changes/);
+assert.match(host.innerHTML,/id="hub-apply" disabled/);
+console.log('Hub setup: only an apply holds navigation, and a preview for another archive is dropped.');
+

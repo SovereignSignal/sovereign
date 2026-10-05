@@ -983,7 +983,14 @@ window.onerror = function (msg, src, line, col) {
     const refreshButton=$('#gate-refresh');if(refreshButton)refreshButton.onclick=()=>{gateChecks.clear();gotoGate();refresh()};
     const dismiss=$('#gate-dismiss');if(dismiss)dismiss.onclick=()=>notice.hidden=true;
   }
-  window.sovCanQuit=()=>{if(window.SovHub?.busy||window.SovBackups?.busy)return false;
+  // A change running on the archive host or the Hub holds navigation and quit until it
+  // answers; reads never do. Say why the click went nowhere, and clear it when it lands.
+  function holding(on){
+    const n=$('#gate-notice');if(!on){if(n.dataset.hold){n.hidden=true;delete n.dataset.hold;}return;}
+    n.hidden=false;n.className='gate-feedback running';n.dataset.hold='1';
+    n.innerHTML=`<strong>${window.SovHub?.busy?'Hub operation':'Backup'} running</strong><p>Navigation and quit wait for it to finish.</p>`;
+  }
+  window.sovCanQuit=()=>{if(window.SovHub?.busy||window.SovBackups?.busy){holding(true);return false;}
     if(pendingProducer?.running){$('#drawer').classList.add('open');return false;}
     if(!gatePending)return true;
     showGateNotice('running');return false;
@@ -1560,8 +1567,8 @@ window.onerror = function (msg, src, line, col) {
     }
   };
   function deliverInner(kind, payload) {
-    if(kind.startsWith('archiveBackup')){SovBackups.deliver(kind,payload);return;}
-    if(kind.startsWith('hub')){SovHub.deliver(kind,payload);return;}
+    if(kind.startsWith('archiveBackup')){SovBackups.deliver(kind,payload);if(!SovHub.busy&&!SovBackups.busy)holding(false);return;}
+    if(kind.startsWith('hub')){SovHub.deliver(kind,payload);if(!SovHub.busy&&!SovBackups.busy)holding(false);return;}
     if(kind==='discovery'){
       if(payload.request!==discoveryRequest)return;
       discoveryRequest=null;discovery=payload;

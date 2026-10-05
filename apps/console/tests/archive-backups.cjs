@@ -45,3 +45,29 @@ context.document.body.dataset.view='recovery';backups.mount(host,'/archive/A');
 assert.match(host.innerHTML,/Destination connected/,'coming back shows the reply that arrived meanwhile');
 console.log('Archive backups: a late reply never paints over another view.');
 
+// Reading never holds navigation or quit; only a change on the archive host does.
+click('ab-refresh');
+assert.equal(last().action,'status');
+assert.equal(backups.busy,false,'a status read does not hold the owner');
+backups.deliver('archiveBackupResult',{request:last().request,...remote,latest_restored:true});
+click('',{abAction:'backup'});click('ab-preview');
+assert.equal(last().apply,false);
+assert.equal(backups.busy,false,'a preview does not hold the owner');
+backups.deliver('archiveBackupResult',{request:last().request,action:'backup',exit:0,token:'t',files:1,source_bytes:1,host:'Hub-A'});
+click('ab-apply');
+assert.equal(last().apply,true);
+assert.equal(backups.busy,true,'a backup in progress holds the owner');
+backups.deliver('archiveBackupResult',{request:last().request,applied:true,state:'completed',exit:0});
+assert.equal(backups.busy,false);
+backups.deliver('archiveBackupResult',{request:last().request,...remote});
+
+// A read for one archive that answers after another was opened is not that archive's state.
+backups.mount(host,'/archive/B');
+const stale=sent.filter(m=>m.action==='status').length;
+backups.mount(host,'/archive/C');
+assert.equal(sent.filter(m=>m.action==='status').length,stale,'one read at a time');
+backups.deliver('archiveBackupResult',{request:last().request,...remote});
+assert.doesNotMatch(host.innerHTML,/Destination connected/,'B\'s reply is not shown for C');
+assert.deepEqual([last().action,last().root],['status','/archive/C'],'C is asked for its own status');
+console.log('Archive backups: only a change holds navigation, and a reply for another archive is dropped.');
+

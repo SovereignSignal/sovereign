@@ -45,9 +45,9 @@ window.SovHub=(()=>{
     if(b.id==='hub-apply'&&ready&&!pending)request(true);
     if(b.dataset.hubPick)post({cmd:'hubPick',field:b.dataset.hubPick,directory:b.dataset.hubPick==='folder'});
   });
-  return {get busy(){return !!pending;},mount(el,archive){const mounted=host===el&&root===archive&&el.querySelector('#hub-operation');host=el;if(root!==archive){root=archive;ready=false;result=null;}if(!mounted)render();if(!home)post({cmd:'hubDefaults'});},deliver(kind,p){
+  return {get busy(){return !!pending?.apply;},mount(el,archive){const mounted=host===el&&root===archive&&el.querySelector('#hub-operation');host=el;if(root!==archive){root=archive;ready=false;result=null;}if(!mounted)render();if(!home)post({cmd:'hubDefaults'});},deliver(kind,p){
     if(kind==='hubDefaults'){home=p.home;values.destination||=home+'/Sovereign Hub';values.config||=values.destination+'/config.json';render();}
     if(kind==='hubPicked'){values[p.field]=p.path;ready=false;render();}
-    if(kind==='hubResult'){if(!pending||p.request!==pending.request)return;const previous=pending;pending=null;result=p;ready=p.exit===0&&!p.error&&!previous?.apply&&!['status','doctor'].includes(previous?.command);if(p.applied&&p.config?.destination)values.config=p.config.destination+'/config.json';render();}
+    if(kind==='hubResult'){if(!pending||p.request!==pending.request)return;const previous=pending;pending=null;if(previous.root!==root){render();return;}result=p;ready=p.exit===0&&!p.error&&!previous?.apply&&!['status','doctor'].includes(previous?.command);if(p.applied&&p.config?.destination)values.config=p.config.destination+'/config.json';render();}
   }};
 })();

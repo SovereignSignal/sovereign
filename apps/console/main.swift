@@ -571,7 +571,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
 
     private func archiveBackup(_ request: [String: Any], generation: UUID) {
         func fail(_ message: String) { deliver("archiveBackupResult", ["error": message, "request": request["request"] ?? ""], generation: generation) }
-        guard !archiveBackupBusy, let resources = Bundle.main.resourceURL,
+        // A page that navigated away from a read and came back can ask while it still runs.
+        guard !archiveBackupBusy else { fail("The archive host is still answering an earlier request. Refresh in a moment."); return }
+        guard let resources = Bundle.main.resourceURL,
               let root = Settings.archive, let requested = request["root"] as? String,
               Settings.archiveKey(root) == Settings.archiveKey(requested),
               let action = request["action"] as? String,
@@ -611,7 +613,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
 
     private func hubOperation(_ request: [String: Any], generation: UUID) {
         func fail(_ message: String) { deliver("hubResult", ["error": message, "request": request["request"] ?? ""], generation: generation) }
-        guard !hubBusy, let resources = Bundle.main.resourceURL,
+        guard !hubBusy else { fail("An earlier Hub operation is still running. Try again when it finishes."); return }
+        guard let resources = Bundle.main.resourceURL,
               let command = request["command"] as? String,
               ["install", "key", "recovery", "snapshot", "restore", "status", "doctor", "activate", "run"].contains(command),
               let root = Settings.archive, let requestedRoot = request["root"] as? String,
