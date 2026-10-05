@@ -1238,6 +1238,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
                 else if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
             } catch {
                 Settings.lastError = "Open at login: \(error.localizedDescription)"
+                // Store what macOS has, so the box shows it and ticking it again is a change to retry.
+                Settings.loginItem = SMAppService.mainApp.status == .enabled
             }
         }
     }
