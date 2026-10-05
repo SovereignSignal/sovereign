@@ -1260,27 +1260,33 @@ window.onerror = function (msg, src, line, col) {
     requestAnimationFrame(() => bridge({ cmd: "glanceSize", h: Math.ceil(g.scrollHeight) }));
   }
 
-  // A pane the owner is in the middle of: a field has focus, or a control no longer shows what was drawn.
-  const inUse = (el) => [...el.querySelectorAll("input,select,textarea")].some(f => f === document.activeElement
-    || (f.type === "checkbox" || f.type === "radio" ? f.checked !== f.defaultChecked
-      : f.tagName === "SELECT" ? f.value !== ([...f.options].find(o => o.defaultSelected) || f.options[0] || {}).value : f.value !== f.defaultValue));
-  // Text typed into the detail survives its redraw: the same field, drawn again, gets it back,
-  // and the focused one its caret.
+  // A control the owner changed: it no longer shows what was drawn.
+  const edited = f => f.type === "checkbox" || f.type === "radio" ? f.checked !== f.defaultChecked
+    : f.tagName === "SELECT" ? f.value !== ([...f.options].find(o => o.defaultSelected) || f.options[0] || {}).value : f.value !== f.defaultValue;
+  const fields = () => [...document.querySelectorAll("#rows :is(input,select,textarea), #insp :is(input,select,textarea)")];
+  // A pane the owner is in the middle of: a field has focus, or a control was changed.
+  const inUse = (el) => [...el.querySelectorAll("input,select,textarea")].some(f => f === document.activeElement || edited(f));
+  // What the owner is in the middle of survives a redraw: a control drawn again gets back its
+  // changed value, and the focused one its focus and caret.
   function keepTyped(draw) {
-    const box = $("#insp"), a = document.activeElement;
-    const typed = [...box.querySelectorAll("input[id]")].filter(f => f === a || f.value !== f.defaultValue).map(f => [f.id, f.value, f === a && [f.selectionStart, f.selectionEnd]]);
+    const a = document.activeElement, key = f => f.id || f.name + "=" + f.value;
+    const kept = fields().filter(f => f === a || edited(f)).map(f => [key(f), f.value, f.checked, f === a && [f.selectionStart, f.selectionEnd]]);
     draw();
-    for (const [id, value, caret] of typed) {
-      const f = document.getElementById(id); if (!f || !box.contains(f)) continue;
-      f.value = value; if (caret) { f.focus(); try { f.setSelectionRange(caret[0], caret[1]); } catch (e) {} }
+    const now = fields();
+    for (const [k, value, checked, caret] of kept) {
+      const f = now.find(x => key(x) === k); if (!f) continue;
+      // A radio is restored by checking the chosen one, which unchecks the rest, as a click does.
+      if (f.type === "checkbox" || f.type === "radio") { if (f.checked !== checked && (checked || f.type === "checkbox")) { f.checked = checked; f.dispatchEvent(new Event("change", { bubbles: true })); } }
+      else f.value = value;
+      if (caret) { f.focus(); try { f.setSelectionRange(caret[0], caret[1]); } catch (e) {} }
     }
   }
-  // A status tick never redraws under the owner: the list pane waits while a form in it is
-  // in use, and the detail keeps what was typed into it.
-  function render(d, tick) {
+  // A status tick never redraws under the owner: both panes are drawn from the new status, and
+  // whatever the owner changed or was typing in is carried across.
+  function render(d) {
     D = d;
     if (GLANCE) return renderGlance();
-    renderTop(); keepTyped(() => { if (!tick || !inUse($("#rows"))) renderList(); renderInspector(); });
+    renderTop(); keepTyped(() => { renderList(); renderInspector(); });
     if(view==='discover'&&!discovery)scanTools();
     // The page's first place, held only until a jump in from the other page says where the owner went.
     if (hist.i < 0) { commit(); hist.boot = true; }
@@ -1709,7 +1715,7 @@ window.onerror = function (msg, src, line, col) {
       if(!gatePending)for(const [slug,entry] of gateChecks){
         if(entry.key!==GateModel.reviewKey(payload,slug)){gateChecks.delete(slug);gateResolutions.delete(slug);}
       }
-      render(payload,true);
+      render(payload);
       if(resumeReview&&view==='review'&&!settingsOpen&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
     } else if (kind === "appUpdateResult") {
