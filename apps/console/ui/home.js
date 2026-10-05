@@ -97,7 +97,7 @@ window.Home = (() => {
     tiles.append(tile('sources','Sources',c.producers.total?String(c.producers.delivering):'–',c.producers.total?' of '+c.producers.total:'',c.producers.total?(quiet?quiet+' quiet':'all delivering'):'none yet'));
     const snap=bk.snapshots?.newest_age_h,behind=(bk.remotes||[]).filter(r=>r.ahead>0).length;
     const [n,unit]=snap==null?['–','']:snap<1?[String(Math.max(1,Math.round(snap*60))),'m ago']:snap<48?[String(Math.round(snap)),'h ago']:[String(Math.round(snap/24)),'d ago'];
-    tiles.append(tile('recovery','Backup',n,unit,(bk.remotes||[]).length?(behind?(behind===1?'1 copy':behind+' copies')+' behind':'copies current'):'not reported'));
+    tiles.append(tile('backups','Backup',n,unit,(bk.remotes||[]).length?(behind?(behind===1?'1 copy':behind+' copies')+' behind':'copies current'):'not reported'));
     host.append(tiles);
   }
   function render(){
