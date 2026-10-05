@@ -210,12 +210,12 @@ window.SovStatus = (() => {
     // next step points.
     // The hub by the name the fleet and Devices know it: the pointer's alias, then its host name.
     const hubName = (m.hub_pointer || '').split(':')[0] || h.hub_host, tool = id => ((D.harnesses || []).find(x => x.id === id) || {}).name || id;
-    const KIND_VIEW = { hypervisor: "backups", relay: "backups", "runner-stalled": "jobs", "runner-standing-down": "jobs" };
+    const KIND_VIEW = { archive: "archive", hypervisor: "backups", relay: "backups", "runner-stalled": "jobs", "runner-standing-down": "jobs" };
     const here = n => !n.host || n.host === m.host, labelOf = n => String(n.text || "").split(/[:\s]/)[0];
     const jobRow = n => (n.kind === "job" || n.kind === "xcode-license") && here(n) && !!labelOf(n), named = new Set((D.needs_you || []).filter(jobRow).map(labelOf));
     (D.needs_you || []).forEach((n, i) => { if(n.kind === "client-intake" || n.kind === "job" && here(n) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return;
-      const job = jobRow(n), down = n.kind === "xcode-license" || n.kind === "job" && / last exited (?!0\b)/.test(n.text || "") || ["host", "hub", "runner-stalled"].includes(n.kind);
-      need.push({ state: down ? "down" : "warn", name: job ? shortLabel(labelOf(n)) : n.harness ? tool(n.harness) : n.kind === "hub" ? "Hub" : /^runner-/.test(n.kind) ? "runner" : n.host || n.lane || n.node || n.kind,
+      const job = jobRow(n), down = n.kind === "xcode-license" || n.kind === "job" && / last exited (?!0\b)/.test(n.text || "") || ["archive", "host", "hub", "runner-stalled"].includes(n.kind);
+      need.push({ state: down ? "down" : "warn", name: job ? shortLabel(labelOf(n)) : n.harness ? tool(n.harness) : n.kind === "hub" ? "Hub" : n.kind === "archive" ? "Archive" : /^runner-/.test(n.kind) ? "runner" : n.host || n.lane || n.node || n.kind,
         detail: n.text, why:n.why, failure_output:n.failure_output, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: down ? 0 : 1, cause: "need:" + n.kind,
         jump: n.harness ? {view:"tools",id:n.harness} : job ? {view:"jobs",id:labelOf(n)} : n.host ? {view:"hosts",id:n.host} : n.kind === "hub" ? {view:"hosts",id:hubName} : KIND_VIEW[n.kind] ? {view:KIND_VIEW[n.kind]} : null }); });
     // A client whose intake failed is one row, from the clients list, which disassociation
@@ -288,7 +288,7 @@ window.SovStatus = (() => {
     const now = {}; hosts.forEach(x => { if (x.net && x.net.online != null) now[x.host] = x.net.online; if (x.net && x.net.online && prev[x.host] === false) fresh.push({ state: "live", name: x.host, detail: "came back", age_h: null, jump: { view: "hosts", id: x.host } }); });
     try { storage.setItem("sov.online", JSON.stringify(now)); } catch (e) {}
     // Derived alerts follow the same explanation contract as service-produced rows.
-    const where = v => ({ tools: "Sources", hosts: "Sources → Devices", system: "Sources → Map", backups: "Backups → Copies" })[v] || "Settings → Jobs";
+    const where = v => ({ tools: "Sources", hosts: "Sources → Devices", system: "Sources → Map", backups: "Backups → Copies", archive: "Library" })[v] || "Settings → Jobs";
     for(const r of [...need,...stale]){
       const place=where(r.jump?.view);
       const guidance=r.cause==='no-backup'?
@@ -396,6 +396,7 @@ window.SovStatus = (() => {
     if (c === "backup-stale") return "backup stale";
     if (c === "backup-unscheduled") return "not scheduled";
     if (c === "backup-unknown" || c === "need:hypervisor") return "backup unknown";
+    if (c === "need:archive") return "unreadable";
     if (c === "need:xcode-license") return "cannot start";
     if (c === "need:runner-stalled") return "stalled";
     if (c === "need:runner-standing-down") return "standing down";

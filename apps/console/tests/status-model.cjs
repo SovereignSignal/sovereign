@@ -357,3 +357,9 @@ const assocLanes=model.associations({machine:{host:'here',vault:'/a'},device_ass
 const producers=assess(assocLanes).completeness.producers;
 assert.equal(producers.total,2);assert.equal(producers.delivering,1);
 console.log('Completeness: lanes on disassociated devices are not counted.');
+// An archive the status service could not read is the worst thing on Today: red, named,
+// two words, and landing on Library, which shows the error, never on Sources.
+const unreadable=assess({machine:{host:'here'},needs_you:[{kind:'archive',text:'The archive could not be read: archive folder not found. It is configured at /a.'}]}).need[0];
+assert.equal(unreadable.name,'Archive');assert.equal(unreadable.state,'down');assert.equal(model.brief(unreadable),'unreadable');
+assert.equal(unreadable.jump.view,'archive');assert.match(unreadable.action,/Library/);
+console.log('An unreadable archive is one red row that lands on Library.');
