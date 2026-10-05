@@ -41,9 +41,11 @@
   assert('the map is a face of Sources',$('sources-tab').getAttribute('aria-pressed')==='true'&&!!document.querySelector('#controls [data-view="system"][aria-pressed="true"]'));
   assert('restored archive repopulates dynamic map',!!view().querySelector('[data-node="tool:read"]'));
   view().querySelector('[aria-label="Zoom in"]').click();view().querySelector('[aria-label="Fit environment"]').click();
-  const fit=view().querySelector('.sv-world-map').getBoundingClientRect().width,pane=view().querySelector('.sv-map-scroll').clientWidth;
-  assert('Fit fills the map pane, down to the width that keeps labels legible',Math.abs(fit-Math.max(pane,861))<=1);
-  assert('map labels stay legible at Fit',10*fit/1050>=8);
+  const map=view().querySelector('.sv-world-map'),fit=map.getBoundingClientRect().width,scroller=view().querySelector('.sv-map-scroll'),pane=scroller.clientWidth,W=map.viewBox.baseVal.width;
+  assert('Fit fills the map pane, down to the width that keeps labels legible',Math.abs(fit-Math.max(pane,Math.round(W*.82)))<=1);
+  assert('map labels stay legible at Fit',10*fit/W>=8);
+  const box=scroller.getBoundingClientRect();
+  assert('a layout that fits its pane shows every device at Fit',W*.82>pane||[...map.querySelectorAll('[data-node^="device:"]')].every(g=>{const r=g.getBoundingClientRect();return r.left>=box.left-1&&r.right<=box.right+1;}));
   assert('no page-level horizontal overflow',document.documentElement.scrollWidth<=document.documentElement.clientWidth);
  }catch(e){failures.push(String(e.stack||e))}
  window.webkit.messageHandlers.sov.postMessage({cmd:'clientError',where:'system-qa',msg:JSON.stringify({checks,failures})});

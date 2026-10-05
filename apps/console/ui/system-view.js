@@ -45,14 +45,19 @@ window.SystemView=(()=>{
       const toolbar=E('div',null,'sv-map-toolbar');toolbar.append(E('span',[[m.devices.length,'device'],[m.tools.length,'tool']].map(([k,w])=>k+' '+w+(k===1?'':'s')).join(' · '),'sv-map-count'));
       const controls=E('div');for(const[label,fn]of[['−',()=>{zoom=Math.max(.7,zoom-.2);rerender();}],['Fit',()=>{zoom=1;worldScroll={top:0,left:0};rerender();}],['+',()=>{zoom=Math.min(2.4,zoom+.2);rerender();}]]){const b=B(label,fn);b.setAttribute('aria-label',label==='−'?'Zoom out':label==='+'?'Zoom in':'Fit environment');controls.append(b);}toolbar.append(controls);stage.append(toolbar);
       const scroll=E('div',null,'sv-map-scroll');scroll.setAttribute('aria-label','Scrollable environment map');scroll.tabIndex=0;
-      const peripheral=[...m.tools,...m.clients,...m.nodes.filter(x=>x.kind==='relay')],devices=m.devices;
-      const height=Math.max(610,180+Math.max(Math.ceil(peripheral.length/2),Math.ceil(devices.length/3))*110),positions=new Map();
-      peripheral.forEach((x,i)=>positions.set(x.id,{x:105+(i%2)*170,y:145+Math.floor(i/2)*110}));
-      devices.forEach((x,i)=>positions.set(x.id,{x:748+(i%3)*110,y:145+Math.floor(i/3)*110}));
-      positions.set('archive',{x:525,y:height*.49});positions.set('app',{x:525,y:height*.77});if(m.hub)positions.set('hub',{x:525,y:120});
-      const svg=S('svg',{viewBox:'0 0 1050 '+height,role:'group','aria-label':'Spatial map of '+m.archive.name,class:'sv-world-map'});svg.style.width='max('+zoom*100+'%,'+Math.round(zoom*1050*legible)+'px)';
-      const defs=S('defs'),pattern=S('pattern',{id:'sv-grid',width:60,height:30,patternUnits:'userSpaceOnUse'});pattern.append(S('path',{d:'M0 15L30 0L60 15L30 30Z',fill:'none',stroke:'var(--sv-grid)', 'stroke-width':.6}));defs.append(pattern);svg.append(defs,S('rect',{width:1050,height,fill:'url(#sv-grid)'}));
-      for(const[x,w,title]of[[25,340,'TOOLS & ARCHIVE ACCESS'],[415,220,'ARCHIVE & CONTROL'],[695,330,'DEVICES & PRODUCERS']]){svg.append(S('rect',{x,y:48,width:w,height:height-85,rx:22,class:'sv-zone'}),S('text',{x:x+18,y:78,class:'sv-zone-title'},title));}
+      // Laid out for its pane: it is measured before the drawing, and the columns are the fewest rows that fit at the legible
+      // scale (one or two of tools, two or three of devices), so a narrow window scrolls down to a device, not sideways.
+      stage.append(scroll);layout.append(stage,overview(n));host.append(layout);
+      const peripheral=[...m.tools,...m.clients,...m.nodes.filter(x=>x.kind==='relay')],devices=m.devices,room=scroll.clientWidth/legible;
+      const plan=(tc,dc)=>{const tw=tc===2?340:190,ax=25+tw+(tc===2?50:30),dx=ax+220+(tc===2?60:40);return {tc,dc,tw,ax,dx,width:dx+110*dc+25,height:Math.max(610,180+Math.max(Math.ceil(peripheral.length/tc),Math.ceil(devices.length/dc))*110)};};
+      const plans=[plan(2,3),plan(2,2),plan(1,3),plan(1,2)],fits=plans.filter(p=>p.width<=room);
+      const {tc,dc,tw,ax,dx,width,height}=!room?plans[0]:fits.length?fits.sort((a,b)=>a.height-b.height||b.width-a.width)[0]:plans[3],mid=ax+110,positions=new Map();
+      peripheral.forEach((x,i)=>positions.set(x.id,{x:105+(tw-170*tc)/2+(i%tc)*170,y:145+Math.floor(i/tc)*110}));
+      devices.forEach((x,i)=>positions.set(x.id,{x:dx+53+(i%dc)*110,y:145+Math.floor(i/dc)*110}));
+      positions.set('archive',{x:mid,y:height*.49});positions.set('app',{x:mid,y:height*.77});if(m.hub)positions.set('hub',{x:mid,y:120});
+      const svg=S('svg',{viewBox:'0 0 '+width+' '+height,role:'group','aria-label':'Spatial map of '+m.archive.name,class:'sv-world-map'});svg.style.width='max('+zoom*100+'%,'+Math.round(zoom*width*legible)+'px)';
+      const defs=S('defs'),pattern=S('pattern',{id:'sv-grid',width:60,height:30,patternUnits:'userSpaceOnUse'});pattern.append(S('path',{d:'M0 15L30 0L60 15L30 30Z',fill:'none',stroke:'var(--sv-grid)', 'stroke-width':.6}));defs.append(pattern);svg.append(defs,S('rect',{width,height,fill:'url(#sv-grid)'}));
+      for(const[x,w,title]of[[25,tw,'TOOLS & ARCHIVE ACCESS'],[ax,220,'ARCHIVE & CONTROL'],[dx,110*dc,'DEVICES & PRODUCERS']]){svg.append(S('rect',{x,y:48,width:w,height:height-85,rx:22,class:'sv-zone'}),S('text',{x:x+18,y:78,class:'sv-zone-title'},title));}
       // Environment folds lane nodes into association paths; Flow retains every reported hop.
       const paths=[];for(const e of m.edges){if(positions.has(e.from)&&positions.has(e.to))paths.push({from:e.from,to:e.to,edges:[e],role:e.role});else if(positions.has(e.from)&&['lane','intake'].includes(byId.get(e.to)?.kind)){for(const out of m.edges.filter(x=>x.from===e.to&&positions.has(x.to)))paths.push({from:e.from,to:out.to,edges:[e,out],role:e.role});}}
       for(const p of paths){const a=positions.get(p.from),b=positions.get(p.to),active=p.from===selected||p.to===selected,mid=(a.x+b.x)/2;
@@ -64,8 +69,8 @@ window.SystemView=(()=>{
         if(big)for(const dy of[-8,-19,-30])g.append(S('path',{d:`M-65 ${dy} L0 ${dy+25} L65 ${dy}`,class:'sv-core-layer'}));
         g.append(S('circle',{cx:0,cy:-z,r:big?6:3,class:'sv-node-light'}),S('text',{x:0,y:big?58:45,'text-anchor':'middle',class:'sv-node-name'},short(target.name,big?25:target.kind==='device'?14:22)),S('text',{x:0,y:big?77:61,'text-anchor':'middle',class:'sv-node-kind'},big?(m.pending==null?'REVIEW UNVERIFIED':m.pending+' AWAITING REVIEW'):(target.role?kind(target)+' · '+label:label)));
         g.onclick=()=>choose(id);g.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose(id);host.querySelector('[data-node="'+CSS.escape(id)+'"]')?.focus({preventScroll:true});}};svg.append(g);}
-      scroll.append(svg);stage.append(scroll);scroll.onscroll=()=>{worldScroll={top:scroll.scrollTop,left:scroll.scrollLeft};};requestAnimationFrame(()=>{if(scroll.isConnected){scroll.scrollTop=worldScroll.top;scroll.scrollLeft=worldScroll.left;}});
-      const legend=E('div',null,'sv-legend');legend.append(E('span','● Context access','context'),E('span','● Collection / control','capture'),E('span','┄ Grouped lane relationship'),E('span','Select a component to follow its paths'));stage.append(legend);layout.append(stage,overview(n));host.append(layout);
+      scroll.append(svg);scroll.onscroll=()=>{worldScroll={top:scroll.scrollTop,left:scroll.scrollLeft};};requestAnimationFrame(()=>{if(scroll.isConnected){scroll.scrollTop=worldScroll.top;scroll.scrollLeft=worldScroll.left;}});
+      const legend=E('div',null,'sv-legend');legend.append(E('span','● Context access','context'),E('span','● Collection / control','capture'),E('span','┄ Grouped lane relationship'),E('span','Select a component to follow its paths'));stage.append(legend);
     }else if(pane==='flow'){
       const layout=E('div',null,'sv-flow-layout'),rail=E('aside',null,'sv-route-list');rail.append(E('div','ROUTES / '+n.name,'sv-eyebrow'));
       const selector=E('select');selector.setAttribute('aria-label','Component to trace');for(const c of m.nodes){const o=E('option',c.name);o.value=c.id;o.selected=c.id===selected;selector.append(o);}selector.onchange=()=>choose(selector.value,'flow');rail.append(selector);
