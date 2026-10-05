@@ -24,4 +24,23 @@ assert.equal(age(1000,11800),'3 hours old');
 assert.equal(age(1000,173800),'2 days old');
 assert.equal(age(2000,1000),'Age unavailable');
 assert.equal(age(undefined,2000),'Age unavailable');
-console.log('Archive backup protection: unavailable, unconfigured, missing, legacy, untested, same-disk, restored and age states passed.');
+// A status refresh mounts the pane again. A drawn form is left alone, so focus, typed paths
+// and open disclosures survive; after another view used the pane it is drawn again.
+const posts=[];let uuid=0;
+const live=vm.createContext({window:{webkit:{messageHandlers:{sov:{postMessage:m=>posts.push(m)}}}},document:{addEventListener(){},querySelector(){return null},body:{dataset:{view:'recovery'}}},crypto:{randomUUID:()=>'r'+(++uuid)},Date,Number});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/archive-backups.js'),'utf8'),live);
+const backups=live.window.SovBackups;
+const pane=()=>({isConnected:true,className:'',renders:0,html:'',set innerHTML(v){this.html=v;this.renders++;},get innerHTML(){return this.html;},
+  get firstElementChild(){const m=/^<(\w+) class="([^"]*)"/.exec(this.html);return m?{classList:{contains:c=>m[2].split(' ').includes(c)}}:null;}});
+const rows=pane();
+backups.mount(rows,'/archive');
+assert.deepEqual(posts.map(p=>p.action),['status']);
+backups.deliver('archiveBackupResult',{request:posts[0].request,protocol:1,destinations:[],observed_at:2000,exit:0});
+const drawn=rows.renders;
+backups.mount(rows,'/archive');backups.mount(rows,'/archive');
+assert.equal(rows.renders,drawn,'a refresh does not rebuild a drawn form');
+assert.equal(posts.length,1);
+rows.html='<div class="set-pane"></div>';
+backups.mount(rows,'/archive');
+assert.equal(rows.renders,drawn+1,'the form is drawn again after another view used the pane');
+console.log('Archive backup protection: unavailable, unconfigured, missing, legacy, untested, same-disk, restored and age states, and a refresh that keeps the drawn form, passed.');
