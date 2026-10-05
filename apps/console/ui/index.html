@@ -1005,7 +1005,7 @@ window.onerror = function (msg, src, line, col) {
   function holding(on){
     const n=$('#gate-notice');if(!on){if(n.dataset.hold){n.hidden=true;delete n.dataset.hold;}return;}
     n.hidden=false;n.className='gate-feedback running';n.dataset.hold='1';
-    n.innerHTML=`<strong>${window.SovHub?.busy?'Hub operation':'Backup'} running</strong><p>Navigation and quit wait for it to finish.</p>`;
+    n.innerHTML=`<strong>${esc(window.SovHub?.busy?'Hub operation':window.SovBackups?.operation||'Backup')} running</strong><p>Navigation and quit wait for it to finish.</p>`;
   }
   window.sovCanQuit=()=>{if(window.SovHub?.busy||window.SovBackups?.busy){holding(true);return false;}
     if(pendingProducer?.running){$('#drawer').classList.add('open');return false;}

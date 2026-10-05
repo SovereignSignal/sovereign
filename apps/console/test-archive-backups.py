@@ -33,7 +33,7 @@ if(SCENE==='narrow'){
  check('No horizontal page overflow',document.documentElement.scrollWidth<=innerWidth);
  check('No horizontal form overflow',document.querySelector('#rows').scrollWidth<=document.querySelector('#rows').clientWidth);
 }else{
- apply().click();check('A running change holds navigation and says so',!window.sovCanQuit()&&document.querySelector('#gate-notice').textContent.includes('Backup running'));
+ apply().click();check('A running change holds navigation and says so',!window.sovCanQuit()&&document.querySelector('#gate-notice').textContent.includes('Destination change running'));
  await wait(()=>document.querySelector('.ab-card')&&settled());check('The hold clears when it lands',document.querySelector('#gate-notice').hidden);
  check('Destination saved on correct host',replies.some(r=>r.state==='configured'&&r.applied));
  check('Configured archive opens backup action',document.querySelector('[data-ab-action="backup"]').getAttribute('aria-pressed')==='true');

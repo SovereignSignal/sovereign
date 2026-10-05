@@ -6,6 +6,8 @@ window.SovBackups=(()=>{
   const post=o=>window.webkit.messageHandlers.sov.postMessage(o);
   const stamp=t=>t?new Date(t*1000).toLocaleString():'None recorded';
   const names={backup:'Back up now',restore:'Restore to a new folder',verify:'Check saved backup',reconnect:'Reconnect folder',configure:'Save destination'};
+  // What a running change is called where navigation says it is waiting for it.
+  const running={backup:'Backup',restore:'Restore',verify:'Backup check',reconnect:'Reconnect',configure:'Destination change'};
   const fields={configure:['folder','key'],reconnect:['folder'],backup:[],verify:['backup'],restore:['backup','key','destination']};
   const labels={folder:'Backup folder',key:'Recovery key file',backup:'Backup file',destination:'New restore folder'};
   const storageChoices={external:['External drive','Connect your USB or external drive to the archive computer. Choose a dedicated folder on that drive.'],network:['NAS or network folder','Connect the shared folder in Finder on the archive computer, then choose a folder inside it.'],folder:['Folder on this computer','Choose a folder outside the archive. A copy on the same disk cannot protect against that disk failing.']};
@@ -96,7 +98,7 @@ window.SovBackups=(()=>{
     if(b.id==='ab-use-folder'){values[browser.field]=browser.field==='destination'?browser.folder.replace(/\/$/,'')+'/Restored Sovereign':browser.folder;browser=null;ready=false;result=null;render();}
     if(b.id==='ab-close-browser'){browser=null;render();}
   });
-  return {protection,age,get busy(){return !!pending?.apply;},mount(el,archive){const changed=root!==archive,drawn=!changed&&host===el&&el.firstElementChild?.classList.contains('archive-backups');host=el;if(changed){root=archive;action='configure';storage='external';state=null;result=null;ready=false;browser=null;for(const k in values)values[k]='';}if(!drawn)render();if((!state||state.error)&&!pending&&root)send('status',false,{},drawn);},deliver(kind,p){
+  return {protection,age,get busy(){return !!pending?.apply;},get operation(){return pending?.apply?running[pending.op]:null;},mount(el,archive){const changed=root!==archive,drawn=!changed&&host===el&&el.firstElementChild?.classList.contains('archive-backups');host=el;if(changed){root=archive;action='configure';storage='external';state=null;result=null;ready=false;browser=null;for(const k in values)values[k]='';}if(!drawn)render();if((!state||state.error)&&!pending&&root)send('status',false,{},drawn);},deliver(kind,p){
     if(kind==='archiveBackupPicked'){if(p.field in values){values[p.field]=p.path;ready=false;result=null;render();}return;}
     if(kind!=='archiveBackupResult'||p.request!==pending?.request)return;
     const old=pending;pending=null;
