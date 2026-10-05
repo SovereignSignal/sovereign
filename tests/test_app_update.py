@@ -14,6 +14,14 @@ def bundle(path, version, build, commit):
     if commit is not None:
         d["SovereignSourceCommit"] = commit
     (path / "Contents/Info.plist").write_bytes(plistlib.dumps(d))
+def commits(checkout):
+    subprocess.run(["git", "-C", str(checkout), "init", "-q"], check=True)
+    def commit(message):
+        subprocess.run(["git", "-C", str(checkout), "-c", "user.email=t@t", "-c", "user.name=t",
+                        "commit", "-q", "--allow-empty", "-m", message], check=True)
+        return subprocess.run(["git", "-C", str(checkout), "log", "-1", "--format=%h"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+    return commit
 def run(home, *args):
     env = dict(os.environ, HOME=str(home))
     cp = subprocess.run([sys.executable, str(UPD), *args], env=env, capture_output=True, text=True)
@@ -92,7 +100,6 @@ class AppUpdatePreview(unittest.TestCase):
         import shutil
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp); app = home / "Applications/Sovereign.app"
-            bundle(app, "1.0.0", "7", "aaaaaaa")
             (app / "Contents/Resources/runtime/bin").mkdir(parents=True)
             (app / "Contents/Resources/runtime/bin/python3").write_text("")
             inside = app / "Contents/Resources/backend/bin"; inside.mkdir(parents=True)
@@ -101,9 +108,9 @@ class AppUpdatePreview(unittest.TestCase):
             marker = checkout / "build-ran-here"
             (checkout / "apps/console/build.sh").write_text(
                 "#!/bin/bash\ntouch '%s'\necho 'stop here' >&2\nexit 1\n" % marker)
-            subprocess.run(["git", "-C", str(checkout), "init", "-q"], check=True)
-            subprocess.run(["git", "-C", str(checkout), "-c", "user.email=t@t", "-c", "user.name=t",
-                            "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+            git = commits(checkout)
+            bundle(app, "1.0.0", "7", git("older"))
+            git("newer")
             env = dict(os.environ, HOME=str(home))
             def go(*args):
                 cp = subprocess.run([sys.executable, str(inside / "sov-app-update"), *args],
@@ -129,6 +136,29 @@ class AppUpdatePreview(unittest.TestCase):
                 apply('ok')
             self.assertEqual(run.call_count, 1, 'failure must stop before quit or installation')
 
+    def test_an_older_or_other_source_is_never_offered_or_installed(self):
+        # Unequal is not newer. An app built from a worktree or a later branch differs from an
+        # older checkout, and rebuilding that checkout would quietly install an older Sovereign.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp); app = home / "Applications/Sovereign.app"
+            (app / "Contents/Resources/runtime/bin").mkdir(parents=True)
+            (app / "Contents/Resources/runtime/bin/python3").write_text("")
+            checkout = home / "src"; (checkout / "apps/console").mkdir(parents=True)
+            marker = checkout / "build-ran"
+            (checkout / "apps/console/build.sh").write_text("#!/bin/bash\ntouch '%s'\nexit 1\n" % marker)
+            git = commits(checkout); older = git("older"); newer = git("newer")
+            subprocess.run(["git", "-C", str(checkout), "checkout", "-q", older], check=True)
+            for installed in (newer, newer + "+local", "fffffff"):
+                bundle(app, "0.6.0", "39", installed)
+                _, prev = run(home, "--preview", "--template", str(checkout))
+                self.assertTrue(prev["current"], installed); self.assertIn("nothing newer", prev["summary"])
+                code, out = run(home, "--apply", "--token", prev["token"], "--template", str(checkout))
+                self.assertEqual(code, 1); self.assertIn("nothing newer", out["error"])
+                self.assertFalse(marker.exists(), "an older source must never be built over a newer app")
+            bundle(app, "0.5.16", "38", older)
+            subprocess.run(["git", "-C", str(checkout), "checkout", "-q", newer], check=True)
+            _, prev = run(home, "--preview", "--template", str(checkout))
+            self.assertFalse(prev["current"]); self.assertIn("Build Sovereign", prev["summary"])
     def test_an_absent_app_still_previews_rather_than_crashing(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, out = run(Path(tmp), "--preview")
