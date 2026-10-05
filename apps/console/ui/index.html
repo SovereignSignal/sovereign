@@ -1210,7 +1210,7 @@ window.onerror = function (msg, src, line, col) {
   function commit() {
     const p = place();
     if (samePlace(hist.stack[hist.i], p)) return;
-    hist.stack = hist.stack.slice(0, hist.i + 1); hist.stack.push(p); hist.i = hist.stack.length - 1;
+    hist.stack = hist.stack.slice(0, hist.i + 1); hist.stack.push(p); hist.i = hist.stack.length - 1; hist.boot = false;
   }
   function applyPlace(p) {
     settingsOpen = !!p.settings; view = p.view; renderTop();
@@ -1260,7 +1260,8 @@ window.onerror = function (msg, src, line, col) {
     if (GLANCE) return renderGlance();
     renderTop(); renderList(); renderInspector();
     if(view==='discover'&&!discovery)scanTools();
-    if (hist.i < 0) commit();
+    // The page's first place, held only until a jump in from the other page says where the owner went.
+    if (hist.i < 0) { commit(); hist.boot = true; }
   }
   // A lane that a tool on this machine owns is listed as that tool.
   const findRow = (id) => { const list = items(); return list.find(i => i.id === id) || list.find(i => i.kind === "tool" && localTool(i.id)?.lane === id); };
@@ -1709,6 +1710,7 @@ window.onerror = function (msg, src, line, col) {
     } else if (kind === "goto") {
       if(!window.sovCanQuit())return;
       if (!D && !payload.settings) { pendingGoto = payload; return; }
+      if (hist.boot) { hist.stack = []; hist.i = -1; hist.boot = false; }   // a jump in replaces the default it loaded on
       if (payload.settings) return openSettings();
       if (payload.snapshot) return window.sovView(payload.snapshot);
       if (payload.view === "review" && !payload.sel) return gotoGate();
