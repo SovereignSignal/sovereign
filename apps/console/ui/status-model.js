@@ -269,8 +269,9 @@ window.SovStatus = (() => {
     const now = {}; hosts.forEach(x => { if (x.net && x.net.online != null) now[x.host] = x.net.online; if (x.net && x.net.online && prev[x.host] === false) fresh.push({ state: "live", name: x.host, detail: "came back", age_h: null, jump: { view: "hosts", id: x.host } }); });
     try { storage.setItem("sov.online", JSON.stringify(now)); } catch (e) {}
     // Derived alerts follow the same explanation contract as service-produced rows.
+    const where = v => ({ tools: "Sources", hosts: "Sources → Devices", system: "Sources → Map", backups: "Backups → Copies" })[v] || "Settings → Jobs";
     for(const r of [...need,...stale]){
-      const place=r.jump?.view==='tools'?'Sources':r.jump?.view==='hosts'?'Sources → Devices':r.jump?.view==='backups'?'Backups → Copies':'Settings → Jobs';
+      const place=where(r.jump?.view);
       const guidance=r.cause==='no-backup'?
         ['The node returned no recorded backup dump for this VM. A configured job alone does not prove a completed backup.', 'Open Backups → Copies and inspect this VM’s backup job and last dump. Arrange a backup with the node administrator if none exists.', 'Refresh after the next successful backup; the VM shows a recent last backup age.']:
         r.detail==='pushed, awaiting hub acceptance'?
@@ -295,8 +296,10 @@ window.SovStatus = (() => {
     };
     const needG = collapse(need, (cause, rows) => {
       const label = rows[0].causeLabel || (cause === "job-failed" ? "failed their last run" : cause === "unreachable" ? "are unreachable" : cause === "mirror-late" ? "are past twice their mirror cadence" : "need a look");
-      return { state: rows.some(r => r.state === "down") ? "down" : "warn", name: `${rows.length} ${cause === "job-failed" || cause === "hub-job-late" ? "jobs" : "machines"}`,
-        detail: `${label}: ${rows.slice(0, 2).map(r => r.name).join(", ")}${rows.length > 2 ? " and " + (rows.length - 2) + " more" : ""}`, why:rows.some(r=>r.failure_output)?'Recorded failure details for each job are shown below.':rows[0].why, action:'Inspect each listed item in '+(rows[0].jump?.view==='backups'?'Backups → Copies':rows[0].jump?.view==='hosts'?'Sources → Devices':rows[0].jump?.view==='tools'?'Sources':'Settings → Jobs')+'. '+rows[0].action, verify:rows[0].verify, age_h: null, order: rows[0].order };
+      // One noun per thing: a job, a source (a tool or lane that feeds the archive), or a device.
+      const noun = cause === "job-failed" || cause === "hub-job-late" ? "jobs" : cause === "mirror-late" || cause === "lane-late" ? "sources" : "devices";
+      return { state: rows.some(r => r.state === "down") ? "down" : "warn", name: `${rows.length} ${noun}`,
+        detail: `${label}: ${rows.map(r => r.name).join(", ")}`, why:rows.some(r=>r.failure_output)?'Recorded failure details for each job are shown below.':rows[0].why, action:'Inspect each listed item in '+where(rows[0].jump?.view)+'. '+rows[0].action, verify:rows[0].verify, age_h: null, order: rows[0].order };
     }).sort(worse);
     const freshG = collapse(fresh, (cause, rows) => { const newest = Math.min(...rows.map(r => r.age_h == null ? Infinity : r.age_h));
       return { state: "live", name: `${rows.length} mirrors`, detail: `pulled on ${rows[0].host}, newest ${age(newest)} ago`, age_h: isFinite(newest) ? newest : null, order: 1 }; });

@@ -330,3 +330,12 @@ assert.equal(assess({machine:{host:'here'},hub:{reachable:false,hub_host:'hubhos
 console.log('Service rows: named, coloured and routed by kind; red rows first.');
 assert.equal(verdict({...connected,needs_you:[{kind:'host',host:'vm-a',text:'This device cannot currently reach vm-a.'},{kind:'host',host:'vm-b',text:'This device cannot currently reach vm-b.'}]}).text,
  'Attention: This device cannot currently reach vm-a, and 1 more.','a service sentence is said once, without its name in front');
+// A group is counted in the noun of its members, and its drawer names every one of them.
+const lateMirrors=assess({machine:{host:'here'},fleet:{hosts:[{host:'other',harnesses:['a','b','c','d','e','f'].map(t=>({harness:t,lane:t,run_age_h:30}))}]}}).need;
+assert.equal(lateMirrors.length,1);assert.equal(lateMirrors[0].name,'6 sources','six late tools on one device are six sources');
+for(const t of ['a','b','c','d','e','f'])assert.match(lateMirrors[0].detail,new RegExp(t+' on other'));
+assert.equal(assess({backups:{hosts:[1,2,3].map(n=>({host:'vm-'+n,node:'node',reachable:true,inventory_complete:true,scheduled:true,last_dump_age_h:null}))}}).need[0].name,'3 devices');
+assert.equal(assess({fleet:{hosts:[{host:'a',net:{online:false}},{host:'b',net:{online:false}}]}}).need[0].name,'2 devices');
+assert.equal(assess({clients:[{client_id:'a',state:'rejected'},{client_id:'b',state:'error'}]}).need[0].action.startsWith('Inspect each listed item in Sources → Map.'),true);
+assert.equal(result.need.find(x=>x.group==='job-failed').name,'2 jobs');
+console.log('Groups: jobs, sources and devices, every member named.');
