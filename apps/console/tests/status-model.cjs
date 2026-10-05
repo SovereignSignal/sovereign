@@ -191,7 +191,9 @@ console.log('Permission drift: contract-vs-reality findings surface per lane, in
 // What is waiting for the curator. The hub always reported its queue depth and the app
 // showed none of it: "open Review" while thousands of items sat unjudged. The rate is
 // what makes the number mean anything to a person.
-const queueRows = d => assess(d).waiting.filter(x => (x.cause||'').startsWith('queue-'));
+// The reading queue is work the system does by itself: its own list, never 'waiting', which
+// holds runs awaiting verification and feeds the Glance and the crown's verdict.
+const queueRows = d => { const a = assess(d); assert.equal(a.waiting.filter(x => (x.cause||'').startsWith('queue-')).length, 0); return a.queue; };
 const hubQueue = (status) => ({machine:{host:'here'},hub:{reachable:true,status}});
 const q = queueRows(hubQueue({judged:50,deferred:2451,coverage:{processable:6740,judged_ever:3812,unjudged_in_window:2259,stranded_pre_watermark:669}}));
 assert.equal(q.length,2);
@@ -271,3 +273,7 @@ assert.match(verdict({...connected,jobs:[{label:'job-a',last_exit:1}]}).text,/^A
 assert.equal(verdict({...connected,backups:{lanes:[{lane:'producer',delivery:'waiting'}]}}).state,'warn');
 assert.equal(verdict(connected).state,'live');
 console.log('Verdict: one sentence and the worst state from the shared assessment.');
+const backlog={...connected,hub:{reachable:true,status:{coverage:{unjudged_in_window:750,stranded_pre_watermark:2037}}}};
+assert.equal(verdict(backlog).state,'live','a reading queue is not awaiting verification');
+assert.equal(verdict({...backlog,harnesses:[{id:'tool',name:'tool',state:'connected',cadence_s:3600,run_age_h:1.5}]}).state,'warn','a backlog never hides a stale source');
+console.log('Verdict: the reading queue neither greys the crown nor hides staleness.');

@@ -88,7 +88,7 @@ window.Home = (() => {
       host.append(list);
     }
     // What the system is working on by itself. The reading queue has its own figure below.
-    const watching=assessment.waiting.filter(w=>!['queue-waiting','queue-stranded'].includes(w.cause));
+    const watching=assessment.waiting;
     if(watching.length){
       host.append(element('div','Watching','cap today-cap'));
       const list=element('div',null,'plain-list today-waiting');

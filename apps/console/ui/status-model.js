@@ -105,7 +105,7 @@ window.SovStatus = (() => {
     // re-render later must not age jobs that were healthy then into alerts nobody re-read.
     const seenAt = Date.parse(D._status?.observed_at || D.generated_at), at = Number.isFinite(seenAt) ? seenAt : Date.now();
     const ago = (iso) => iso ? (at - new Date(iso).getTime()) / 36e5 : null;
-    const need = [], fresh = [], stale = [], waiting = []; let cad;
+    const need = [], fresh = [], stale = [], waiting = [], queue = []; let cad;
     const late = (name, detail, ageH, cad, jump, cause) => {   // one thing against its cadence
       if (ageH == null || cad == null) return;
       if (ageH > 2 * cad) need.push({ state: "down", name, detail: `${detail} ${age(ageH)} ago, expected every ${age(cad)}`, age_h: ageH, jump, cause, order: 0 });
@@ -164,7 +164,7 @@ window.SovStatus = (() => {
     const deferredCount = Number(st.deferred) || 0;
     if (waitingCount > 0) {
       const nights = judgedRun > 0 ? Math.ceil(waitingCount / judgedRun) : null;
-      waiting.push({ state: "warn", name: "Waiting to be judged", age_h: null, jump: { view: "jobs", id: "hub:job:nightly" },
+      queue.push({ state: "warn", name: "Waiting to be judged", age_h: null, jump: { view: "jobs", id: "hub:job:nightly" },
         detail: `${waitingCount.toLocaleString()} item${waitingCount === 1 ? "" : "s"} the curator has not read yet` +
                 (nights ? `, about ${nights} night${nights === 1 ? "" : "s"} at ${judgedRun} a night.` : "."),
         why: `${(Number(cov.processable) || 0).toLocaleString()} items are eligible and ${(Number(cov.judged_ever) || 0).toLocaleString()} have ever been judged.` +
@@ -175,7 +175,7 @@ window.SovStatus = (() => {
     if (strandedCount > 0) {
       // Named separately because time alone never reaches it: the nightly judges newest
       // first, so this tail stays where it is until something goes after it deliberately.
-      waiting.push({ state: "warn", name: "Older than the watermark", age_h: null, jump: { view: "jobs", id: "hub:job:burndown" },
+      queue.push({ state: "warn", name: "Older than the watermark", age_h: null, jump: { view: "jobs", id: "hub:job:burndown" },
         detail: `${strandedCount.toLocaleString()} item${strandedCount === 1 ? "" : "s"} sit behind the point the curator started from and will not be reached by the nightly run.`,
         why: "The nightly judges the newest material first, so this tail is only read by a run that goes after it on purpose.",
         cause: "queue-stranded" });
@@ -281,7 +281,7 @@ window.SovStatus = (() => {
     const freshG = collapse(fresh, (cause, rows) => { const newest = Math.min(...rows.map(r => r.age_h == null ? Infinity : r.age_h));
       return { state: "live", name: `${rows.length} mirrors`, detail: `pulled on ${rows[0].host}, newest ${age(newest)} ago`, age_h: isFinite(newest) ? newest : null, order: 1 }; });
     freshG.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
-    return { need: needG, fresh: freshG, stale, waiting, completeness: completeness(D) };
+    return { need: needG, fresh: freshG, stale, waiting, queue, completeness: completeness(D) };
   }
   const safeURL=value=>{try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)&&u.hostname?u.href:null}catch(_){return null}};
   function caption(status) {
