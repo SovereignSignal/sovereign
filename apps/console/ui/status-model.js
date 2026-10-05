@@ -296,9 +296,12 @@ window.SovStatus = (() => {
   // Keep raw status and archive history intact. Every app surface uses this projection.
   function associations(value) {
     value=backupScope(value);
+    // A lane whose own contract says retired is provenance, not a live source. The status
+    // service's retired flag (from the connector manifest) is kept, never replaced.
+    if(value?.lanes)value={...value,lanes:value.lanes.map(l=>!l.retired&&/^retired\b/i.test(String(l.status||'').trim())?{...l,retired:true}:l)};
     const retired=new Set((value?.harnesses||[]).filter(h=>h.state==='removed').map(h=>h.lane));
     if(retired.size)value={...value,
-      lanes:(value.lanes||[]).map(l=>({...l,retired:retired.has(l.lane),associated:retired.has(l.lane)?false:l.associated})),
+      lanes:(value.lanes||[]).map(l=>({...l,retired:!!l.retired||retired.has(l.lane),associated:retired.has(l.lane)?false:l.associated})),
       fleet:{...value.fleet,hosts:(value.fleet?.hosts||[]).map(h=>({...h,harnesses:(h.harnesses||[]).filter(t=>!retired.has(t.lane)),lanes:(h.lanes||[]).filter(l=>!retired.has(l.lane))}))},
       backups:{...value.backups,lanes:(value.backups?.lanes||[]).filter(l=>!retired.has(l.lane))}};
     const config=value?.device_associations;
