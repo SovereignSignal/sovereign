@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Native corrective-release evidence; only the disposable archive is writable."""
-import argparse, json, os, subprocess, tempfile, sys
+import argparse, json, os, subprocess, tempfile, sys, uuid
 from pathlib import Path
 from datetime import datetime, timezone
 HERE=Path(__file__).resolve().parent
@@ -57,6 +57,11 @@ def main():
  parser=argparse.ArgumentParser();parser.add_argument('--evidence',type=Path,required=True);parser.add_argument('--live',action='store_true');args=parser.parse_args()
  args.evidence.mkdir(parents=True,exist_ok=True); reports=[]
  app=HERE/'build/Sovereign.app/Contents/MacOS/Sovereign'
+ suite='com.sovereign.qa.release.'+uuid.uuid4().hex   # never the preview's own preferences, live or not
+ try:main_runs(args,app,suite,reports)
+ finally:subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
+
+def main_runs(args,app,suite,reports):
  with tempfile.TemporaryDirectory(prefix='sovereign-release-') as folder:
   base=Path(folder);archive=base/'QA Archive';brain_local.create(archive,ROOT);archive=archive.resolve()
   brain_local.capture(archive,'A useful decision','Local notes remain portable Markdown.')
@@ -67,7 +72,7 @@ def main():
   for theme,size,first,second in cases:
    name=('live-' if args.live else '')+theme+'-'+size
    snap=args.evidence/(name+'-'+first+'.png')
-   env=dict(os.environ,SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(snap),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR='operations:view:'+second,SOV_QA_JS='window.sovView('+json.dumps(first)+');setTimeout(()=>{'+probe(theme,first,args.live)+'},1500);',SOV_QA_JS_AFTER_ANCHOR="for(let n=0;n<100&&(/checking/.test(document.getElementById('vmeta')?.textContent||'')||document.querySelector('.rv-check.checking'));n++)await new Promise(r=>setTimeout(r,50));"+probe(theme,second,args.live))
+   env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(snap),SOV_SNAPSHOT_DELAY='7',SOV_SNAPSHOT_ANCHOR='operations:view:'+second,SOV_QA_JS='window.sovView('+json.dumps(first)+');setTimeout(()=>{'+probe(theme,first,args.live)+'},1500);',SOV_QA_JS_AFTER_ANCHOR="for(let n=0;n<100&&(/checking/.test(document.getElementById('vmeta')?.textContent||'')||document.querySelector('.rv-check.checking'));n++)await new Promise(r=>setTimeout(r,50));"+probe(theme,second,args.live))
    # The gate check reads HOME's pointer unless these name an archive; keep it on the QA one.
    if not args.live:env.update(SOV_QA_STATUS_COMMAND=str(command),SOV_QA_GATE_HOME=str(gate));env.pop('BRAIN_ROOT',None);env.pop('SOVS_VAULT',None)
    # CLI defaults override the archive for this process without persisting preferences.
