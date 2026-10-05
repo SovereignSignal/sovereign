@@ -377,3 +377,11 @@ const retiredPush=assess(model.associations({machine:{host:'here'},lanes:[{lane:
  backups:{lanes:[{lane:'old',delivery:'accepted',pushed:'2000-01-01T00:00:00Z'}]}}));
 assert.equal([...retiredPush.need,...retiredPush.stale].filter(x=>/old/.test(x.name)).length,0,'a retired lane raises no push alarm');
 console.log('Producer pushes: a lane retired by its contract raises nothing.');
+// A paused job waits on the owner; it is not a run awaiting verification, and it never
+// hides a stale snapshot from the crown.
+const pausedHub=(extra={})=>({...connected,hub:{reachable:true,jobs:{burndown:{ts:new Date().toISOString(),exit:75,health:{state:'paused',summary:'Stood down'}}}},...extra});
+const onlyPaused=verdict(pausedHub());
+assert.equal(onlyPaused.state,'idle');assert.match(onlyPaused.text,/^burndown paused until you act/);assert.ok(!/verification/.test(onlyPaused.text),onlyPaused.text);
+const pausedStale=verdict(pausedHub({backups:{snapshots:{newest_age_h:30}}}));
+assert.equal(pausedStale.state,'warn','a paused job never hides staleness');assert.match(pausedStale.text,/^Stale: daily snapshot/);
+console.log('Verdict: a paused job is named as paused and never hides a stale item.');

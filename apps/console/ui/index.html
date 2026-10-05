@@ -1254,7 +1254,7 @@ window.onerror = function (msg, src, line, col) {
         ${row({ view: "archive", section: "composition" }, "cards", num(a.total), a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : "")}
         ${row({ view: "hosts" }, "fleet", fleet.length ? `${online} of ${fleet.length} up` : "?", offline ? offline + " offline" : unknown ? unknown + " not probed" : fleet.length ? "all reachable" : "not reported", offline ? "hot" : "")}
         ${needs.filter(n => n.cause !== "need:gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.jump ? {view:n.jump.view,sel:{id:n.jump.id}} : {view:'glance'}))}"><span class="l">${esc(n.name)}</span><span class="s wrap">${esc(n.detail)}</span><span class="chev">›</span></button>`).join("")}
-        ${assessment.waiting.map(n => row({view:'jobs',sel:{id:n.jump.id}},n.name,'Awaiting verification','')).join('')}
+        ${assessment.waiting.map(n => row({view:'jobs',sel:{id:n.jump.id}},n.name,n.cause==='job-paused'?'Paused':'Awaiting verification','')).join('')}
       </div>
       <div class="g-foot"><span class="meta">${esc(m.host || "")} · ${esc(SovStatus.caption(D))}</span><span class="sp"></span><button class="brass" id="g-console">Open Sovereign</button></div>`;
     requestAnimationFrame(() => bridge({ cmd: "glanceSize", h: Math.ceil(g.scrollHeight) }));

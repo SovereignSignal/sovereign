@@ -425,8 +425,12 @@ window.SovStatus = (() => {
     let state, text;
     if (down.length) { state = "down"; text = `Attention: ${say(down[0])}${down.length > 1 ? `, and ${down.length - 1} more` : ""}.`; }
     else if (A.need.length) { state = "warn"; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${say(A.need[0])}.`; }
-    else if (A.waiting.length) { state = "idle"; text = `${A.waiting.length} awaiting verification. No action required while the next run is pending.`; }
     else if (A.stale.length) { state = "warn"; text = `Stale: ${A.stale[0].name} ${A.stale[0].detail}.`; }
+    // Waiting holds runs awaiting verification and jobs that stood down until the owner acts.
+    else if (A.waiting.length) { state = "idle";
+      const paused = A.waiting.filter(r => r.cause === "job-paused"), checking = A.waiting.length - paused.length;
+      text = [paused.length ? `${paused.length === 1 ? paused[0].name : paused.length + " jobs"} paused until you act; nothing has failed` : "",
+              checking ? `${checking} awaiting verification. No action required while the next run is pending` : ""].filter(Boolean).join(". ") + "."; }
     else {
       state = "live";
       const landed = landedToday(D);
