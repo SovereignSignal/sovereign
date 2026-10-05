@@ -1397,7 +1397,7 @@ window.onerror = function (msg, src, line, col) {
     const addr = net.ip || (vm && vm.ip) || "";
     const vmPart = vm ? `<div class="prose">${esc(vm.name)} · ${esc(vm.status || "?")}${vm.ip ? " · " + esc(vm.ip) : ""}
         ${vm.status !== "running" ? ` <button data-act="vmstart" data-vm="${esc(vm.name)}">Start VM</button>` : ""}</div>
-      ${vmFailed && vmFailed.name === vm.name ? `<div class="note" role="status">Start VM failed: ${esc(String(vmFailed.out || "").trim() || "exit " + vmFailed.exit)}</div>` : ""}
+      ${vmFailed && vmFailed.name === vm.name && vm.status !== "running" ? `<div class="note" role="status">Start VM failed: ${esc(String(vmFailed.out || "").trim() || "exit " + vmFailed.exit)}</div>` : ""}
       <div class="prose" style="margin-top:8px">Inside the VM, once:</div>
       <div class="code-line"><code>${esc(bs.line || "bash /media/psf/Home/.sovereign/vm-bootstrap.sh")}</code><button data-act="copy" data-text="${esc(bs.line || "bash /media/psf/Home/.sovereign/vm-bootstrap.sh")}">Copy</button></div>
       <div class="secret-help">${bs.hub_key ? "It opens ssh, authorizes the hub's key, joins the tailnet, and prints the address to use below." : "The hub's key is not on this machine yet (it is fetched from the hub on refresh); the line will work once it is."}</div>` : "";
