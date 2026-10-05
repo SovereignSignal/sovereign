@@ -64,6 +64,17 @@ assert.doesNotMatch(other.html,/role="alert"/);
 backups.mount(other,'/down');
 assert.equal(posts.length,count,'a good answer is kept');
 console.log('Archive backups: a refresh keeps the drawn form, and a failed check is retried.');
+// While the host stays down, the re-check a refresh makes is quiet: the drawn failure, its
+// disclosures and focus stay, and only an answer that differs redraws the pane.
+const down=pane();backups.mount(down,'/still-down');
+backups.deliver('archiveBackupResult',{request:posts.at(-1).request,error:'The archive host is unavailable.'});
+const shown=down.renders;backups.mount(down,'/still-down');
+assert.equal(posts.at(-1).action,'status');assert.equal(down.renders,shown,'a refresh re-check draws no busy state');
+backups.deliver('archiveBackupResult',{request:posts.at(-1).request,error:'The archive host is unavailable.'});
+assert.equal(down.renders,shown,'the same failure is not drawn again');
+backups.mount(down,'/still-down');backups.deliver('archiveBackupResult',{request:posts.at(-1).request,protocol:1,destinations:[],observed_at:4000,exit:0});
+assert.equal(down.renders,shown+1);assert.doesNotMatch(down.html,/role="alert"/,'a changed answer is drawn');
+console.log('Archive backups: a re-check while the host is down redraws only when the answer changes.');
 }
 
 const backups=context.window.SovBackups;
