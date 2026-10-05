@@ -87,7 +87,9 @@ def frontmatter(path):
             break
         m = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
         if m:
-            out[m.group(1)] = m.group(2).strip()
+            # A '#' that opens the value or follows a space starts a YAML comment, which an
+            # owner's note on a contract line is; one inside a URL or a name stays.
+            out[m.group(1)] = re.sub(r"(^|\s)#.*$", "", m.group(2)).strip()
     return out
 
 
@@ -371,6 +373,22 @@ def job_error_output(path):
         return "\n".join(clean.splitlines()[-35:])[:8000]
     except OSError:
         return ""
+
+
+def redacted_tail(text, limit=400):
+    """Captured output as the console may show it: credentials redacted before the tail is
+    cut, and nothing when redaction fails, never the raw text."""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    try:
+        from brain_redact import redact_text
+        return redact_text(text or "")[0].strip()[-limit:]
+    except Exception:
+        return ""
+
+
+def last_line(text):
+    return next((l.strip() for l in reversed((text or "").splitlines()) if l.strip()), "")
 
 
 def lane_log_info(h, manifest, runs=None):
@@ -885,7 +903,8 @@ def fleet_view(root, contrib=None):
             hid = name[:-(len(host) + 1)] if host and name.endswith("-" + host) else name
             rec["harnesses"].append({**_harness_entry(d, hid), "lane": name})
     for d in sorted(glob.glob(os.path.join(root, "raw", "workspaces", "*"))):
-        if not os.path.isdir(d):
+        # no contract, no lane, so no device named after the folder (the lanes list agrees)
+        if not os.path.isdir(d) or not os.path.exists(os.path.join(d, "LANE.md")):
             continue
         name = os.path.basename(d)
         fm = frontmatter(os.path.join(d, "LANE.md"))
@@ -1009,6 +1028,12 @@ def backups_view(root, hub, fleet):
             return {"why": "hang", "url": None, "action": "ssh to the node connected but never answered within %d s. Check the node's Tailscale SSH policy from this machine: `ssh -v %%s`." % PROBE_BUDGET}
         if "closed or filtered" in str(exc):
             return {"why": "port-closed", "url": None, "action": "Port 22 did not answer from this machine. Check the node is powered on and on the tailnet, then refresh."}
+        if isinstance(exc, subprocess.CalledProcessError):
+            # ssh says why on its last stderr line (a changed host key, a refused key, a
+            # policy deny); the exception's own text is only the argv.
+            said = last_line(redacted_tail(err))[:160].rstrip(".").replace("%", "%%")
+            return {"why": "ssh-failed" if said else "error", "url": None,
+                    "action": "ssh to the node exited %d: %s. Run `ssh %%s` in a terminal to see the whole message, then refresh." % (exc.returncode, said or "no error output")}
         return {"why": "error", "url": None, "action": "ssh to the node failed: %s" % (str(exc)[:120] or type(exc).__name__)}
     def _probe(node):
         result = {"jobs": None, "dumps": {}, "reachable": False, "detail": None}
@@ -1084,6 +1109,7 @@ def hypervisor_needs(backups):
         cause = {"tailscale-check": "Tailscale SSH requires a browser re-check from this machine.",
                  "hang": "The SSH probe did not answer within its 6 second budget.",
                  "port-closed": "The node's SSH port did not answer the connection probe.",
+                 "ssh-failed": "ssh to the node exited with an error, quoted in the next step.",
                  "error": "The SSH probe failed; the underlying cause is unconfirmed."}.get(d.get("why"), "The node did not return backup information.")
         row = {"kind": "hypervisor", "node": node, "text": text,
                "why": cause, "action": action,
@@ -1155,6 +1181,7 @@ def explain_needs(rows):
     New producers must supply their own fields; unknown kinds remain visibly legacy.
     """
     guidance = {
+        "archive": ("Cards and lanes are read from the archive folder, so an unreadable one would otherwise look like an empty archive.", "Check the folder at that path still exists, its drive is mounted and this machine may read it. If the archive moved on purpose, write its new path to ~/.brain-root.", "Refresh; Library lists the archive's cards again."),
         "configuration": ("The local machine role configuration is invalid.", "Repair the local connectors.json machine declaration, then request status again.", "Status reports the declared role without a configuration error."),
         "client-intake": ("The contribution intake reported a delivery or validation failure.", "Inspect the client receipt and retry after resolving its reported cause.", "Refresh status; delivery and hub import each show their own successful receipt."),
         "hub": ("The configured hub did not return status; its governance state is unknown.", "Open Sources → Devices, inspect the configured hub and restore its connection, then refresh.", "Refresh; the hub reports reachable and Review shows a current queue."),
@@ -1247,6 +1274,14 @@ def archive_shape(root):
     syncs to every machine, so this costs no hub call; the console turns it into the
     Archive view. Every list is slugs, so a count can open the cards behind it."""
     K = os.path.join(root, "knowledge")
+    # The glob below finds nothing in a folder that is gone, unmounted or unreadable
+    # (permissions or macOS privacy), and nothing is not zero cards: say which.
+    try:
+        os.listdir(K)
+    except FileNotFoundError:
+        raise OSError("%s folder not found" % ("knowledge" if os.path.isdir(root) else "archive"))
+    except OSError:
+        raise OSError("knowledge folder unreadable")
     WIKI = re.compile(r"\[\[([^\]|#]+?)(?:[|#][^\]]*)?\]\]")
     cards, inbound, slugs = [], {}, set()
     today = datetime.date.today()
@@ -1311,6 +1346,19 @@ def archive_shape(root):
             "dangling": [{"target": k, "from": v} for k, v in sorted(dangling.items(), key=lambda kv: -len(kv[1]))]}
 
 
+def hub_failure(via, exc=None, said=""):
+    """Why the hub did not answer, as a phrase the console can show whole after "The hub
+    did not answer: ", with the captured text, redacted, kept in error_detail."""
+    detail = redacted_tail((getattr(exc, "stderr", None) or str(exc)) if exc is not None else said)
+    if isinstance(exc, subprocess.TimeoutExpired):
+        why = "no reply within %d seconds" % exc.timeout
+    elif isinstance(exc, ValueError):
+        why = "incomplete status report"
+    else:
+        why = last_line(detail)[:160] or (type(exc).__name__ if exc is not None else "no output")
+    return {"reachable": False, "error": why, "error_detail": detail or None, "via": via}
+
+
 def fetch_hub(root, hub_pointer, want):
     if not want:
         return {"reachable": None, "skipped": True}
@@ -1323,9 +1371,9 @@ def fetch_hub(root, hub_pointer, want):
                 d = json.loads(res.stdout)
                 d["via"] = "ssh " + alias
                 return d
-            return {"reachable": False, "error": (res.stderr or "no output").strip()[-200:], "via": "ssh " + alias}
+            return hub_failure("ssh " + alias, said=res.stderr)
         except Exception as e:
-            return {"reachable": False, "error": str(e)[:200], "via": "ssh " + alias}
+            return hub_failure("ssh " + alias, e)
     # this machine may be the hub
     if root and glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json")):
         try:
@@ -1334,7 +1382,7 @@ def fetch_hub(root, hub_pointer, want):
             d["via"] = "local"
             return d
         except Exception as e:
-            return {"reachable": False, "error": str(e)[:200], "via": "local"}
+            return hub_failure("local", e)
     return {"reachable": None, "error": "no ~/.brain-hub pointer and this machine holds no hub lane"}
 
 
@@ -1764,13 +1812,15 @@ def main():
             row["last_run"], row["last_ok"] = _receipt("last-run"), _receipt("last-ok")
             if _receipt("last-exit") is not None:
                 row["last_exit"] = _receipt("last-exit")
-            # The runner captures the program's output here; launchd's stderr
-            # only contains failures outside the program (for example startup).
-            err = os.path.join(hub_state, jid + ".last-output")
-            if not os.path.exists(err):
-                err = os.path.join(hub_state, jid + ".error.log")
+            # The runner captures the program's whole output, stdout too, in .last-output:
+            # a kit receipt or "updates=0" is normal there, so it is what a failure points
+            # at, never an error log. launchd's stderr is the error log; it only holds
+            # failures outside the program (for example startup).
+            err = os.path.join(hub_state, jid + ".error.log")
             n, a = _log_lines(err)
             row["stderr"], row["stderr_lines"], row["stderr_age_h"] = err, n, a
+            out_p = os.path.join(hub_state, jid + ".last-output")
+            row["last_output"] = out_p if os.path.exists(out_p) else None
     real = {j["label"] for j in jobs}
     for hid, ent in sorted(served.items()):
         lbl = ent.get("label") or (("com.sovereign.connector.%s" if sys.platform == "darwin" else "sovereign-connector-%s") % hid)
@@ -1795,6 +1845,8 @@ def main():
 
     # needs you
     needs = []
+    if out["archive"].get("error"):
+        needs.append({"kind": "archive", "text": "The archive could not be read: %s. It is configured at %s." % (out["archive"]["error"], root)})
     if hub.get("reachable") is False:
         needs.append({"kind": "hub", "text": "The hub did not answer (%s). Governance state is unknown until it does." % hub.get("via", "?")})
     if hub.get("pending"):
@@ -1892,7 +1944,8 @@ def main():
                           "action": "Run: sudo xcodebuild -license accept   then: launchctl kickstart gui/$(id -u)/%s. Reconnecting any tool with sov connect points the job at the Command Line Tools interpreter, which an Xcode update cannot revoke." % j["label"],
                           "verify": "Refresh after the kickstart; the job's last exit is 0 and its lanes report a fresh run."})
         elif j.get("last_exit") not in (None, 0):
-            n = {"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], j.get("stderr") or "its log"), "failure_output": job_error_output(j.get("stderr"))}
+            log = j.get("last_output") or j.get("stderr")     # a hub job's failure is in what its program printed
+            n = {"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], log or "its log"), "failure_output": job_error_output(log)}
             if j.get("harness"):
                 n["harness"] = j["harness"]        # a lane row routes to the tool, not to the job list
             needs.append(n)

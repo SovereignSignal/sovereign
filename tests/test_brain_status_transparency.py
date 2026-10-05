@@ -33,11 +33,29 @@ class Transparency(unittest.TestCase):
    if isinstance(node,ast.Dict):
     for key,value in zip(node.keys,node.values):
      if isinstance(key,ast.Constant) and key.value=='kind' and isinstance(value,ast.Constant) and isinstance(value.value,str):kinds.add(value.value)
-  known={'configuration','client-intake','hub','gate','harness','mirror-missing','lane-refused','lane-timeout','lane-silent','runner-standing-down','runner-stalled','relay','xcode-license','job','not-connected'}
+  known={'archive','configuration','client-intake','hub','gate','harness','mirror-missing','lane-refused','lane-timeout','lane-silent','runner-standing-down','runner-stalled','relay','xcode-license','job','not-connected'}
   for kind in kinds-{'local VM','host','hypervisor','contribution'}:
    self.assertIn(kind,known,'New needs-you kind needs guidance: '+kind)
    self.complete(self.m.explain_needs([{'kind':kind,'text':'Reported condition'}])[0])
   self.assertTrue(self.m.explain_needs([{'kind':'future','text':'missing guidance'}])[0]['legacy'])
+ def test_hub_failure_is_a_whole_phrase_with_the_rest_redacted_beside_it(self):
+  # The console shows the reason once, after "The hub did not answer: ", in a row that
+  # cannot wrap or open; an argv repr or 200 bytes of ssh stderr put the cause past the edge.
+  import subprocess,types
+  key='api_key=Zx9QwErTy7UiOp3AsDfGh2JkL'
+  cases=[(subprocess.TimeoutExpired(['ssh'],25,stderr=(key+'\n').encode()),'no reply within 25 seconds',True),
+         (subprocess.CompletedProcess(['ssh'],255,'','@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\n'+key+'\nHost key verification failed.\n'),'Host key verification failed.',True),
+         (subprocess.CompletedProcess(['ssh'],0,'{"reachable": true, "lanes": {"cut',''),'incomplete status report',False)]
+  for result,said,secret in cases:
+   def run(*a,_r=result,**k):
+    if isinstance(_r,Exception):raise _r
+    return _r
+   self.m.subprocess=types.SimpleNamespace(run=run,TimeoutExpired=subprocess.TimeoutExpired,CalledProcessError=subprocess.CalledProcessError)
+   hub=self.m.fetch_hub('/archive','hubbox:/archive',True)
+   self.assertEqual((hub['reachable'],hub['error'],hub['via']),(False,said,'ssh hubbox'))
+   self.assertTrue(hub['error_detail'])
+   self.assertNotIn('Zx9QwErTy7UiOp3AsDfGh2JkL',hub['error_detail'])
+   if secret:self.assertIn('[redacted',hub['error_detail'])
  def test_explicit_cause_is_preserved(self):
   row={'kind':'job','text':'failed','why':'Exact cause','action':'Exact next step','verify':'Exact confirmation'}
   self.assertEqual(self.m.explain_needs([dict(row)]),[row])

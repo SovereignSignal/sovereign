@@ -676,10 +676,35 @@ class HubReceipts(unittest.TestCase):
             output = hub / "autocommit.last-output"
             output.write_text("Credential scan blocked the commit.\n")
             (hub / "autocommit.error.log").write_text("")
-            row = next(j for j in b.status()["jobs"] if j["label"] == label)
+            d = b.status()
+            row = next(j for j in d["jobs"] if j["label"] == label)
             self.assertEqual(row["last_exit"], 1)
-            self.assertEqual(row["stderr"], str(output))
-            self.assertEqual(row["stderr_lines"], 1)
+            self.assertEqual(row["last_output"], str(output))
+            self.assertEqual(row["stderr"], str(hub / "autocommit.error.log"))
+            need = next(n for n in d["needs_you"] if n.get("kind") == "job" and n["text"].startswith(label + " last exited 1"))
+            self.assertIn(str(output), need["text"])
+            self.assertIn("Credential scan blocked the commit.", need["failure_output"])
+
+    def test_a_hub_job_that_succeeded_and_printed_is_not_an_error(self):
+        """The runner writes every job's stdout and stderr to <job>.last-output, so a kit
+        receipt or "updates=0" is normal output. It is not an error log: it raised a
+        Today alert and an "N err" on every healthy hub job, and offered to clear a file
+        the nightly reads back. launchd's own stderr for the job is the error log."""
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp); label = "com.sovereign.hub.kit"
+            b.plist(label); b.labels = label
+            hub = b.state / "hub"; hub.mkdir()
+            (hub / "kit.last-run").write_text("1700000000\n"); (hub / "kit.last-exit").write_text("0\n")
+            (hub / "kit.last-output").write_text('{\n  "applied": true\n}\n')
+            (hub / "kit.error.log").write_text("")
+            d = b.status()
+            row = next(j for j in d["jobs"] if j["label"] == label)
+            self.assertEqual((row["stderr"], row["stderr_lines"]), (str(hub / "kit.error.log"), 0))
+            self.assertFalse([n for n in d["needs_you"] if label in n.get("text", "")])
+            (hub / "kit.error.log").write_text("could not start the runner\n")
+            d = b.status()
+            self.assertTrue([n for n in d["needs_you"] if n.get("kind") == "job" and label in n.get("text", "")],
+                            "output launchd itself recorded is still an error log")
 
     def test_a_hub_job_row_carries_the_runner_receipts(self):
         with tempfile.TemporaryDirectory() as tmp:

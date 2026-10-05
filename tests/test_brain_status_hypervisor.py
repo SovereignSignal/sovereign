@@ -49,7 +49,8 @@ class HypervisorProbe(unittest.TestCase):
         # never touch the real subprocess module: it is shared with every other test
         self.mod.subprocess = types.SimpleNamespace(
             run=subprocess.run, CompletedProcess=subprocess.CompletedProcess,
-            TimeoutExpired=subprocess.TimeoutExpired, PIPE=subprocess.PIPE)
+            TimeoutExpired=subprocess.TimeoutExpired, CalledProcessError=subprocess.CalledProcessError,
+            PIPE=subprocess.PIPE)
         self.home = tempfile.mkdtemp(prefix="hv-home-")
         self.saved_home = os.environ.get("HOME")
         os.environ["HOME"] = self.home
@@ -176,6 +177,31 @@ class HypervisorProbe(unittest.TestCase):
         for row in m.hypervisor_needs(view):
             for key in ("why", "action", "verify"):
                 self.assertTrue(row[key])
+
+    def test_a_failed_ssh_names_what_ssh_said(self):
+        """Port 22 answers and ssh exits 255. The cause is in its stderr; it used to be
+        thrown away for the exception's argv repr, cut mid-word, while the row claimed the
+        cause was unconfirmed."""
+        m = self.mod
+        def fake_run(argv, **kw):
+            if argv[:2] == ["ssh", "-G"]:
+                return subprocess.CompletedProcess(argv, 0, stdout="hostname h\nport 22\n", stderr="")
+            return subprocess.CompletedProcess(argv, 255, stdout="", stderr=(
+                "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\n"
+                "api_key=Zx9QwErTy7UiOp3AsDfGh2JkL\n\nHost key verification failed.\n"))
+        m.subprocess.run = fake_run
+        m.port_open = lambda *args, **kwargs: True
+        view = m.backups_view("/nonexistent", {}, fleet_two_nodes())
+        d = view["hosts"][0]["detail"]
+        self.assertEqual(d["why"], "ssh-failed")
+        self.assertIn("exited 255", d["action"])
+        self.assertIn("Host key verification failed.", d["action"])
+        self.assertIn("ssh node-a", d["action"])
+        self.assertNotIn("Command '[", d["action"])
+        row = m.hypervisor_needs(view)[0]
+        self.assertIn("Host key verification failed.", row["text"])
+        self.assertNotIn("unconfirmed", row["why"])
+        self.assertNotIn("Zx9QwErTy7UiOp3AsDfGh2JkL", m.redacted_tail("api_key=Zx9QwErTy7UiOp3AsDfGh2JkL\n"))
 
     def test_failure_is_cached_and_a_fresh_failure_is_not_reprobed(self):
         m = self.mod
