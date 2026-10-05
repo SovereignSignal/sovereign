@@ -159,6 +159,22 @@ class AppUpdatePreview(unittest.TestCase):
             subprocess.run(["git", "-C", str(checkout), "checkout", "-q", newer], check=True)
             _, prev = run(home, "--preview", "--template", str(checkout))
             self.assertFalse(prev["current"]); self.assertIn("Build Sovereign", prev["summary"])
+    def test_status_says_behind_only_when_the_source_holds_the_installed_build(self):
+        # Today and Settings call a differing build "a newer version"; status must say which.
+        import importlib.machinery, importlib.util
+        loader = importlib.machinery.SourceFileLoader("sov_status_app_update", str(ROOT / "bin/sov-status"))
+        status = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(status)
+        with tempfile.TemporaryDirectory() as tmp:
+            checkout = Path(tmp); git = commits(checkout); older = git("older"); newer = git("newer")
+            status.TEMPLATE_ROOT = str(checkout)
+            self.assertTrue(status._behind(older, newer + " 2026-10-04"))
+            self.assertIsNone(status._behind(newer + "+local", newer + " 2026-10-04"), "equal is current, not behind")
+            subprocess.run(["git", "-C", str(checkout), "checkout", "-q", older], check=True)
+            self.assertFalse(status._behind(newer, older + " 2026-10-04"))
+            self.assertFalse(status._behind("fffffff", older + " 2026-10-04"))
+            self.assertFalse(status._behind("--output=x", older + " 2026-10-04"))
+            self.assertIsNone(status._behind(None, older + " 2026-10-04"))
     def test_an_absent_app_still_previews_rather_than_crashing(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, out = run(Path(tmp), "--preview")

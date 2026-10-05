@@ -33,6 +33,7 @@ window.SovSettings = (() => {
     let lead, action = true, why = "";
     if (!a.source_commit) { lead = `${name} predates update checking, so it cannot tell you whether it is current.`; why = `The bundle records no source revision${src ? `; this machine's source is ${esc(src)}` : ""}.`; }
     else if (!src) { lead = `${name} cannot be checked right now.`; why = "This machine's source revision could not be read, so there is nothing to compare against."; action = false; }
+    else if (commit !== src && a.behind === false) { lead = `${name} was built from newer or different source than this machine has, so there is nothing newer to install.`; why = `Built from source ${esc(commit)}, which this machine's source ${esc(src)} does not contain.`; action = false; }
     else if (commit !== src) { lead = `A newer version is ready to install. You are running ${name}.`; why = `Built from source ${esc(commit)}; this machine's source is now ${esc(src)}.`; }
     else { lead = `${name} is the newest build of this machine's source.`; why = `Built from source ${esc(src)}, which is what this machine has.`; action = false; }
     return sect("Version", `<p class="set-lead">${lead}</p>${more("Details", `<p class="set-note">${why}</p>`)}<span class="pulls" id="set-update-state" aria-live="polite"></span>`, "",

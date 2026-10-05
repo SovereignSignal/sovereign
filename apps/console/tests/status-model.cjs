@@ -147,6 +147,16 @@ assert.equal(appBehind.actionKind,'app-update');
 assert.ok(!/old9999|abc1234/.test(appBehind.detail),'no commit hashes in the headline');
 assert.match(appBehind.why,/old9999/); assert.match(appBehind.why,/abc1234/);
 assert.ok(assess(withApp({installed:true,version:'1.0.0',build:'1',source_commit:'old9999'},'abc1234 2026-01-01')).need.some(x=>x.name==='Update available'),'behind belongs in needs');
+// Unequal is not newer: a build from a worktree or a later branch than this checkout is
+// not behind it, and Update would install the older source. Say so, offer nothing.
+const ahead = assess(withApp({installed:true,version:'0.6.0',build:'39',source_commit:'new8888',behind:false},'abc1234 2026-01-01'));
+assert.ok(![...ahead.need,...ahead.stale,...ahead.fresh].some(x=>x.name==='Update available'),'an older source is never offered as an update');
+const differs = ahead.stale.find(x=>x.cause==='app-ahead');
+assert.equal(differs.name,'Source differs'); assert.equal(differs.actionKind,undefined);
+assert.match(differs.action,/source/); assert.ok(!/Jobs|log/.test(differs.action),'no generic job guidance');
+assert.match(differs.detail,/nothing newer to install/); assert.match(differs.why,/new8888/);
+assert.equal(model.brief(differs),'nothing newer');
+assert.equal(appRow(withApp({installed:true,version:'1.0.0',build:'1',source_commit:'old9999',behind:true},'abc1234 2026-01-01')).name,'Update available');
 // A local build is still current when its commit matches.
 assert.equal(appRow(withApp({installed:true,version:'1.2.3',build:'9',source_commit:'abc1234+local'},'abc1234 2026-01-01')).state,'live');
 // An unstamped build says so rather than implying an agreement it cannot check.

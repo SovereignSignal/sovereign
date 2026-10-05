@@ -1470,6 +1470,24 @@ def _installed_app():
     return out
 
 
+def _behind(commit, rev):
+    """Whether this source's history holds the installed build, so building it is an update.
+
+    Unequal is not newer: an app built from a worktree or a later branch differs from an
+    older checkout, and rebuilding that checkout would install an older Sovereign. None
+    when there is nothing to compare, including when the two are the same build."""
+    commit = (commit or "").replace("+local", "")
+    if not rev or not commit or rev.split(" ")[0] == commit:
+        return None
+    if not re.fullmatch(r"[0-9a-f]{4,40}", commit):
+        return False
+    try:
+        return subprocess.run(["git", "-C", TEMPLATE_ROOT, "merge-base", "--is-ancestor", commit, "HEAD"],
+                              capture_output=True, timeout=5).returncode == 0
+    except Exception:
+        return None
+
+
 def main():
     if any(a in sys.argv[1:] for a in ("--help", "-h")):
         print(__doc__)
@@ -1487,6 +1505,7 @@ def main():
     except Exception:
         rev = None
     app = _installed_app()
+    if app.get("installed"): app["behind"] = _behind(app.get("source_commit"), rev)
 
     out = {"generated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
            "machine": {"vault": root, "vault_name": os.path.basename(root) if root else None, "host": host,
