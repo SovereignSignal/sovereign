@@ -230,10 +230,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             }
             let runner = sov.map { URL(fileURLWithPath: $0).deletingLastPathComponent()
                                        .appendingPathComponent("sov-connectors-run").path }
+            // "done": the reply comes after the work, not when it starts (a launchctl kickstart)
             let request = d["request"] ?? NSNull()
             if let lane = lane, let runner = runner, FileManager.default.isExecutableFile(atPath: runner) {
                 run([runner, "--only", lane]) { out, err, code in
-                    self.deliver("kickstart", ["label": lane, "exit": code, "out": out + err, "request": request], generation: generation)
+                    self.deliver("kickstart", ["label": lane, "exit": code, "out": out + err, "request": request, "done": true], generation: generation)
                 }
             } else {
                 run(["/bin/launchctl", "kickstart", "-k", "gui/\(getuid())/\(label)"]) { out, err, code in
@@ -243,9 +244,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         case "clearlog":
             if let p = d["path"] as? String, p.hasSuffix(".log"), p.hasPrefix(NSHomeDirectory()) {
                 try? "".write(toFile: p, atomically: true, encoding: .utf8)
-                deliver("kickstart", ["label": "cleared " + (p as NSString).lastPathComponent, "exit": 0, "out": "", "request": d["request"] ?? NSNull()], generation: generation)
+                deliver("kickstart", ["label": "cleared " + (p as NSString).lastPathComponent, "exit": 0, "out": "", "request": d["request"] ?? NSNull(), "done": true], generation: generation)
             } else {
-                deliver("kickstart", ["label": "clear log", "exit": 1, "out": "Only a .log file in your home folder can be cleared here.", "request": d["request"] ?? NSNull()], generation: generation)
+                deliver("kickstart", ["label": "clear log", "exit": 1, "out": "Only a .log file in your home folder can be cleared here.", "request": d["request"] ?? NSNull(), "done": true], generation: generation)
             }
         case "reveal":
             if let p = d["path"] as? String { NSWorkspace.shared.selectFile(p, inFileViewerRootedAtPath: "") }

@@ -1699,8 +1699,10 @@ window.onerror = function (msg, src, line, col) {
     } else if (kind === "kickstart") {
       if (payload.request !== drawerRun) return;
       drawerBusy = false;
-      $("#drawer-log").textContent += (payload.exit === 0 ? "started " + payload.label : "exit " + payload.exit + "\n" + payload.out) + "\n";
-      $("#drawer-state").textContent = payload.exit === 0 ? "started" : "failed";
+      // A lane run and a cleared log reply once the work is done; a job kickstart, once started.
+      const ok = payload.exit === 0;
+      $("#drawer-log").textContent += (!ok ? "exit " + payload.exit + "\n" + payload.out : payload.done ? String(payload.out || "").trim() || payload.label : "started " + payload.label) + "\n";
+      $("#drawer-state").textContent = !ok ? "failed" : payload.done ? "done" : "started";
       setTimeout(refresh, 4000);
     } else if (kind === "settings") {
       S = Object.assign({}, S, payload);
