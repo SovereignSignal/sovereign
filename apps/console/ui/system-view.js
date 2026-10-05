@@ -12,7 +12,7 @@ window.SystemView=(()=>{
   const short=(s,n=24)=>s.length>n?s.slice(0,n-1)+'…':s;
   // Drawings are fit to their pane but never below this scale, so 10-unit labels stay near 8px; a narrower pane scrolls.
   const legible=.82;
-  function health(n){if(n.failed)return ['Collection failed','bad'];if(n.late)return ['Collection overdue','warn'];if(n.online===false||n.reachable===false)return ['Unreachable','bad'];if(n.kind==='device')return [n.local?'This device':n.online===true?'Reachable':'Not checked',n.online===true?'good':'neutral'];if(n.kind==='hub')return[n.reachable===true?'Reachable':'Not checked',n.reachable===true?'good':'neutral'];if(n.kind==='tool')return[n.canRead&&n.collects?'Read + contribute':n.canRead?'Context configured':n.collects?'Collection configured':'Setup incomplete',n.canRead||n.collects?'good':'warn'];return[kind(n),'neutral'];}
+  function health(n){if(n.failed)return ['Collection failed','bad'];if(n.late)return ['Collection overdue','warn'];if(n.online===false||n.reachable===false)return ['Unreachable','bad'];if(n.kind==='device')return [n.local?'This device':n.online===true?'Reachable':'Not checked',n.online===true?'good':'neutral'];if(n.kind==='hub')return[n.local?'This device':n.reachable===true?'Reachable':'Not checked',n.reachable===true?'good':'neutral'];if(n.kind==='tool')return[n.canRead&&n.collects?'Read + contribute':n.canRead?'Context configured':n.collects?'Collection configured':'Setup incomplete',n.canRead||n.collects?'good':'warn'];return[kind(n),'neutral'];}
   function render(host,input,api){
     const m=SovEnvironment.build(input),byId=new Map(m.nodes.map(n=>[n.id,n]));
     if(archiveRoot!==m.root){archiveRoot=m.root;selected='archive';routeId=null;query='';zoom=1;lesson=0;worldScroll={top:0,left:0};}
@@ -42,7 +42,7 @@ window.SystemView=(()=>{
     const nodeButton=(target,next=pane)=>{const b=B('',()=>choose(target.id,next),'sv-component');b.dataset.node=target.id;b.setAttribute('aria-pressed',String(target.id===selected));const [label,tone]=health(target);b.append(E('i',null,'sv-dot '+tone),E('span',target.name),E('small',kind(target)));return b;};
     if(pane==='world'){
       const layout=E('div',null,'sv-world-layout'),stage=E('section',null,'sv-stage');
-      const toolbar=E('div',null,'sv-map-toolbar');toolbar.append(E('span',m.devices.length+' devices · '+m.tools.length+' tools','sv-map-count'));
+      const toolbar=E('div',null,'sv-map-toolbar');toolbar.append(E('span',[[m.devices.length,'device'],[m.tools.length,'tool']].map(([k,w])=>k+' '+w+(k===1?'':'s')).join(' · '),'sv-map-count'));
       const controls=E('div');for(const[label,fn]of[['−',()=>{zoom=Math.max(.7,zoom-.2);rerender();}],['Fit',()=>{zoom=1;worldScroll={top:0,left:0};rerender();}],['+',()=>{zoom=Math.min(2.4,zoom+.2);rerender();}]]){const b=B(label,fn);b.setAttribute('aria-label',label==='−'?'Zoom out':label==='+'?'Zoom in':'Fit environment');controls.append(b);}toolbar.append(controls);stage.append(toolbar);
       const scroll=E('div',null,'sv-map-scroll');scroll.setAttribute('aria-label','Scrollable environment map');scroll.tabIndex=0;
       const peripheral=[...m.tools,...m.clients,...m.nodes.filter(x=>x.kind==='relay')],devices=m.devices;
@@ -62,7 +62,7 @@ window.SystemView=(()=>{
         const w=big?65:28,h=big?25:11,z=big?52:23;
         g.append(S('path',{d:`M${-w} 0 L0 ${h} L0 ${h-z} L${-w} ${-z}Z`,class:'sv-block-left'}),S('path',{d:`M0 ${h} L${w} 0 L${w} ${-z} L0 ${h-z}Z`,class:'sv-block-right'}),S('path',{d:`M${-w} ${-z} L0 ${-h-z} L${w} ${-z} L0 ${h-z}Z`,class:'sv-block-top'}));
         if(big)for(const dy of[-8,-19,-30])g.append(S('path',{d:`M-65 ${dy} L0 ${dy+25} L65 ${dy}`,class:'sv-core-layer'}));
-        g.append(S('circle',{cx:0,cy:-z,r:big?6:3,class:'sv-node-light'}),S('text',{x:0,y:big?58:45,'text-anchor':'middle',class:'sv-node-name'},short(target.name,big?25:target.kind==='device'?14:22)),S('text',{x:0,y:big?77:61,'text-anchor':'middle',class:'sv-node-kind'},big?(m.pending==null?'REVIEW UNVERIFIED':m.pending+' AWAITING REVIEW'):(target.kind==='device'&&target.role?kind(target)+' · '+label:label)));
+        g.append(S('circle',{cx:0,cy:-z,r:big?6:3,class:'sv-node-light'}),S('text',{x:0,y:big?58:45,'text-anchor':'middle',class:'sv-node-name'},short(target.name,big?25:target.kind==='device'?14:22)),S('text',{x:0,y:big?77:61,'text-anchor':'middle',class:'sv-node-kind'},big?(m.pending==null?'REVIEW UNVERIFIED':m.pending+' AWAITING REVIEW'):(target.role?kind(target)+' · '+label:label)));
         g.onclick=()=>choose(id);g.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose(id);host.querySelector('[data-node="'+CSS.escape(id)+'"]')?.focus({preventScroll:true});}};svg.append(g);}
       scroll.append(svg);stage.append(scroll);scroll.onscroll=()=>{worldScroll={top:scroll.scrollTop,left:scroll.scrollLeft};};requestAnimationFrame(()=>{if(scroll.isConnected){scroll.scrollTop=worldScroll.top;scroll.scrollLeft=worldScroll.left;}});
       const legend=E('div',null,'sv-legend');legend.append(E('span','● Context access','context'),E('span','● Collection / control','capture'),E('span','┄ Grouped lane relationship'),E('span','Select a component to follow its paths'));stage.append(legend);layout.append(stage,overview(n));host.append(layout);
