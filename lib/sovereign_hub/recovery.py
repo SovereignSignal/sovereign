@@ -43,7 +43,7 @@ def recovery_key(output, apply=False):
 
 def configure(config, folder, key, apply=False):
     folder = directory(folder); key = check_key(key, Path(config['archive']), Path(config['destination']))
-    if folder == key.parent:
+    if within(key, folder):
         raise ValueError('Store capsules separately from the recovery key.')
     for root in (Path(config['archive']), Path(config['destination'])):
         if within(folder, root):
@@ -88,7 +88,7 @@ def snapshot(config, output, key, apply=False):
     for root in (archive, hub):
         if within(output, root):
             raise ValueError('Place the recovery capsule outside the archive and Hub folder.')
-    if output.parent == key.parent:
+    if within(key, output.parent):
         raise ValueError('Store capsules separately from the recovery key.')
     directory(output.parent)
     if output.exists():

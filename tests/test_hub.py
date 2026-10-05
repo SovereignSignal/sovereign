@@ -106,6 +106,10 @@ class HubTests(unittest.TestCase):
         with self.assertRaises(ValueError):recovery.recovery_key(self.archive/'secret',True)
         self.assertFalse((self.archive/'secret').exists())
         with self.assertRaises(ValueError):recovery.configure(self.config,self.keys,self.key,True)
+        # A key anywhere under the capsule folder travels with every capsule it opens.
+        nested=self.backups/'keys';nested.mkdir();key=nested/'hub.key';recovery.recovery_key(key,True)
+        with self.assertRaisesRegex(ValueError,'separately'):recovery.configure(self.config,self.backups,key)
+        with self.assertRaisesRegex(ValueError,'separately'):recovery.snapshot(self.config,self.backups/'two.sovbackup',key)
 
     def test_06b_archive_guards_judge_the_folder_not_its_spelling(self):
         # Case and /System/Volumes/Data firmlinks name one folder many ways on APFS.
