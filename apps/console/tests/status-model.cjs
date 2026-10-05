@@ -328,6 +328,7 @@ const firstAmber=kinds.findIndex(n=>n.state!=='down'),lastRed=kinds.map(n=>n.sta
 assert.ok(lastRed<firstAmber,'red rows come first: '+kinds.map(n=>n.state+' '+n.name).join(', '));
 assert.equal(assess({machine:{host:'here'},hub:{reachable:false,hub_host:'hubhost'}}).need[0].jump.id,'hubhost','a derived hub alert lands on the hub too');
 console.log('Service rows: named, coloured and routed by kind; red rows first.');
+assert.equal(verdict({...connected,needs_you:[{kind:'legacy'}]}).state,'warn','a service row without a sentence still gives a verdict');
 assert.equal(verdict({...connected,needs_you:[{kind:'host',host:'vm-a',text:'This device cannot currently reach vm-a.'},{kind:'host',host:'vm-b',text:'This device cannot currently reach vm-b.'}]}).text,
  'Attention: This device cannot currently reach vm-a, and 1 more.','a service sentence is said once, without its name in front');
 // A group is counted in the noun of its members, and its drawer names every one of them.

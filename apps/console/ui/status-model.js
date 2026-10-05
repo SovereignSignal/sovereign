@@ -396,7 +396,7 @@ window.SovStatus = (() => {
     const A = assess(D, storage), st = (D.hub || {}).status || {}, hosts = ((D.fleet || {}).hosts || []);
     const down = A.need.filter(r => r.state === "down");
     // A service row's detail is already a sentence about its thing; a derived row's is not.
-    const say = f => (f.group ? f.name + " " + f.detail.split(":")[0] : f.need != null ? f.detail : f.name + " " + f.detail).replace(/\.$/, "");
+    const say = f => String(f.group ? f.name + " " + f.detail.split(":")[0] : f.need != null ? f.detail : f.name + " " + f.detail).replace(/\.$/, "");
     let state, text;
     if (down.length) { state = "down"; text = `Attention: ${say(down[0])}${down.length > 1 ? `, and ${down.length - 1} more` : ""}.`; }
     else if (A.need.length) { state = "warn"; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${say(A.need[0])}.`; }
