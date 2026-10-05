@@ -82,7 +82,7 @@ window.SovBackups=(()=>{
     if(b.dataset.abAction){action=b.dataset.abAction;result=null;ready=false;browser=null;render();}
     if(b.id==='ab-preview')send(action);
     if(b.id==='ab-apply'&&ready)send(action,true);
-    if(b.dataset.abPick){const drives=b.dataset.abPick==='folder'&&(action==='reconnect'||storage!=='folder');if(state?.remote){const start=drives?'/Volumes':state.home;browser={field:b.dataset.abPick,folder:start,entries:[]};send('browse',false,{folder:start});}else post({cmd:'archiveBackupPick',field:b.dataset.abPick,location:drives?'volumes':'home'});}
+    if(b.dataset.abPick){const drives=b.dataset.abPick==='folder'&&(action==='reconnect'||storage!=='folder');if(state?.remote){const start=drives?'/Volumes':state.home;browser={field:b.dataset.abPick,folder:start,entries:[]};send('browse',false,{folder:start});}else post({cmd:'archiveBackupPick',field:b.dataset.abPick,action,location:drives?'volumes':'home'});}
     if(b.dataset.abEntry){if(b.dataset.directory==='true')send('browse',false,{folder:b.dataset.abEntry});else if(browser&&['backup','key'].includes(browser.field)){values[browser.field]=b.dataset.abEntry;browser=null;result=null;ready=false;render();}}
     if(b.id==='ab-volumes')send('browse',false,{folder:'/Volumes'});
     if(b.id==='ab-home')send('browse',false,{folder:state.home});

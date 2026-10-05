@@ -150,7 +150,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         case "archiveBackupPick":
             guard !archiveBackupBusy, let field = d["field"] as? String,
                   ["folder", "key", "backup", "destination"].contains(field) else { return }
-            if field == "key" || field == "destination" {
+            // Restore reads a key that exists; a Save panel would ask to replace it.
+            let existingKey = field == "key" && d["action"] as? String == "restore"
+            if (field == "key" && !existingKey) || field == "destination" {
                 let panel = NSSavePanel()
                 panel.title = field == "key" ? "Recovery key location" : "New restore folder"
                 panel.nameFieldStringValue = field == "key" ? "sovereign-recovery.key" : "Restored Sovereign"
@@ -159,6 +161,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             } else {
                 let panel = NSOpenPanel(); panel.canChooseDirectories = field == "folder"
                 panel.canChooseFiles = field != "folder"; panel.allowsMultipleSelection = false
+                if existingKey { panel.title = "Choose the recovery key" }
                 if field == "folder" {
                     panel.title = "Choose a backup folder"
                     panel.canCreateDirectories = true
@@ -424,6 +427,10 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     private func sendStatus(pending: Bool, error: String? = nil, detail: String = "") {
         guard let waiter = statusWaiter else { return }
         var value = statusCache ?? [:]
+        // archiveKey decides identity here; the pages compare spellings. A connected vault that is
+        // the open archive written another way (case, Unicode form, a link) reaches them as the open one.
+        if let root = Settings.archive, var machine = value["machine"] as? [String: Any], let vault = machine["vault"] as? String,
+           Settings.archiveKey(vault) == Settings.archiveKey(root) { machine["vault"] = root; value["machine"] = machine }
         var state = value["_status"] as? [String: Any] ?? [:]
         state["pending"] = pending; state["stale"] = pending || error != nil
         state["budget_s"] = statusBudget
@@ -737,7 +744,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
               let vault = machine["vault"] as? String, Settings.archiveKey(root) == Settings.archiveKey(vault) else {
             return ["available": false]
         }
-        return ["available": true, "scope": vault, "excluded": Settings.backupExclusions(root)]
+        return ["available": true, "scope": root, "excluded": Settings.backupExclusions(root)]
     }
 
     private func setBackupScope(_ request: [String: Any], generation: UUID) {
@@ -766,7 +773,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         let hubAlias = (machine["hub_pointer"] as? String ?? "").components(separatedBy: ":").first ?? ""
         let protected = [machine["host"] as? String ?? "", hubAlias, hub["hub_host"] as? String ?? ""]
             .filter { !$0.isEmpty }
-        return ["available": true, "scope": vault, "protected_hosts": protected,
+        return ["available": true, "scope": root, "protected_hosts": protected,
                 "disassociated": Settings.disassociatedDevices(root)]
     }
 
@@ -911,7 +918,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
             else { self.showLoadFailure(w) }
         }
     }
-    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { showLoadFailure(w) }
+    // Handling this callback turns off WebKit's own reload. The window offers Try again;
+    // the Glance has no overlay, so it loads again or every later crown click opens it blank.
+    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { if w === glanceWeb { load(w, glance: true) } else { showLoadFailure(w) } }
     static var shared: App!
     var window: NSWindow!
     var web: WKWebView!
@@ -1126,7 +1135,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
                 }
                 guard let root = result["root"] as? String else { return }
                 Settings.archive = root
+                // The Glance is a second document on its own bridge; it asked once, at load.
                 self.bridge.deliver("localState", ["root": root])
+                self.glanceBridge?.deliver("localState", ["root": root])
             }
         }
     }
@@ -1317,8 +1328,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         // Today lives in the other document; every other place is a view of this one.
+        // The Glance's verdict and jump-less rows name Today as "glance", as setView does.
         if let place = place {
-            if (place["view"] as? String) == "today" { navigate(page: "home", place: ["view": "home"]) }
+            if ["today", "glance", "home"].contains(place["view"] as? String ?? "") { navigate(page: "home", place: ["view": "home"]) }
             else { navigate(page: "operations", place: place) }
         }
     }
@@ -1353,16 +1365,21 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         appMenu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r")
         appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Sovereign", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Sovereign", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
+        // Cmd+W, Cmd+M and Cmd+H reach AppKit only as menu key equivalents.
+        let fileItem = NSMenuItem(); main.addItem(fileItem)
+        let file = NSMenu(title: "File")
         if localMode {
-            let fileItem = NSMenuItem(); main.addItem(fileItem)
-            let file = NSMenu(title: "File")
             file.addItem(withTitle: "Today", action: #selector(openHome), keyEquivalent: "")
             file.addItem(withTitle: "New Archive…", action: #selector(newArchive), keyEquivalent: "")
             file.addItem(withTitle: "Open Archive…", action: #selector(openArchive), keyEquivalent: "o")
-            fileItem.submenu = file
+            file.addItem(.separator())
         }
+        file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileItem.submenu = file
         let editItem = NSMenuItem(); main.addItem(editItem)
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -1385,6 +1402,11 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         }
         appearanceItem.submenu = choices; appearanceMenu = choices
         viewMenu.addItem(appearanceItem); viewItem.submenu = viewMenu
+        let windowItem = NSMenuItem(); main.addItem(windowItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowItem.submenu = windowMenu; NSApp.windowsMenu = windowMenu
         NSApp.mainMenu = main
     }
 
