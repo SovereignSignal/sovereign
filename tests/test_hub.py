@@ -93,11 +93,20 @@ class HubTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):recovery.restore(corrupt,dest,self.key,True)
         self.assertFalse(dest.exists())
 
+    def test_04b_restore_refuses_a_folder_inside_any_archive(self):
+        # A restore carries a whole archive, its Git history, the Hub and its runtime.
+        capsule=self.backups/'roundtrip.sovbackup'
+        for dest in (self.archive/'workstreams/restored hub',self.base/'Restored/archive/workstreams/again'):
+            with self.assertRaisesRegex(ValueError,'outside every archive'):recovery.restore(capsule,dest,self.key,True)
+            self.assertFalse(dest.exists())
+
     def test_05_linked_data_and_inflight_job_refuse_snapshot(self):
-        link=self.archive/'linked';link.symlink_to(self.key)
-        try:
-            with self.assertRaises((IntakeError,OSError)):recovery.snapshot(self.config,self.backups/'linked.sovbackup',self.key,True)
-        finally:link.unlink()
+        # Capsules carry no links. Refuse by name, never as a bare "[Errno 62] alias.md".
+        for link,target in ((self.archive/'linked',self.key),(self.archive/'knowledge/alias.md','../CLAUDE.md')):
+            link.symlink_to(target)
+            try:
+                with self.assertRaisesRegex(ValueError,'linked file: '+str(link)):recovery.snapshot(self.config,self.backups/'linked.sovbackup',self.key,True)
+            finally:link.unlink()
         with locked(self.destination/'operation.lock'):
             with self.assertRaises(IntakeError):recovery.snapshot(self.config,self.backups/'busy.sovbackup',self.key,True)
         self.assertFalse((self.backups/'linked.sovbackup').exists())
@@ -106,6 +115,22 @@ class HubTests(unittest.TestCase):
         with self.assertRaises(ValueError):recovery.recovery_key(self.archive/'secret',True)
         self.assertFalse((self.archive/'secret').exists())
         with self.assertRaises(ValueError):recovery.configure(self.config,self.keys,self.key,True)
+        # A key anywhere under the capsule folder travels with every capsule it opens.
+        nested=self.backups/'keys';nested.mkdir();key=nested/'hub.key';recovery.recovery_key(key,True)
+        with self.assertRaisesRegex(ValueError,'separately'):recovery.configure(self.config,self.backups,key)
+        with self.assertRaisesRegex(ValueError,'separately'):recovery.snapshot(self.config,self.backups/'two.sovbackup',key)
+
+    def test_06b_archive_guards_judge_the_folder_not_its_spelling(self):
+        # Case and /System/Volumes/Data firmlinks name one folder many ways on APFS.
+        inside=self.archive/'workstreams';found=[Path(v) for v in (str(inside).replace('/Archive/','/aRCHIVE/'),'/System/Volumes/Data'+str(inside)) if os.path.exists(v) and os.path.samefile(v,inside)]
+        if not found:self.skipTest('this volume spells each folder one way')
+        placed=inside/'placed.key';placed.write_bytes(os.urandom(32));placed.chmod(0o600)
+        try:
+            for spelled in found:
+                with self.assertRaisesRegex(ValueError,'outside both'):recovery.configure(self.config,self.backups,spelled/'placed.key')
+                with self.assertRaisesRegex(ValueError,'outside the archive'):recovery.snapshot(self.config,spelled/'inside.sovbackup',self.key)
+                with self.assertRaisesRegex(ValueError,'outside the archive'):core.install_plan(self.archive,spelled/'Hub','fixture-local')
+        finally:placed.unlink()
 
     def test_07_unsafe_tar_entries_refused_before_extraction(self):
         for name,kind in [('../escape',tarfile.REGTYPE),('archive/linked',tarfile.SYMTYPE),('/absolute',tarfile.REGTYPE)]:

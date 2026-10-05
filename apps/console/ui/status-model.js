@@ -125,6 +125,12 @@ window.SovStatus = (() => {
       } else if (!srcRev) {
         stale.push({ state: "warn", name: "Update status unknown", detail: `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"} cannot be checked for updates right now.`,
                      why: "This machine's source revision could not be read, so the installed build has nothing to be compared against.", age_h: null, jump, cause: "app-source-unknown" });
+      } else if (appInfo.source_commit.replace("+local", "") !== srcRev && appInfo.behind === false) {
+        // Unequal is not newer: built from a worktree or a later branch than this checkout.
+        stale.push({ state: "warn", name: "Source differs", detail: `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"} was built from newer or different source than this machine has, so there is nothing newer to install.`,
+                     why: `The installed app was built from source ${appInfo.source_commit}, which this machine's source (${srcRev}) does not contain.`,
+                     action: "Bring this machine's source up to the installed build, or install from the source you mean to run.",
+                     verify: "This row becomes \u201cUp to date\u201d once the installed build and this machine's source agree.", age_h: null, jump, cause: "app-ahead" });
       } else if (appInfo.source_commit.replace("+local", "") !== srcRev) {
         // Plainly: an update is ready. The revisions are evidence, so they belong in the
         // drawer with the rest of the evidence, not in the sentence that has to land first.
@@ -348,6 +354,7 @@ window.SovStatus = (() => {
     if (c === "backup-unscheduled") return "not scheduled";
     if (c === "backup-unknown") return "backup unknown";
     if (c === "app-behind") return "ready to install";
+    if (c === "app-ahead") return "nothing newer";
     if (c === "app-unstamped" || c === "app-source-unknown") return "cannot be checked";
     if (c === "permission-drift") return "permission unsettled";
     if (c === "job-paused") return "paused";

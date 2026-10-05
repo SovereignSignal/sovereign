@@ -34,6 +34,13 @@ test('a behind build offers the action and shows both revisions', () => {
   assert(html.includes('abc1234') && html.includes('def5678'));
 });
 
+test('a build newer than this source is not called a newer version', () => {
+  const html = paint({ D: app({ app: { installed: true, version: '0.6.0', build: '39', source_commit: 'abc1234', behind: false }, template_rev: 'def5678 older' }) });
+  assert(!html.includes('A newer version'));
+  assert(html.includes('nothing newer to install'));
+  assert(!html.includes('id="set-update">Update now'));
+});
+
 test('an unstamped build claims no agreement it cannot check', () => {
   const html = paint({ D: app({ app: { installed: true, version: '0.1', build: '1' } }) });
   assert(html.includes('predates update checking'));

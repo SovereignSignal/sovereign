@@ -183,6 +183,38 @@ class ArchiveBackups(unittest.TestCase):
         with patch.object(b.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','old command')):
             with self.assertRaisesRegex(ValueError,'No local fallback'):self.request('backup',True)
         self.assertFalse((self.archive/'backups').exists())
+    def spellings(self,path):
+        # APFS ignores case and Unicode form, and /System/Volumes/Data firmlinks the data
+        # volume, so one folder answers to several spellings. Keep those this disk honours.
+        found=[v for v in (str(path).replace('/archive','/ARCHIVE'),'/System/Volumes/Data'+str(path)) if os.path.exists(v) and os.path.samefile(v,path)]
+        if not found:self.skipTest('this volume spells each folder one way')
+        return found
+    def test_inside_archive_guards_judge_the_folder_not_its_spelling(self):
+        saved=self.backup()
+        for inside in self.spellings(self.archive/'workstreams'):
+            with self.assertRaisesRegex(ValueError,'outside the archive'):self.request('configure',folder=str(self.folder),key=inside+'/sovereign-recovery.key')
+            with self.assertRaisesRegex(ValueError,'separate backup folder'):self.request('configure',folder=inside,key=str(self.key))
+            with self.assertRaisesRegex(ValueError,'Restore outside'):self.request('restore',backup=saved['backup'],destination=inside+'/restored',key=str(self.key))
+        self.assertFalse((self.archive/'workstreams/sovereign-recovery.key').exists())
+    def test_client_and_hub_know_their_archive_however_the_pointer_spells_it(self):
+        named=self.base/'Café';brain_local.create(named,ROOT);decomposed=str(self.base/'Café')
+        if not os.path.samefile(decomposed,named):self.skipTest('this volume keeps Unicode forms apart')
+        state=self.home/'state';state.mkdir();hub=self.home/'.brain-hub';response=subprocess.CompletedProcess([],0,json.dumps({'protocol':1,'host':'authority','destinations':[]}),'')
+        for pointer,root in [(decomposed,named)]+[(v,self.archive) for v in self.spellings(self.archive)]:
+            (self.home/'.brain-root').write_text(pointer);hub.write_text('authority:/archive')
+            (state/'connectors.json').write_text(json.dumps({'machine':{'role':'client','mode':'read-and-contribute'}}))
+            with patch.object(b.subprocess,'run',return_value=response):
+                self.assertTrue(b.operate(dict(protocol=1,root=str(root),action='status'))['remote'],pointer)
+            hub.unlink();(state/'connectors.json').write_text(json.dumps({'machine':{'role':'hub'}}))
+            self.assertEqual(b.operate(dict(protocol=1,root=str(root),action='status'),serve=True)['root'],str(root))
+    def test_folder_problems_are_sentences_not_codes(self):
+        import contextlib
+        link=self.base/'alias';link.symlink_to(self.folder)
+        for action,folder,words in (('configure','/Volumes/Not Mounted/Sovereign','does not exist'),('browse','/Volumes/Gone','does not exist'),('configure',str(link),'linked')):
+            out=io.StringIO();req=dict(protocol=1,root=str(self.archive),action=action,folder=folder,key=str(self.key))
+            with patch.object(sys,'argv',['sov-backup','--request',json.dumps(req)]),contextlib.redirect_stdout(out):
+                self.assertEqual(b.main(),1)
+            self.assertIn(words,json.loads(out.getvalue())['error'])
     def test_serve_refuses_wrong_authority_and_mixed_protocol(self):
         with self.assertRaisesRegex(ValueError,'authority'):b.operate(dict(protocol=1,root=str(self.archive),action='status'),serve=True)
         with self.assertRaisesRegex(ValueError,'Upgrade'):b.operate(dict(protocol=99,root=str(self.archive),action='status'))
@@ -280,6 +312,20 @@ class ArchiveBackups(unittest.TestCase):
         self.assertEqual((archive/'note-link').resolve(),archive/'knowledge/concepts/decision.md')
         self.assertEqual((archive/'directory-link').resolve(),archive/'knowledge')
         self.assertTrue((archive/'broken-link').is_symlink());self.assertFalse((archive/'broken-link').exists())
+
+    def test_only_the_top_level_repos_folder_is_left_out(self):
+        # repos/ is the archive's workshop; a note in a deeper folder of that name is content.
+        ws=self.archive/'workstreams/ws';(ws/'repos/empty').mkdir(parents=True)
+        (ws/'repos/plan.md').write_text('A plan in a folder called repos.\n');(ws/'repos/alias.md').symlink_to('plan.md')
+        (ws/'operation.lock').write_text('');(ws/'tool.pyc').write_bytes(b'cache')
+        (self.archive/'repos/code').mkdir(parents=True);(self.archive/'repos/code/x.py').write_text('working tree')
+        saved=self.backup()
+        self.request('restore',True,backup=saved['backup'],destination=str(self.restore),key=str(self.key))
+        back=self.restore/'archive/workstreams/ws'
+        self.assertEqual((back/'repos/plan.md').read_text(),'A plan in a folder called repos.\n')
+        self.assertTrue((back/'repos/alias.md').is_symlink());self.assertTrue((back/'repos/empty').is_dir())
+        self.assertTrue((back/'operation.lock').exists());self.assertEqual((back/'tool.pyc').read_bytes(),b'cache')
+        self.assertEqual(list((self.restore/'archive/repos').iterdir()),[])
 
     def test_manifest_cannot_create_escaping_or_traversed_links(self):
         saved=self.backup();plain=self.base/'plain.tar';b.crypt('open',self.key,Path(saved['backup']),plain)

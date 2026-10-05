@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import time
@@ -78,6 +79,17 @@ def source_rev(template=None):
     return r.stdout.strip() or None
 
 
+def contains(template, commit):
+    """Whether this source's history holds the installed build, so building it is an update."""
+    if not commit:
+        return True  # an unstamped build predates update checking; installing stamps it
+    if not re.fullmatch(r"[0-9a-f]{4,40}", commit):
+        return False
+    r = subprocess.run(["git", "-C", template, "merge-base", "--is-ancestor", commit, "HEAD"],
+                       capture_output=True, timeout=10)
+    return r.returncode == 0
+
+
 def running():
     r = subprocess.run(["pgrep", "-f", APP + "/Contents/MacOS/Sovereign"],
                        capture_output=True, text=True)
@@ -89,9 +101,15 @@ def plan(template=None):
     app, rev = installed(), source_rev(template)
     p = {"installed": app, "source_commit": rev, "app_path": APP, "template": template,
          "buildable": buildable(template)}
-    p["current"] = bool(app.get("source_commit")) and app.get("source_commit", "").replace("+local", "") == rev
-    p["summary"] = ("Sovereign is already the newest build of this machine's source."
-                    if p["current"] else
+    commit = (app.get("source_commit") or "").replace("+local", "")
+    same = bool(commit) and commit == rev
+    # Unequal is not newer. An app built from a worktree or a later branch differs from an
+    # older checkout, and rebuilding that checkout would quietly install an older Sovereign.
+    p["ahead"] = bool(rev) and not same and not contains(template or TEMPLATE, commit)
+    p["current"] = same or p["ahead"]  # nothing newer to install
+    p["summary"] = ("Sovereign is already the newest build of this machine's source." if same else
+                    "Sovereign was built from newer or different source than this machine has, "
+                    "so there is nothing newer to install." if p["ahead"] else
                     "Build Sovereign from this machine's source and install it.")
     p["effects"] = ("Sovereign will close and reopen. The current app is kept so it can be put back. "
                     "Your settings and the selected archive are not touched. Nothing is installed if the build fails.")
@@ -113,6 +131,8 @@ def apply(token, template=None):
     runtime = os.path.join(APP, "Contents", "Resources", "runtime")
     if not os.path.isfile(os.path.join(runtime, "bin", "python3")):
         raise ValueError("The installed app has no bundled runtime to build against.")
+    if p.get("ahead"):
+        raise ValueError(p["summary"])
 
     # 1. Build. The installed app is untouched until this succeeds.
     env = dict(os.environ, SOV_PYTHON_RUNTIME=runtime)

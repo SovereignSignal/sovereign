@@ -12,7 +12,7 @@ import tempfile
 import time
 
 from sovereign_intake.common import directory, read_under, atomic, exclusive, locked
-from .core import absolute, crypto_tool, MAX_FILE, write_jobs, validate
+from .core import absolute, crypto_tool, MAX_FILE, write_jobs, validate, within
 
 MAX_TOTAL = 480 * 1024 * 1024
 MAX_MEMBERS = 100000
@@ -21,7 +21,7 @@ MAX_MEMBERS = 100000
 def check_key(path, archive=None, hub=None):
     path = absolute(path)
     for root in (archive, hub):
-        if root and (path == root or root in path.parents):
+        if root and within(path, root):
             raise ValueError('Keep the recovery key outside both the archive and Hub folder.')
     raw, info = read_under(path.parent, path.name, 32)
     if len(raw) != 32 or info.st_mode & 0o077:
@@ -29,9 +29,13 @@ def check_key(path, archive=None, hub=None):
     return path
 
 
+def inside_archive(path):
+    return any((p / 'knowledge').is_dir() and (p / 'raw').is_dir() for p in path.parents)
+
+
 def recovery_key(output, apply=False):
     output = absolute(output)
-    if any((p / 'knowledge').is_dir() and (p / 'raw').is_dir() for p in output.parents):
+    if inside_archive(output):
         raise ValueError('Keep the recovery key outside every archive.')
     directory(output.parent)
     if output.exists():
@@ -43,10 +47,10 @@ def recovery_key(output, apply=False):
 
 def configure(config, folder, key, apply=False):
     folder = directory(folder); key = check_key(key, Path(config['archive']), Path(config['destination']))
-    if folder == key.parent:
+    if within(key, folder):
         raise ValueError('Store capsules separately from the recovery key.')
     for root in (Path(config['archive']), Path(config['destination'])):
-        if folder == root or root in folder.parents:
+        if within(folder, root):
             raise ValueError('Store capsules outside the archive and Hub folder.')
     updated = dict(config, snapshot_folder=str(folder), recovery_key=str(key))
     if apply:
@@ -73,6 +77,8 @@ def inventory(config):
             entries.append((str(PurePosixPath(prefix) / rel), None, None))
             for name in sorted(files):
                 path = current / name
+                if path.is_symlink():
+                    raise ValueError('Snapshot refused a linked file: ' + str(path))
                 raw, info = read_under(root, str(rel / name), MAX_FILE)
                 total += len(raw)
                 if total > MAX_TOTAL or len(entries) >= MAX_MEMBERS: raise ValueError('Recovery capsule exceeds its size limit.')
@@ -86,9 +92,9 @@ def snapshot(config, output, key, apply=False):
     output = absolute(output); archive = Path(config['archive']); hub = Path(config['destination'])
     key = check_key(key, archive, hub)
     for root in (archive, hub):
-        if output == root or root in output.parents:
+        if within(output, root):
             raise ValueError('Place the recovery capsule outside the archive and Hub folder.')
-    if output.parent == key.parent:
+    if within(key, output.parent):
         raise ValueError('Store capsules separately from the recovery key.')
     directory(output.parent)
     if output.exists():
@@ -171,6 +177,9 @@ def restore(capsule, destination, key, apply=False):
     capsule = absolute(capsule); destination = absolute(destination); key = check_key(key)
     if destination.exists():
         raise ValueError('Restore only into a new directory. Existing archives are never overwritten.')
+    # A restore carries a whole archive with its Git history, the Hub and its runtime.
+    if inside_archive(destination):
+        raise ValueError('Restore into a new folder outside every archive.')
     # The native helper authenticates the whole capsule before tar data is inspected.
     raw, _ = read_under(capsule.parent, capsule.name, MAX_TOTAL)
     with tempfile.TemporaryDirectory(prefix='sov-restore-', dir=destination.parent) as tmp:
