@@ -305,6 +305,20 @@ class ArchiveBackups(unittest.TestCase):
         self.assertEqual((archive/'directory-link').resolve(),archive/'knowledge')
         self.assertTrue((archive/'broken-link').is_symlink());self.assertFalse((archive/'broken-link').exists())
 
+    def test_only_the_top_level_repos_folder_is_left_out(self):
+        # repos/ is the archive's workshop; a note in a deeper folder of that name is content.
+        ws=self.archive/'workstreams/ws';(ws/'repos/empty').mkdir(parents=True)
+        (ws/'repos/plan.md').write_text('A plan in a folder called repos.\n');(ws/'repos/alias.md').symlink_to('plan.md')
+        (ws/'operation.lock').write_text('');(ws/'tool.pyc').write_bytes(b'cache')
+        (self.archive/'repos/code').mkdir(parents=True);(self.archive/'repos/code/x.py').write_text('working tree')
+        saved=self.backup()
+        self.request('restore',True,backup=saved['backup'],destination=str(self.restore),key=str(self.key))
+        back=self.restore/'archive/workstreams/ws'
+        self.assertEqual((back/'repos/plan.md').read_text(),'A plan in a folder called repos.\n')
+        self.assertTrue((back/'repos/alias.md').is_symlink());self.assertTrue((back/'repos/empty').is_dir())
+        self.assertTrue((back/'operation.lock').exists());self.assertEqual((back/'tool.pyc').read_bytes(),b'cache')
+        self.assertEqual(list((self.restore/'archive/repos').iterdir()),[])
+
     def test_manifest_cannot_create_escaping_or_traversed_links(self):
         saved=self.backup();plain=self.base/'plain.tar';b.crypt('open',self.key,Path(saved['backup']),plain)
         for links in ({'archive/link':'outside'},{'archive/link':'archive/../outside'},

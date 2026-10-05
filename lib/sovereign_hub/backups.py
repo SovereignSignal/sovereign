@@ -143,20 +143,26 @@ def extra_files(ctx):
     return out
 
 
+def pruned(prefix, base, current, excluded):
+    # The archive leaves out its top-level workshop (repos/) only; a deeper folder of
+    # that name is content. Engine, runtime and Hub caches are pruned at every depth.
+    return excluded if prefix != 'archive' or current == base else ()
+
+
 def inventory(ctx):
     entries = {}; total = 0
     for prefix, base, excluded in roots(ctx):
         base = directory(base)
         for current, dirs, files in os.walk(base, followlinks=False):
             current = Path(current)
-            dirs[:] = sorted(d for d in dirs if d not in excluded)
+            dirs[:] = sorted(d for d in dirs if d not in pruned(prefix, base, current, excluded))
             for name in list(dirs):
                 if (current / name).is_symlink():
                     if prefix == 'archive':
                         dirs.remove(name); continue # recorded without following by link_inventory
                     raise ValueError('A linked directory cannot be backed up: ' + str(current / name))
             for name in sorted(files):
-                if name.endswith('.pyc') or name in ('operation.lock', '.DS_Store'): continue
+                if name == '.DS_Store' or prefix != 'archive' and (name.endswith('.pyc') or name == 'operation.lock'): continue
                 p = current / name
                 if p.is_symlink() and prefix == 'archive': continue
                 # Bundled engines/runtime may use internal file aliases. Materialize
@@ -188,9 +194,10 @@ def signature(info):
 def directory_inventory(ctx):
     names = set()
     for prefix, base, excluded in roots(ctx):
-        for current, dirs, _ in os.walk(directory(base), followlinks=False):
+        base = directory(base)
+        for current, dirs, _ in os.walk(base, followlinks=False):
             current = Path(current)
-            dirs[:] = sorted(d for d in dirs if d not in excluded)
+            dirs[:] = sorted(d for d in dirs if d not in pruned(prefix, base, current, excluded))
             if prefix == 'archive': dirs[:] = [d for d in dirs if not (current/d).is_symlink()]
             if any((current / d).is_symlink() for d in dirs):
                 raise ValueError('Linked directories cannot be backed up.')
@@ -204,7 +211,7 @@ def link_inventory(ctx):
     # Flatten their resolved target to a portable path confined to this archive.
     root = ctx['root']; links = {}
     for current, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = [d for d in dirs if d != 'repos']
+        if Path(current) == root: dirs[:] = [d for d in dirs if d != 'repos']
         for name in dirs + files:
             path = Path(current)/name
             if not path.is_symlink(): continue
