@@ -73,7 +73,7 @@ window.Home = (() => {
       for(const need of needs){
         const source=need.need!=null?status.needs_you[need.need]:null,gate=source?.kind==='gate';
         const groupViews=[...new Set((need.members||[]).map(member=>member.jump?.view))];
-        const jump=need.jump||(groupViews.length===1&&groupViews[0]?{view:groupViews[0]}:null)||{view:source?.harness?'sources':source?.kind==='job'?'jobs':'sources',id:source?.harness};
+        const jump=need.jump||(groupViews.length===1&&groupViews[0]?{view:groupViews[0]}:null)||{view:'sources'};
         if(gate)list.append(item('gate',need.state,plural(hub.pending||0,'proposal'),'waiting','Review',()=>api.review(),null));
         // A row that can do the thing says so on the row; nobody should go looking for a button.
         else if(need.actionKind)list.append(item(need.cause||need.name,need.state,need.name,SovStatus.brief(need),need.action||'Do it',()=>act(need.actionKind),detail(need)));

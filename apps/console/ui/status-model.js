@@ -186,13 +186,18 @@ window.SovStatus = (() => {
     const localHubFailures = new Map(h.via === 'local' ? Object.entries(h.jobs||{}).filter(([,j])=>j.source==='hub-runner'&&j.ts&&j.exit!=null&&j.exit!==0).map(([k,j])=>['com.sovereign.hub.'+k,j]) : []);
     const coveredLocalJob = j => {const receipt=localHubFailures.get(j.label);return receipt && receipt.exit===j.last_exit && Number.isFinite(j.last_run) && Date.parse(receipt.ts)/1000===j.last_run;};
     // A local job the service reports leads its sentence with the job's label. That row is the
-    // job's one row: red and first when it failed, named and landing on the job.
+    // job's one row: red and first when it failed, named and landing on the job. Every other
+    // service row says what it is in its kind: name it, colour it and send it where its own
+    // next step points.
+    const hubName = h.hub_host || (m.hub_pointer || '').split(':')[0], tool = id => ((D.harnesses || []).find(x => x.id === id) || {}).name || id;
+    const KIND_VIEW = { hypervisor: "backups", relay: "backups", "runner-stalled": "jobs", "runner-standing-down": "jobs" };
     const here = n => !n.host || n.host === m.host, labelOf = n => String(n.text || "").split(/[:\s]/)[0];
     const jobRow = n => (n.kind === "job" || n.kind === "xcode-license") && here(n) && !!labelOf(n), named = new Set((D.needs_you || []).filter(jobRow).map(labelOf));
     (D.needs_you || []).forEach((n, i) => { if(n.kind === "client-intake" || n.kind === "job" && here(n) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return;
-      const job = jobRow(n), failed = n.kind === "xcode-license" || n.kind === "job" && / last exited /.test(n.text || "");
-      need.push({ state: failed ? "down" : "warn", name: job ? shortLabel(labelOf(n)) : n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, failure_output:n.failure_output, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: failed || n.kind === "host" ? 0 : 1, cause: "need:" + n.kind,
-        jump: job ? (n.harness ? {view:"tools",id:n.harness} : {view:"jobs",id:labelOf(n)}) : n.host?{view:"hosts",id:n.host}:null }); });
+      const job = jobRow(n), down = n.kind === "xcode-license" || n.kind === "job" && / last exited /.test(n.text || "") || ["host", "hub", "runner-stalled"].includes(n.kind);
+      need.push({ state: down ? "down" : "warn", name: job ? shortLabel(labelOf(n)) : n.harness ? tool(n.harness) : n.kind === "hub" ? "Hub" : /^runner-/.test(n.kind) ? "runner" : n.host || n.lane || n.node || n.kind,
+        detail: n.text, why:n.why, failure_output:n.failure_output, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: down ? 0 : 1, cause: "need:" + n.kind,
+        jump: n.harness ? {view:"tools",id:n.harness} : job ? {view:"jobs",id:labelOf(n)} : n.host ? {view:"hosts",id:n.host} : n.kind === "hub" ? {view:"hosts",id:hubName} : KIND_VIEW[n.kind] ? {view:KIND_VIEW[n.kind]} : null }); });
     // A client whose intake failed is one row, from the clients list, which disassociation
     // filters; the service's own client-intake row names it only inside a sentence.
     (D.clients || h.clients || []).filter(c => c.state === "error" || c.state === "rejected").forEach(c => need.push({ state: "down", name: String(c.client_id || "unknown"),
@@ -208,9 +213,8 @@ window.SovStatus = (() => {
     });
     if (h.jobs_error) need.push({ state: "warn", name: "Hub jobs", detail: h.jobs_error, jump: { view: "jobs" }, order: 0, cause: "hub-jobs-unknown" });
     hosts.filter(x => x.net && x.net.online === false && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Sources → Devices.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
-    const hubName = h.hub_host || (m.hub_pointer || '').split(':')[0];
     if (h.reachable === false && !(D.needs_you||[]).some(n=>n.kind==='hub') && !hosts.some(x => x.host === hubName && x.net?.online === false))
-      need.push({state:'down',name:'Hub',detail:'unreachable; review and acceptance could not be checked',jump:{view:'jobs'},order:0});
+      need.push({state:'down',name:'Hub',detail:'unreachable; review and acceptance could not be checked',jump:{view:'hosts',id:hubName},order:0});
     (bk.hosts || []).forEach(x => {
       const b=backupState(x);if(!b.issue)return;
       need.push({state:b.state,name:x.host,detail:b.text,age_h:x.last_dump_age_h,
@@ -279,7 +283,8 @@ window.SovStatus = (() => {
       r.why ||= guidance[0];r.action ||= guidance[1];r.verify ||= guidance[2];
     }
     fresh.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
-    need.sort((p, q) => p.order - q.order || (q.age_h || 0) - (p.age_h || 0));
+    const worse = (p, q) => p.order - q.order || (p.state === "down" ? 0 : 1) - (q.state === "down" ? 0 : 1);   // worst state first
+    need.sort((p, q) => worse(p, q) || (q.age_h || 0) - (p.age_h || 0));
     stale.sort((p, q) => (q.age_h || 0) - (p.age_h || 0));
     // one row per repeated cause; the drawer lists the members
     const collapse = (list, mk) => {
@@ -292,7 +297,7 @@ window.SovStatus = (() => {
       const label = rows[0].causeLabel || (cause === "job-failed" ? "failed their last run" : cause === "unreachable" ? "are unreachable" : cause === "mirror-late" ? "are past twice their mirror cadence" : "need a look");
       return { state: rows.some(r => r.state === "down") ? "down" : "warn", name: `${rows.length} ${cause === "job-failed" || cause === "hub-job-late" ? "jobs" : "machines"}`,
         detail: `${label}: ${rows.slice(0, 2).map(r => r.name).join(", ")}${rows.length > 2 ? " and " + (rows.length - 2) + " more" : ""}`, why:rows.some(r=>r.failure_output)?'Recorded failure details for each job are shown below.':rows[0].why, action:'Inspect each listed item in '+(rows[0].jump?.view==='backups'?'Backups → Copies':rows[0].jump?.view==='hosts'?'Sources → Devices':rows[0].jump?.view==='tools'?'Sources':'Settings → Jobs')+'. '+rows[0].action, verify:rows[0].verify, age_h: null, order: rows[0].order };
-    }).sort((p, q) => p.order - q.order);
+    }).sort(worse);
     const freshG = collapse(fresh, (cause, rows) => { const newest = Math.min(...rows.map(r => r.age_h == null ? Infinity : r.age_h));
       return { state: "live", name: `${rows.length} mirrors`, detail: `pulled on ${rows[0].host}, newest ${age(newest)} ago`, age_h: isFinite(newest) ? newest : null, order: 1 }; });
     freshG.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
@@ -365,7 +370,10 @@ window.SovStatus = (() => {
     if (c === "no-backup") return "no backup";
     if (c === "backup-stale") return "backup stale";
     if (c === "backup-unscheduled") return "not scheduled";
-    if (c === "backup-unknown") return "backup unknown";
+    if (c === "backup-unknown" || c === "need:hypervisor") return "backup unknown";
+    if (c === "need:xcode-license") return "cannot start";
+    if (c === "need:runner-stalled") return "stalled";
+    if (c === "need:runner-standing-down") return "standing down";
     if (c === "app-behind") return "ready to install";
     if (c === "app-unstamped" || c === "app-source-unknown") return "cannot be checked";
     if (c === "permission-drift") return "permission unsettled";
@@ -383,9 +391,11 @@ window.SovStatus = (() => {
     if (!D?.machine?.connected) return { state: "idle", text: "Not connected." };
     const A = assess(D, storage), st = (D.hub || {}).status || {}, hosts = ((D.fleet || {}).hosts || []);
     const down = A.need.filter(r => r.state === "down");
+    // A service row's detail is already a sentence about its thing; a derived row's is not.
+    const say = f => (f.group ? f.name + " " + f.detail.split(":")[0] : f.need != null ? f.detail : f.name + " " + f.detail).replace(/\.$/, "");
     let state, text;
-    if (down.length) { state = "down"; const f = down[0]; text = `Attention: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.name + " " + f.detail}${down.length > 1 ? `, and ${down.length - 1} more` : ""}.`; }
-    else if (A.need.length) { state = "warn"; const f = A.need[0]; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.need != null ? f.detail : f.name + " " + f.detail}.`; }
+    if (down.length) { state = "down"; text = `Attention: ${say(down[0])}${down.length > 1 ? `, and ${down.length - 1} more` : ""}.`; }
+    else if (A.need.length) { state = "warn"; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${say(A.need[0])}.`; }
     else if (A.waiting.length) { state = "idle"; text = `${A.waiting.length} awaiting verification. No action required while the next run is pending.`; }
     else if (A.stale.length) { state = "warn"; text = `Stale: ${A.stale[0].name} ${A.stale[0].detail}.`; }
     else {

@@ -305,3 +305,28 @@ assert.equal(assess({...refusedClient,clients:undefined,hub:{clients:refusedClie
 const disassociated=model.associations({...refusedClient,device_associations:{available:true,scope:'/a',disassociated:['field-laptop']}});
 assert.equal(assess(disassociated).need.length,0,'a disassociated client raises nothing');
 console.log('A refused client intake is one row, and disassociation hides it.');
+// A service row is named, coloured and sent where its own next step points, by its kind.
+const kinds=assess({machine:{host:'here',hub_pointer:'hubhost:/archive'},hub:{reachable:false,hub_host:'hubhost'},harnesses:[{id:'cursor-here',name:'Cursor'}],needs_you:[
+ {kind:'host',host:'vm-a',text:'This device cannot currently reach vm-a.'},
+ {kind:'hub',text:'The hub did not answer (ssh hubhost). Governance state is unknown until it does.'},
+ {kind:'hypervisor',node:'node-a',text:'Backup posture of 3 VMs on node-a is unknown.'},
+ {kind:'relay',text:"The mover's source /x is gone."},
+ {kind:'runner-stalled',text:'The connector job has not finished a tick since then.'},
+ {kind:'runner-standing-down',text:'The connector job has stood down 3 tick(s) in a row.'},
+ {kind:'lane-silent',harness:'cursor-here',text:'Cursor: the connector job is running but has not visited this lane.'},
+ {kind:'gate',text:'2 proposals waiting.'}]}).need;
+const byKind=k=>kinds.find(n=>n.cause==='need:'+k);
+assert.equal(byKind('host').state,'down','an unreachable device is red wherever it is reported');
+assert.equal(byKind('hub').name,'Hub');assert.equal(byKind('hub').state,'down');assert.equal(byKind('hub').jump.view,'hosts');assert.equal(byKind('hub').jump.id,'hubhost');
+assert.equal(model.brief(byKind('hub')),'unreachable');
+assert.equal(byKind('hypervisor').name,'node-a');assert.equal(byKind('hypervisor').jump.view,'backups');assert.equal(model.brief(byKind('hypervisor')),'backup unknown');
+assert.equal(byKind('relay').jump.view,'backups');
+assert.equal(byKind('runner-stalled').name,'runner');assert.equal(byKind('runner-stalled').state,'down');assert.equal(byKind('runner-stalled').jump.view,'jobs');
+assert.equal(byKind('runner-standing-down').jump.view,'jobs');assert.equal(model.brief(byKind('runner-standing-down')),'standing down');
+assert.equal(byKind('lane-silent').name,'Cursor');assert.equal(byKind('lane-silent').jump.view,'tools');assert.equal(byKind('lane-silent').jump.id,'cursor-here');
+const firstAmber=kinds.findIndex(n=>n.state!=='down'),lastRed=kinds.map(n=>n.state).lastIndexOf('down');
+assert.ok(lastRed<firstAmber,'red rows come first: '+kinds.map(n=>n.state+' '+n.name).join(', '));
+assert.equal(assess({machine:{host:'here'},hub:{reachable:false,hub_host:'hubhost'}}).need[0].jump.id,'hubhost','a derived hub alert lands on the hub too');
+console.log('Service rows: named, coloured and routed by kind; red rows first.');
+assert.equal(verdict({...connected,needs_you:[{kind:'host',host:'vm-a',text:'This device cannot currently reach vm-a.'},{kind:'host',host:'vm-b',text:'This device cannot currently reach vm-b.'}]}).text,
+ 'Attention: This device cannot currently reach vm-a, and 1 more.','a service sentence is said once, without its name in front');
