@@ -339,3 +339,9 @@ assert.equal(assess({fleet:{hosts:[{host:'a',net:{online:false}},{host:'b',net:{
 assert.equal(assess({clients:[{client_id:'a',state:'rejected'},{client_id:'b',state:'error'}]}).need[0].action.startsWith('Inspect each listed item in Sources → Map.'),true);
 assert.equal(result.need.find(x=>x.group==='job-failed').name,'2 jobs');
 console.log('Groups: jobs, sources and devices, every member named.');
+// A lane on a disassociated device is not a producer this archive is waiting on.
+const assocLanes=model.associations({machine:{host:'here',vault:'/a'},device_associations:{available:true,scope:'/a',disassociated:['gone']},
+ lanes:[{lane:'live',host:'here',vault_age_h:1},{lane:'quiet',host:'here',vault_age_h:100},{lane:'away',host:'gone',vault_age_h:200},{lane:'away-fresh',host:'gone',vault_age_h:1}]});
+const producers=assess(assocLanes).completeness.producers;
+assert.equal(producers.total,2);assert.equal(producers.delivering,1);
+console.log('Completeness: lanes on disassociated devices are not counted.');

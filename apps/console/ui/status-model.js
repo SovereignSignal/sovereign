@@ -56,9 +56,10 @@ window.SovStatus = (() => {
   function completeness(D) {
     const st = (D && D.hub && D.hub.status) || {}, cov = st.coverage || {};
     const total = Number(cov.processable) || 0, judged = Number(cov.judged_ever) || 0;
-    const lanes = (D && D.lanes || []).filter(l => !l.retired);
-    // "Delivering" is the lane's own declared cadence, not a fixed clock: a lane that
-    // collects weekly is not behind at six days.
+    // A lane on a device the owner disassociated is not a producer this archive waits on.
+    const lanes = (D && D.lanes || []).filter(l => !l.retired && l.associated !== false);
+    // "Delivering" is one 48-hour clock for every lane: the status service reports no
+    // per-lane cadence yet, so a lane that collects weekly reads quiet between runs.
     const live = lanes.filter(l => l.vault_age_h != null && l.vault_age_h <= 48).length;
     const gate = Number((D && D.hub && D.hub.pending)) || 0;
     const pct = total > 0 ? Math.round((judged / total) * 100) : null;
