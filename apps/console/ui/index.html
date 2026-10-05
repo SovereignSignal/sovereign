@@ -1235,7 +1235,7 @@ window.onerror = function (msg, src, line, col) {
   function renderGlance() {
     const m = D.machine || {}, h = hub(), st = h.status || {}, cov = st.coverage || {}, a = arch();
     const fleet = ((D.fleet || {}).hosts) || [];
-    const weeks = ((h.judge || {}).weeks) || [], rates = weeks.map(w => w.judged ? 100 * w.kept / w.judged : 0), last = weeks[weeks.length - 1];
+    const weeks = ((h.judge || {}).weeks) || [], rates = weeks.map(w => w.judged ? 100 * w.kept / w.judged : 0), last = thisWeek(h);
     const online = fleet.filter(x => (x.net || {}).online).length, offline = fleet.filter(x => (x.net || {}).online === false).length;
     const unknown = fleet.length - online - offline;
     const pending = reviewQueue().count, assessment = assess(), needs = assessment.need;
