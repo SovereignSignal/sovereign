@@ -34,9 +34,9 @@ fi
 # verdict, but a manual commit (or a quiet gate) would otherwise leave Gitea
 # behind while node-12 stays current.
 if git push -q origin main --tags 2>>"$LOG"; then
-  say "out: vault -> gitea ok"
+  say "out: vault -> origin ok"
 else
-  say "OUT FAIL: vault -> gitea (canonical remote not advancing)"
+  say "OUT FAIL: vault -> origin (canonical remote not advancing)"
 fi
 if git -C "$SOV_TEMPLATE" push -q "$X" main 2>>"$LOG"; then
   say "out: template -> $X ok"

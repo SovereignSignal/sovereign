@@ -23,9 +23,15 @@ window.SovSettings = (() => {
   const sect = (title, body, note, acts) => `<div class="set-sect"><h2>${title}</h2><div class="set-body">${body}${note ? `<p class="set-note">${note}</p>` : ""}</div>${acts ? `<div class="acts">${acts}</div>` : ""}</div>`;
   const more = (summary, body, open) => `<details class="set-more"${open ? " open" : ""}><summary>${summary}</summary>${body}</details>`;
 
+  /* Before the first status arrives, or when it could not be read, there is no
+     build, job or lane to describe: say so instead of an empty answer. */
+  const unread = D => !D || D.error || (D._status && !D.machine) ? (D && D.error ? "Status unavailable" : "Checking…") : "";
+  const say = text => `<p class="set-lead">${text}</p>`;
+
   /* The app's own currency, in the same words the Today row uses. The revisions
      are evidence and sit behind the sentence, never in place of it. */
   function appSection(D) {
+    if (unread(D)) return sect("Version", say(unread(D)));
     const a = (D && D.machine && D.machine.app) || {}, src = String((D && D.machine && D.machine.template_rev) || "").split(" ")[0];
     if (!a.installed) return sect("Version", `<p class="set-lead">Sovereign is running from a build this machine cannot identify.</p>`, "Install once from this machine's source and it will be able to check itself from then on.");
     const name = `Sovereign ${esc(a.version || "?")} build ${esc(a.build || "?")}`;
@@ -46,11 +52,18 @@ window.SovSettings = (() => {
       `<button id="set-change">${root ? "Change…" : "Open an archive…"}</button>${root ? `<button id="set-reveal">Show in Finder</button>` : ""}`);
   }
 
+  /* A job is what an operating system schedules; a lane runs inside one. The Jobs
+     header counts with this too, so the two places never disagree. */
+  function jobCount(D) {
+    const local = (D && D.jobs) || [], lanes = local.filter(j => j.kick).length;
+    return { jobs: Object.keys((D && D.hub && D.hub.jobs) || {}).length + local.length - lanes, lanes };
+  }
+
   /* The scheduled work behind the archive. It is engine-room detail, so it has a
      door here and no place in the navigation. */
   function jobsSection(D) {
-    const n = Object.keys((D && D.hub && D.hub.jobs) || {}).length + ((D && D.jobs) || []).filter(j => !j.kick).length;
-    return sect("Jobs", `<p class="set-lead">${n ? n + " scheduled" : "None reported"}</p>`, "",
+    const n = jobCount(D).jobs;
+    return sect("Jobs", say(unread(D) || (n ? n + " scheduled" : "None reported")), "",
       `<button data-goto-view="jobs">View</button><button data-goto-view="setup">Hub setup…</button>`);
   }
 
@@ -58,8 +71,9 @@ window.SovSettings = (() => {
      in its own LANE.md; this reads them back so the owner can see contribute-only
      and read-and-contribute side by side instead of opening seven files. */
   function permissionSection(D) {
+    if (unread(D)) return sect("Permissions", say(unread(D)));
     const lanes = (D && D.lanes || []).filter(l => l.lane && l.associated !== false);
-    if (!lanes.length) return sect("Permissions", `<p class="set-lead">No producer lanes are declared for this archive.</p>`);
+    if (!lanes.length) return sect("Permissions", say("No producer lanes are declared for this archive."));
     // `read` carries its mechanism in parentheses and `read_scope` is sometimes the
     // bare boolean `true` rather than a scope, which rendered as "reads true". Say
     // what is actually known: the scope when there is one, else the mechanism.
@@ -113,7 +127,8 @@ window.SovSettings = (() => {
     return sect(`<label for="s-appearance">Appearance</label>`,
              `<select id="s-appearance">${["system", "dark", "light"].map(v => `<option value="${v}" ${(S.appearance || "system") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</select>`)
       + sect("Shows in", `<div class="set-inline">${["dock", "menubar", "both"].map(where).join("")}</div>`)
-      + sect("On close", `<label class="check"><input type="checkbox" id="s-closequits" ${S.closeQuits ? "checked" : ""}> Quit Sovereign</label>`)
+      // Native quits on close only from the Dock: a menu bar crown keeps Sovereign running.
+      + sect("On close", `<label class="check"><input type="checkbox" id="s-closequits" ${S.closeQuits ? "checked" : ""}${S.where === "dock" ? "" : " disabled"}> Quit Sovereign</label><p class="set-note" id="s-closequits-note"${S.where === "dock" ? " hidden" : ""}>Dock only</p>`)
       + sect("At login", `<label class="check"><input type="checkbox" id="s-login" ${S.loginItem ? "checked" : ""}> Open Sovereign</label>`, esc(login))
       + pick("s-refresh", "Refresh every", [30, 60, 300, 900], S.refresh, v => v < 60 ? v + " seconds" : (v / 60) + " minute" + (v > 60 ? "s" : ""))
       + sect("Detail panel", `<label class="check"><input type="checkbox" id="s-pin" ${pinned ? "checked" : ""}> Keep it open beside the list</label>`);
@@ -134,7 +149,16 @@ window.SovSettings = (() => {
     </div>`;
   }
 
+  // Choosing where it shows applies to On close before Save, so the box never lies.
+  document.addEventListener("change", e => {
+    if (e.target.name !== "set-where") return;
+    const box = document.getElementById("s-closequits"), note = document.getElementById("s-closequits-note"), dock = e.target.value === "dock";
+    if (box) box.disabled = !dock;
+    if (note) note.hidden = dock;
+  });
+
   return {
+    jobCount,
     mount(el, next) { host = el; ctx = Object.assign({}, ctx, next); render(); },
     /* Re-render in place when the bridge answers, so a save or an update result
        lands without the owner losing their scroll position in a long pane. */

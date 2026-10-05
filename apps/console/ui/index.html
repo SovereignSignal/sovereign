@@ -404,6 +404,8 @@ window.onerror = function (msg, src, line, col) {
     return out;
   }
   const monthOf = (d) => d.toLocaleDateString([], { month: "short" });
+  // The judge lists only weeks that have judgments, so its newest entry is this week's only if it says so.
+  const thisWeek = (h) => { const w = ((h.judge || {}).weeks) || [], last = w[w.length - 1]; return last && last.week === isoWeekKey(new Date()) ? last : null; };
   const PRODUCER_X = ["desk", "web", "legacy", "other"];
 
   // everything the drawer can open, whether or not it is drawn as a row
@@ -419,12 +421,12 @@ window.onerror = function (msg, src, line, col) {
       arow("week:" + w.key, w.key.replace("-W", " week "), num(cs.length) + " cards landed", cs.map(c => c.slug),
            { kv: Object.entries(bt).sort((x, y) => y[1] - x[1]).map(([t, n]) => [t, num(n)]) });
     });
-    const weeks = ((h.judge || {}).weeks) || [], last = weeks[weeks.length - 1], bd = h.burndown || {};
+    const last = thisWeek(h), bd = h.burndown || {};
     arow("judge", "the judge", "keep rate by week, and what sits behind it", [], {
-      kv: [["this week", last ? `${num(last.kept)} of ${num(last.judged)} kept · ${pct(last.kept, last.judged)}` : "no judgments yet"],
+      kv: [["this week", last ? `${num(last.kept)} of ${num(last.judged)} kept · ${pct(last.kept, last.judged)}` : "none judged yet"],
            ["all time", num((h.judge || {}).total_judged) + " judged"],
            ["last run", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)} kept` : "?"],
-           ["unjudged", num(st.deferred ?? cov.unjudged_in_window) + " of " + num(cov.processable) + " in scope"],
+           ["unjudged", num(cov.unjudged_in_window) + " of " + num(cov.processable) + " in scope"],
            ["stranded", num(cov.stranded_pre_watermark) + " behind the watermark"],
            ["burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "running every 2h, stops itself under 2% kept"]],
       gears: h.gears || {}, gears_note: h.gears_note });
@@ -460,14 +462,16 @@ window.onerror = function (msg, src, line, col) {
     const added = `<section data-dash="weeks"><span class="cap">Added per week</span><div class="lib-weeks">${bars}</div><div class="lib-axis">${axis}</div></section>`;
 
     // how much of what arrives has been read, and how much of that was kept
-    const st = h.status || {}, cov = st.coverage || {}, jw = ((h.judge || {}).weeks) || [], last = jw[jw.length - 1];
+    const st = h.status || {}, cov = st.coverage || {}, last = thisWeek(h);
     const read = cov.processable ? Math.round(100 * (cov.judged_ever || 0) / cov.processable) : null;
     const fig = (id, label, value, unit, note) => `<button class="fig-tile" ${open(id)}><span class="cap">${label}</span><span class="fig">${esc(value)}${unit ? `<small>${unit}</small>` : ""}</span><span class="fig-note">${esc(note)}</span></button>`;
+    // A figure the hub did not send is unknown, never 0.
+    const count = (label, n, note) => fig("judge", label, n == null ? "–" : num(n), "", n == null ? "not reported" : note);
     const judge = `<section class="tiles4" data-dash="judge">
       ${fig("judge", "Read", read == null ? "–" : String(read), read == null ? "" : "%", cov.processable ? num(cov.judged_ever) + " of " + num(cov.processable) : "not reported")}
       ${fig("judge", "Kept", last && last.judged ? String(Math.round(100 * last.kept / last.judged)) : "–", last && last.judged ? "%" : "", "this week")}
-      ${fig("judge", "Waiting", num(st.deferred ?? cov.unjudged_in_window ?? 0), "", "not read yet")}
-      ${fig("judge", "Out of reach", num(cov.stranded_pre_watermark ?? 0), "", "before the start")}</section>`;
+      ${count("Waiting", cov.unjudged_in_window, "not read yet")}
+      ${count("Out of reach", cov.stranded_pre_watermark, "before the start")}</section>`;
 
     const bs = a.by_src || {}, desk = bs.desk || 0, unat = (bs.web || 0) + (bs.legacy || 0) + (bs.other || 0);
     const prodN = Object.entries(bs).filter(([x]) => !PRODUCER_X.includes(x)).reduce((acc, [, n]) => acc + n, 0), maxS = Math.max(desk, prodN, unat, 1);
@@ -521,10 +525,12 @@ window.onerror = function (msg, src, line, col) {
     return `<div class="sect"><h2>Producer</h2><p class="prose">${h.state==='removed'?'Removed. Its history is preserved.':`Runs ${h.runs_on?'on '+esc(h.runs_on):'on this Mac'}. Removal stops collection and removes Sovereign’s context setup. Saved captures stay.`}${h.read!=='none'?' Restart the tool to clear context already loaded.':''}</p>
       ${removable?`<button data-act="remove-producer" data-harness="${esc(h.id)}">Remove producer…</button>`:h.state==='removed'&&h.detected!==false?`<button class="brass" data-act="connect" data-harness="${esc(h.id)}">Add again…</button>`:''}</div>`;
   }
+  // Library and Copies describe the connected archive; another archive opened here is not it.
+  const elsewhere = () => (view === "archive" || view === "backups") && archiveKnown && !!selectedRoot && !!D?.machine?.vault && selectedRoot !== D.machine.vault;
   function items() {
     if (view === "review") return reviewQueue().proposals.map(p => ({kind:"prop",id:"p:"+p.slug,o:p}));
     if (view === "discover") return discoveredTools().map(t=>({kind:"candidate",id:t.id,o:t}));
-    if (!D || D.error) return [];
+    if (!D || D.error || elsewhere()) return [];
     if (view === "archive") return archiveItems();
     if (view === "hosts") return hostItems();
     if (view === "sources") return sourceItems();
@@ -613,8 +619,8 @@ window.onerror = function (msg, src, line, col) {
     if (!h.reachable) out.push({ kind: "quiet", id: "hub-off", text: "The hub did not answer: " + (h.error || "no route") });
     else {
       const bd = h.burndown || {};
-      row("hub:judge", { label: "judge", desc: `last run kept ${num(st.new_proposals)} of ${num(st.judged)} · ${num(st.deferred ?? cov.unjudged_in_window)} unjudged in scope`, state: st.judged != null ? "live" : "", stateText: bd.stopped ? "burn-down stopped" : "judging", age_h: h.status_age_h, goto: "judge",
-        detail: [["last run", `${num(st.new_proposals)} kept of ${num(st.judged)} judged`], ["digest", h.digest_at], ["unjudged in scope", `${num(st.deferred ?? cov.unjudged_in_window)} of ${num(cov.processable)}`], ["stranded behind the watermark", num(cov.stranded_pre_watermark)], ["judged ever", num((h.judge || {}).total_judged)], ["burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "running, 10-minute tick, stops itself under 2% kept"]],
+      row("hub:judge", { label: "judge", desc: `last run kept ${num(st.new_proposals)} of ${num(st.judged)} · ${num(cov.unjudged_in_window)} unjudged in scope`, state: st.judged != null ? "live" : "", stateText: bd.stopped ? "burn-down stopped" : "judging", age_h: h.status_age_h, goto: "judge",
+        detail: [["last run", `${num(st.new_proposals)} kept of ${num(st.judged)} judged`], ["digest", h.digest_at], ["unjudged in scope", `${num(cov.unjudged_in_window)} of ${num(cov.processable)}`], ["stranded behind the watermark", num(cov.stranded_pre_watermark)], ["judged ever", num((h.judge || {}).total_judged)], ["burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "running, 10-minute tick, stops itself under 2% kept"]],
         note: "The judge runs on the hub's own inference. Nothing it keeps lands without the gate." });
       row("hub:gate", { label: "gate", desc: h.pending ? `${num(h.pending)} waiting for you` : "nothing waiting", state: h.pending ? "warn" : "live", stateText: h.pending ? "needs you" : "clear", age_h: null, gate: true,
         detail: [["waiting", num(h.pending)], ["audit items", num(st.audit_pending)]], note: "Open Sovereign → Review to compare proposals and approve or reject them." });
@@ -653,6 +659,9 @@ window.onerror = function (msg, src, line, col) {
     const b = D.backups || {}, out = [];
     const ageOf = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
     const row = (id, o) => out.push({ kind: "backup", id, o });
+    // The hub reports its own copies; when it does not answer they are unknown, not absent.
+    if (hub().reachable === false) row("bk:hub", { label: "archive · hub copies", desc: "the hub did not answer", state: "", stateText: "unknown", tag: "hub", age_h: null,
+      detail: [["error", hub().error]], note: "Its git copies, daily snapshot and lane acceptance could not be checked. Refresh once the hub answers." });
     (b.remotes || []).forEach(r => {
       const a = ageOf(r.remote_head), ex = ((b.exchange || {})[r.name] || (b.exchange || {})[r.host] || {});
       const local = r.host === "localhost" || r.host === "127.0.0.1";
@@ -675,9 +684,11 @@ window.onerror = function (msg, src, line, col) {
       note: "A live copy of the notes, not of the archive: governance files and anything that is not markdown never cross it." });
     (b.lanes || []).forEach(l => {
       const p = ageOf(l.pushed), accepted = l.delivery === "accepted", state = accepted ? (p != null && p < 48 ? "live" : "warn") : l.delivery === "waiting" ? "warn" : "idle";
-      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : SovStatus.contributionIssue(l).text+" "+SovStatus.contributionIssue(l).why+" "+SovStatus.contributionIssue(l).action+" "+SovStatus.contributionIssue(l).verify, state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
+      // Unknown acceptance keeps its reason and how to tell it worked for the detail; the row stays a phrase.
+      const known = accepted || l.delivery === "waiting", issue = known ? null : SovStatus.contributionIssue(l);
+      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : "hub acceptance not verified", state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
         detail: [["source commit time", l.pushed || "unknown"], ["last change on main", l.merged || "unknown"], ["source commit", l.source_head || "unknown"], ["observed at", l.observed_at || "unknown"], ["keep", l.keep]],
-        note: "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
+        note: (issue ? issue.why + " " + issue.verify + " " : "") + "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
     });
     (b.hosts || []).forEach(h => {
       const status = SovStatus.backupState(h), last=h.last_backup;
@@ -766,7 +777,8 @@ window.onerror = function (msg, src, line, col) {
     else if (view === "hosts") { const gone = D.fleet?.disassociated?.length || 0; text = `${D.fleet?.hosts?.length || 0} active${gone ? " · " + gone + " disassociated" : ""}`; }
     else if (view === "discover") text = `${n} found`;
     else if (view === "archive") text = arch().total ? num(arch().total) + " cards" : "";
-    else if (view === "jobs") text = `${n} jobs`;
+    else if (view === "jobs") { const c = SovSettings.jobCount(D), many = (k, w) => k + " " + w + (k === 1 ? "" : "s");
+      text = many(c.jobs, "job") + (c.lanes ? ", " + many(c.lanes, "lane") : ""); }
     $("#listcount").textContent = text;
   }
   // The queue says what it is only when it is not simply a list of proposals: empty,
@@ -803,6 +815,7 @@ window.onerror = function (msg, src, line, col) {
     if(!review&&view!=="discover"&&D?._status?.pending&&!D.machine){rows.innerHTML='<div class="empty">Checking…</div>';footerMeta(0);return;}
     if(!review&&view!=="discover"&&D?.error){rows.innerHTML='<div class="empty">System status unavailable. Use Refresh to try again.</div>';sel=null;footerMeta(0);return;}
     if (!review && view!=="discover" && D?.machine?.connected === false) {renderSetup(D);return;}
+    if (!review && elsewhere()) {rows.innerHTML=`<div class="empty">You opened ${esc(selectedRoot.split("/").pop())}. The connected system belongs to ${esc(D.machine.vault_name || "another archive")}.<p><button data-act="choose-archive">Open archive…</button></p></div>`;sel=null;$("#listcount").textContent="";syncActive();return;}
     const list = items();
     if (view === "hosts") {
       const ids = {}; list.filter(selectable).forEach(i => { const id = (i.o.meta || {}).identity; if (id) ids[id] = (ids[id] || 0) + 1; });
@@ -905,6 +918,7 @@ window.onerror = function (msg, src, line, col) {
     const control = $("#s-appearance"); if (control) { control.value = e.detail; [...control.options].forEach(o => { o.defaultSelected = o.selected; }); }
   });
   function openSettings() {
+    if (!window.sovCanQuit()) return;   // Settings is navigation too, and from it the archive can change
     settingsOpen = true; sel = null;
     // The drawer is not where Settings lives any more, so put it away first.
     if (!pinned) { $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
@@ -986,7 +1000,14 @@ window.onerror = function (msg, src, line, col) {
     const refreshButton=$('#gate-refresh');if(refreshButton)refreshButton.onclick=()=>{gateChecks.clear();gotoGate();refresh()};
     const dismiss=$('#gate-dismiss');if(dismiss)dismiss.onclick=()=>notice.hidden=true;
   }
-  window.sovCanQuit=()=>{if(window.SovHub?.busy||window.SovBackups?.busy)return false;
+  // A change running on the archive host or the Hub holds navigation and quit until it
+  // answers; reads never do. Say why the click went nowhere, and clear it when it lands.
+  function holding(on){
+    const n=$('#gate-notice');if(!on){if(n.dataset.hold){n.hidden=true;delete n.dataset.hold;}return;}
+    n.hidden=false;n.className='gate-feedback running';n.dataset.hold='1';
+    n.innerHTML=`<strong>${window.SovHub?.busy?'Hub operation':'Backup'} running</strong><p>Navigation and quit wait for it to finish.</p>`;
+  }
+  window.sovCanQuit=()=>{if(window.SovHub?.busy||window.SovBackups?.busy){holding(true);return false;}
     if(pendingProducer?.running){$('#drawer').classList.add('open');return false;}
     if(!gatePending)return true;
     showGateNotice('running');return false;
@@ -1194,7 +1215,7 @@ window.onerror = function (msg, src, line, col) {
   function commit() {
     const p = place();
     if (samePlace(hist.stack[hist.i], p)) return;
-    hist.stack = hist.stack.slice(0, hist.i + 1); hist.stack.push(p); hist.i = hist.stack.length - 1;
+    hist.stack = hist.stack.slice(0, hist.i + 1); hist.stack.push(p); hist.i = hist.stack.length - 1; hist.boot = false;
   }
   function applyPlace(p) {
     settingsOpen = !!p.settings; view = p.view; renderTop();
@@ -1229,7 +1250,7 @@ window.onerror = function (msg, src, line, col) {
         ${(() => { const vd = verdictSentence(); bridge({ cmd: "verdict", state: vd.state, text: vd.text }); return `<button class="g-row verdict ${vd.state}" data-place="${esc(JSON.stringify({ view: "glance" }))}"><span class="vdot"></span><span class="vt">${esc(vd.text)}</span></button>`; })()}
         ${row({ view: "review" }, "Review proposals", pending == null ? "Unverified" : num(pending), "Open your review queue")}
         ${row({ view: "archive", section: "judge" }, "judge kept", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)}` : "?", (last ? "wk " + pct(last.kept, last.judged) : "") + sparkline(rates))}
-        ${row({ view: "archive", section: "judge" }, "unjudged", num(st.deferred ?? cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
+        ${row({ view: "archive", section: "judge" }, "unjudged", num(cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
         ${row({ view: "archive", section: "composition" }, "cards", num(a.total), a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : "")}
         ${row({ view: "hosts" }, "fleet", fleet.length ? `${online} of ${fleet.length} up` : "?", offline ? offline + " offline" : unknown ? unknown + " not probed" : fleet.length ? "all reachable" : "not reported", offline ? "hot" : "")}
         ${needs.filter(n => n.cause !== "need:gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.jump ? {view:n.jump.view,sel:{id:n.jump.id}} : {view:'glance'}))}"><span class="l">${esc(n.name)}</span><span class="s wrap">${esc(n.detail)}</span><span class="chev">›</span></button>`).join("")}
@@ -1261,7 +1282,8 @@ window.onerror = function (msg, src, line, col) {
     if (GLANCE) return renderGlance();
     renderTop(); keepTyped(() => { if (!tick || !inUse($("#rows"))) renderList(); renderInspector(); });
     if(view==='discover'&&!discovery)scanTools();
-    if (hist.i < 0) commit();
+    // The page's first place, held only until a jump in from the other page says where the owner went.
+    if (hist.i < 0) { commit(); hist.boot = true; }
   }
   // A bare name is a row id first (a tool), then a lane; "lane:<name>" is that lane. A lane
   // that a tool on this machine owns is listed as that tool, and a guest's sub-lane
@@ -1448,8 +1470,8 @@ window.onerror = function (msg, src, line, col) {
       if (act === "review-next") return stepReview(1);
       if (act === "review-prev") return stepReview(-1);
       if (act === "review-unfold") { reviewUnfolded.add(sel.id.slice(2)); renderInspector(); return; }
-      if (b.id === "set-change") return bridge({ cmd: "chooseArchive" });
-      if (b.id === "set-reveal") return bridge({ cmd: "reveal" });
+      if (b.id === "set-change") return window.sovCanQuit() && bridge({ cmd: "chooseArchive" });
+      if (b.id === "set-reveal") return bridge({ cmd: "reveal", path: selectedRoot });
       if (b.id === "set-update") {
         const template = D && D.machine && D.machine.template;
         if (!template) { SovSettings.note("set-update-state", "This machine\u2019s source location is not known, so there is nothing to build from."); return; }
@@ -1472,6 +1494,7 @@ window.onerror = function (msg, src, line, col) {
       }
       if(act === "remove-producer")return producer(b.dataset.harness,"remove",false);
       if (act === "hostadd") return hostAdd(b.dataset.host, false);
+      if (act === "choose-archive") return bridge({ cmd: "navigate", page: "home", place: { chooseArchive: true } });
       if (b.id === 'review-retry') return ['no_archive','different_archive'].includes(reviewQueue().state)?bridge({cmd:'navigate',page:'home',place:{chooseArchive:true}}):refresh();
       if (act === "gotogate") return gotoGate();
       if (b.dataset.gotoView) return setView(b.dataset.gotoView, b.dataset.gotoView === "archive" ? { section: b.dataset.gotoSec } : undefined);
@@ -1596,8 +1619,8 @@ window.onerror = function (msg, src, line, col) {
     }
   };
   function deliverInner(kind, payload) {
-    if(kind.startsWith('archiveBackup')){SovBackups.deliver(kind,payload);return;}
-    if(kind.startsWith('hub')){SovHub.deliver(kind,payload);return;}
+    if(kind.startsWith('archiveBackup')){SovBackups.deliver(kind,payload);if(!SovHub.busy&&!SovBackups.busy)holding(false);return;}
+    if(kind.startsWith('hub')){SovHub.deliver(kind,payload);if(!SovHub.busy&&!SovBackups.busy)holding(false);return;}
     if(kind==='discovery'){
       if(payload.request!==discoveryRequest)return;
       discoveryRequest=null;discovery=payload;
@@ -1741,6 +1764,7 @@ window.onerror = function (msg, src, line, col) {
     } else if (kind === "goto") {
       if(!window.sovCanQuit())return;
       if (!D && !payload.settings) { pendingGoto = payload; return; }
+      if (hist.boot) { hist.stack = []; hist.i = -1; hist.boot = false; }   // a jump in replaces the default it loaded on
       if (payload.settings) return openSettings();
       if (payload.snapshot) return window.sovView(payload.snapshot);
       if (payload.view === "review" && !payload.sel) return gotoGate();

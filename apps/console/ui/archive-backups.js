@@ -31,10 +31,11 @@ window.SovBackups=(()=>{
     const request=crypto.randomUUID();const payload={cmd:'archiveBackup',protocol:1,root,action:op,apply,request,...extra};
     if(fields[op])for(const f of fields[op])payload[f]=values[f];
     if(apply)payload.token=result?.token;
-    pending={request,op,apply};ready=false;post(payload);render();
+    pending={request,op,apply,root};ready=false;post(payload);render();
   }
+  // #rows hosts every view, so a reply that lands after the owner moved on must not paint into another one.
   function render(){
-    if(!host?.isConnected)return;
+    if(!host?.isConnected||document.body.dataset.view!=='recovery')return;
     const dest=state?.destinations?.[0],busy=!!pending,remote=state?.remote,owner=state?.executor||state?.host;
     const hasState=state&&!state.error;
     const assessment=protection(state);
@@ -59,7 +60,7 @@ window.SovBackups=(()=>{
       ${action==='configure'?'<p>An existing recovery key can be reused. A new key is created at the chosen path when you save. Nothing is scheduled automatically.</p>':''}
       ${action==='restore'?'<p>Verify and recover into a new folder. Restored connections and schedules remain inactive.</p>':''}
       <div class="acts"><button id="ab-preview" ${busy||(['backup','verify'].includes(action)&&!dest?.available)?'disabled':''}>${busy?'Working…':'Preview'}</button><button id="ab-apply" class="brass" ${busy||!ready?'disabled':''}>${esc(names[action])}</button></div>`:''}
-      ${browser?`<section class="ab-browser"><h3>Choose on ${esc(owner||'this computer')}</h3><p class="ab-path">${esc(browser.folder)}</p><div class="acts"><button id="ab-volumes" ${busy?'disabled':''}>Connected drives</button><button id="ab-home" ${busy?'disabled':''}>Home folder</button><button id="ab-up" ${busy?'disabled':''}>Parent folder</button>${browser.field==='folder'?`<button id="ab-use-folder" ${busy?'disabled':''}>Use this folder</button>`:''}<button id="ab-close-browser" ${busy?'disabled':''}>Close</button></div>${browser.entries.map(e=>`<button class="ab-entry" data-ab-entry="${esc(e.path)}" data-directory="${e.directory}" ${busy?'disabled':''}>${e.directory?'Folder: ':''}${esc(e.name)}</button>`).join('')}<p>You can also enter a complete path above.</p></section>`:''}
+      ${browser?`<section class="ab-browser"><h3>Choose on ${esc(owner||'this computer')}</h3><p class="ab-path">${esc(browser.folder)}</p><div class="acts"><button id="ab-volumes" ${busy?'disabled':''}>Connected drives</button><button id="ab-home" ${busy?'disabled':''}>Home folder</button><button id="ab-up" ${busy?'disabled':''}>Parent folder</button>${['folder','destination'].includes(browser.field)?`<button id="ab-use-folder" ${busy?'disabled':''}>Use this folder</button>`:''}<button id="ab-close-browser" ${busy?'disabled':''}>Close</button></div>${browser.entries.map(e=>`<button class="ab-entry" data-ab-entry="${esc(e.path)}" data-directory="${e.directory}" ${busy?'disabled':''}>${e.directory?'Folder: ':''}${esc(e.name)}</button>`).join('')}<p>You can also enter a complete path above.</p></section>`:''}
       <div role="status" aria-live="polite">${busy?'<p>The archive host is working. Large backups may take several minutes.</p>':''}${result?.error?`<p class="ab-error">${esc(result.error)}</p>`:''}
       ${result&&!result.error?summary(result):''}</div>
       <details><summary>What this protects</summary><p>${esc(state?.scope||'Only content present on the authoritative archive host is included.')}</p><p>Excluded: ${esc((state?.excludes||[]).join('; '))}.</p></details>
@@ -87,13 +88,16 @@ window.SovBackups=(()=>{
     if(b.id==='ab-volumes')send('browse',false,{folder:'/Volumes'});
     if(b.id==='ab-home')send('browse',false,{folder:state.home});
     if(b.id==='ab-up')send('browse',false,{folder:browser.parent});
-    if(b.id==='ab-use-folder'){values[browser.field]=browser.folder;browser=null;ready=false;result=null;render();}
+    // A restore needs a folder that does not exist yet, so it lands inside the one chosen, named as the local picker names it.
+    if(b.id==='ab-use-folder'){values[browser.field]=browser.field==='destination'?browser.folder.replace(/\/$/,'')+'/Restored Sovereign':browser.folder;browser=null;ready=false;result=null;render();}
     if(b.id==='ab-close-browser'){browser=null;render();}
   });
-  return {protection,age,get busy(){return !!pending;},mount(el,archive){const changed=root!==archive,drawn=!changed&&host===el&&el.firstElementChild?.classList.contains('archive-backups');host=el;if(changed){root=archive;action='configure';storage='external';state=null;result=null;ready=false;browser=null;for(const k in values)values[k]='';}if(!drawn)render();if((!state||state.error)&&!pending&&root)send('status');},deliver(kind,p){
+  return {protection,age,get busy(){return !!pending?.apply;},mount(el,archive){const changed=root!==archive,drawn=!changed&&host===el&&el.firstElementChild?.classList.contains('archive-backups');host=el;if(changed){root=archive;action='configure';storage='external';state=null;result=null;ready=false;browser=null;for(const k in values)values[k]='';}if(!drawn)render();if((!state||state.error)&&!pending&&root)send('status');},deliver(kind,p){
     if(kind==='archiveBackupPicked'){if(p.field in values){values[p.field]=p.path;ready=false;result=null;render();}return;}
     if(kind!=='archiveBackupResult'||p.request!==pending?.request)return;
     const old=pending;pending=null;
+    // Reads do not hold navigation, so another archive may be open by the time one answers.
+    if(old.root!==root){render();if(!state&&root)send('status');return;}
     if(old.op==='status'){const initial=!state;state=p.error?{...state,...p}:p;const d=p.destinations?.[0];values.folder=d?.folder||values.folder;values.key=d?.key||values.key||(p.home?p.home+'/sovereign-recovery.key':'');values.backup=d?.last_success?.backup_id?d.folder+'/'+d.last_success.backup_id+'.sovbackup':values.backup;if(d&&(initial||result?.state==='configured'||result?.state==='reconnected'))action='backup';render();return;}
     if(old.op==='browse'){if(p.error)result=p;else browser={...browser,...p};render();return;}
     result=p;ready=!old.apply&&!p.error&&p.exit===0&&!!p.token;

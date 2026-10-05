@@ -6,6 +6,8 @@ let checks = 0; const test = (name, fn) => { fn(); checks++; console.log('PASS '
 const sent = [];
 const host = { isConnected: true, className: '', innerHTML: '', querySelector(sel) { return this.innerHTML.includes('id="' + sel.slice(1) + '"') ? { textContent: '' } : null } };
 global.window = { webkit: { messageHandlers: { sov: { postMessage: o => sent.push(o) } } } };
+const listeners = {}, controls = {};
+global.document = { addEventListener(k, f) { listeners[k] = f; }, getElementById: id => controls[id] || null };
 require(process.argv[2] || '../ui/settings-view.js');
 const view = global.window.SovSettings;
 const paint = ctx => { host.innerHTML = ''; view.mount(host, Object.assign({ S: {}, D: null, root: null, pinned: false }, ctx)); return host.innerHTML };
@@ -145,6 +147,32 @@ test('preferences reflect what is saved, not defaults', () => {
   assert(html.includes('Registered with macOS'));
 });
 
+test('quit on close is offered only where it applies: the Dock', () => {
+  assert(paint({ S: { where: 'dock' } }).match(/id="s-closequits" (?!disabled)[^>]*>/));
+  for (const where of ['menubar', 'both']) {
+    const html = paint({ S: { where, closeQuits: true } });
+    assert(/id="s-closequits" checked disabled/.test(html), where + ' keeps running in the menu bar');
+    assert(/id="s-closequits-note">Dock only</.test(html));
+  }
+  // Choosing Dock before saving enables it at once, and choosing away disables it again.
+  controls['s-closequits'] = { disabled: true }; controls['s-closequits-note'] = { hidden: false };
+  listeners.change({ target: { name: 'set-where', value: 'dock' } });
+  assert.deepEqual([controls['s-closequits'].disabled, controls['s-closequits-note'].hidden], [false, true]);
+  listeners.change({ target: { name: 'set-where', value: 'menubar' } });
+  assert.deepEqual([controls['s-closequits'].disabled, controls['s-closequits-note'].hidden], [true, false]);
+});
+
+test('a status not yet read, or not readable, claims nothing about the build, jobs or lanes', () => {
+  const falsehoods = /cannot identify|Install once|None reported|No producer lanes/;
+  for (const [D, said] of [[null, 'Checking'], [{ _status: { pending: true } }, 'Checking'],
+                           [{ error: 'System status could not be read (exit 1).', _status: { pending: false, stale: true } }, 'Status unavailable']]) {
+    const html = paint({ D });
+    assert(!falsehoods.test(html), JSON.stringify(D));
+    assert.equal(html.split(said).length - 1, 3, 'Version, Jobs and Permissions each say so: ' + JSON.stringify(D));
+    assert(html.includes('data-goto-view="jobs"'), 'the door to Jobs stays open');
+  }
+});
+
 test('mounting twice does not duplicate the pane', () => {
   view.mount(host, { root: '/a' }); view.mount(host, { root: '/a' });
   assert.equal(host.innerHTML.split('class="set-pane"').length - 1, 1);
@@ -157,6 +185,8 @@ test('the pane never posts on its own', () => {
 test('the scheduled work has a door here and a count', () => {
   const html = paint({ D: { hub: { jobs: { nightly: {}, curate: {} } }, jobs: [{ label: 'a' }, { label: 'b', kick: 'a' }] } });
   assert(html.includes('3 scheduled'));
+  // The Jobs header reads the same count, with the lanes inside the runner apart.
+  assert.deepEqual({ ...view.jobCount({ hub: { jobs: { nightly: {}, curate: {} } }, jobs: [{ label: 'a' }, { label: 'b', kick: 'a' }] }) }, { jobs: 3, lanes: 1 });
   assert(html.includes('data-goto-view="jobs"') && html.includes('data-goto-view="setup"'));
 });
 

@@ -39,6 +39,13 @@ class ExchangeCheckedImport(LaneFixture, unittest.TestCase):
         self.assertEqual((self.p/'knowledge/card.md').read_text(),'owner draft\n')
         self.assertEqual(self.git('rev-parse','main'),self.git('rev-parse','exchange/main'))
 
+    def test_canonical_push_is_logged_under_the_remote_it_pushes(self):
+        # sov-status keys the exchange record by this label and the console looks it up by
+        # remote name; a label that is not the remote leaves the canonical copy unwatched.
+        log = self.exchange()
+        self.assertIn('out: vault -> origin ok', log)
+        self.assertNotIn('-> gitea', log)
+
     def test_outside_edit_refused(self):
         before=self.git('rev-parse','main')
         self.git('checkout','-q','lane/fixture')
