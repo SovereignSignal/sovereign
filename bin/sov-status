@@ -887,7 +887,8 @@ def fleet_view(root, contrib=None):
             hid = name[:-(len(host) + 1)] if host and name.endswith("-" + host) else name
             rec["harnesses"].append({**_harness_entry(d, hid), "lane": name})
     for d in sorted(glob.glob(os.path.join(root, "raw", "workspaces", "*"))):
-        if not os.path.isdir(d):
+        # no contract, no lane, so no device named after the folder (the lanes list agrees)
+        if not os.path.isdir(d) or not os.path.exists(os.path.join(d, "LANE.md")):
             continue
         name = os.path.basename(d)
         fm = frontmatter(os.path.join(d, "LANE.md"))

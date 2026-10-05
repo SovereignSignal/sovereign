@@ -56,5 +56,23 @@ class LaneContractComments(unittest.TestCase):
         self.assertEqual((row["host"], row["read"], row["write"]), ("hubbox", "none", "rsync (via staging)"))
 
 
+class FolderWithoutContract(unittest.TestCase):
+    """A raw/workspaces folder with no LANE.md is not a lane, so it is not a device either.
+    The lanes list already skipped it; the fleet named a device after the folder."""
+
+    def test_a_workspace_folder_without_a_contract_is_no_device(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = base.Box(tmp); b.declare({}); b.record({})
+            (b.vault / "raw" / "workspaces" / "scratchwork" / "proposals").mkdir(parents=True)
+            lane = b.vault / "raw" / "workspaces" / "boxlane"
+            lane.mkdir()
+            (lane / "LANE.md").write_text("---\nlane: boxlane\nproducer: p\nwrite: git\nread: none\nstatus: onboarded\n---\n")
+            d = b.status()
+        names = [h["host"] for h in d["fleet"]["hosts"]]
+        self.assertNotIn("scratchwork", names)
+        self.assertIn("boxlane", names)            # a contract with no host still falls back to its folder
+        self.assertNotIn("scratchwork", [l["lane"] for l in d["lanes"]])
+
+
 if __name__ == "__main__":
     unittest.main()
