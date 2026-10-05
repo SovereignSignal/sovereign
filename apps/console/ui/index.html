@@ -1209,7 +1209,7 @@ window.onerror = function (msg, src, line, col) {
         ${row({ view: "archive", section: "judge" }, "judge kept", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)}` : "?", (last ? "wk " + pct(last.kept, last.judged) : "") + sparkline(rates))}
         ${row({ view: "archive", section: "judge" }, "unjudged", num(st.deferred ?? cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
         ${row({ view: "archive", section: "composition" }, "cards", num(a.total), a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : "")}
-        ${row({ view: "hosts" }, "fleet", `${online} of ${fleet.length} up`, offline ? offline + " offline" : unknown ? unknown + " not probed" : "all reachable", offline ? "hot" : "")}
+        ${row({ view: "hosts" }, "fleet", fleet.length ? `${online} of ${fleet.length} up` : "?", offline ? offline + " offline" : unknown ? unknown + " not probed" : fleet.length ? "all reachable" : "not reported", offline ? "hot" : "")}
         ${needs.filter(n => n.cause !== "need:gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.jump ? {view:n.jump.view,sel:{id:n.jump.id}} : {view:'glance'}))}"><span class="l">${esc(n.name)}</span><span class="s wrap">${esc(n.detail)}</span><span class="chev">›</span></button>`).join("")}
         ${assessment.waiting.map(n => row({view:'jobs',sel:{id:n.jump.id}},n.name,'Awaiting verification','')).join('')}
       </div>
@@ -1620,7 +1620,7 @@ window.onerror = function (msg, src, line, col) {
         }else if(GateModel.queue(payload,selectedRoot,archiveKnown).available){gateCompleted.delete(slug);}
       }
       if(!GateModel.queue(payload,selectedRoot,archiveKnown).available){gateChecks.clear();gateResolutions.clear();}
-      if (GLANCE && payload.error) {D=payload;const g=$('#glance');g.hidden=false;g.innerHTML=`<div class="empty">${esc(payload.error)}</div><button id="g-refresh">Try again</button>`;return;}
+      if (GLANCE && payload.error) {D=payload;bridge({cmd:"verdict",state:"down",text:payload.error});const g=$('#glance');g.hidden=false;g.innerHTML=`<div class="empty">${esc(payload.error)}</div><button id="g-refresh">Try again</button>`;return;}
       if(!gatePending)for(const [slug,entry] of gateChecks){
         if(entry.key!==GateModel.reviewKey(payload,slug)){gateChecks.delete(slug);gateResolutions.delete(slug);}
       }
