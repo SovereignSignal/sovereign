@@ -6,7 +6,7 @@ body:not(.glance)>#operations-bar{grid-column:2;grid-row:1}
 body:not(.glance)>#verdict{grid-column:2;grid-row:2}
 body:not(.glance)>main{grid-column:2;grid-row:4;min-width:0;overflow:hidden}
 body:not(.glance)>#drawer{left:170px}
-@media(max-width:900px){body:not(.glance){grid-template-columns:140px minmax(0,1fr)}body:not(.glance)>#drawer{left:140px}}
+@media(max-width:899px){body:not(.glance){grid-template-columns:140px minmax(0,1fr)}body:not(.glance)>#drawer{left:140px}}
 
 body:not(.glance)>#gate-notice{grid-column:2;grid-row:3;margin:8px 12px;max-height:180px;overflow:auto}
 #gate-notice[hidden],body.glance>#gate-notice{display:none}
@@ -26,7 +26,7 @@ body:not(.glance) .row.head{height:28px}
 .row .state .tag{overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .tag{display:inline-block;font:11px/14px var(--mono);height:16px;padding:0 5px;border:1px solid var(--rule);border-radius:4px;color:var(--faint);white-space:nowrap}
 .tag.on{color:var(--live);border-color:color-mix(in srgb,var(--live) 40%,transparent)}
-.tag.hold{color:var(--brass);border-color:color-mix(in srgb,var(--brass) 45%,transparent)}
+.tag.hold{color:var(--brass-text);border-color:color-mix(in srgb,var(--brass) 45%,transparent)}
 @media(max-width:800px){.row .where{display:none}.row .state{width:96px}}
 
 /* Pages that are one column: no detail panel beside them. */
@@ -92,7 +92,7 @@ body.review.queue-empty #rows{flex:none}
 .fold::before,.fold::after{content:"";flex:1;height:1px;background:var(--rule-soft)}
 body.review #inspector .acts{position:sticky;bottom:0;z-index:2;margin:0 -20px;padding:10px 20px;align-items:center;gap:8px;background:var(--panel);border-top:1px solid var(--rule-soft)}
 .rv-check{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11px}
-@media(max-width:900px){body.review #inspector .acts kbd{display:none}}
+@media(max-width:899px){body.review #inspector .acts kbd{display:none}}
 
 /* The Library. Magnitude only, so one hue; every mark has its number beside it. */
 .lib{padding:20px 24px 28px;display:flex;flex-direction:column;gap:20px}

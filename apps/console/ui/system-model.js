@@ -18,19 +18,19 @@
     const app=node('app','Sovereign','app');
     if(archive)edge('local-archive',app.id,archive.id,'Local archive engine','Selected archive','local','Read and capture on this device. A local capture is not approved knowledge.');
     if(!bound)return {root:selected||null,bound,mismatch,unavailable,observedAt:null,nodes,edges,tools,devices,clients,notConnected,receipts,archive,hub:null,pending:null,warning:mismatch?'This archive is not the archive configured for this device’s connectors. Their connections are hidden.':unavailable?'System status is unavailable. The selected local archive remains accessible.':selected?'Local archive open. No matching connector environment has been reported.':'Open or create an archive to see its environment.'};
-    function device(name,extra={}){if(!name)return null;const id='device:'+name;let d=devices.find(d=>d.id===id);if(!d){d=node(id,name,'device',{online:null,...extra});devices.push(d);}else Object.assign(d,extra);return d;}
+    // The hub is named by the alias the rest of the app uses, and the machine behind it is drawn once:
+    // a device with the hub's alias or hostname is the hub, so its tools and network state attach there.
+    const hubConfigured=!!machine.hub_pointer||hub.via==='local'||text(hub.via).startsWith('ssh ');
+    const via=text(hub.via),hubAlias=text(machine.hub_pointer).split(':')[0]||(via.startsWith('ssh ')?via.slice(4):via==='local'?text(machine.host):'');
+    const hubNames=new Set([hubAlias,text(hub.hub_host)].filter(Boolean));
+    const hubNode=hubConfigured?node('hub',hubAlias||text(hub.hub_host)||(via==='local'?'This device':'Configured hub'),'hub',{reachable:hub.reachable===true?true:hub.reachable===false?false:null,via:hub.via||null}):null;
+    if(hubNode)edge('hub-control','app','hub',via.startsWith('ssh ')?'SSH':via==='local'?'Local subprocess':'Transport not reported',hub.reachable===true?'Hub answered':hub.reachable===false?'Hub unavailable':'Configured; not verified','control','Status reads and owner decisions share the configured hub. Decisions still require validation and explicit owner action.');
+    function device(name,extra={}){if(!name)return null;if(hubNode&&hubNames.has(name))return Object.assign(hubNode,extra);const id='device:'+name;let d=devices.find(d=>d.id===id);if(!d){d=node(id,name,'device',{online:null,...extra});devices.push(d);}else Object.assign(d,extra);return d;}
     device(text(machine.host),{local:true,role:machine.role||null,clientMode:machine.client_mode||null});
     for(const h of list(observed.fleet?.hosts)){if(!text(h.host))continue;device(h.host,{online:typeof h.net?.online==='boolean'?h.net.online:null,local:h.host===machine.host,harnesses:list(h.harnesses),registry:h});}
     for(const c of list(observed.clients||hub.clients)){
       if(!text(c.client_id))continue;
       device(c.client_id,{role:'client',clientMode:c.client_mode||null,intake:c});
-    }
-    const hubConfigured=!!machine.hub_pointer||hub.via==='local'||text(hub.via).startsWith('ssh ');
-    let hubNode=null;
-    if(hubConfigured){
-      const name=text(hub.hub_host)||text(hub.via).replace(/^ssh /,'')||text(machine.hub_pointer).split(':')[0]||'Configured hub';
-      hubNode=node('hub',name==='local'?(text(machine.host)||'This device'):name,'hub',{reachable:hub.reachable===true?true:hub.reachable===false?false:null,via:hub.via||null});
-      edge('hub-control','app','hub',text(hub.via).startsWith('ssh ')?'SSH':hub.via==='local'?'Local subprocess':'Transport not reported',hub.reachable===true?'Hub answered':hub.reachable===false?'Hub unavailable':'Configured; not verified','control','Status reads and owner decisions share the configured hub. Decisions still require validation and explicit owner action.');
     }
     for(const d of devices.filter(d=>d.intake)){
       const c=d.intake,n=node('intake:'+c.client_id,c.client_id+' intake','intake',{record:c});

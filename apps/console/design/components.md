@@ -49,7 +49,7 @@ Unchanged semantics: read and write bars 3 px tall, `--rule-soft` track, filled 
 Segmented control, mono 11.5, gap `--s3`, each label padded `--s2`. Active: `--ink` with a 2 px `--brass` underline sitting on the bottom rule; others `--muted`. History arrows on the left in `--faint`; keys 1 to 6 as today. Top rule 1 px `--rule-soft`.
 
 ## Drawer (400) and inspector
-Slide from the right in `--dur` `--ease`, `--panel` with `--shadow`. Title `--t-title` semibold, subtitle mono caption `--faint`, close and Pin as text buttons. Sections: heading mono caption uppercase `--muted`, then key-value pairs (key mono caption `--faint` 96 px column, value `--t-body` `--ink`) or prose `--t-body`. Actions: text buttons; the primary one in `--brass` with `--brass-wash` fill on hover. Pinning turns the drawer into a right column at the same width.
+Slide from the right in `--dur` `--ease`, `--panel` with `--shadow`. Title `--t-title` semibold, subtitle mono caption `--faint`, close and Pin as text buttons. Sections: heading mono caption uppercase `--muted`, then key-value pairs (key mono caption `--faint` 96 px column, value `--t-body` `--ink`) or prose `--t-body`. Actions: text buttons; the primary one in `--brass` with `--brass-wash` fill on hover. Pinning turns the drawer into a right column at the same width from 1100 px; narrower, it stays open over the list.
 
 ## Glance panel (menu bar, 420 wide)
 Same data shape. First row is the verdict sentence (`--t-body` medium with the state dot) instead of a gate row; then the five figures as today (label mono caption `--faint`, value `--t-title` mono); footer with the clock and Open console as the brass text button. The status item is a 6 px state dot beside the crown template glyph.
