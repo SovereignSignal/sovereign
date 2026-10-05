@@ -33,7 +33,7 @@ class Transparency(unittest.TestCase):
    if isinstance(node,ast.Dict):
     for key,value in zip(node.keys,node.values):
      if isinstance(key,ast.Constant) and key.value=='kind' and isinstance(value,ast.Constant) and isinstance(value.value,str):kinds.add(value.value)
-  known={'configuration','client-intake','hub','gate','harness','mirror-missing','lane-refused','lane-timeout','lane-silent','runner-standing-down','runner-stalled','relay','xcode-license','job','not-connected'}
+  known={'archive','configuration','client-intake','hub','gate','harness','mirror-missing','lane-refused','lane-timeout','lane-silent','runner-standing-down','runner-stalled','relay','xcode-license','job','not-connected'}
   for kind in kinds-{'local VM','host','hypervisor','contribution'}:
    self.assertIn(kind,known,'New needs-you kind needs guidance: '+kind)
    self.complete(self.m.explain_needs([{'kind':kind,'text':'Reported condition'}])[0])

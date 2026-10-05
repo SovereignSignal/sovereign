@@ -1181,6 +1181,7 @@ def explain_needs(rows):
     New producers must supply their own fields; unknown kinds remain visibly legacy.
     """
     guidance = {
+        "archive": ("Cards and lanes are read from the archive folder, so an unreadable one would otherwise look like an empty archive.", "Check the folder at that path still exists, its drive is mounted and this machine may read it. If the archive moved on purpose, write its new path to ~/.brain-root.", "Refresh; Library lists the archive's cards again."),
         "configuration": ("The local machine role configuration is invalid.", "Repair the local connectors.json machine declaration, then request status again.", "Status reports the declared role without a configuration error."),
         "client-intake": ("The contribution intake reported a delivery or validation failure.", "Inspect the client receipt and retry after resolving its reported cause.", "Refresh status; delivery and hub import each show their own successful receipt."),
         "hub": ("The configured hub did not return status; its governance state is unknown.", "Open Sources → Devices, inspect the configured hub and restore its connection, then refresh.", "Refresh; the hub reports reachable and Review shows a current queue."),
@@ -1273,6 +1274,14 @@ def archive_shape(root):
     syncs to every machine, so this costs no hub call; the console turns it into the
     Archive view. Every list is slugs, so a count can open the cards behind it."""
     K = os.path.join(root, "knowledge")
+    # The glob below finds nothing in a folder that is gone, unmounted or unreadable
+    # (permissions or macOS privacy), and nothing is not zero cards: say which.
+    try:
+        os.listdir(K)
+    except FileNotFoundError:
+        raise OSError("%s folder not found" % ("knowledge" if os.path.isdir(root) else "archive"))
+    except OSError:
+        raise OSError("knowledge folder unreadable")
     WIKI = re.compile(r"\[\[([^\]|#]+?)(?:[|#][^\]]*)?\]\]")
     cards, inbound, slugs = [], {}, set()
     today = datetime.date.today()
@@ -1836,6 +1845,8 @@ def main():
 
     # needs you
     needs = []
+    if out["archive"].get("error"):
+        needs.append({"kind": "archive", "text": "The archive could not be read: %s. It is configured at %s." % (out["archive"]["error"], root)})
     if hub.get("reachable") is False:
         needs.append({"kind": "hub", "text": "The hub did not answer (%s). Governance state is unknown until it does." % hub.get("via", "?")})
     if hub.get("pending"):
