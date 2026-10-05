@@ -1316,6 +1316,7 @@ window.onerror = function (msg, src, line, col) {
   // VM gets the one line to run inside it first; then the hub does the rest (sov host add).
   let pendingHost = null;
   let pendingDevice=null;
+  let vmFailed = null;   // the last Start VM that failed, said under its VM until the next try
   function backupScopeActions(o){
     const h=o.backupHost,config=D.backup_scope;
     if(!h||!config?.available||config.scope!==selectedRoot)return '';
@@ -1350,6 +1351,7 @@ window.onerror = function (msg, src, line, col) {
     const addr = net.ip || (vm && vm.ip) || "";
     const vmPart = vm ? `<div class="prose">${esc(vm.name)} · ${esc(vm.status || "?")}${vm.ip ? " · " + esc(vm.ip) : ""}
         ${vm.status !== "running" ? ` <button data-act="vmstart" data-vm="${esc(vm.name)}">Start VM</button>` : ""}</div>
+      ${vmFailed && vmFailed.name === vm.name ? `<div class="note" role="status">Start VM failed: ${esc(String(vmFailed.out || "").trim() || "exit " + vmFailed.exit)}</div>` : ""}
       <div class="prose" style="margin-top:8px">Inside the VM, once:</div>
       <div class="code-line"><code>${esc(bs.line || "bash /media/psf/Home/.sovereign/vm-bootstrap.sh")}</code><button data-act="copy" data-text="${esc(bs.line || "bash /media/psf/Home/.sovereign/vm-bootstrap.sh")}">Copy</button></div>
       <div class="secret-help">${bs.hub_key ? "It opens ssh, authorizes the hub's key, joins the tailnet, and prints the address to use below." : "The hub's key is not on this machine yet (it is fetched from the hub on refresh); the line will work once it is."}</div>` : "";
@@ -1458,7 +1460,7 @@ window.onerror = function (msg, src, line, col) {
       if (b.id === 'review-retry') return ['no_archive','different_archive'].includes(reviewQueue().state)?bridge({cmd:'navigate',page:'home',place:{chooseArchive:true}}):refresh();
       if (act === "gotogate") return gotoGate();
       if (b.dataset.gotoView) return setView(b.dataset.gotoView, b.dataset.gotoView === "archive" ? { section: b.dataset.gotoSec } : undefined);
-      if (act === "vmstart") { b.disabled = true; b.textContent = "starting…"; return bridge({ cmd: "vmstart", name: b.dataset.vm }); }
+      if (act === "vmstart") { vmFailed = null; b.disabled = true; b.textContent = "starting…"; return bridge({ cmd: "vmstart", name: b.dataset.vm }); }
       if (act === "copy") { try { navigator.clipboard.writeText(b.dataset.text); b.textContent = "copied"; } catch (e) { b.textContent = "select it"; } return; }
       if (act === "connect") {   // a secret travels in memory to the bridge, which puts it in the child's environment only
         const f = document.getElementById("secret-" + b.dataset.harness), extra = {};
@@ -1674,6 +1676,8 @@ window.onerror = function (msg, src, line, col) {
       backupResult=payload.error||(payload.state==='cancelled'?'Cancelled. No backup was started.':payload.verification||'Refresh to inspect the backup result.');
       renderInspector();if(payload.state==='requested')setTimeout(refresh,4000);
     } else if (kind === "vmstart") {
+      // a failed start says why at once; a good one shows when status sees the VM running
+      if (payload.exit !== 0) { vmFailed = payload; renderInspector(); }
       setTimeout(refresh, 3000);
     } else if (kind === "log") {
       if (payload.request !== drawerRun) return;   // another run's output: not this drawer's

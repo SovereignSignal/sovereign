@@ -213,9 +213,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             if (d["apply"] as? Bool) == true { args.append("--apply") }
             stream(args, id: "hostadd", request: d["request"], generation: generation)
         case "vmstart":
-            guard let name = d["name"] as? String, !name.isEmpty else { return }
+            guard let name = d["name"] as? String, !name.isEmpty else { deliver("vmstart", ["name": "", "exit": 64, "out": "No VM was named."], generation: generation); return }
             run(["/usr/local/bin/prlctl", "start", name]) { out, err, code in
-                self.deliver("vmstart", ["name": name, "exit": code, "out": out + err])
+                self.deliver("vmstart", ["name": name, "exit": code, "out": out + err], generation: generation)
             }
         case "kickstart":
             guard let label = d["label"] as? String else {
