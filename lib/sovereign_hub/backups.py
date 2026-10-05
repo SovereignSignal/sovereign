@@ -668,9 +668,20 @@ def operate(req, serve=False):
             else:
                 result=verify_or_restore(ctx,config,plan)
         except BaseException as exc:
-            atomic(ctx['store']/'last-attempt.json',dict(attempt,state='failed',finished=time.time(),error=str(exc)[:1000]));raise
+            atomic(ctx['store']/'last-attempt.json',dict(attempt,state='failed',finished=time.time(),error=said(exc)[:1000]));raise
         atomic(ctx['store']/'last-attempt.json',dict(attempt,**result))
         return dict(result,protocol=PROTOCOL,applied=True)
+
+
+SAID = {'missing_directory': 'That folder does not exist on the archive host. Connect its disk or create it, then try again.',
+        'linked_directory': 'Choose a folder whose path has no linked (alias) folders.'}
+
+
+def said(exc):
+    # What the owner reads, in the reply and the attempt receipt: never a boundary code.
+    if isinstance(exc, subprocess.CalledProcessError):
+        return 'Backup encryption or verification failed. Check the recovery key and available storage.'
+    return SAID.get(str(exc), str(exc))
 
 
 def main():
@@ -683,6 +694,5 @@ def main():
         result=operate(req,serve='--serve' in sys.argv)
         print(json.dumps(result));return 1 if result.get('error') else 0
     except (ValueError,OSError,subprocess.SubprocessError,tarfile.TarError) as exc:
-        message='Backup encryption or verification failed. Check the recovery key and available storage.' if isinstance(exc,subprocess.CalledProcessError) else str(exc)
         # A failed apply may already have written a key or a failure receipt.
-        print(json.dumps(dict(protocol=PROTOCOL,error=message,applied=None if isinstance(req,dict) and req.get('apply') else False)));return 1
+        print(json.dumps(dict(protocol=PROTOCOL,error=said(exc),applied=None if isinstance(req,dict) and req.get('apply') else False)));return 1

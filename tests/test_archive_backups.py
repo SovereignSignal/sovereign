@@ -207,6 +207,14 @@ class ArchiveBackups(unittest.TestCase):
                 self.assertTrue(b.operate(dict(protocol=1,root=str(root),action='status'))['remote'],pointer)
             hub.unlink();(state/'connectors.json').write_text(json.dumps({'machine':{'role':'hub'}}))
             self.assertEqual(b.operate(dict(protocol=1,root=str(root),action='status'),serve=True)['root'],str(root))
+    def test_folder_problems_are_sentences_not_codes(self):
+        import contextlib
+        link=self.base/'alias';link.symlink_to(self.folder)
+        for action,folder,words in (('configure','/Volumes/Not Mounted/Sovereign','does not exist'),('browse','/Volumes/Gone','does not exist'),('configure',str(link),'linked')):
+            out=io.StringIO();req=dict(protocol=1,root=str(self.archive),action=action,folder=folder,key=str(self.key))
+            with patch.object(sys,'argv',['sov-backup','--request',json.dumps(req)]),contextlib.redirect_stdout(out):
+                self.assertEqual(b.main(),1)
+            self.assertIn(words,json.loads(out.getvalue())['error'])
     def test_serve_refuses_wrong_authority_and_mixed_protocol(self):
         with self.assertRaisesRegex(ValueError,'authority'):b.operate(dict(protocol=1,root=str(self.archive),action='status'),serve=True)
         with self.assertRaisesRegex(ValueError,'Upgrade'):b.operate(dict(protocol=99,root=str(self.archive),action='status'))
