@@ -520,10 +520,12 @@ window.onerror = function (msg, src, line, col) {
     return `<div class="sect"><h2>Producer</h2><p class="prose">${h.state==='removed'?'Removed. Its history is preserved.':`Runs ${h.runs_on?'on '+esc(h.runs_on):'on this Mac'}. Removal stops collection and removes Sovereign’s context setup. Saved captures stay.`}${h.read!=='none'?' Restart the tool to clear context already loaded.':''}</p>
       ${removable?`<button data-act="remove-producer" data-harness="${esc(h.id)}">Remove producer…</button>`:h.state==='removed'&&h.detected!==false?`<button class="brass" data-act="connect" data-harness="${esc(h.id)}">Add again…</button>`:''}</div>`;
   }
+  // Library and Copies describe the connected archive; another archive opened here is not it.
+  const elsewhere = () => (view === "archive" || view === "backups") && archiveKnown && !!selectedRoot && !!D?.machine?.vault && selectedRoot !== D.machine.vault;
   function items() {
     if (view === "review") return reviewQueue().proposals.map(p => ({kind:"prop",id:"p:"+p.slug,o:p}));
     if (view === "discover") return discoveredTools().map(t=>({kind:"candidate",id:t.id,o:t}));
-    if (!D || D.error) return [];
+    if (!D || D.error || elsewhere()) return [];
     if (view === "archive") return archiveItems();
     if (view === "hosts") return hostItems();
     if (view === "sources") return sourceItems();
@@ -813,6 +815,7 @@ window.onerror = function (msg, src, line, col) {
     if(!review&&view!=="discover"&&D?._status?.pending&&!D.machine){rows.innerHTML='<div class="empty">Checking…</div>';footerMeta(0);return;}
     if(!review&&view!=="discover"&&D?.error){rows.innerHTML='<div class="empty">System status unavailable. Use Refresh to try again.</div>';sel=null;footerMeta(0);return;}
     if (!review && view!=="discover" && D?.machine?.connected === false) {renderSetup(D);return;}
+    if (!review && elsewhere()) {rows.innerHTML=`<div class="empty">You opened ${esc(selectedRoot.split("/").pop())}. The connected system belongs to ${esc(D.machine.vault_name || "another archive")}.<p><button data-act="choose-archive">Open archive…</button></p></div>`;sel=null;$("#listcount").textContent="";syncActive();return;}
     const list = items();
     if (view === "hosts") {
       const ids = {}; list.filter(selectable).forEach(i => { const id = (i.o.meta || {}).identity; if (id) ids[id] = (ids[id] || 0) + 1; });
@@ -1456,6 +1459,7 @@ window.onerror = function (msg, src, line, col) {
       }
       if(act === "remove-producer")return producer(b.dataset.harness,"remove",false);
       if (act === "hostadd") return hostAdd(b.dataset.host, false);
+      if (act === "choose-archive") return bridge({ cmd: "navigate", page: "home", place: { chooseArchive: true } });
       if (b.id === 'review-retry') return ['no_archive','different_archive'].includes(reviewQueue().state)?bridge({cmd:'navigate',page:'home',place:{chooseArchive:true}}):refresh();
       if (act === "gotogate") return gotoGate();
       if (b.dataset.gotoView) return setView(b.dataset.gotoView, b.dataset.gotoView === "archive" ? { section: b.dataset.gotoSec } : undefined);
