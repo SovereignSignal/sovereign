@@ -920,7 +920,7 @@ window.onerror = function (msg, src, line, col) {
   // A card's text is material that came in through raw. Every character is escaped
   // first; only headings, list items, bold and code are then given back as markup,
   // so nothing a proposal contains can become an element.
-  function mdBlocks(text) {
+  function mdBlocks(text, keepTitle) {
     const out = []; let para = [];
     const flush = () => { if (para.length) { out.push(para.join(" ")); para = []; } };
     for (const line of String(text || "").replace(/\r/g, "").split("\n")) {
@@ -929,7 +929,8 @@ window.onerror = function (msg, src, line, col) {
       else para.push(line.trim());
     }
     flush();
-    return out.length && /^#\s/.test(out[0]) ? out.slice(1) : out;   // the title is already the heading above
+    // The title is already the heading above. A comparison keeps it: a retitle is a change.
+    return !keepTitle && out.length && /^#\s/.test(out[0]) ? out.slice(1) : out;
   }
   const mdInline = (text) => esc(text).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
   function mdBlock(block, cls) {
@@ -951,7 +952,7 @@ window.onerror = function (msg, src, line, col) {
   }
   // What changed, with one block of context either side and longer unchanged runs folded.
   function changesHTML(current, proposed, unfolded) {
-    const d = diffBlocks(mdBlocks(current), mdBlocks(proposed)), changed = (k) => !!d[k] && d[k][0] !== "same", out = [];
+    const d = diffBlocks(mdBlocks(current, true), mdBlocks(proposed, true)), changed = (k) => !!d[k] && d[k][0] !== "same", out = [];
     for (let k = 0; k < d.length; k++) {
       if (unfolded || changed(k) || changed(k - 1) || changed(k + 1)) { out.push(mdBlock(d[k][1], d[k][0] === "same" ? "" : d[k][0])); continue; }
       let e = k; while (e < d.length && !changed(e) && !changed(e - 1) && !changed(e + 1)) e++;
@@ -1050,7 +1051,7 @@ window.onerror = function (msg, src, line, col) {
         `${(p.flags||[]).length?`<div class="note">${esc(p.flags.join(', '))}: requires your review.</div>`:''}`+
         (check?.review_notes||[]).map(note=>`<div class="note">${esc(note)}</div>`).join('')+
         (existing.length?`<div class="rv-tabs" role="tablist">${[['changes','Changes'],['proposed','Proposed'],['current','Current']].map(([k,label])=>`<button role="tab" data-tab="${k}" aria-selected="${String(tab===k)}">${label}</button>`).join('')}<span class="rv-stat">+${changes.adds} −${changes.dels}</span></div>`:'')+
-        `<div class="rv-card" id="${tab==='proposed'?'gate-proposed':'gate-comparison'}">${tab==='changes'?changes.html:tab==='current'?existing.map(c=>`<p class="mono rv-path">${esc(c.path)}</p>${mdBlocks(c.body).map(b=>mdBlock(b)).join('')}`).join(''):proposed}</div>`+
+        `<div class="rv-card" id="${tab==='proposed'?'gate-proposed':'gate-comparison'}">${tab==='changes'?changes.html:tab==='current'?existing.map(c=>`<p class="mono rv-path">${esc(c.path)} · ${esc(c.type)}</p>${mdBlocks(c.body, true).map(b=>mdBlock(b)).join('')}`).join(''):proposed}</div>`+
         `<div class="acts">${resolvable ? `<button class="brass" data-act="${resolving?'gate':'gate-resolve'}" data-verb="resolve" data-slug="${esc(p.slug)}">${resolving?'Approve update as '+esc(retained):'Resolve and review'}</button>` : `<button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}" ${GateModel.canApprove(check,gatePending)?'':'disabled'}>${state==='running'?'Saving…':'Approve'}</button>`}<kbd title="Approve">⌘↵</kbd>
         <button class="danger" data-act="gate" data-verb="reject" data-slug="${esc(p.slug)}" ${GateModel.canReject(check,gatePending)?'':'disabled'}>Reject</button><kbd title="Reject, pressed twice">R</kbd>
         <button class="quiet rv-check ${esc(state)}" data-act="gate-check" data-slug="${esc(p.slug)}" title="${esc(message)}" ${['checking','running'].includes(state)||gatePending?'disabled':''}>${dot(tone,title)}${state==='checking'?'Checking…':state==='running'?'Saving…':state==='ready'?'Checked':'Check again'}</button>
