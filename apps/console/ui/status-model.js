@@ -271,7 +271,8 @@ window.SovStatus = (() => {
       if (here != null && there != null && here - there > lag) { lag = here - there; lagLane = l.lane; }
     });
     if (lag > 1) stale.push({ state: "warn", name: "this copy", detail: `${age(lag)} behind the hub on ${lagLane} (${(D.obsidian || {}).sync || "sync"} has not carried everything)`, age_h: lag, jump: { view: "backups", id: "bk:obsidian" } });
-    (bk.lanes || []).forEach(l => {
+    // A producer pushing into a retired lane is not expected to push either.
+    (bk.lanes || []).forEach(l => { if (retiredLanes.has(l.lane)) return;
       const ah = ago(l.pushed), jump = { view: "backups", id: "bk:lane:" + l.lane };
       if (l.delivery === "waiting") {
         need.push({ state: "warn", name: `lane ${l.lane}`, detail: "pushed, awaiting hub acceptance", age_h: ah, jump, order: 1 });

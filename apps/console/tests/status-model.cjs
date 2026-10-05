@@ -371,3 +371,9 @@ assert.equal(mirrored.completeness.producers.delivering,1,'a mirror past its cad
 assert.ok(mirrored.need.some(n=>n.cause==='mirror-late'),'while Today calls it late');
 assert.equal(assess({machine:{host:'here'},fleet:{hosts:[{host:'other',harnesses:[{harness:'tool',lane:'far',run_age_h:0.5}]}]},lanes:[{lane:'far',vault_age_h:30}]}).completeness.producers.delivering,1);
 console.log('Completeness: a remote mirror lane is counted at its own cadence, as Sources reads it.');
+// A lane whose own contract says retired is not expected to push, whatever its last commit:
+// Sources lists it under Removed, so Today must not call it late.
+const retiredPush=assess(model.associations({machine:{host:'here'},lanes:[{lane:'old',status:'retired 2026-09-01'}],
+ backups:{lanes:[{lane:'old',delivery:'accepted',pushed:'2000-01-01T00:00:00Z'}]}}));
+assert.equal([...retiredPush.need,...retiredPush.stale].filter(x=>/old/.test(x.name)).length,0,'a retired lane raises no push alarm');
+console.log('Producer pushes: a lane retired by its contract raises nothing.');
