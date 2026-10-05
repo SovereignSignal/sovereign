@@ -8,6 +8,8 @@ import brain_local
 PROBE=r'''
 const checks={},check=(n,v)=>checks[n]=!!v,post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
 const wait=async fn=>{for(let n=0;n<2500;n++){if(fn())return;await pause(40)}throw Error('Timeout: '+fn)};
+// Only a change holds the guard; the status read that follows one shows only as the working line.
+const settled=()=>!window.SovBackups.busy&&!document.querySelector('.archive-backups [role="status"]')?.textContent.includes('is working');
 const replies=[],deliver=window.sovDeliver;window.sovDeliver=(kind,p)=>{if(kind==='archiveBackupResult')replies.push(p);deliver(kind,p)};
 await wait(()=>document.querySelector('[data-ab-field="folder"]'));
 check('Notes workspace remains removed',!document.getElementById('notes-tab')&&!document.getElementById('editor'));
@@ -25,34 +27,35 @@ const preview=()=>document.querySelector('#ab-preview'),apply=()=>document.query
 const rejected=replies.length;post({cmd:'archiveBackup',root:ARCHIVE,action:'configure',folder:FOLDER,key:KEY,apply:true});
 await wait(()=>replies.length>rejected);check('Native mutation requires preview',replies.at(-1).error?.includes('Preview'));
 input('folder',FOLDER);input('key',KEY);check('Apply starts disabled',apply().disabled);
-preview().click();check('Pending operation blocks navigation',!window.sovCanQuit());await wait(()=>!apply().disabled);
+preview().click();check('A preview does not hold navigation',window.sovCanQuit());await wait(()=>!apply().disabled);
 check('Preview creates no schedule',replies.at(-1).scheduled===false&&replies.at(-1).applied===false);
 if(SCENE==='narrow'){
  check('No horizontal page overflow',document.documentElement.scrollWidth<=innerWidth);
  check('No horizontal form overflow',document.querySelector('#rows').scrollWidth<=document.querySelector('#rows').clientWidth);
 }else{
- apply().click();await wait(()=>document.querySelector('.ab-card')&&!window.SovBackups.busy);
+ apply().click();check('A running change holds navigation and says so',!window.sovCanQuit()&&document.querySelector('#gate-notice').textContent.includes('Backup running'));
+ await wait(()=>document.querySelector('.ab-card')&&settled());check('The hold clears when it lands',document.querySelector('#gate-notice').hidden);
  check('Destination saved on correct host',replies.some(r=>r.state==='configured'&&r.applied));
  check('Configured archive opens backup action',document.querySelector('[data-ab-action="backup"]').getAttribute('aria-pressed')==='true');
  check('Manual cadence is explicit',document.querySelector('.ab-mode').textContent.includes('Automatic backups are not enabled'));
  document.querySelector('[data-ab-action="backup"]').click();preview().click();await wait(()=>!apply().disabled);
- check('Backup preview includes files',replies.at(-1).files>0);apply().click();await wait(()=>replies.some(r=>r.state==='completed')&&!window.SovBackups.busy);
+ check('Backup preview includes files',replies.at(-1).files>0);apply().click();await wait(()=>replies.some(r=>r.state==='completed')&&settled());
  check('Saved bytes authenticated',replies.find(r=>r.state==='completed')?.integrity_verified===true);
  check('Backup does not claim restore drill',!replies.find(r=>r.state==='completed')?.restore_tested);
  check('Next action tests the saved backup',document.querySelector('#ab-next').textContent==='Test a restore');
  check('Backup age is visible',document.querySelector('.ab-age').textContent.includes('Backup age at that check'));
  document.querySelector('[data-ab-action="restore"]').click();input('destination',RESTORE);preview().click();await wait(()=>!apply().disabled);apply().click();
- await wait(()=>replies.some(r=>r.state==='restored')&&!window.SovBackups.busy);
+ await wait(()=>replies.some(r=>r.state==='restored')&&settled());
  check('Restore stays inactive',replies.find(r=>r.state==='restored')?.activation_required===true&&replies.find(r=>r.state==='restored')?.scheduled===false);
  check('Latest backup restore proof is visible',document.querySelector('.ab-card').textContent.includes('Restore tested'));
  check('Successful same-disk restore still warns about disk failure',document.querySelector('.ab-readiness').textContent.includes('disk failure'));
  document.querySelector('[data-ab-action="reconnect"]').click();input('folder',FOLDER);preview().click();await wait(()=>!apply().disabled);apply().click();
- await wait(()=>replies.some(r=>r.state==='reconnected')&&!window.SovBackups.busy);
+ await wait(()=>replies.some(r=>r.state==='reconnected')&&settled());
  check('Reconnect keeps successful restore proof',document.querySelector('.ab-card').textContent.includes('Restore tested'));
  check('Navigation released',window.sovCanQuit());
  if(SCENE==='remote'){
   check('Authority is visible',document.querySelector('.archive-backups').textContent.includes('fixture-hub'));
-  document.querySelector('#ab-refresh').click();await wait(()=>!window.SovBackups.busy);
+  document.querySelector('#ab-refresh').click();await wait(()=>settled());
   check('Unreachable authority shows dated prior receipts',document.querySelector('.ab-card')?.textContent.includes('previously observed receipts')&&document.querySelector('.ab-card h3')?.textContent==='Destination status unavailable');
   check('Unreachable authority cannot fall back to local backup',!document.querySelector('#ab-apply'));
   check('Unreachable authority cannot retain a healthy protection summary',document.querySelector('.ab-readiness').textContent.includes('fresh check'));

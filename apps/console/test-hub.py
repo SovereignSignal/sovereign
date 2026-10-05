@@ -17,13 +17,14 @@ const req={cmd:'hubOperation',command:'install',root:ARCHIVE,destination:DESTINA
 post({...req,apply:true});await wait(()=>replies.length===1);check('Native apply requires prior preview',replies[0].error?.includes('Preview'));
 post({...req,root:ARCHIVE+'-wrong',apply:false});await wait(()=>replies.length===2);check('Different archive refused natively',!!replies[1].error);
 input('destination',DESTINATION);input('model','fixture-local');check('Apply initially disabled',apply().disabled);
-preview().click();check('Pending operation protects navigation',!window.sovCanQuit());
+preview().click();check('A preview does not hold navigation',window.sovCanQuit());
 await wait(()=>!apply().disabled);check('Preview prepares inactive jobs',replies[2].scheduled===false&&replies[2].applied===false);
 input('model','changed-local');check('Editing invalidates preview',apply().disabled);
 post({...req,model:'changed-local',apply:true});await wait(()=>replies.length===4);check('Changed request refused natively',replies[3].error?.includes('Preview'));
 input('model','fixture-local');preview().click();await wait(()=>!apply().disabled);
 if(PHASE==='install'){
- apply().click();check('Install shows pending state',preview().disabled);await wait(()=>replies.length===6);
+ apply().click();check('Install shows pending state',preview().disabled);
+ check('A running apply holds navigation and says so',!window.sovCanQuit()&&document.querySelector('#gate-notice').textContent.includes('Hub operation running'));await wait(()=>replies.length===6);
  check('Bundled install completed',replies[5].applied===true&&replies[5].exit===0);check('Installed jobs stay inactive',replies[5].scheduled===false);
  check('Apply reset after completion',apply().disabled);check('Navigation available after completion',window.sovCanQuit());
 }else{
