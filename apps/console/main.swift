@@ -911,7 +911,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
             else { self.showLoadFailure(w) }
         }
     }
-    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { showLoadFailure(w) }
+    // Handling this callback turns off WebKit's own reload. The window offers Try again;
+    // the Glance has no overlay, so it loads again or every later crown click opens it blank.
+    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { if w === glanceWeb { load(w, glance: true) } else { showLoadFailure(w) } }
     static var shared: App!
     var window: NSWindow!
     var web: WKWebView!
