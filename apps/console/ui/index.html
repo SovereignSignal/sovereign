@@ -771,7 +771,8 @@ window.onerror = function (msg, src, line, col) {
     else if (view === "hosts") { const gone = D.fleet?.disassociated?.length || 0; text = `${D.fleet?.hosts?.length || 0} active${gone ? " · " + gone + " disassociated" : ""}`; }
     else if (view === "discover") text = `${n} found`;
     else if (view === "archive") text = arch().total ? num(arch().total) + " cards" : "";
-    else if (view === "jobs") text = `${n} jobs`;
+    else if (view === "jobs") { const c = SovSettings.jobCount(D), many = (k, w) => k + " " + w + (k === 1 ? "" : "s");
+      text = many(c.jobs, "job") + (c.lanes ? ", " + many(c.lanes, "lane") : ""); }
     $("#listcount").textContent = text;
   }
   // The queue says what it is only when it is not simply a list of proposals: empty,

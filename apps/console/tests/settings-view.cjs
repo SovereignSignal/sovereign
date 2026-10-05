@@ -178,6 +178,8 @@ test('the pane never posts on its own', () => {
 test('the scheduled work has a door here and a count', () => {
   const html = paint({ D: { hub: { jobs: { nightly: {}, curate: {} } }, jobs: [{ label: 'a' }, { label: 'b', kick: 'a' }] } });
   assert(html.includes('3 scheduled'));
+  // The Jobs header reads the same count, with the lanes inside the runner apart.
+  assert.deepEqual({ ...view.jobCount({ hub: { jobs: { nightly: {}, curate: {} } }, jobs: [{ label: 'a' }, { label: 'b', kick: 'a' }] }) }, { jobs: 3, lanes: 1 });
   assert(html.includes('data-goto-view="jobs"') && html.includes('data-goto-view="setup"'));
 });
 

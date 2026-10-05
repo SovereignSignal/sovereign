@@ -51,10 +51,17 @@ window.SovSettings = (() => {
       `<button id="set-change">${root ? "Change…" : "Open an archive…"}</button>${root ? `<button id="set-reveal">Show in Finder</button>` : ""}`);
   }
 
+  /* A job is what an operating system schedules; a lane runs inside one. The Jobs
+     header counts with this too, so the two places never disagree. */
+  function jobCount(D) {
+    const local = (D && D.jobs) || [], lanes = local.filter(j => j.kick).length;
+    return { jobs: Object.keys((D && D.hub && D.hub.jobs) || {}).length + local.length - lanes, lanes };
+  }
+
   /* The scheduled work behind the archive. It is engine-room detail, so it has a
      door here and no place in the navigation. */
   function jobsSection(D) {
-    const n = Object.keys((D && D.hub && D.hub.jobs) || {}).length + ((D && D.jobs) || []).filter(j => !j.kick).length;
+    const n = jobCount(D).jobs;
     return sect("Jobs", say(unread(D) || (n ? n + " scheduled" : "None reported")), "",
       `<button data-goto-view="jobs">View</button><button data-goto-view="setup">Hub setup…</button>`);
   }
@@ -150,6 +157,7 @@ window.SovSettings = (() => {
   });
 
   return {
+    jobCount,
     mount(el, next) { host = el; ctx = Object.assign({}, ctx, next); render(); },
     /* Re-render in place when the bridge answers, so a save or an update result
        lands without the owner losing their scroll position in a long pane. */
