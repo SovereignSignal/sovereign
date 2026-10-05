@@ -855,7 +855,10 @@ final class Bridge: NSObject, WKScriptMessageHandler {
 
     // Every line names the drawer run that asked for it (the page drops any other run's
     // output) and goes only to the document that asked (a reloaded page never sees it).
-    func stream(_ args: [String], id: String, request: Any?, generation: UUID, env extra: [String: String] = [:], completion: ((Int32) -> Void)? = nil) {
+    // A run always ends: one that outlives timeLimit (a routed ssh on a dead link holds a
+    // producer change, every destination and normal quit) is stopped with its whole process
+    // group, since that ssh is a grandchild holding the pipe open, and ends as failed.
+    func stream(_ args: [String], id: String, request: Any?, generation: UUID, timeLimit: Double = 900, env extra: [String: String] = [:], completion: ((Int32) -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async {
             func send(_ fields: [String: Any]) {
                 self.deliver("log", fields.merging(["id": id, "request": request ?? NSNull()]) { _, tag in tag }, generation: generation)
@@ -875,10 +878,21 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 }
             }
             do { try p.run() } catch { DispatchQueue.main.async { completion?(-1) }; send(["line": "failed to start: \(error)", "state": "end", "exit": -1]); return }
+            // Process makes the child a process group leader, so -pid reaches its descendants.
+            let pid = p.processIdentifier
+            var stopped = false
+            let stop = DispatchWorkItem {
+                stopped = true; kill(-pid, SIGTERM); if p.isRunning { p.terminate() }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 2) { kill(-pid, SIGKILL); if p.isRunning { kill(pid, SIGKILL) } }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeLimit, execute: stop)
             p.waitUntilExit()
+            stop.cancel()
             o.fileHandleForReading.readabilityHandler = nil
-            let rest = o.fileHandleForReading.readDataToEndOfFile()
+            // after a stop, never wait on a pipe something outside the group may still hold
+            let rest = stopped ? Data() : o.fileHandleForReading.readDataToEndOfFile()
             for line in (String(data: rest, encoding: .utf8) ?? "").split(separator: "\n") { send(["line": String(line)]) }
+            if stopped { send(["line": "stopped after \(Int(timeLimit / 60)) min without finishing"]) }
             DispatchQueue.main.async { completion?(p.terminationStatus) }
             send(["line": "exit \(p.terminationStatus)", "state": "end", "exit": Int(p.terminationStatus)])
         }
