@@ -1523,12 +1523,11 @@ def _behind(commit, rev):
 
     Unequal is not newer: an app built from a worktree or a later branch differs from an
     older checkout, and rebuilding that checkout would install an older Sovereign. None
-    when there is nothing to compare, including when the two are the same build."""
+    when there is nothing to compare, including when the two are the same build and when the
+    stamp is not a commit (build.sh writes "unknown" when git fails), which records nothing."""
     commit = (commit or "").replace("+local", "")
-    if not rev or not commit or rev.split(" ")[0] == commit:
+    if not rev or not re.fullmatch(r"[0-9a-f]{4,40}", commit) or rev.split(" ")[0] == commit:
         return None
-    if not re.fullmatch(r"[0-9a-f]{4,40}", commit):
-        return False
     try:
         return subprocess.run(["git", "-C", TEMPLATE_ROOT, "merge-base", "--is-ancestor", commit, "HEAD"],
                               capture_output=True, timeout=5).returncode == 0

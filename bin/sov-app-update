@@ -81,10 +81,10 @@ def source_rev(template=None):
 
 def contains(template, commit):
     """Whether this source's history holds the installed build, so building it is an update."""
-    if not commit:
-        return True  # an unstamped build predates update checking; installing stamps it
-    if not re.fullmatch(r"[0-9a-f]{4,40}", commit):
-        return False
+    # An unstamped build predates update checking, and a stamp that is not a commit (build.sh
+    # writes "unknown" when git fails) records nothing either: installing stamps it.
+    if not commit or not re.fullmatch(r"[0-9a-f]{4,40}", commit):
+        return True
     r = subprocess.run(["git", "-C", template, "merge-base", "--is-ancestor", commit, "HEAD"],
                        capture_output=True, timeout=10)
     return r.returncode == 0

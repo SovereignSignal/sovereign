@@ -173,8 +173,19 @@ class AppUpdatePreview(unittest.TestCase):
             subprocess.run(["git", "-C", str(checkout), "checkout", "-q", older], check=True)
             self.assertFalse(status._behind(newer, older + " 2026-10-04"))
             self.assertFalse(status._behind("fffffff", older + " 2026-10-04"))
-            self.assertFalse(status._behind("--output=x", older + " 2026-10-04"))
-            self.assertIsNone(status._behind(None, older + " 2026-10-04"))
+            # A stamp that is not a commit (build.sh writes "unknown" when git fails) is no
+            # stamp: nothing to compare, so the app still offers the update that stamps it.
+            for stamp in ("--output=x", "unknown", "unknown+local", None):
+                self.assertIsNone(status._behind(stamp, older + " 2026-10-04"), stamp)
+    def test_a_build_stamped_unknown_can_still_be_updated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp); checkout = home / "src"; (checkout / "apps/console").mkdir(parents=True)
+            (checkout / "apps/console/build.sh").write_text("#!/bin/bash\nexit 1\n")
+            commits(checkout)("only")
+            for stamp in ("unknown", "unknown+local"):
+                bundle(home / "Applications/Sovereign.app", "0.6.0", "39", stamp)
+                _, prev = run(home, "--preview", "--template", str(checkout))
+                self.assertFalse(prev["current"], stamp); self.assertIn("Build Sovereign", prev["summary"])
     def test_an_absent_app_still_previews_rather_than_crashing(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, out = run(Path(tmp), "--preview")
