@@ -197,7 +197,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             var secretEnv: [String: String] = [:]
             if let v = d["secret"] as? String, let k = d["secretEnv"] as? String, !v.isEmpty,
                k.range(of: "^[A-Z_][A-Z0-9_]*$", options: .regularExpression) != nil { secretEnv[k] = v }
-            stream(args, id: "connect", env: secretEnv)
+            stream(args, id: "connect", request: d["request"], generation: generation, env: secretEnv)
         case "hostadd":
             // the hub does the work (sov routes there); the drawer streams it
             guard let sov = sov, let name = d["name"] as? String,
@@ -207,7 +207,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 if let v = d[key] as? String, !v.isEmpty { args += [flag, v] }
             }
             if (d["apply"] as? Bool) == true { args.append("--apply") }
-            stream(args, id: "hostadd")
+            stream(args, id: "hostadd", request: d["request"], generation: generation)
         case "vmstart":
             guard let name = d["name"] as? String, !name.isEmpty else { return }
             run(["/usr/local/bin/prlctl", "start", name]) { out, err, code in
@@ -224,19 +224,20 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             }
             let runner = sov.map { URL(fileURLWithPath: $0).deletingLastPathComponent()
                                        .appendingPathComponent("sov-connectors-run").path }
+            let request = d["request"] ?? NSNull()
             if let lane = lane, let runner = runner, FileManager.default.isExecutableFile(atPath: runner) {
                 run([runner, "--only", lane]) { out, err, code in
-                    self.deliver("kickstart", ["label": lane, "exit": code, "out": out + err])
+                    self.deliver("kickstart", ["label": lane, "exit": code, "out": out + err, "request": request], generation: generation)
                 }
             } else {
                 run(["/bin/launchctl", "kickstart", "-k", "gui/\(getuid())/\(label)"]) { out, err, code in
-                    self.deliver("kickstart", ["label": label, "exit": code, "out": out + err])
+                    self.deliver("kickstart", ["label": label, "exit": code, "out": out + err, "request": request], generation: generation)
                 }
             }
         case "clearlog":
             if let p = d["path"] as? String, p.hasSuffix(".log"), p.hasPrefix(NSHomeDirectory()) {
                 try? "".write(toFile: p, atomically: true, encoding: .utf8)
-                deliver("kickstart", ["label": "cleared " + (p as NSString).lastPathComponent, "exit": 0, "out": ""])
+                deliver("kickstart", ["label": "cleared " + (p as NSString).lastPathComponent, "exit": 0, "out": "", "request": d["request"] ?? NSNull()], generation: generation)
             }
         case "reveal":
             if let p = d["path"] as? String { NSWorkspace.shared.selectFile(p, inFileViewerRootedAtPath: "") }
@@ -685,7 +686,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
 
     private func manageProducer(_ request: [String: Any], generation: UUID) {
         func fail(_ message: String) {
-            deliver("log", ["id": "producer", "line": message, "state": "end", "exit": 65], generation: generation)
+            deliver("log", ["id": "producer", "request": request["request"] ?? NSNull(), "line": message, "state": "end", "exit": 65], generation: generation)
         }
         guard !producerBusy else { fail("A producer change is already running."); return }
         guard let sov = sov, let root = Settings.archive,
@@ -726,7 +727,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         var args = [qa ?? sov, action == "add" ? "connect" : "disconnect", h]
         if !(meta["detect"] as? [String] ?? []).isEmpty { args += ["--vault", root] }
         if apply { args.append("--apply") }
-        stream(args, id: "producer", env: secret) { code in
+        stream(args, id: "producer", request: request["request"], generation: generation, env: secret) { code in
             self.producerBusy = false
             if !apply && code == 0 && self.generation == generation { self.producerReview = key }
         }
@@ -838,29 +839,34 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    func stream(_ args: [String], id: String, env extra: [String: String] = [:], completion: ((Int32) -> Void)? = nil) {
+    // Every line names the drawer run that asked for it (the page drops any other run's
+    // output) and goes only to the document that asked (a reloaded page never sees it).
+    func stream(_ args: [String], id: String, request: Any?, generation: UUID, env extra: [String: String] = [:], completion: ((Int32) -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async {
+            func send(_ fields: [String: Any]) {
+                self.deliver("log", fields.merging(["id": id, "request": request ?? NSNull()]) { _, tag in tag }, generation: generation)
+            }
             let p = Process()
             p.executableURL = URL(fileURLWithPath: args[0])
             p.arguments = Array(args.dropFirst())
             p.environment = self.env().merging(extra) { _, new in new }
             let o = Pipe()
             p.standardOutput = o; p.standardError = o
-            self.deliver("log", ["id": id, "line": "$ " + args.map { $0.hasPrefix("/") ? ($0 as NSString).lastPathComponent : $0 }.joined(separator: " "), "state": "start"])
+            send(["line": "$ " + args.map { $0.hasPrefix("/") ? ($0 as NSString).lastPathComponent : $0 }.joined(separator: " "), "state": "start"])
             o.fileHandleForReading.readabilityHandler = { fh in
                 let data = fh.availableData
                 if data.isEmpty { return }
                 for line in (String(data: data, encoding: .utf8) ?? "").split(separator: "\n", omittingEmptySubsequences: false) {
-                    if !line.isEmpty { self.deliver("log", ["id": id, "line": String(line)]) }
+                    if !line.isEmpty { send(["line": String(line)]) }
                 }
             }
-            do { try p.run() } catch { DispatchQueue.main.async { completion?(-1) }; self.deliver("log", ["id": id, "line": "failed to start: \(error)", "state": "end", "exit": -1]); return }
+            do { try p.run() } catch { DispatchQueue.main.async { completion?(-1) }; send(["line": "failed to start: \(error)", "state": "end", "exit": -1]); return }
             p.waitUntilExit()
             o.fileHandleForReading.readabilityHandler = nil
             let rest = o.fileHandleForReading.readDataToEndOfFile()
-            for line in (String(data: rest, encoding: .utf8) ?? "").split(separator: "\n") { self.deliver("log", ["id": id, "line": String(line)]) }
+            for line in (String(data: rest, encoding: .utf8) ?? "").split(separator: "\n") { send(["line": String(line)]) }
             DispatchQueue.main.async { completion?(p.terminationStatus) }
-            self.deliver("log", ["id": id, "line": "exit \(p.terminationStatus)", "state": "end", "exit": Int(p.terminationStatus)])
+            send(["line": "exit \(p.terminationStatus)", "state": "end", "exit": Int(p.terminationStatus)])
         }
     }
 

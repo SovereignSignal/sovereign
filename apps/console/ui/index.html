@@ -1301,10 +1301,16 @@ window.onerror = function (msg, src, line, col) {
     if (parts.includes("back")) setTimeout(back, 120);
   };
 
+  // The drawer shows one operation, the one it is titled with. Each run gets a number the
+  // bridge echoes on every reply, so another run's output never lands under this title, and
+  // a new operation waits until this one has ended: openDrawer then returns 0.
+  let drawerRun = 0, drawerBusy = false;
   function openDrawer(title, showApply) {
+    if (drawerBusy) { $("#drawer").classList.add("open"); return 0; }
     $("#drawer-title").textContent = title; $("#drawer-log").textContent = ""; $("#drawer-state").textContent = "running…";
     $("#drawer-apply").textContent = "Install";
     $("#drawer-apply").hidden = !showApply; $("#drawer-apply").disabled = true; $("#drawer").classList.add("open");
+    drawerBusy = true; return ++drawerRun;
   }
   // A machine with nothing deployed: the drawer walks the owner through joining it. A local
   // VM gets the one line to run inside it first; then the hub does the rest (sov host add).
@@ -1358,28 +1364,27 @@ window.onerror = function (msg, src, line, col) {
   function hostAdd(host, apply) {
     const f = (id) => ($("#" + id) || {}).value || "";
     const extra = apply && pendingHost ? pendingHost.extra : { user: f("ha-user").trim(), addr: f("ha-addr").trim(), identity: f("ha-identity").trim(), workstreams: f("ha-ws").trim() };
-    if (!extra.user || !extra.addr) { openDrawer("Connect " + host, false); $("#drawer-log").textContent = "user and address are needed first"; $("#drawer-state").textContent = ""; return; }
+    if (!extra.user || !extra.addr) { if (openDrawer("Connect " + host, false)) { drawerBusy = false; $("#drawer-log").textContent = "user and address are needed first"; $("#drawer-state").textContent = ""; } return; }
+    const request = openDrawer((apply ? "Connecting " : "Dry run: ") + host, !apply); if (!request) return;
     pendingHost = { host, apply, extra }; pendingConnect = null; pendingProducer = null;
-    openDrawer((apply ? "Connecting " : "Dry run: ") + host, !apply);
-    bridge(Object.assign({ cmd: "hostadd", name: host, apply: !!apply }, extra));
+    bridge(Object.assign({ cmd: "hostadd", name: host, apply: !!apply }, extra, { request }));
   }
   let pendingProducer=null;
   function producer(harness,action,apply,extra={}){
-    if(pendingProducer?.running)return;
     if(apply){if(!pendingProducer?.reviewed)return;extra=pendingProducer.extra;}
+    const request=openDrawer((apply?(action==='remove'?'Removing ':'Adding '):'Review '+action+': ')+harness,!apply);if(!request)return;
     pendingConnect=null;pendingHost=null;
     pendingProducer={harness,action,apply,extra,reviewed:false,running:true};
-    openDrawer((apply?(action==='remove'?'Removing ':'Adding '):'Review '+action+': ')+harness,!apply);
     $('#drawer-apply').textContent=action==='remove'?'Remove producer':'Add producer';
-    bridge({cmd:'producer',harness,action,apply:!!apply,root:selectedRoot,...extra});
+    bridge({cmd:'producer',harness,action,apply:!!apply,root:selectedRoot,...extra,request});
   }
   function connect(harness, apply, extra) {
     extra = extra || (pendingConnect && pendingConnect.extra) || {};
     if(harness!=="all"&&selectedRoot&&selectedRoot===D?.machine?.vault)return producer(harness,"add",apply,extra);
+    const request = openDrawer((apply ? "Installing " : "Dry run: ") + (harness === "all" ? "every tool found" : harness), !apply); if (!request) return;
     pendingProducer=null;pendingHost=null;
     pendingConnect = { harness, apply, extra };
-    openDrawer((apply ? "Installing " : "Dry run: ") + (harness === "all" ? "every tool found" : harness), !apply);
-    bridge(Object.assign({ cmd: "connect", harness, apply: !!apply, host: extra.host || (D.machine || {}).host || "" }, extra));
+    bridge(Object.assign({ cmd: "connect", harness, apply: !!apply, host: extra.host || (D.machine || {}).host || "" }, extra, { request }));
   }
   // destructive actions arm on the first click and fire on the second, within four seconds
   function armOrFire(b, label, fire) {
@@ -1477,13 +1482,13 @@ window.onerror = function (msg, src, line, col) {
       if (act === "kickstart") {   // data-lane: one lane inside a job that carries many, run by name
         const m = { cmd: "kickstart", label: b.dataset.label };
         if (b.dataset.lane) m.lane = b.dataset.lane;
-        openDrawer("Run now: " + (m.lane || m.label), false);
+        if (!(m.request = openDrawer("Run now: " + (m.lane || m.label), false))) return;
         return bridge(m);
       }
       if (act === "reveal") return bridge({ cmd: "reveal", path: b.dataset.path });
       if (act === "open") return bridge({ cmd: "open", path: b.dataset.path });
       if (act === "openurl") return bridge({ cmd: "openurl", url: b.dataset.url });
-      if (act === "clearlog") return armOrFire(b, "Clear log", () => { openDrawer("Clear log", false); bridge({ cmd: "clearlog", path: b.dataset.path }); });
+      if (act === "clearlog") return armOrFire(b, "Clear log", () => { const request = openDrawer("Clear log", false); if (request) bridge({ cmd: "clearlog", path: b.dataset.path, request }); });
       if (act === 'gate-check') { requestGateCheck(b.dataset.slug); renderInspector(); return; }
       if (act === 'gate-resolve') { const slug=b.dataset.slug,check=gateChecks.get(slug)?.value;if(canReview(slug)&&GateModel.canResolve(check,gatePending)){gateResolutions.set(slug,check.fingerprint);reviewTab='changes';renderInspector();$('#gate-resolution-preview')?.scrollIntoView({block:'start'});}return; }
       if (act === 'gate-cancel-resolution') {gateResolutions.delete(b.dataset.slug);renderInspector();return;}
@@ -1671,21 +1676,25 @@ window.onerror = function (msg, src, line, col) {
     } else if (kind === "vmstart") {
       setTimeout(refresh, 3000);
     } else if (kind === "log") {
+      if (payload.request !== drawerRun) return;   // another run's output: not this drawer's
       const log = $("#drawer-log"); log.textContent += payload.line + "\n"; log.scrollTop = log.scrollHeight;
       if (payload.state === "end") {
+        drawerBusy = false;
         if(payload.id==='producer'&&pendingProducer){
           pendingProducer.running=false;
-          if(!pendingProducer.apply){pendingProducer.reviewed=payload.exit===0;$('#drawer-apply').disabled=payload.exit!==0;}
+          if(!pendingProducer.apply)pendingProducer.reviewed=payload.exit===0;
           else {pendingProducer=null;setTimeout(refresh,800);}
         }
         $("#drawer-state").textContent = payload.exit === 0 ? "done" : "exit " + payload.exit;
-        if (payload.id === "connect" && pendingConnect && !pendingConnect.apply && payload.exit === 0) $("#drawer-apply").disabled = false;
-        if (payload.id === "hostadd" && pendingHost && !pendingHost.apply && payload.exit === 0) { $("#drawer-apply").disabled = false; $("#drawer-apply").textContent = "Install"; }
-        if (pendingHost && pendingHost.apply && payload.state === "end") { pendingHost = null; setTimeout(refresh, 800); }
-        if (pendingConnect && pendingConnect.apply) { pendingConnect = null; setTimeout(refresh, 800); }
+        // Install (or Add producer) follows this run's own dry run: enabled on exit 0, never otherwise
+        $("#drawer-apply").disabled = payload.exit !== 0;
+        if (payload.id === "hostadd" && pendingHost?.apply) { pendingHost = null; setTimeout(refresh, 800); }
+        if (payload.id === "connect" && pendingConnect?.apply) { pendingConnect = null; setTimeout(refresh, 800); }
         if (payload.id === "gate") setTimeout(refresh, 1200);
       }
     } else if (kind === "kickstart") {
+      if (payload.request !== drawerRun) return;
+      drawerBusy = false;
       $("#drawer-log").textContent += (payload.exit === 0 ? "started " + payload.label : "exit " + payload.exit + "\n" + payload.out) + "\n";
       $("#drawer-state").textContent = payload.exit === 0 ? "started" : "failed";
       setTimeout(refresh, 4000);
