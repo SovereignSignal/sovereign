@@ -13,7 +13,7 @@
 <script src="status-model.js"></script><script src="gate-model.js"></script><script src="system-model.js"></script><script src="system-view.js"></script><script src="shell.js"></script><script src="home.js"></script>
 <script>
 'use strict';
-const $=id=>document.getElementById(id);let root=null,request=0,readRequest=0,contextRequest=0,view="home",stateReady=false,pendingGoto=null;
+const $=id=>document.getElementById(id);let root=null,request=0,readRequest=0,contextRequest=0,view="home",stateReady=false,pendingGoto=null,timer=null;
 const send=data=>window.webkit.messageHandlers.sov.postMessage(data);
 // The notice line exists for failures. Routine state is not announced.
 function notice(text,error=false){const n=$('notice');n.textContent=text||'';n.hidden=!text;n.classList.toggle('error',error)}
@@ -55,7 +55,8 @@ $('create').onclick=()=>send({cmd:'chooseArchive',create:true});
 $('choose').onclick=()=>send({cmd:'chooseArchive',create:false});
 $('change').onclick=()=>send({cmd:'chooseArchive',create:false});
 window.sovDeliver=(kind,payload)=>{
- if(kind==='settings')return;
+ // Settings > Refresh every applies here too: Today is where the window opens and stays.
+ if(kind==='settings'){clearInterval(timer);timer=setInterval(()=>{if(stateReady)Home.refresh()},Math.max(15,payload.refresh||60)*1000);return}
  if(kind==='status'){Home.status(payload);return}
  if(kind==='appUpdateResult'){
   // Failed builds return a terminal result while this app remains open.
@@ -85,4 +86,5 @@ window.sovCanQuit=()=>true;
 window.sovChooseArchive=create=>send({cmd:'chooseArchive',create});
 window.onerror=()=>notice('The archive view encountered an error. Reopen the window to retry.',true);
 send({cmd:'localState'});
+send({cmd:'settings'});
 </script></body></html>
