@@ -566,24 +566,7 @@ window.onerror = function (msg, src, line, col) {
     return A;
   }
   // ---------- the verdict: one sentence, the worst state on screen ----------
-  function verdictSentence() {
-    if(D?._status?.error||D?.error)return {state:'down',text:D._status?.error||D.error};
-    if(D?._status?.pending)return {state:'warn',text:SovStatus.caption(D)};
-    const A = assess(), h = hub(), st = h.status || {}, hosts = ((D.fleet || {}).hosts || []);
-    const down = A.need.filter(r => r.state === "down"), warn = A.need.filter(r => r.state !== "down");
-    let state, text;
-    if (down.length) { state = "down"; const f = down[0]; text = `Attention: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.name + " " + f.detail}${down.length > 1 ? `, and ${down.length - 1} more` : ""}.`; }
-    else if (A.need.length) { state = "warn"; const f = A.need[0]; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.need != null ? f.detail : f.name + " " + f.detail}.`; }
-    else if (A.waiting.length) { state = "idle"; text = `${A.waiting.length} awaiting verification. No action required while the next run is pending.`; }
-    else if (A.stale.length) { state = "warn"; text = `Stale: ${A.stale[0].name} ${A.stale[0].detail}.`; }
-    else {
-      state = "live";
-      const a = arch(), today = new Date().toISOString().slice(0, 10), landed = (a.cards || []).filter(c => c.created === today).length;
-      const fact = landed ? `${landed} card${landed === 1 ? "" : "s"} landed today` : st.judged != null ? `the judge kept ${num(st.new_proposals)} of ${num(st.judged)} last run` : `${hosts.filter(x => x.net && x.net.online).length} hosts up`;
-      text = `All good. ${fact}.`;
-    }
-    return { state, text: text.replace(/\.\.$/, ".") };
-  }
+  function verdictSentence() { return SovStatus.verdict(D, localStorage); }
   function renderVerdict() {
     const v = $("#verdict"); if (!v || !D) return;
     const failed = D.error || D._status?.error;

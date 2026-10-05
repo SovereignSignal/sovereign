@@ -359,6 +359,27 @@ window.SovStatus = (() => {
     if (r.detail === "pushed, awaiting hub acceptance") return "awaiting hub";
     return "";
   }
+  // The verdict: one sentence and the worst state, for the menu-bar crown and the Glance,
+  // from the same assessment wherever the window is.
+  function verdict(D, storage) {
+    if (D?._status?.error || D?.error) return { state: "down", text: D._status?.error || D.error };
+    if (D?._status?.pending) return { state: "warn", text: caption(D) };
+    if (!D?.machine?.connected) return { state: "idle", text: "Not connected." };
+    const A = assess(D, storage), st = (D.hub || {}).status || {}, hosts = ((D.fleet || {}).hosts || []);
+    const down = A.need.filter(r => r.state === "down");
+    let state, text;
+    if (down.length) { state = "down"; const f = down[0]; text = `Attention: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.name + " " + f.detail}${down.length > 1 ? `, and ${down.length - 1} more` : ""}.`; }
+    else if (A.need.length) { state = "warn"; const f = A.need[0]; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.need != null ? f.detail : f.name + " " + f.detail}.`; }
+    else if (A.waiting.length) { state = "idle"; text = `${A.waiting.length} awaiting verification. No action required while the next run is pending.`; }
+    else if (A.stale.length) { state = "warn"; text = `Stale: ${A.stale[0].name} ${A.stale[0].detail}.`; }
+    else {
+      state = "live";
+      const a = D.archive || {}, today = new Date().toISOString().slice(0, 10), landed = (a.cards || []).filter(c => c.created === today).length;
+      const fact = landed ? `${landed} card${landed === 1 ? "" : "s"} landed today` : st.judged != null ? `the judge kept ${num(st.new_proposals)} of ${num(st.judged)} last run` : `${hosts.filter(x => x.net && x.net.online).length} hosts up`;
+      text = `All good. ${fact}.`;
+    }
+    return { state, text: text.replace(/\.\.$/, ".") };
+  }
   // When the status on screen was observed, as a clock time. The full caption (how long
   // ago, how long the check took) is evidence for a tooltip, never a line of the page.
   function seen(status) {
@@ -367,5 +388,5 @@ window.SovStatus = (() => {
     if (s.error || status?.error) return "refresh failed";
     return Number.isFinite(stamp) ? new Date(stamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   }
-  return {assess, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, week: isoWeekKey};
+  return {assess, verdict, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, week: isoWeekKey};
 })();

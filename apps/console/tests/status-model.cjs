@@ -259,3 +259,15 @@ assert.equal(model.seen({machine:{},_status:{pending:true}}),'checking…');
 assert.equal(model.seen({machine:{},_status:{error:'probe failed'}}),'refresh failed');
 assert.match(model.seen({machine:{},generated_at:new Date().toISOString()}),/\d/);
 console.log('Short reasons and observed time: known causes have a short form, unknown ones fall back to their sentence.');
+
+// The crown's verdict comes from the same assessment wherever the window is, Today included.
+const verdict=d=>model.verdict(d,{getItem(){return null},setItem(){}});
+const connected={machine:{host:'here',connected:true},generated_at:new Date().toISOString()};
+for(const [d,text] of [[{...connected,_status:{error:'probe failed'}},'probe failed'],[{error:'no status'},'no status']]){const v=verdict(d);assert.equal(v.state,'down');assert.equal(v.text,text);}
+assert.equal(verdict({...connected,_status:{pending:true}}).state,'warn');
+assert.equal(verdict({machine:{connected:false}}).state,'idle','a local-only archive is not all good, it is not connected');
+assert.equal(verdict({...connected,jobs:[{label:'job-a',last_exit:1}]}).state,'down');
+assert.match(verdict({...connected,jobs:[{label:'job-a',last_exit:1}]}).text,/^Attention: job-a failed/);
+assert.equal(verdict({...connected,backups:{lanes:[{lane:'producer',delivery:'waiting'}]}}).state,'warn');
+assert.equal(verdict(connected).state,'live');
+console.log('Verdict: one sentence and the worst state from the shared assessment.');

@@ -116,5 +116,5 @@ window.Home = (() => {
     const environment=element('div');host.append(environment);
     SystemView.render(environment,{root,status,context},{browse:api.browse,review:api.review,openNote:api.openNote,operations:go});
   }
-  return {init(options){api=options;render()},view(value){view=value;render()},archive(value){root=value;context=null;open=null;render()},context(value){context=value;render()},status(value){if(value.request!==request)return;pending=value._status?.pending===true;status=SovStatus.retain(status,value);render()},refresh(){if(pending)return;pending=true;if(status)status={...status,_status:{...status._status,pending:true,stale:true}};render();api.send({cmd:'status',request:++request})}};
+  return {init(options){api=options;render()},view(value){view=value;render()},archive(value){root=value;context=null;open=null;render()},context(value){context=value;render()},status(value){if(value.request!==request)return;pending=value._status?.pending===true;status=SovStatus.retain(status,value);render();api.send({cmd:'verdict',...SovStatus.verdict(status,localStorage)})},refresh(){if(pending)return;pending=true;if(status)status={...status,_status:{...status._status,pending:true,stale:true}};render();api.send({cmd:'status',request:++request})}};
 })();
