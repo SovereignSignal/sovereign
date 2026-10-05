@@ -1709,11 +1709,12 @@ window.onerror = function (msg, src, line, col) {
       $("#drawer-state").textContent = payload.exit === 0 ? "started" : "failed";
       setTimeout(refresh, 4000);
     } else if (kind === "settings") {
-      S = Object.assign({}, S, payload);
+      S = Object.assign({}, S, { error: null }, payload);   // an answer without an error clears the last one
       const first = !gotSettings; gotSettings = true;
       if (first && !GLANCE && !D && S.defaultView) { const saved = RENAMED[S.defaultView] || S.defaultView; if (PAGE[saved]) view = saved; }
       resetTimer();
-      if (settingsOpen) { renderInspector(); const st = $("#s-state"); if (st && saving) st.textContent = payload.error ? "" : "Saved"; }
+      // The pane shows the answer: a save's always, a probe's once no change is in progress.
+      if (settingsOpen && (saving || !inUse($("#rows")))) { renderList(); const st = $("#s-state"); if (st && saving && !payload.error) st.textContent = "Saved"; }
       saving = false;
     } else if (kind === "goto") {
       if(!window.sovCanQuit())return;
