@@ -903,6 +903,7 @@ window.onerror = function (msg, src, line, col) {
     const control = $("#s-appearance"); if (control) control.value = e.detail;
   });
   function openSettings() {
+    if (!window.sovCanQuit()) return;   // Settings is navigation too, and from it the archive can change
     settingsOpen = true; sel = null;
     // The drawer is not where Settings lives any more, so put it away first.
     if (!pinned) { $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
@@ -1422,7 +1423,7 @@ window.onerror = function (msg, src, line, col) {
       if (act === "review-next") return stepReview(1);
       if (act === "review-prev") return stepReview(-1);
       if (act === "review-unfold") { reviewUnfolded.add(sel.id.slice(2)); renderInspector(); return; }
-      if (b.id === "set-change") return bridge({ cmd: "chooseArchive" });
+      if (b.id === "set-change") return window.sovCanQuit() && bridge({ cmd: "chooseArchive" });
       if (b.id === "set-reveal") return bridge({ cmd: "reveal", path: selectedRoot });
       if (b.id === "set-update") {
         const template = D && D.machine && D.machine.template;
