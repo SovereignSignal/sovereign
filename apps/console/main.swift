@@ -236,7 +236,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             // "done": the reply comes after the work, not when it starts (a launchctl kickstart)
             let request = d["request"] ?? NSNull()
             if let lane = lane, let runner = runner, FileManager.default.isExecutableFile(atPath: runner) {
-                run([runner, "--only", lane]) { out, err, code in
+                // The runner bounds each lane itself; this bounds the reply the drawer waits on.
+                run([runner, "--only", lane], timeLimit: 900) { out, err, code in
                     self.deliver("kickstart", ["label": lane, "exit": code, "out": out + err, "request": request, "done": true], generation: generation)
                 }
             } else {

@@ -119,6 +119,13 @@ class TheLaneButtonNamesTheLane(unittest.TestCase):
                          "only kick the job: " + handler.strip()[:200])
         self.assertIn("cmd:", handler)
 
+    def test_the_bridge_bounds_the_lane_run_the_drawer_waits_on(self):
+        """The drawer holds every other action until this reply lands, so the bridge's lane
+        run must end even if the runner does not, as its streamed commands do."""
+        swift = (ROOT / "apps" / "console" / "main.swift").read_text(encoding="utf-8")
+        self.assertRegex(swift, r'run\(\[runner, "--only", lane\], timeLimit: \d+\)',
+                         "the lane run has no time limit, so a hung runner holds the drawer")
+
 
 class TheRunnerRunsTheLaneItIsGiven(unittest.TestCase):
     """The other half of the contract the button relies on: a single lane, by name, and
