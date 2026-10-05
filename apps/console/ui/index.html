@@ -458,11 +458,13 @@ window.onerror = function (msg, src, line, col) {
     const st = h.status || {}, cov = st.coverage || {}, jw = ((h.judge || {}).weeks) || [], last = jw[jw.length - 1];
     const read = cov.processable ? Math.round(100 * (cov.judged_ever || 0) / cov.processable) : null;
     const fig = (id, label, value, unit, note) => `<button class="fig-tile" ${open(id)}><span class="cap">${label}</span><span class="fig">${esc(value)}${unit ? `<small>${unit}</small>` : ""}</span><span class="fig-note">${esc(note)}</span></button>`;
+    // A figure the hub did not send is unknown, never 0.
+    const count = (label, n, note) => fig("judge", label, n == null ? "–" : num(n), "", n == null ? "not reported" : note);
     const judge = `<section class="tiles4" data-dash="judge">
       ${fig("judge", "Read", read == null ? "–" : String(read), read == null ? "" : "%", cov.processable ? num(cov.judged_ever) + " of " + num(cov.processable) : "not reported")}
       ${fig("judge", "Kept", last && last.judged ? String(Math.round(100 * last.kept / last.judged)) : "–", last && last.judged ? "%" : "", "this week")}
-      ${fig("judge", "Waiting", num(cov.unjudged_in_window ?? 0), "", "not read yet")}
-      ${fig("judge", "Out of reach", num(cov.stranded_pre_watermark ?? 0), "", "before the start")}</section>`;
+      ${count("Waiting", cov.unjudged_in_window, "not read yet")}
+      ${count("Out of reach", cov.stranded_pre_watermark, "before the start")}</section>`;
 
     const bs = a.by_src || {}, desk = bs.desk || 0, unat = (bs.web || 0) + (bs.legacy || 0) + (bs.other || 0);
     const prodN = Object.entries(bs).filter(([x]) => !PRODUCER_X.includes(x)).reduce((acc, [, n]) => acc + n, 0), maxS = Math.max(desk, prodN, unat, 1);
