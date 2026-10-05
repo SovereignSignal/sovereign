@@ -150,7 +150,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         case "archiveBackupPick":
             guard !archiveBackupBusy, let field = d["field"] as? String,
                   ["folder", "key", "backup", "destination"].contains(field) else { return }
-            if field == "key" || field == "destination" {
+            // Restore reads a key that exists; a Save panel would ask to replace it.
+            let existingKey = field == "key" && d["action"] as? String == "restore"
+            if (field == "key" && !existingKey) || field == "destination" {
                 let panel = NSSavePanel()
                 panel.title = field == "key" ? "Recovery key location" : "New restore folder"
                 panel.nameFieldStringValue = field == "key" ? "sovereign-recovery.key" : "Restored Sovereign"
@@ -159,6 +161,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             } else {
                 let panel = NSOpenPanel(); panel.canChooseDirectories = field == "folder"
                 panel.canChooseFiles = field != "folder"; panel.allowsMultipleSelection = false
+                if existingKey { panel.title = "Choose the recovery key" }
                 if field == "folder" {
                     panel.title = "Choose a backup folder"
                     panel.canCreateDirectories = true
