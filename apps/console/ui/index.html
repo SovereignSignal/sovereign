@@ -399,6 +399,8 @@ window.onerror = function (msg, src, line, col) {
     return out;
   }
   const monthOf = (d) => d.toLocaleDateString([], { month: "short" });
+  // The judge lists only weeks that have judgments, so its newest entry is this week's only if it says so.
+  const thisWeek = (h) => { const w = ((h.judge || {}).weeks) || [], last = w[w.length - 1]; return last && last.week === isoWeekKey(new Date()) ? last : null; };
   const PRODUCER_X = ["desk", "web", "legacy", "other"];
 
   // everything the drawer can open, whether or not it is drawn as a row
@@ -414,9 +416,9 @@ window.onerror = function (msg, src, line, col) {
       arow("week:" + w.key, w.key.replace("-W", " week "), num(cs.length) + " cards landed", cs.map(c => c.slug),
            { kv: Object.entries(bt).sort((x, y) => y[1] - x[1]).map(([t, n]) => [t, num(n)]) });
     });
-    const weeks = ((h.judge || {}).weeks) || [], last = weeks[weeks.length - 1], bd = h.burndown || {};
+    const last = thisWeek(h), bd = h.burndown || {};
     arow("judge", "the judge", "keep rate by week, and what sits behind it", [], {
-      kv: [["this week", last ? `${num(last.kept)} of ${num(last.judged)} kept · ${pct(last.kept, last.judged)}` : "no judgments yet"],
+      kv: [["this week", last ? `${num(last.kept)} of ${num(last.judged)} kept · ${pct(last.kept, last.judged)}` : "none judged yet"],
            ["all time", num((h.judge || {}).total_judged) + " judged"],
            ["last run", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)} kept` : "?"],
            ["unjudged", num(cov.unjudged_in_window) + " of " + num(cov.processable) + " in scope"],
@@ -455,7 +457,7 @@ window.onerror = function (msg, src, line, col) {
     const added = `<section data-dash="weeks"><span class="cap">Added per week</span><div class="lib-weeks">${bars}</div><div class="lib-axis">${axis}</div></section>`;
 
     // how much of what arrives has been read, and how much of that was kept
-    const st = h.status || {}, cov = st.coverage || {}, jw = ((h.judge || {}).weeks) || [], last = jw[jw.length - 1];
+    const st = h.status || {}, cov = st.coverage || {}, last = thisWeek(h);
     const read = cov.processable ? Math.round(100 * (cov.judged_ever || 0) / cov.processable) : null;
     const fig = (id, label, value, unit, note) => `<button class="fig-tile" ${open(id)}><span class="cap">${label}</span><span class="fig">${esc(value)}${unit ? `<small>${unit}</small>` : ""}</span><span class="fig-note">${esc(note)}</span></button>`;
     // A figure the hub did not send is unknown, never 0.
