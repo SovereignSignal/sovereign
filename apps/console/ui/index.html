@@ -1170,7 +1170,7 @@ window.onerror = function (msg, src, line, col) {
   }
 
   function openInspector() { $("#inspector").classList.add("open"); $("#inspector").setAttribute("aria-hidden", "false"); }
-  function closeInspector() { settingsOpen = false; if(splitReview()){sel=null;renderInspector();syncActive();return;} if (pinned) { renderInspector(); return; } $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
+  function closeInspector() { settingsOpen = false; if(splitReview()){sel=null;document.querySelectorAll(".row[role=option]").forEach(r=>r.setAttribute("aria-selected","false"));renderInspector();syncActive();return;} if (pinned) { renderInspector(); return; } $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
   function setPinned(v) {
     pinned = !!v; document.body.classList.toggle("pinned", pinned);
     try { localStorage.setItem("sov.pinned", pinned ? "1" : "0"); } catch (e) {}
