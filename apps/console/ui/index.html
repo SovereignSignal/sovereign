@@ -373,7 +373,7 @@ window.onerror = function (msg, src, line, col) {
     const page = settingsOpen ? "settings" : PAGE[view];
     $("#vault").textContent = settingsOpen ? "Settings" : TITLE[view] || "Sovereign";
     SovShell.select(page);
-    SovShell.archive(selectedRoot?.split("/").pop(), !D || D.error || D._status?.error ? "" : D.machine?.connected ? "live" : "");
+    SovShell.archive(selectedRoot?.split("/").pop(), !D || D.error || D._status?.error ? "" : D.machine?.connected && D.machine.vault === selectedRoot ? "live" : "");
     $("#controls").innerHTML = settingsOpen ? ""
       : view === "discover" ? `<button data-view="sources">Done</button>`
       : page === "sources" ? segment([["sources", "Tools"], ["hosts", "Devices"], ["system", "Map"]]) + `<button data-view="discover">Add</button>`

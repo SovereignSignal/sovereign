@@ -41,7 +41,8 @@ function chrome(state){
  $('seen').textContent=SovStatus.seen(state.status);$('seen').title=SovStatus.caption(state.status);
  $('refresh').disabled=state.pending;
  const s=state.status,name=root?root.split('/').pop():null;
- SovShell.archive(name,!s||s.error||s._status?.error?'':s.machine?.connected?'live':'');
+ // Live only when the connected system answered for the archive that is open.
+ SovShell.archive(name,!s||s.error||s._status?.error?'':s.machine?.connected&&s.machine.vault===root?'live':'');
 }
 // Keys 1 to 5 reach the five destinations from here too.
 document.addEventListener('keydown',e=>{
