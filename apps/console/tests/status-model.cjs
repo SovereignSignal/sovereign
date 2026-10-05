@@ -307,7 +307,7 @@ const disassociated=model.associations({...refusedClient,device_associations:{av
 assert.equal(assess(disassociated).need.length,0,'a disassociated client raises nothing');
 console.log('A refused client intake is one row, and disassociation hides it.');
 // A service row is named, coloured and sent where its own next step points, by its kind.
-const kinds=assess({machine:{host:'here',hub_pointer:'hubhost:/archive'},hub:{reachable:false,hub_host:'hubhost'},harnesses:[{id:'cursor-here',name:'Cursor'}],needs_you:[
+const kinds=assess({machine:{host:'here',hub_pointer:'hubhost:/archive'},hub:{reachable:false,hub_host:'Hub-Machine-Name'},harnesses:[{id:'cursor-here',name:'Cursor'}],needs_you:[
  {kind:'host',host:'vm-a',text:'This device cannot currently reach vm-a.'},
  {kind:'hub',text:'The hub did not answer (ssh hubhost). Governance state is unknown until it does.'},
  {kind:'hypervisor',node:'node-a',text:'Backup posture of 3 VMs on node-a is unknown.'},

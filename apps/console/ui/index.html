@@ -689,6 +689,8 @@ window.onerror = function (msg, src, line, col) {
   // already says healthy, so a state word appears only when there is something to add.
   const tagClass = { live: "on", warn: "mid", down: "off" };
   const SAID_BY_DOT = new Set(["current", "connected", "Succeeded", "clear", "accepted", "backed up", "judging"]);
+  // A hub that is online on the network can still fail to answer for status: say so on its device.
+  const hubSilent = (host) => hub().reachable === false && host === ((D.machine?.hub_pointer || "").split(":")[0] || hub().hub_host);
   const stateTag = (word, cls) => `<span class="state">${word ? `<span class="tag ${cls || ""}">${esc(word)}</span>` : ""}</span>`;
   function rowHTML(it) {
     const o = it.o;
@@ -709,7 +711,7 @@ window.onerror = function (msg, src, line, col) {
       return `${dot(net.online == null ? "" : net.online ? "live" : "down", net.online == null ? "network unknown" : net.online ? "online" : "offline")}
         <span class="title mono" style="flex:0 0 168px">${esc(o.host)}</span>
         <span class="where">${esc([m.kind, m.where].filter(Boolean).join(" · "))}</span>
-        ${net.online === false ? stateTag("unreachable", "off") : stateTag(m.identity && m.identity !== domIdentity ? m.identity : "")}
+        ${net.online === false ? stateTag("unreachable", "off") : hubSilent(o.host) ? stateTag("not answering", "off") : stateTag(m.identity && m.identity !== domIdentity ? m.identity : "")}
         <span class="num" style="width:52px">${tools ? tools + (tools === 1 ? " tool" : " tools") : ""}</span>
         <span class="num" style="width:40px">${newest == null ? "" : age(newest)}</span>
         <span class="chev">›</span>`;
@@ -1048,7 +1050,7 @@ window.onerror = function (msg, src, line, col) {
         <div class="sect"><h2>Network</h2>${kv([
           ["state", o.associated===false ? "Disassociated; excluded from active monitoring" : `${dot(net.online == null ? "" : net.online ? "live" : "down", "")} ${net.online == null ? "unknown" : net.online ? "online" : "offline"}`, "raw"],
           ["address", net.ip ? `<span class="mono">${esc(net.ip)}</span>` : null, "raw"],
-          ["seen via", net.via], ["reach", m.reach]])}</div>
+          ["seen via", net.via], ["reach", m.reach], ["hub status", hubSilent(o.host) ? "The hub did not answer: " + (hub().error || "no route") : null]])}</div>
         <div class="sect"><h2>Reaches the archive</h2><div class="prose">${esc(m.transport || "no transport recorded")}
           ${m.notes ? `<div style="color:var(--muted);margin-top:4px">${esc(m.notes)}</div>` : ""}</div></div>
         ${o.associated!==false && !isMe && !hs.length ? connectMachineSect(o) : ""}

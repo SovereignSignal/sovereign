@@ -190,7 +190,8 @@ window.SovStatus = (() => {
     // job's one row: red and first when it failed, named and landing on the job. Every other
     // service row says what it is in its kind: name it, colour it and send it where its own
     // next step points.
-    const hubName = h.hub_host || (m.hub_pointer || '').split(':')[0], tool = id => ((D.harnesses || []).find(x => x.id === id) || {}).name || id;
+    // The hub by the name the fleet and Devices know it: the pointer's alias, then its host name.
+    const hubName = (m.hub_pointer || '').split(':')[0] || h.hub_host, tool = id => ((D.harnesses || []).find(x => x.id === id) || {}).name || id;
     const KIND_VIEW = { hypervisor: "backups", relay: "backups", "runner-stalled": "jobs", "runner-standing-down": "jobs" };
     const here = n => !n.host || n.host === m.host, labelOf = n => String(n.text || "").split(/[:\s]/)[0];
     const jobRow = n => (n.kind === "job" || n.kind === "xcode-license") && here(n) && !!labelOf(n), named = new Set((D.needs_you || []).filter(jobRow).map(labelOf));
