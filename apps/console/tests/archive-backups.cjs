@@ -43,4 +43,19 @@ assert.equal(posts.length,1);
 rows.html='<div class="set-pane"></div>';
 backups.mount(rows,'/archive');
 assert.equal(rows.renders,drawn+1,'the form is drawn again after another view used the pane');
-console.log('Archive backup protection: unavailable, unconfigured, missing, legacy, untested, same-disk, restored and age states, and a refresh that keeps the drawn form, passed.');
+// A failed check is not kept as the answer: the next refresh asks the archive host again,
+// one check at a time.
+const other=pane();
+backups.mount(other,'/down');
+const first=posts.at(-1);assert.equal(first.root,'/down');
+backups.deliver('archiveBackupResult',{request:first.request,error:'The archive host is unavailable.'});
+assert.match(other.html,/role="alert"/);
+backups.mount(other,'/down');
+assert.equal(posts.at(-1).action,'status');assert.notEqual(posts.at(-1).request,first.request,'a refresh after a failure checks again');
+const count=posts.length;backups.mount(other,'/down');
+assert.equal(posts.length,count,'never two checks at once');
+backups.deliver('archiveBackupResult',{request:posts.at(-1).request,protocol:1,destinations:[],observed_at:3000,exit:0});
+assert.doesNotMatch(other.html,/role="alert"/);
+backups.mount(other,'/down');
+assert.equal(posts.length,count,'a good answer is kept');
+console.log('Archive backup protection: unavailable, unconfigured, missing, legacy, untested, same-disk, restored and age states, a refresh that keeps the drawn form, and a retried failed check passed.');
