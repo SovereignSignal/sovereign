@@ -37,7 +37,8 @@
 
 @media(max-width:850px){
   .set-perms{font-size:10px}
-  .set-perms th:nth-child(3),.set-perms td:nth-child(3){display:none}
+  /* Column 2 is where; the host band above each group already names it. */
+  .set-perms th:nth-child(2),.set-perms td:nth-child(2){display:none}
 }
 
 /* A retired lane is provenance, not a live wire: present, and visibly answered. */
