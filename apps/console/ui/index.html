@@ -1415,7 +1415,7 @@ window.onerror = function (msg, src, line, col) {
       if (act === "review-prev") return stepReview(-1);
       if (act === "review-unfold") { reviewUnfolded.add(sel.id.slice(2)); renderInspector(); return; }
       if (b.id === "set-change") return bridge({ cmd: "chooseArchive" });
-      if (b.id === "set-reveal") return bridge({ cmd: "reveal" });
+      if (b.id === "set-reveal") return bridge({ cmd: "reveal", path: selectedRoot });
       if (b.id === "set-update") {
         const template = D && D.machine && D.machine.template;
         if (!template) { SovSettings.note("set-update-state", "This machine\u2019s source location is not known, so there is nothing to build from."); return; }
