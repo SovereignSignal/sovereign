@@ -6,6 +6,8 @@ let checks = 0; const test = (name, fn) => { fn(); checks++; console.log('PASS '
 const sent = [];
 const host = { isConnected: true, className: '', innerHTML: '', querySelector(sel) { return this.innerHTML.includes('id="' + sel.slice(1) + '"') ? { textContent: '' } : null } };
 global.window = { webkit: { messageHandlers: { sov: { postMessage: o => sent.push(o) } } } };
+const listeners = {}, controls = {};
+global.document = { addEventListener(k, f) { listeners[k] = f; }, getElementById: id => controls[id] || null };
 require(process.argv[2] || '../ui/settings-view.js');
 const view = global.window.SovSettings;
 const paint = ctx => { host.innerHTML = ''; view.mount(host, Object.assign({ S: {}, D: null, root: null, pinned: false }, ctx)); return host.innerHTML };
@@ -136,6 +138,21 @@ test('preferences reflect what is saved, not defaults', () => {
   assert(html.includes('value="300" selected'));
   assert(html.includes('id="s-pin" checked'));
   assert(html.includes('Registered with macOS'));
+});
+
+test('quit on close is offered only where it applies: the Dock', () => {
+  assert(paint({ S: { where: 'dock' } }).match(/id="s-closequits" (?!disabled)[^>]*>/));
+  for (const where of ['menubar', 'both']) {
+    const html = paint({ S: { where, closeQuits: true } });
+    assert(/id="s-closequits" checked disabled/.test(html), where + ' keeps running in the menu bar');
+    assert(/id="s-closequits-note">Dock only</.test(html));
+  }
+  // Choosing Dock before saving enables it at once, and choosing away disables it again.
+  controls['s-closequits'] = { disabled: true }; controls['s-closequits-note'] = { hidden: false };
+  listeners.change({ target: { name: 'set-where', value: 'dock' } });
+  assert.deepEqual([controls['s-closequits'].disabled, controls['s-closequits-note'].hidden], [false, true]);
+  listeners.change({ target: { name: 'set-where', value: 'menubar' } });
+  assert.deepEqual([controls['s-closequits'].disabled, controls['s-closequits-note'].hidden], [true, false]);
 });
 
 test('mounting twice does not duplicate the pane', () => {
