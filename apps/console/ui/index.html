@@ -122,8 +122,9 @@
     visibility: hidden; transition: transform var(--dur) var(--ease), visibility 0s linear var(--dur); }
   #inspector.open { transform: none; }
   /* Off-canvas is not enough: hidden also takes a closed panel's buttons out of the focus order. */
-  #inspector.open, body.pinned #inspector, body.review #inspector { visibility: visible; transition-delay: 0s; }
-  @media (min-width: 1100px) { body.pinned #inspector { position: static; transform: none; box-shadow: none; width: auto; } }
+  #inspector.open, body.review #inspector { visibility: visible; transition-delay: 0s; }
+  /* Narrower, pinning does nothing: the panel is the ordinary drawer, hidden until a row opens it. */
+  @media (min-width: 1100px) { body.pinned #inspector { position: static; transform: none; box-shadow: none; width: auto; visibility: visible; transition-delay: 0s; } }
   #inspector .pad { padding: 12px 16px 12px; }
   #inspector .acts { position: sticky; bottom: 0; background: var(--panel); padding: 8px 0 12px; border-top: 1px solid var(--rule-soft); }
   .insp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
@@ -330,6 +331,10 @@ window.onerror = function (msg, src, line, col) {
   const hist = { stack: [], i: -1 };
   try { pinned = localStorage.getItem("sov.pinned") === "1"; } catch (e) {}
   document.body.classList.toggle("pinned", pinned);
+  // A pinned panel docks only where the window keeps room for it; narrower, it is the ordinary drawer.
+  const wide = window.matchMedia ? matchMedia("(min-width: 1100px)") : { matches: false };
+  const docked = () => pinned && wide.matches;
+  wide.addEventListener?.("change", () => { if (docked()) openInspector(); });   // grown wide enough: it docks, shown
 
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const age = (h) => h == null ? "–" : h < 1 ? Math.max(1, Math.round(h * 60)) + "m" : h < 48 ? (Math.round(h * 10) / 10) + "h" : Math.round(h / 24) + "d";
@@ -921,7 +926,7 @@ window.onerror = function (msg, src, line, col) {
     if (!window.sovCanQuit()) return;   // Settings is navigation too, and from it the archive can change
     settingsOpen = true; sel = null;
     // The drawer is not where Settings lives any more, so put it away first.
-    if (!pinned) { $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
+    if (!docked()) { $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
     renderList(); renderInspector(); renderTop(); commit(); bridge({ cmd: "settings", probe: true });
   }
   let saving = false;
@@ -1196,7 +1201,7 @@ window.onerror = function (msg, src, line, col) {
   }
 
   function openInspector() { $("#inspector").classList.add("open"); $("#inspector").setAttribute("aria-hidden", "false"); }
-  function closeInspector() { settingsOpen = false; if(splitReview()){sel=null;document.querySelectorAll(".row[role=option]").forEach(r=>r.setAttribute("aria-selected","false"));renderInspector();syncActive();return;} if (pinned) { renderInspector(); return; } $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
+  function closeInspector() { settingsOpen = false; if(splitReview()){sel=null;document.querySelectorAll(".row[role=option]").forEach(r=>r.setAttribute("aria-selected","false"));renderInspector();syncActive();return;} if (docked()) { renderInspector(); return; } $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
   function setPinned(v) {
     pinned = !!v; document.body.classList.toggle("pinned", pinned);
     try { localStorage.setItem("sov.pinned", pinned ? "1" : "0"); } catch (e) {}
@@ -1223,7 +1228,7 @@ window.onerror = function (msg, src, line, col) {
     sel = p.sel ? { view: p.view, kind: p.sel.kind, id: p.sel.id } : null;
     renderList(); renderInspector();
     if(view==='discover'&&!discovery)scanTools();
-    if (splitReview() || p.settings || (p.open && sel) || pinned) openInspector();
+    if (splitReview() || p.settings || (p.open && sel) || docked()) openInspector();
     else { $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
     $("#rows").scrollTop = p.scroll || 0; syncActive();
   }
@@ -1490,7 +1495,7 @@ window.onerror = function (msg, src, line, col) {
       if (b.id === "g-console") return bridge({ cmd: "showConsole", place: { view: "today" } });
       if (b.id === "s-save") return saveSettings();
       if (b.id === "pin") return setPinned(!pinned);
-      if (b.id === "insp-close") { pinned ? setPinned(false) : closeInspector(); commit(); return; }
+      if (b.id === "insp-close") { docked() ? setPinned(false) : closeInspector(); commit(); return; }
       if (b.id === "drawer-close") return $("#drawer").classList.remove("open");
       if (b.id === "drawer-apply") { if(pendingProducer)return producer(pendingProducer.harness,pendingProducer.action,true); if (pendingHost) return hostAdd(pendingHost.host, true); if (pendingConnect) connect(pendingConnect.harness, true); return; }
       if(act==='discover-tools')return setView('discover');
@@ -1576,7 +1581,7 @@ window.onerror = function (msg, src, line, col) {
     else if (e.key === "ArrowUp") { e.preventDefault(); i = Math.max(0, i - 1); }
     else if (e.key === "Enter" || e.key === "i") { e.preventDefault(); if (i >= 0) return select(list[i].kind, list[i].id, true); i = 0; }
     else return;
-    const open = $("#inspector").classList.contains("open") || pinned;
+    const open = $("#inspector").classList.contains("open") || docked();
     select(list[i].kind, list[i].id, open);
     const el = document.querySelector('.row[data-id="' + CSS.escape(list[i].id) + '"]');
     if (el) scrollRowsTo(el, true);
@@ -1592,7 +1597,7 @@ window.onerror = function (msg, src, line, col) {
     // Approving puts a card into trusted knowledge, so its key takes a modifier, and it
     // acts only on the proposal open on screen.
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && view === "review" && !settingsOpen) { e.preventDefault(); const b = $('#insp [data-act="gate"]:not(.danger), #insp [data-act="gate-resolve"]'); if (b && sel?.kind === "prop" && b.dataset.slug === sel.id.slice(2)) b.click(); }
-    if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !pinned) { closeInspector(); commit(); } }
+    if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !docked()) { closeInspector(); commit(); } }
     if (typing || e.metaKey || e.ctrlKey) return;
     if (GLANCE) return;   // the menu-bar panel has its own rows, and no rail to walk
     if (/^[1-5]$/.test(e.key)) return document.getElementById(["today", "review", "sources", "library", "backups"][+e.key - 1] + "-tab").click();

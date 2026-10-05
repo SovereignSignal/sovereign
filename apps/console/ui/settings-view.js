@@ -131,7 +131,7 @@ window.SovSettings = (() => {
       + sect("On close", `<label class="check"><input type="checkbox" id="s-closequits" ${S.closeQuits ? "checked" : ""}${S.where === "dock" ? "" : " disabled"}> Quit Sovereign</label><p class="set-note" id="s-closequits-note"${S.where === "dock" ? " hidden" : ""}>Dock only</p>`)
       + sect("At login", `<label class="check"><input type="checkbox" id="s-login" ${S.loginItem ? "checked" : ""}> Open Sovereign</label>`, esc(login))
       + pick("s-refresh", "Refresh every", [30, 60, 300, 900], S.refresh, v => v < 60 ? v + " seconds" : (v / 60) + " minute" + (v > 60 ? "s" : ""))
-      + sect("Detail panel", `<label class="check"><input type="checkbox" id="s-pin" ${pinned ? "checked" : ""}> Keep it open beside the list</label>`);
+      + sect("Detail panel", `<label class="check"><input type="checkbox" id="s-pin" ${pinned ? "checked" : ""}> Keep it open beside the list in a wide window</label>`);
   }
 
   function render() {
