@@ -883,9 +883,10 @@ window.onerror = function (msg, src, line, col) {
   // names a job other than the lane's own label) is therefore named to the bridge in
   // data-lane, and the runner runs that one lane by name. A lane that still keeps a job of
   // its own - a per-tool job, or a calendar-cadence pull the tick never touches - is
-  // kicked as before, because there the job IS the lane.
+  // kicked as before, because there the job IS the lane. A cloud pull that runs on the hub
+  // has no job on this machine to kick (job_loaded is the hub's), so it offers none here.
   function runNowBtn(h, label) {
-    if (!h || !h.job_loaded) return "";
+    if (!h || !h.job_loaded || (h.runs_on && h.runs_on !== (D.machine || {}).host)) return "";
     const job = h.kick || h.label;
     return `<button data-act="kickstart" data-label="${esc(job)}"${job === h.label ? "" : ` data-lane="${esc(h.id)}"`}>${esc(label || "Run mirror now")}</button>`;
   }
