@@ -5,7 +5,7 @@ window.SovStatus = (() => {
 
   const num = (n) => n == null ? "?" : Number(n).toLocaleString();
 
-  const runAge = (s) => { const m = /Last run: (\S+)/.exec(s || ""); if (!m) return null; const t = Date.parse(m[1]); return isNaN(t) ? null : (Date.now() - t) / 36e5; };
+  const runAge = (s, at = Date.now()) => { const m = /Last run: (\S+)/.exec(s || ""); if (!m) return null; const t = Date.parse(m[1]); return isNaN(t) ? null : (at - t) / 36e5; };
 
   const intervalOf = (t) => { if (t && t.cadence_s) return +t.cadence_s;
     const m = /every (\d+)s/.exec(((t && t.plist) || {}).schedule || ""); return m ? +m[1] : 900; };
@@ -101,7 +101,10 @@ window.SovStatus = (() => {
   function assess(D, storage) {
     const hub = () => D.hub || {}, arch = () => D.archive || {};
     const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
-    const ago = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
+    // Ages are measured when status was observed, like the ages the service computes. A
+    // re-render later must not age jobs that were healthy then into alerts nobody re-read.
+    const seenAt = Date.parse(D._status?.observed_at || D.generated_at), at = Number.isFinite(seenAt) ? seenAt : Date.now();
+    const ago = (iso) => iso ? (at - new Date(iso).getTime()) / 36e5 : null;
     const need = [], fresh = [], stale = [], waiting = []; let cad;
     const late = (name, detail, ageH, cad, jump, cause) => {   // one thing against its cadence
       if (ageH == null || cad == null) return;
@@ -203,7 +206,7 @@ window.SovStatus = (() => {
         verify:'Refresh after the storage check or next successful backup; confirm the recorded backup and schedule coverage.'});
     });
     // cadence: mirrors here, mirrors on every host, producer pushes, hub jobs, the snapshot
-    (D.harnesses || []).forEach(x => { if (x.state !== "connected" || x.runs_on) return; const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run), cad = intervalOf(x) / 3600;
+    (D.harnesses || []).forEach(x => { if (x.state !== "connected" || x.runs_on) return; const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run, at), cad = intervalOf(x) / 3600;
       if (late(x.name || x.id, "mirror last ran", ah, cad, { view: "tools", id: x.id }, "mirror-late") === true && ah != null && ah <= cad) fresh.push({ state: "live", name: x.name || x.id, detail: `pulled ${age(ah)} ago on ${m.host}`, age_h: ah, jump: { view: "tools", id: x.id }, cause: "pull:" + m.host, host: m.host }); });
     // a remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
     // observable cadence is about an hour, not its own 15 minutes

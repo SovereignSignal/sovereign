@@ -24,6 +24,17 @@ assert.equal(result.need.find(x=>x.group==='job-failed').members.length,2);
 assert.equal(assess({hub:{reachable:false}}).need[0].state,'down');
 console.log('Status assessment: 4 unknown variants neutral; waiting, accepted freshness, failures, grouping and hub dedupe passed.');
 
+// Ages are measured at the observation. Re-rendering an hour-old status (a row opened,
+// a refresh pending or failed) must not age healthy jobs and mirrors into alerts.
+const hourAgo=new Date(Date.now()-3600000).toISOString();
+const observedHealthy={generated_at:hourAgo,_status:{observed_at:hourAgo},machine:{host:'here'},
+ hub:{jobs:{'verdict-poll':{ts:hourAgo,exit:0,cadence_s:60}}},harnesses:[{id:'tool',name:'tool',state:'connected',cadence_s:900,last_run:'Last run: '+hourAgo}],
+ backups:{lanes:[{lane:'producer',delivery:'accepted',pushed:hourAgo}]}};
+assert.equal(assess(observedHealthy).need.length,0,'healthy when observed stays healthy');
+assert.equal(assess(observedHealthy).stale.length,0);
+assert.equal(assess({...observedHealthy,_status:{}}).need.length,0,'generated_at stands in for the observation time');
+console.log('Ages: measured at the observation, never at render time.');
+
 const model=box.window.SovStatus;
 const liveProgress={phase:'judging',active:true,summary:'Judging 3/50',checked_at:Date.now()/1000,no_progress_s:90};
 const progressing=model.hubJob({exit:0,progress:liveProgress});
