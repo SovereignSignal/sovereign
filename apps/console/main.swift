@@ -1319,8 +1319,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         // Today lives in the other document; every other place is a view of this one.
+        // The Glance's verdict and jump-less rows name Today as "glance", as setView does.
         if let place = place {
-            if (place["view"] as? String) == "today" { navigate(page: "home", place: ["view": "home"]) }
+            if ["today", "glance", "home"].contains(place["view"] as? String ?? "") { navigate(page: "home", place: ["view": "home"]) }
             else { navigate(page: "operations", place: place) }
         }
     }
