@@ -84,8 +84,9 @@ assert.equal(assess({hub:{jobs:{autocommit:{...recovering,exit:0}}}}).waiting.le
 assert.equal(assess({hub:{jobs:{autocommit:{...recovering,health:{state:'needs_attention'}}}}}).need.length,1);
 for(const via of ['ssh hub',undefined])for(const exit of [0,1]){
  const separate=assess({...snapshot,hub:{via,reachable:true,jobs:{autocommit:{...recovering,exit}}}});
- assert.ok(separate.need.some(n=>n.jump?.id==='com.sovereign.hub.autocommit'));
- assert.ok(separate.need.some(n=>n.need===0));
+ // One failure is one row: the service's own row, which lands on the job.
+ assert.equal(separate.need.filter(n=>n.jump?.id==='com.sovereign.hub.autocommit').length,1);
+ assert.ok(separate.need.some(n=>n.need===0&&n.state==='down'));
  assert.equal(separate.waiting.length,exit===1?1:0);
 }
 assert.ok(assess({...snapshot,hub:{...snapshot.hub,jobs:{autocommit:{...recovering,exit:0}}}}).need.length>0);
@@ -283,3 +284,13 @@ assert.equal(assess(cards).fresh.find(f=>f.name==='archive')?.detail,'2 cards la
 assert.equal(verdict(cards).text,'All good. 2 cards landed today.');
 assert.equal(verdict({...connected,archive:{cards:[{age_d:3}]},hub:{status:{judged:50,new_proposals:1}}}).text,'All good. The judge kept 1 of 50 last run.');
 console.log('Cards landed today are counted from their age, in the Glance verdict too.');
+// A local job the service reports is one row: red, named by its job, first, landing on it.
+const runnerLabel='com.sovereign.connector.runner';
+for(const row of [{kind:'job',text:runnerLabel+' last exited 1. Check /tmp/runner.error.log.'},{kind:'xcode-license',text:runnerLabel+' cannot start: its program is /usr/bin/python3, an Xcode shim.'}]){
+ const one=assess({machine:{host:'here'},jobs:[{label:runnerLabel,last_exit:row.kind==='job'?1:69}],needs_you:[{kind:'gate',text:'2 waiting'},row]}).need;
+ assert.equal(one.length,2,row.kind+': one row for one failure');
+ assert.equal(one[0].name,'runner');assert.equal(one[0].state,'down');assert.equal(one[0].jump.view,'jobs');assert.equal(one[0].jump.id,runnerLabel);
+}
+// A job with only recent error output stays amber.
+assert.equal(assess({machine:{host:'here'},jobs:[{label:runnerLabel,last_exit:0}],needs_you:[{kind:'job',text:runnerLabel+': last run exited 0; error output was recorded within the last day.'}]}).need[0].state,'warn');
+console.log('A failed local job is one row, named by its job, red and first.');

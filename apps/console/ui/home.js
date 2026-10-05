@@ -79,11 +79,7 @@ window.Home = (() => {
         if(gate)list.append(item('gate',need.state,plural(hub.pending||0,'proposal'),'waiting','Review',()=>api.review(),null));
         // A row that can do the thing says so on the row; nobody should go looking for a button.
         else if(need.actionKind)list.append(item(need.cause||need.name,need.state,need.name,SovStatus.brief(need),need.action||'Do it',()=>act(need.actionKind),detail(need)));
-        else {
-          // The status service names a job only inside its sentence; lift the label out as the row's name.
-          const name=source?.kind==='job'&&!source.host?SovStatus.shortLabel(String(need.detail||'').split(/[:\s]/)[0])||need.name:need.name;
-          list.append(item((need.cause||'')+':'+need.name+':'+(need.need??''),need.state,name,SovStatus.brief(need)||need.detail,DEST[jump.view]||'Open',()=>go(jump.view,jump.id),detail(need)));
-        }
+        else list.append(item((need.cause||'')+':'+need.name+':'+(need.need??''),need.state,need.name,SovStatus.brief(need)||need.detail,DEST[jump.view]||'Open',()=>go(jump.view,jump.id),detail(need)));
       }
       host.append(list);
     }
