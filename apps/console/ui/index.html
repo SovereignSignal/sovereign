@@ -543,6 +543,9 @@ window.onerror = function (msg, src, line, col) {
     const l = it.o, a = l.vault_age_h, delivery = ((D.backups || {}).lanes || []).find(x => x.lane === l.lane)?.delivery;
     if (l.retired) return { dot: "", word: "removed", rank: 4, age: a };
     if (delivery === "waiting") return { dot: "warn", word: "awaiting hub", rank: 1, age: a };
+    // a lane another device's mirror writes is read as Today reads that mirror
+    const rm = SovStatus.remoteMirror(D, l.lane), r = rm && rm.age_h;
+    if (rm) return r > 2 * rm.cadence_h ? { dot: "down", word: "silent", rank: 0, age: r } : r > rm.cadence_h ? { dot: "warn", word: "late", rank: 1, age: r } : { dot: "live", word: "", rank: 2, age: r };
     if (a == null) return { dot: "", word: "", rank: 3, age: a };
     return a <= 48 ? { dot: "live", word: "", rank: 2, age: a } : { dot: "warn", word: "quiet", rank: 1, age: a };
   }

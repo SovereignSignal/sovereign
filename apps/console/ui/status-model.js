@@ -9,6 +9,18 @@ window.SovStatus = (() => {
 
   const intervalOf = (t) => { if (t && t.cadence_s) return +t.cadence_s;
     const m = /every (\d+)s/.exec(((t && t.plist) || {}).schedule || ""); return m ? +m[1] : 900; };
+  // A remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
+  // observable cadence is about an hour, not its own fifteen minutes. Its age is the fresher
+  // of its own last run and the hub's newest file in its lane.
+  const REMOTE_MIRROR_H = 1;
+  const mirrorAge = (D, t) => { const v = [t.run_age_h, (((D.hub || {}).lanes || {})[t.lane] || {}).age_h].filter(x => x != null); return v.length ? Math.min(...v) : null; };
+  // The same reading for a lane, so Sources and Today never disagree: the latest of the
+  // mirrors on other devices that write it, or null when none does.
+  function remoteMirror(D, lane) {
+    const me = (D.machine || {}).host, ages = ((D.fleet || {}).hosts || []).filter(x => x.host !== me)
+      .flatMap(x => (x.harnesses || []).filter(t => t.lane === lane)).map(t => mirrorAge(D, t)).filter(x => x != null);
+    return ages.length ? { age_h: Math.max(...ages), cadence_h: REMOTE_MIRROR_H } : null;
+  }
   function isoWeekKey(d) {
     const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
     const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day);
@@ -205,14 +217,13 @@ window.SovStatus = (() => {
     // cadence: mirrors here, mirrors on every host, producer pushes, hub jobs, the snapshot
     (D.harnesses || []).forEach(x => { if (x.state !== "connected" || x.runs_on) return; const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run), cad = intervalOf(x) / 3600;
       if (late(x.name || x.id, "mirror last ran", ah, cad, { view: "tools", id: x.id }, "mirror-late") === true && ah != null && ah <= cad) fresh.push({ state: "live", name: x.name || x.id, detail: `pulled ${age(ah)} ago on ${m.host}`, age_h: ah, jump: { view: "tools", id: x.id }, cause: "pull:" + m.host, host: m.host }); });
-    // a remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
-    // observable cadence is about an hour, not its own 15 minutes
-    // A remote mirror's heartbeat reaches this copy through the exchange and the sync, so
-    // its observable cadence is about an hour, not its own fifteen minutes.
-    const hubLanes = h.lanes || {};
+    // Remote mirrors at their observable cadence (mirrorAge); a mirror into a retired lane
+    // is not expected to deliver.
+    const retiredLanes = new Set((D.lanes || []).filter(l => l.retired).map(l => l.lane));
     hosts.filter(x => x.host !== m.host).forEach(x => (x.harnesses || []).forEach(t => {
-      const here = t.run_age_h, there = (hubLanes[t.lane] || {}).age_h, ah = [here, there].filter(v => v != null).length ? Math.min(...[here, there].filter(v => v != null)) : null;
-      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = 1, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host }, cause: "pull:" + x.host, host: x.host }); }));
+      if (retiredLanes.has(t.lane)) return;
+      const ah = mirrorAge(D, t);
+      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = REMOTE_MIRROR_H, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host }, cause: "pull:" + x.host, host: x.host }); }));
     // Is THIS copy behind the hub? Compare the same lane's newest content in both places.
     // It used to subtract a hub lane's age from a REMOTE HOST'S harness run age, which are
     // not two views of one thing: a mirror that had not run in sixteen days on another
@@ -367,5 +378,5 @@ window.SovStatus = (() => {
     if (s.error || status?.error) return "refresh failed";
     return Number.isFinite(stamp) ? new Date(stamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   }
-  return {assess, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, week: isoWeekKey};
+  return {assess, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, remoteMirror, week: isoWeekKey};
 })();
