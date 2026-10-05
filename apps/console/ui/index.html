@@ -1502,6 +1502,8 @@ window.onerror = function (msg, src, line, col) {
     if (row) { const it = items().find(i => i.id === row.dataset.id); if (it) select(it.kind, it.id, true); }
   }
   $("#rows").addEventListener("keydown", (e) => {
+    // Text typed into a field in the list, and chords such as ⌘↵, are not list navigation.
+    if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     const dom = new Set([...document.querySelectorAll(".row[role=option]")].map(r => r.dataset.id));
     const list = items().filter(i => selectable(i) && dom.has(i.id)); if (!list.length) return;
     let i = list.findIndex(x => sel && x.id === sel.id);
@@ -1522,8 +1524,9 @@ window.onerror = function (msg, src, line, col) {
     if ((e.metaKey || e.ctrlKey) && e.key === "[") { e.preventDefault(); back(); }
     if ((e.metaKey || e.ctrlKey) && e.key === "]") { e.preventDefault(); forward(); }
     if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); openSettings(); }
-    // Approving puts a card into trusted knowledge, so its key takes a modifier.
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && view === "review" && !settingsOpen) { e.preventDefault(); $('#insp [data-act="gate"]:not(.danger), #insp [data-act="gate-resolve"]')?.click(); }
+    // Approving puts a card into trusted knowledge, so its key takes a modifier, and it
+    // acts only on the proposal open on screen.
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && view === "review" && !settingsOpen) { e.preventDefault(); const b = $('#insp [data-act="gate"]:not(.danger), #insp [data-act="gate-resolve"]'); if (b && sel?.kind === "prop" && b.dataset.slug === sel.id.slice(2)) b.click(); }
     if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !pinned) { closeInspector(); commit(); } }
     if (typing || e.metaKey || e.ctrlKey) return;
     if (GLANCE) return;   // the menu-bar panel has its own rows, and no rail to walk
