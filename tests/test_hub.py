@@ -93,6 +93,13 @@ class HubTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):recovery.restore(corrupt,dest,self.key,True)
         self.assertFalse(dest.exists())
 
+    def test_04b_restore_refuses_a_folder_inside_any_archive(self):
+        # A restore carries a whole archive, its Git history, the Hub and its runtime.
+        capsule=self.backups/'roundtrip.sovbackup'
+        for dest in (self.archive/'workstreams/restored hub',self.base/'Restored/archive/workstreams/again'):
+            with self.assertRaisesRegex(ValueError,'outside every archive'):recovery.restore(capsule,dest,self.key,True)
+            self.assertFalse(dest.exists())
+
     def test_05_linked_data_and_inflight_job_refuse_snapshot(self):
         link=self.archive/'linked';link.symlink_to(self.key)
         try:

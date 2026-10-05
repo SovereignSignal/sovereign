@@ -29,9 +29,13 @@ def check_key(path, archive=None, hub=None):
     return path
 
 
+def inside_archive(path):
+    return any((p / 'knowledge').is_dir() and (p / 'raw').is_dir() for p in path.parents)
+
+
 def recovery_key(output, apply=False):
     output = absolute(output)
-    if any((p / 'knowledge').is_dir() and (p / 'raw').is_dir() for p in output.parents):
+    if inside_archive(output):
         raise ValueError('Keep the recovery key outside every archive.')
     directory(output.parent)
     if output.exists():
@@ -171,6 +175,9 @@ def restore(capsule, destination, key, apply=False):
     capsule = absolute(capsule); destination = absolute(destination); key = check_key(key)
     if destination.exists():
         raise ValueError('Restore only into a new directory. Existing archives are never overwritten.')
+    # A restore carries a whole archive with its Git history, the Hub and its runtime.
+    if inside_archive(destination):
+        raise ValueError('Restore into a new folder outside every archive.')
     # The native helper authenticates the whole capsule before tar data is inspected.
     raw, _ = read_under(capsule.parent, capsule.name, MAX_TOTAL)
     with tempfile.TemporaryDirectory(prefix='sov-restore-', dir=destination.parent) as tmp:
