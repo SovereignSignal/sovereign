@@ -57,6 +57,11 @@ class GateCheckTests(unittest.TestCase):
   self.assertTrue(any('first.md' in n and 'second.md' in n for n in notes))
  def test_type_conflict_preserves_both_cards(self):
   a=self.existing();b=self.existing('concepts','concept');before=(a.read_bytes(),b.read_bytes());c=self.check();self.assertEqual(c['state'],'type_conflict');self.assertEqual(len(c['existing']),2);self.assertEqual((a.read_bytes(),b.read_bytes()),before)
+ def test_type_change_within_one_folder_is_a_type_conflict(self):
+  self.card(self.proposals/(self.slug+'.md'),'review');old=self.card(self.root/'knowledge/syntheses'/(self.slug+'.md'),'plan','Existing detail')
+  (self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':self.slug}}))
+  c=self.check();self.assertEqual(c['state'],'type_conflict');self.assertTrue(gate.can_resolve(c))
+  self.assertEqual(self.execute(self.setup_real_gate(),'resolve')['state'],'approved');self.assertEqual(gate.read_card(old,self.root)['type'],'plan')
  def test_same_folder_needs_declared_update(self):
   self.existing();self.assertEqual(self.check()['state'],'update_conflict');(self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':self.slug}}));self.assertEqual(self.check()['state'],'ready')
  def test_different_update_target_does_not_authorize_overwrite(self):

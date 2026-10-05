@@ -61,7 +61,8 @@ def check(root, lane, slug, *, resolving=False):
         update = False
         entry = {}
     destination = 'knowledge/'+FOLDERS[card['type']]+'/'+slug+'.md'
-    state = 'type_conflict' if any(c['path'] != destination for c in existing) else 'update_conflict' if existing and not update else 'ready'
+    # plan, review and synthesis share one folder, so a type change can keep the path.
+    state = 'type_conflict' if any(c['path'] != destination or c['type'] != card['type'] for c in existing) else 'update_conflict' if existing and not update else 'ready'
     digest = hashlib.sha256(json.dumps({'proposal': card, 'existing': existing, 'update': update, 'metadata': entry}, sort_keys=True).encode()).hexdigest()
     notes = []
     if isinstance(entry, dict):
