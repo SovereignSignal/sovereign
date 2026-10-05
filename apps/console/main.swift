@@ -656,7 +656,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.async {
                 self.hubBusy = false
                 var result = (out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any] ?? ["error": "Hub operation did not return a result. Inspect its receipts before retrying."]
-                result["command"] = command; result["exit"] = code; result["request"] = request["request"] ?? ""
+                // A job run reports its own exit; the wrapper only says whether it was zero.
+                if result["exit"] == nil { result["exit"] = code }
+                result["command"] = command; result["request"] = request["request"] ?? ""
                 if code == 0 && !apply && self.generation == generation && !["status", "doctor"].contains(command) { self.hubReview = key }
                 self.deliver("hubResult", result, generation: generation)
             }
