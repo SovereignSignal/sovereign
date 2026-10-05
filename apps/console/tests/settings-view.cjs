@@ -155,6 +155,17 @@ test('quit on close is offered only where it applies: the Dock', () => {
   assert.deepEqual([controls['s-closequits'].disabled, controls['s-closequits-note'].hidden], [true, false]);
 });
 
+test('a status not yet read, or not readable, claims nothing about the build, jobs or lanes', () => {
+  const falsehoods = /cannot identify|Install once|None reported|No producer lanes/;
+  for (const [D, said] of [[null, 'Checking'], [{ _status: { pending: true } }, 'Checking'],
+                           [{ error: 'System status could not be read (exit 1).', _status: { pending: false, stale: true } }, 'Status unavailable']]) {
+    const html = paint({ D });
+    assert(!falsehoods.test(html), JSON.stringify(D));
+    assert.equal(html.split(said).length - 1, 3, 'Version, Jobs and Permissions each say so: ' + JSON.stringify(D));
+    assert(html.includes('data-goto-view="jobs"'), 'the door to Jobs stays open');
+  }
+});
+
 test('mounting twice does not duplicate the pane', () => {
   view.mount(host, { root: '/a' }); view.mount(host, { root: '/a' });
   assert.equal(host.innerHTML.split('class="set-pane"').length - 1, 1);

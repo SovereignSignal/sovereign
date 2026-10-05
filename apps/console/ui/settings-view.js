@@ -23,9 +23,15 @@ window.SovSettings = (() => {
   const sect = (title, body, note, acts) => `<div class="set-sect"><h2>${title}</h2><div class="set-body">${body}${note ? `<p class="set-note">${note}</p>` : ""}</div>${acts ? `<div class="acts">${acts}</div>` : ""}</div>`;
   const more = (summary, body, open) => `<details class="set-more"${open ? " open" : ""}><summary>${summary}</summary>${body}</details>`;
 
+  /* Before the first status arrives, or when it could not be read, there is no
+     build, job or lane to describe: say so instead of an empty answer. */
+  const unread = D => !D || D.error || (D._status && !D.machine) ? (D && D.error ? "Status unavailable" : "Checking…") : "";
+  const say = text => `<p class="set-lead">${text}</p>`;
+
   /* The app's own currency, in the same words the Today row uses. The revisions
      are evidence and sit behind the sentence, never in place of it. */
   function appSection(D) {
+    if (unread(D)) return sect("Version", say(unread(D)));
     const a = (D && D.machine && D.machine.app) || {}, src = String((D && D.machine && D.machine.template_rev) || "").split(" ")[0];
     if (!a.installed) return sect("Version", `<p class="set-lead">Sovereign is running from a build this machine cannot identify.</p>`, "Install once from this machine's source and it will be able to check itself from then on.");
     const name = `Sovereign ${esc(a.version || "?")} build ${esc(a.build || "?")}`;
@@ -49,7 +55,7 @@ window.SovSettings = (() => {
      door here and no place in the navigation. */
   function jobsSection(D) {
     const n = Object.keys((D && D.hub && D.hub.jobs) || {}).length + ((D && D.jobs) || []).filter(j => !j.kick).length;
-    return sect("Jobs", `<p class="set-lead">${n ? n + " scheduled" : "None reported"}</p>`, "",
+    return sect("Jobs", say(unread(D) || (n ? n + " scheduled" : "None reported")), "",
       `<button data-goto-view="jobs">View</button><button data-goto-view="setup">Hub setup…</button>`);
   }
 
@@ -57,8 +63,9 @@ window.SovSettings = (() => {
      in its own LANE.md; this reads them back so the owner can see contribute-only
      and read-and-contribute side by side instead of opening seven files. */
   function permissionSection(D) {
+    if (unread(D)) return sect("Permissions", say(unread(D)));
     const lanes = (D && D.lanes || []).filter(l => l.lane && l.associated !== false);
-    if (!lanes.length) return sect("Permissions", `<p class="set-lead">No producer lanes are declared for this archive.</p>`);
+    if (!lanes.length) return sect("Permissions", say("No producer lanes are declared for this archive."));
     // `read` carries its mechanism in parentheses and `read_scope` is sometimes the
     // bare boolean `true` rather than a scope, which rendered as "reads true". Say
     // what is actually known: the scope when there is one, else the mechanism.
