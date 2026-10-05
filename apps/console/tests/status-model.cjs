@@ -277,3 +277,9 @@ const backlog={...connected,hub:{reachable:true,status:{coverage:{unjudged_in_wi
 assert.equal(verdict(backlog).state,'live','a reading queue is not awaiting verification');
 assert.equal(verdict({...backlog,harnesses:[{id:'tool',name:'tool',state:'connected',cadence_s:3600,run_age_h:1.5}]}).state,'warn','a backlog never hides a stale source');
 console.log('Verdict: the reading queue neither greys the crown nor hides staleness.');
+// Cards carry age_d, days since created on the service's own calendar, never created itself.
+const cards={...connected,archive:{cards:[{slug:'a',age_d:0},{slug:'b',age_d:0},{slug:'c',age_d:5},{slug:'d',age_d:null}]}};
+assert.equal(assess(cards).fresh.find(f=>f.name==='archive')?.detail,'2 cards landed today');
+assert.equal(verdict(cards).text,'All good. 2 cards landed today.');
+assert.equal(verdict({...connected,archive:{cards:[{age_d:3}]},hub:{status:{judged:50,new_proposals:1}}}).text,'All good. The judge kept 1 of 50 last run.');
+console.log('Cards landed today are counted from their age, in the Glance verdict too.');

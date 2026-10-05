@@ -17,6 +17,8 @@ window.SovStatus = (() => {
   }
   const HUB_CADENCE_H = { "archivist-nightly": 24, "archivist-weekly": 168, "archivist-weekly-landed": 168, "daily-health-check": 24,
     "vault-autocommit": 24, "fleet-watch": 1, "fleet-watch-drill": 168, "proxmox-monitor": 24, "pi-cluster-monitor": 24 };
+  // Cards carry age_d, whole days since created on the status service's calendar.
+  const landedToday = (D) => ((D.archive || {}).cards || []).filter(c => c.age_d != null && c.age_d < 1).length;
   const shortLabel = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
   function jobProgress(job, status = {}) {
     const p = job.progress, now = Date.now()/1000;
@@ -99,7 +101,7 @@ window.SovStatus = (() => {
     return {...value,_backup_scope_hypervisors:hypervisors,backups:{...value.backups,hosts},needs_you:current.filter(n=>n.kind!=='hypervisor'||hosts.some(h=>h.node===n.node&&h.backup_required))};
   }
   function assess(D, storage) {
-    const hub = () => D.hub || {}, arch = () => D.archive || {};
+    const hub = () => D.hub || {};
     const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
     // Ages are measured when status was observed, like the ages the service computes. A
     // re-render later must not age jobs that were healthy then into alerts nobody re-read.
@@ -243,8 +245,8 @@ window.SovStatus = (() => {
     Object.entries(h.jobs || {}).forEach(([k, j]) => { const cad = j.cadence_s ? j.cadence_s / 3600 : HUB_CADENCE_H[k]; if (!cad || j.exit) return; late(k, "last completed", ago(j.ts), cad, { view: "jobs", id: "hub:job:" + k }, "hub-job-late"); });
     if (bk.snapshots) late("daily snapshot", "last taken", bk.snapshots.newest_age_h, 24, { view: "backups", id: "bk:snapshots" }, "snapshot-late");
     // fresh: events, not states
-    const today = new Date().toISOString().slice(0, 10), a = arch(), landed = (a.cards || []).filter(c => c.created === today).length;
-    if (landed) fresh.unshift({ state: "live", name: "archive", detail: `${landed} card${landed === 1 ? "" : "s"} landed today`, age_h: null, jump: { view: "archive", id: "week:" + isoWeekKey(new Date()) } });
+    const landed = landedToday(D);
+    if (landed) fresh.unshift({ state: "live", name: "archive", detail: `${landed} card${landed === 1 ? "" : "s"} landed today`, age_h: null, jump: { view: "archive", id: "week:" + isoWeekKey(new Date(at)) } });
     if (st.judged != null) fresh.unshift({ state: "live", name: "judge", detail: `kept ${num(st.new_proposals)} of ${num(st.judged)} last run`, age_h: h.status_age_h, jump: { view: "jobs", id: "hub:judge" } });
     let prev = {}; try { prev = JSON.parse(storage.getItem("sov.online") || "{}"); } catch (e) {}
     const now = {}; hosts.forEach(x => { if (x.net && x.net.online != null) now[x.host] = x.net.online; if (x.net && x.net.online && prev[x.host] === false) fresh.push({ state: "live", name: x.host, detail: "came back", age_h: null, jump: { view: "hosts", id: x.host } }); });
@@ -374,8 +376,8 @@ window.SovStatus = (() => {
     else if (A.stale.length) { state = "warn"; text = `Stale: ${A.stale[0].name} ${A.stale[0].detail}.`; }
     else {
       state = "live";
-      const a = D.archive || {}, today = new Date().toISOString().slice(0, 10), landed = (a.cards || []).filter(c => c.created === today).length;
-      const fact = landed ? `${landed} card${landed === 1 ? "" : "s"} landed today` : st.judged != null ? `the judge kept ${num(st.new_proposals)} of ${num(st.judged)} last run` : `${hosts.filter(x => x.net && x.net.online).length} hosts up`;
+      const landed = landedToday(D);
+      const fact = landed ? `${landed} card${landed === 1 ? "" : "s"} landed today` : st.judged != null ? `The judge kept ${num(st.new_proposals)} of ${num(st.judged)} last run` : `${hosts.filter(x => x.net && x.net.online).length} devices up`;
       text = `All good. ${fact}.`;
     }
     return { state, text: text.replace(/\.\.$/, ".") };
