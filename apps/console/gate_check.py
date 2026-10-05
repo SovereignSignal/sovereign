@@ -36,6 +36,12 @@ def read_card(path, root):
             'sha256': hashlib.sha256(raw).hexdigest()}
 
 
+def type_label(label):
+    """A type label as YAML reads it: no inline comment, surrounding space or quotes."""
+    value = re.sub(r'\s+#.*$', '', label).strip()
+    return value[1:-1] if len(value) > 1 and value[0] == value[-1] and value[0] in '"\'' else value
+
+
 def check(root, lane, slug, *, resolving=False):
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,120}', slug):
         return {'state': 'invalid'}
@@ -62,7 +68,7 @@ def check(root, lane, slug, *, resolving=False):
         entry = {}
     destination = 'knowledge/'+FOLDERS[card['type']]+'/'+slug+'.md'
     # plan, review and synthesis share one folder, so a type change can keep the path.
-    state = 'type_conflict' if any(c['path'] != destination or c['type'] != card['type'] for c in existing) else 'update_conflict' if existing and not update else 'ready'
+    state = 'type_conflict' if any(c['path'] != destination or type_label(c['type']) != card['type'] for c in existing) else 'update_conflict' if existing and not update else 'ready'
     digest = hashlib.sha256(json.dumps({'proposal': card, 'existing': existing, 'update': update, 'metadata': entry}, sort_keys=True).encode()).hexdigest()
     notes = []
     if isinstance(entry, dict):
@@ -201,7 +207,7 @@ def can_resolve(review):
     if review.get('state') != 'type_conflict' or not review.get('update') or len(existing) != 1:
         return False
     card = existing[0]
-    kind = card.get('type')
+    kind = type_label(card.get('type', ''))
     return (kind in FOLDERS and card['path'].split('/')[-2] == FOLDERS[kind]
             and kind != review['proposal']['type'])
 
@@ -240,7 +246,7 @@ def resolve_locked(root, lane, slug, expected, command, lock_fd):
     labels = match[1]
     if len(re.findall(r'(?m)^type:',labels)) != 1:
         return {'state':'invalid'}
-    kind = before['existing'][0]['type']
+    kind = type_label(before['existing'][0]['type'])
     labels = re.sub(r'(?m)^type:[^\r\n]*', 'type: '+kind, labels)
     resolved = (text[:match.start(1)]+labels+text[match.end(1):]).encode('utf-8')
     record = resolution_record(root,lane,slug)

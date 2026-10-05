@@ -62,6 +62,13 @@ class GateCheckTests(unittest.TestCase):
   (self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':self.slug}}))
   c=self.check();self.assertEqual(c['state'],'type_conflict');self.assertTrue(gate.can_resolve(c))
   self.assertEqual(self.execute(self.setup_real_gate(),'resolve')['state'],'approved');self.assertEqual(gate.read_card(old,self.root)['type'],'plan')
+ def test_declared_update_reads_the_existing_type_as_yaml_does(self):
+  # A label written with trailing space, quotes or an inline comment is the same type.
+  (self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':self.slug}}))
+  for label in ('entity ','"entity"',"'entity'",'entity # person'):
+   with self.subTest(label=label):self.existing('entities',label);self.assertEqual(self.check()['state'],'ready')
+  (self.root/'knowledge/entities'/(self.slug+'.md')).unlink();old=self.existing('concepts','"concept" # not an entity');c=self.check();self.assertEqual(c['state'],'type_conflict');self.assertTrue(gate.can_resolve(c))
+  self.assertEqual(self.execute(self.setup_real_gate(),'resolve')['state'],'approved');self.assertIn('type: concept\n',old.read_text())
  def test_same_folder_needs_declared_update(self):
   self.existing();self.assertEqual(self.check()['state'],'update_conflict');(self.proposals/'.meta.json').write_text(json.dumps({self.slug:{'update_of':self.slug}}));self.assertEqual(self.check()['state'],'ready')
  def test_different_update_target_does_not_authorize_overwrite(self):
