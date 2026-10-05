@@ -100,8 +100,26 @@ window.Home = (() => {
     tiles.append(tile('backups','Backup',n,unit,(bk.remotes||[]).length?(behind?(behind===1?'1 copy':behind+' copies')+' behind':'copies current'):'not reported'));
     host.append(tiles);
   }
+  // A refresh redraws the page under the owner every minute, so what they are in the middle of is
+  // carried across: the focused control, found again by what it is and which of those it was, gets
+  // focus and caret back, and a disclosure they opened stays open.
+  const FOCUSABLE='button,input,select,textarea,a,[tabindex]';
+  const sig=e=>e.tagName+'|'+(e.dataset?.node||e.dataset?.pane||e.dataset?.route||e.getAttribute('aria-label')||e.textContent.trim().slice(0,80))+'|'+(e.closest('.today-item')?.querySelector('strong')?.textContent||'');
+  function keep(host){
+    const a=document.activeElement,mine=a&&a!==host&&host.contains(a)?sig(a):null;
+    const at=mine&&[...host.querySelectorAll(FOCUSABLE)].filter(e=>sig(e)===mine).indexOf(a),caret=mine&&[a.selectionStart,a.selectionEnd];
+    const open=[...host.querySelectorAll('details[open] > summary')].map(x=>x.textContent);
+    return ()=>{
+      for(const d of host.querySelectorAll('details'))if(open.includes(d.querySelector('summary')?.textContent))d.open=true;
+      const f=mine&&[...host.querySelectorAll(FOCUSABLE)].filter(e=>sig(e)===mine)[at];if(!f)return;
+      f.focus({preventScroll:true});try{if(caret[0]!=null)f.setSelectionRange(caret[0],caret[1])}catch(e){}
+    };
+  }
   function render(){
-    if(!api)return;const host=document.getElementById('system-home');host.replaceChildren();host.classList.toggle('system-mode',view==='system');
+    if(!api)return;const host=document.getElementById('system-home'),restore=keep(host);draw(host);restore();
+  }
+  function draw(host){
+    host.replaceChildren();host.classList.toggle('system-mode',view==='system');
     api.chrome({view,pending,status});
     const badge=document.getElementById('review-count');if(badge)badge.textContent=GateModel.queue(status,root).count||'';
     if(view!=='system')return today(host);
