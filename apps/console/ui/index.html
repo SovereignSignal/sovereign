@@ -685,9 +685,11 @@ window.onerror = function (msg, src, line, col) {
       note: "A live copy of the notes, not of the archive: governance files and anything that is not markdown never cross it." });
     (b.lanes || []).forEach(l => {
       const p = ageOf(l.pushed), accepted = l.delivery === "accepted", state = accepted ? (p != null && p < 48 ? "live" : "warn") : l.delivery === "waiting" ? "warn" : "idle";
-      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : SovStatus.contributionIssue(l).text+" "+SovStatus.contributionIssue(l).why+" "+SovStatus.contributionIssue(l).action+" "+SovStatus.contributionIssue(l).verify, state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
+      // Unknown acceptance keeps its reason and how to tell it worked for the detail; the row stays a phrase.
+      const known = accepted || l.delivery === "waiting", issue = known ? null : SovStatus.contributionIssue(l);
+      row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : "hub acceptance not verified", state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
         detail: [["source commit time", l.pushed || "unknown"], ["last change on main", l.merged || "unknown"], ["source commit", l.source_head || "unknown"], ["observed at", l.observed_at || "unknown"], ["keep", l.keep]],
-        note: "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
+        note: (issue ? issue.why + " " + issue.verify + " " : "") + "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
     });
     (b.hosts || []).forEach(h => {
       const status = SovStatus.backupState(h), last=h.last_backup;
