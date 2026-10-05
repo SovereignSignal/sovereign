@@ -795,7 +795,12 @@ window.onerror = function (msg, src, line, col) {
     const rows=$('#rows');
     $('#review-intro').hidden=true;rows.className='';
     const region=(label)=>{rows.setAttribute('role','region');rows.setAttribute('aria-label',label);rows.removeAttribute('aria-activedescendant');};
-    if(settingsOpen){region('Settings');SovSettings.mount(rows,{S,D,root:selectedRoot,pinned});footerMeta(0);return;}
+    if(settingsOpen){region('Settings');
+      // A redraw keeps the disclosures the owner opened and the last update result.
+      const open=[...rows.querySelectorAll('.set-pane details')].map(x=>x.open),note=$('#set-update-state')?.textContent;
+      SovSettings.mount(rows,{S,D,root:selectedRoot,pinned});
+      const now=rows.querySelectorAll('.set-pane details');if(now.length===open.length)now.forEach((x,i)=>{x.open=open[i];});
+      if(note)SovSettings.note('set-update-state',note);footerMeta(0);return;}
     if(view==='recovery'){region('Archive backups');SovBackups.mount(rows,selectedRoot);footerMeta(0);return;}
     if(view==='setup'){region('Hub setup and recovery');SovHub.mount(rows,selectedRoot);footerMeta(0);return;}
     rows.setAttribute('role','listbox');rows.setAttribute('aria-label',review?'Proposals awaiting your decision':'Records');
@@ -900,7 +905,8 @@ window.onerror = function (msg, src, line, col) {
   });
   window.addEventListener("sov-appearance", e => {
     S.appearance = e.detail;
-    const control = $("#s-appearance"); if (control) control.value = e.detail;
+    // Appearance is saved the moment it changes, so the control shows it as drawn, never as an unsaved edit.
+    const control = $("#s-appearance"); if (control) { control.value = e.detail; [...control.options].forEach(o => { o.defaultSelected = o.selected; }); }
   });
   function openSettings() {
     settingsOpen = true; sel = null;
@@ -1236,10 +1242,27 @@ window.onerror = function (msg, src, line, col) {
     requestAnimationFrame(() => bridge({ cmd: "glanceSize", h: Math.ceil(g.scrollHeight) }));
   }
 
-  function render(d) {
+  // A pane the owner is in the middle of: a field has focus, or a control no longer shows what was drawn.
+  const inUse = (el) => [...el.querySelectorAll("input,select,textarea")].some(f => f === document.activeElement
+    || (f.type === "checkbox" || f.type === "radio" ? f.checked !== f.defaultChecked
+      : f.tagName === "SELECT" ? f.value !== ([...f.options].find(o => o.defaultSelected) || f.options[0] || {}).value : f.value !== f.defaultValue));
+  // Text typed into the detail survives its redraw: the same field, drawn again, gets it back,
+  // and the focused one its caret.
+  function keepTyped(draw) {
+    const box = $("#insp"), a = document.activeElement;
+    const typed = [...box.querySelectorAll("input[id]")].filter(f => f === a || f.value !== f.defaultValue).map(f => [f.id, f.value, f === a && [f.selectionStart, f.selectionEnd]]);
+    draw();
+    for (const [id, value, caret] of typed) {
+      const f = document.getElementById(id); if (!f || !box.contains(f)) continue;
+      f.value = value; if (caret) { f.focus(); try { f.setSelectionRange(caret[0], caret[1]); } catch (e) {} }
+    }
+  }
+  // A status tick never redraws under the owner: the list pane waits while a form in it is
+  // in use, and the detail keeps what was typed into it.
+  function render(d, tick) {
     D = d;
     if (GLANCE) return renderGlance();
-    renderTop(); renderList(); renderInspector();
+    renderTop(); keepTyped(() => { if (!tick || !inUse($("#rows"))) renderList(); renderInspector(); });
     if(view==='discover'&&!discovery)scanTools();
     if (hist.i < 0) commit();
   }
@@ -1649,7 +1672,7 @@ window.onerror = function (msg, src, line, col) {
       if(!gatePending)for(const [slug,entry] of gateChecks){
         if(entry.key!==GateModel.reviewKey(payload,slug)){gateChecks.delete(slug);gateResolutions.delete(slug);}
       }
-      render(payload);
+      render(payload,true);
       if(resumeReview&&view==='review'&&!settingsOpen&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
     } else if (kind === "appUpdateResult") {
