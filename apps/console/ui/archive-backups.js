@@ -102,6 +102,8 @@ window.SovBackups=(()=>{
     const old=pending;pending=null;
     // Reads do not hold navigation, so another archive may be open by the time one answers.
     if(old.root!==root){render();if(!state&&root)send('status');return;}
+    // Native refuses a read while an earlier one runs: the host is still being checked.
+    if(old.op==='status'&&p.busy){if(!old.quiet)render();setTimeout(()=>{if(!pending&&root===old.root&&(!state||state.error)&&document.body.dataset.view==='recovery')send('status',false,{},old.quiet);},3000);return;}
     if(old.op==='status'){const initial=!state,same=old.quiet&&p.error&&state?.error===p.error;state=p.error?{...state,...p}:p;const d=p.destinations?.[0];values.folder=d?.folder||values.folder;values.key=d?.key||values.key||(p.home?p.home+'/sovereign-recovery.key':'');values.backup=d?.last_success?.backup_id?d.folder+'/'+d.last_success.backup_id+'.sovbackup':values.backup;if(d&&(initial||result?.state==='configured'||result?.state==='reconnected'))action='backup';if(!same)render();return;}
     if(old.op==='browse'){if(p.error)result=p;else browser={...browser,...p};render();return;}
     result=p;ready=!old.apply&&!p.error&&p.exit===0&&!!p.token;

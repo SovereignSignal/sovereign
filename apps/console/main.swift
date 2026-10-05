@@ -588,9 +588,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     }
 
     private func archiveBackup(_ request: [String: Any], generation: UUID) {
-        func fail(_ message: String) { deliver("archiveBackupResult", ["error": message, "request": request["request"] ?? ""], generation: generation) }
+        func fail(_ message: String, busy: Bool = false) { deliver("archiveBackupResult", ["error": message, "busy": busy, "request": request["request"] ?? ""], generation: generation) }
         // A page that navigated away from a read and came back can ask while it still runs.
-        guard !archiveBackupBusy else { fail("The archive host is still answering an earlier request. Refresh in a moment."); return }
+        guard !archiveBackupBusy else { fail("The archive host is still answering an earlier request. Refresh in a moment.", busy: true); return }
         guard let resources = Bundle.main.resourceURL,
               let root = Settings.archive, let requested = request["root"] as? String,
               Settings.archiveKey(root) == Settings.archiveKey(requested),

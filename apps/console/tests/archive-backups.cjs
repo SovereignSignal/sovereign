@@ -76,6 +76,20 @@ backups.mount(down,'/still-down');backups.deliver('archiveBackupResult',{request
 assert.equal(down.renders,shown+1);assert.doesNotMatch(down.html,/role="alert"/,'a changed answer is drawn');
 console.log('Archive backups: a re-check while the host is down redraws only when the answer changes.');
 }
+{
+// A page that comes back while an earlier read still runs is told the host is busy: that is
+// still checking, never a failed check, and it asks again shortly.
+const posts=[],timers=[];let uuid=0;
+const live=vm.createContext({window:{webkit:{messageHandlers:{sov:{postMessage:m=>posts.push(m)}}}},document:{addEventListener(){},querySelector(){return null},body:{dataset:{view:'recovery'}}},crypto:{randomUUID:()=>'b'+(++uuid)},Date,Number,setTimeout:f=>timers.push(f)});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/archive-backups.js'),'utf8'),live);
+const backups=live.window.SovBackups,host={isConnected:true,className:'',innerHTML:'',firstElementChild:null};
+backups.mount(host,'/archive');
+backups.deliver('archiveBackupResult',{request:posts.at(-1).request,busy:true,error:'The archive host is still answering an earlier request. Refresh in a moment.'});
+assert.doesNotMatch(host.innerHTML,/could not be checked|role="alert"/,'a busy host is not a failed check');assert.match(host.innerHTML,/Checking/);
+assert.equal(timers.length,1);timers[0]();
+assert.equal(posts.length,2);assert.equal(posts.at(-1).action,'status','it asks again');
+console.log('Archive backups: a busy host reads as still checking and is asked again.');
+}
 
 const backups=context.window.SovBackups;
 const host={isConnected:true,className:'',innerHTML:'',querySelector(s){return this.innerHTML.includes(s.replace(/^#/,'id="').replace(/^\./,''))?{}:null}};
