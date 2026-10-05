@@ -62,7 +62,7 @@ if(SCENE==='job-output'){
  check('Menu keeps status rows without troubleshooting paragraphs',document.querySelector('.g-row.need')&&!document.querySelector('.issue-details'));
  check('Full console remains available',!!document.getElementById('g-console'));
 }else if(SCENE==='concise-mixed'){
- const group=[...document.querySelectorAll('.today-item')].find(r=>r.textContent.includes('2 machines'));
+ const group=[...document.querySelectorAll('.today-item')].find(r=>r.textContent.includes('2 sources'));
  check('Mixed tools and hosts stay one row on Today',location.pathname.endsWith('/local.html')&&!!group&&document.querySelectorAll('.today-needs .today-item').length===1);
  check('Mixed group retains both destination types',group.textContent.includes('local-tool')&&group.textContent.includes('remote-tool on remote'));
  check('A mixed group lands on Sources',group.querySelector('.today-go').textContent.includes('Sources'));
@@ -72,7 +72,7 @@ if(SCENE==='job-output'){
  const rows=[...needs().querySelectorAll('.today-row')],folds=[...needs().querySelectorAll('.today-detail')];
  check('Three concise attention rows',rows.length===3&&needs().getBoundingClientRect().height<160);
  check('No diagnostic paragraphs shown by default',folds.length===2&&folds.every(d=>d.hidden));
- check('Short statuses and named actions',rows.some(r=>r.textContent.includes('autocommit')&&r.textContent.includes('failed')&&r.textContent.includes('Jobs'))&&rows.some(r=>r.textContent.includes('9 proposals')&&r.textContent.includes('Review'))&&rows.some(r=>r.textContent.includes('6 machines')&&r.textContent.includes('no backup')&&r.textContent.includes('Backups')));
+ check('Short statuses and named actions',rows.some(r=>r.textContent.includes('autocommit')&&r.textContent.includes('failed')&&r.textContent.includes('Jobs'))&&rows.some(r=>r.textContent.includes('9 proposals')&&r.textContent.includes('Review'))&&rows.some(r=>r.textContent.includes('6 devices')&&r.textContent.includes('no backup')&&r.textContent.includes('Backups')));
  const item=()=>[...needs().querySelectorAll('.today-item')].find(r=>r.textContent.includes('autocommit'));
  item().querySelector('.today-main').click();await pause(50);
  const fold=item().querySelector('.today-detail');

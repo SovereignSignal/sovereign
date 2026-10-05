@@ -11,8 +11,9 @@ window.Home = (() => {
   // names of the views these destinations replaced.
   const PLACE={tools:'sources',lanes:'sources',glance:'sources'};
   // A row's action names where it lands, in one word.
-  const DEST={jobs:'Jobs',backups:'Backups',recovery:'Backups',hosts:'Sources',sources:'Sources',tools:'Sources',lanes:'Sources',archive:'Library'};
-  const go=(view,id,section)=>api.elsewhere({view:PLACE[view]||view,...(section?{section}:{}),...(id?{sel:{id}}:{})});
+  const DEST={jobs:'Jobs',backups:'Backups',recovery:'Backups',hosts:'Sources',sources:'Sources',tools:'Sources',lanes:'Sources',system:'Sources',archive:'Library'};
+  // The Map is a face of Sources that lives in this document.
+  const go=(view,id,section)=>view==='system'?api.map():api.elsewhere({view:PLACE[view]||view,...(section?{section}:{}),...(id?{sel:{id}}:{})});
   // Run a row's own action. The app cannot build from its own bundle, so an update hands
   // over this machine's source location; the updater refuses rather than guessing.
   function act(kind){
@@ -64,31 +65,24 @@ window.Home = (() => {
       headline(host,'','Not connected');
       const connect=element('button','Connect tools');connect.onclick=()=>go('sources');host.append(connect);return;
     }
-    const assessment=SovStatus.assess(status,localStorage),needs=assessment.need;
-    const refused=(status.clients||hub.clients||[]).filter(c=>c.state==='error'||c.state==='rejected'),count=needs.length+refused.length;
-    headline(host,refused.length||needs.some(n=>n.state==='down')?'down':count?'warn':'live',
+    const assessment=SovStatus.assess(status,localStorage),needs=assessment.need,count=needs.length;
+    headline(host,needs.some(n=>n.state==='down')?'down':count?'warn':'live',
       count?`${plural(count,'thing')} need${count===1?'s':''} you`:'All clear');
     if(count){
       const list=element('div',null,'plain-list today-needs');
-      for(const c of refused)list.append(item('intake:'+c.client_id,'down',c.client_id,'intake failed','Sources',()=>api.map(),
-        detail({detail:'Intake needs attention: '+(c.reason||'see rejected items in the hub receipt.'),why:'What this client sent was received but not imported into raw.',verify:'Refresh after the next intake; the client reports imported.'})));
       for(const need of needs){
         const source=need.need!=null?status.needs_you[need.need]:null,gate=source?.kind==='gate';
         const groupViews=[...new Set((need.members||[]).map(member=>member.jump?.view))];
-        const jump=need.jump||(groupViews.length===1&&groupViews[0]?{view:groupViews[0]}:null)||{view:source?.harness?'sources':source?.kind==='job'?'jobs':'sources',id:source?.harness};
+        const jump=need.jump||(groupViews.length===1&&groupViews[0]?{view:groupViews[0]}:null)||{view:'sources'};
         if(gate)list.append(item('gate',need.state,plural(hub.pending||0,'proposal'),'waiting','Review',()=>api.review(),null));
         // A row that can do the thing says so on the row; nobody should go looking for a button.
         else if(need.actionKind)list.append(item(need.cause||need.name,need.state,need.name,SovStatus.brief(need),need.action||'Do it',()=>act(need.actionKind),detail(need)));
-        else {
-          // The status service names a job only inside its sentence; lift the label out as the row's name.
-          const name=source?.kind==='job'&&!source.host?SovStatus.shortLabel(String(need.detail||'').split(/[:\s]/)[0])||need.name:need.name;
-          list.append(item((need.cause||'')+':'+need.name+':'+(need.need??''),need.state,name,SovStatus.brief(need)||need.detail,DEST[jump.view]||'Open',()=>go(jump.view,jump.id),detail(need)));
-        }
+        else list.append(item((need.cause||'')+':'+need.name+':'+(need.need??''),need.state,need.name,SovStatus.brief(need)||need.detail,DEST[jump.view]||'Open',()=>go(jump.view,jump.id),detail(need)));
       }
       host.append(list);
     }
     // What the system is working on by itself. The reading queue has its own figure below.
-    const watching=assessment.waiting.filter(w=>!['queue-waiting','queue-stranded'].includes(w.cause));
+    const watching=assessment.waiting;
     if(watching.length){
       host.append(element('div','Watching','cap today-cap'));
       const list=element('div',null,'plain-list today-waiting');
@@ -103,7 +97,7 @@ window.Home = (() => {
     tiles.append(tile('sources','Sources',c.producers.total?String(c.producers.delivering):'–',c.producers.total?' of '+c.producers.total:'',c.producers.total?(quiet?quiet+' quiet':'all delivering'):'none yet'));
     const snap=bk.snapshots?.newest_age_h,behind=(bk.remotes||[]).filter(r=>r.ahead>0).length;
     const [n,unit]=snap==null?['–','']:snap<1?[String(Math.max(1,Math.round(snap*60))),'m ago']:snap<48?[String(Math.round(snap)),'h ago']:[String(Math.round(snap/24)),'d ago'];
-    tiles.append(tile('recovery','Backup',n,unit,(bk.remotes||[]).length?(behind?(behind===1?'1 copy':behind+' copies')+' behind':'copies current'):'not reported'));
+    tiles.append(tile('backups','Backup',n,unit,(bk.remotes||[]).length?(behind?(behind===1?'1 copy':behind+' copies')+' behind':'copies current'):'not reported'));
     host.append(tiles);
   }
   function render(){
@@ -116,5 +110,5 @@ window.Home = (() => {
     const environment=element('div');host.append(environment);
     SystemView.render(environment,{root,status,context},{browse:api.browse,review:api.review,openNote:api.openNote,operations:go});
   }
-  return {init(options){api=options;render()},view(value){view=value;render()},archive(value){root=value;context=null;open=null;render()},context(value){context=value;render()},status(value){if(value.request!==request)return;pending=value._status?.pending===true;status=SovStatus.retain(status,value);render()},refresh(){if(pending)return;pending=true;if(status)status={...status,_status:{...status._status,pending:true,stale:true}};render();api.send({cmd:'status',request:++request})}};
+  return {init(options){api=options;render()},view(value){view=value;render()},archive(value){root=value;context=null;open=null;render()},context(value){context=value;render()},status(value){if(value.request!==request)return;pending=value._status?.pending===true;status=SovStatus.retain(status,value);render();api.send({cmd:'verdict',...SovStatus.verdict(status,localStorage)})},refresh(){if(pending)return;pending=true;if(status)status={...status,_status:{...status._status,pending:true,stale:true}};render();api.send({cmd:'status',request:++request})}};
 })();

@@ -5,7 +5,7 @@ window.SovStatus = (() => {
 
   const num = (n) => n == null ? "?" : Number(n).toLocaleString();
 
-  const runAge = (s) => { const m = /Last run: (\S+)/.exec(s || ""); if (!m) return null; const t = Date.parse(m[1]); return isNaN(t) ? null : (Date.now() - t) / 36e5; };
+  const runAge = (s, at = Date.now()) => { const m = /Last run: (\S+)/.exec(s || ""); if (!m) return null; const t = Date.parse(m[1]); return isNaN(t) ? null : (at - t) / 36e5; };
 
   const intervalOf = (t) => { if (t && t.cadence_s) return +t.cadence_s;
     const m = /every (\d+)s/.exec(((t && t.plist) || {}).schedule || ""); return m ? +m[1] : 900; };
@@ -17,6 +17,8 @@ window.SovStatus = (() => {
   }
   const HUB_CADENCE_H = { "archivist-nightly": 24, "archivist-weekly": 168, "archivist-weekly-landed": 168, "daily-health-check": 24,
     "vault-autocommit": 24, "fleet-watch": 1, "fleet-watch-drill": 168, "proxmox-monitor": 24, "pi-cluster-monitor": 24 };
+  // Cards carry age_d, whole days since created on the status service's calendar.
+  const landedToday = (D) => ((D.archive || {}).cards || []).filter(c => c.age_d != null && c.age_d < 1).length;
   const shortLabel = (l) => String(l).replace(/^com\.[a-z]+\.(connector|cron)\./, "");
   function jobProgress(job, status = {}) {
     const p = job.progress, now = Date.now()/1000;
@@ -54,9 +56,10 @@ window.SovStatus = (() => {
   function completeness(D) {
     const st = (D && D.hub && D.hub.status) || {}, cov = st.coverage || {};
     const total = Number(cov.processable) || 0, judged = Number(cov.judged_ever) || 0;
-    const lanes = (D && D.lanes || []).filter(l => !l.retired);
-    // "Delivering" is the lane's own declared cadence, not a fixed clock: a lane that
-    // collects weekly is not behind at six days.
+    // A lane on a device the owner disassociated is not a producer this archive waits on.
+    const lanes = (D && D.lanes || []).filter(l => !l.retired && l.associated !== false);
+    // "Delivering" is one 48-hour clock for every lane: the status service reports no
+    // per-lane cadence yet, so a lane that collects weekly reads quiet between runs.
     const live = lanes.filter(l => l.vault_age_h != null && l.vault_age_h <= 48).length;
     const gate = Number((D && D.hub && D.hub.pending)) || 0;
     const pct = total > 0 ? Math.round((judged / total) * 100) : null;
@@ -99,10 +102,13 @@ window.SovStatus = (() => {
     return {...value,_backup_scope_hypervisors:hypervisors,backups:{...value.backups,hosts},needs_you:current.filter(n=>n.kind!=='hypervisor'||hosts.some(h=>h.node===n.node&&h.backup_required))};
   }
   function assess(D, storage) {
-    const hub = () => D.hub || {}, arch = () => D.archive || {};
+    const hub = () => D.hub || {};
     const m = D.machine || {}, h = hub(), st = h.status || {}, bk = D.backups || {}, hosts = ((D.fleet || {}).hosts || []);
-    const ago = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
-    const need = [], fresh = [], stale = [], waiting = []; let cad;
+    // Ages are measured when status was observed, like the ages the service computes. A
+    // re-render later must not age jobs that were healthy then into alerts nobody re-read.
+    const seenAt = Date.parse(D._status?.observed_at || D.generated_at), at = Number.isFinite(seenAt) ? seenAt : Date.now();
+    const ago = (iso) => iso ? (at - new Date(iso).getTime()) / 36e5 : null;
+    const need = [], fresh = [], stale = [], waiting = [], queue = []; let cad;
     const late = (name, detail, ageH, cad, jump, cause) => {   // one thing against its cadence
       if (ageH == null || cad == null) return;
       if (ageH > 2 * cad) need.push({ state: "down", name, detail: `${detail} ${age(ageH)} ago, expected every ${age(cad)}`, age_h: ageH, jump, cause, order: 0 });
@@ -167,7 +173,7 @@ window.SovStatus = (() => {
     const deferredCount = Number(st.deferred) || 0;
     if (waitingCount > 0) {
       const nights = judgedRun > 0 ? Math.ceil(waitingCount / judgedRun) : null;
-      waiting.push({ state: "warn", name: "Waiting to be judged", age_h: null, jump: { view: "jobs", id: "hub:job:nightly" },
+      queue.push({ state: "warn", name: "Waiting to be judged", age_h: null, jump: { view: "jobs", id: "hub:job:nightly" },
         detail: `${waitingCount.toLocaleString()} item${waitingCount === 1 ? "" : "s"} the curator has not read yet` +
                 (nights ? `, about ${nights} night${nights === 1 ? "" : "s"} at ${judgedRun} a night.` : "."),
         why: `${(Number(cov.processable) || 0).toLocaleString()} items are eligible and ${(Number(cov.judged_ever) || 0).toLocaleString()} have ever been judged.` +
@@ -178,7 +184,7 @@ window.SovStatus = (() => {
     if (strandedCount > 0) {
       // Named separately because time alone never reaches it: the nightly judges newest
       // first, so this tail stays where it is until something goes after it deliberately.
-      waiting.push({ state: "warn", name: "Older than the watermark", age_h: null, jump: { view: "jobs", id: "hub:job:burndown" },
+      queue.push({ state: "warn", name: "Older than the watermark", age_h: null, jump: { view: "jobs", id: "hub:job:burndown" },
         detail: `${strandedCount.toLocaleString()} item${strandedCount === 1 ? "" : "s"} sit behind the point the curator started from and will not be reached by the nightly run.`,
         why: "The nightly judges the newest material first, so this tail is only read by a run that goes after it on purpose.",
         cause: "queue-stranded" });
@@ -186,8 +192,27 @@ window.SovStatus = (() => {
     // needs: failures, unreachable, the gate, unprotected machines
     const localHubFailures = new Map(h.via === 'local' ? Object.entries(h.jobs||{}).filter(([,j])=>j.source==='hub-runner'&&j.ts&&j.exit!=null&&j.exit!==0).map(([k,j])=>['com.sovereign.hub.'+k,j]) : []);
     const coveredLocalJob = j => {const receipt=localHubFailures.get(j.label);return receipt && receipt.exit===j.last_exit && Number.isFinite(j.last_run) && Date.parse(receipt.ts)/1000===j.last_run;};
-    (D.needs_you || []).forEach((n, i) => { if(n.kind === "job" && (!n.host||n.host===m.host) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return; need.push({ state: "warn", name: n.host || n.lane || n.node || n.kind, detail: n.text, why:n.why, failure_output:n.failure_output, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: n.kind === "host" ? 0 : 1, cause: "need:" + n.kind, jump:n.host?{view:"hosts",id:n.host}:null }); });
-    (D.jobs || []).filter(j => !coveredLocalJob(j)).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
+    // A local job the service reports leads its sentence with the job's label. That row is the
+    // job's one row: red and first when it failed, named and landing on the job. Every other
+    // service row says what it is in its kind: name it, colour it and send it where its own
+    // next step points.
+    // The hub by the name the fleet and Devices know it: the pointer's alias, then its host name.
+    const hubName = (m.hub_pointer || '').split(':')[0] || h.hub_host, tool = id => ((D.harnesses || []).find(x => x.id === id) || {}).name || id;
+    const KIND_VIEW = { hypervisor: "backups", relay: "backups", "runner-stalled": "jobs", "runner-standing-down": "jobs" };
+    const here = n => !n.host || n.host === m.host, labelOf = n => String(n.text || "").split(/[:\s]/)[0];
+    const jobRow = n => (n.kind === "job" || n.kind === "xcode-license") && here(n) && !!labelOf(n), named = new Set((D.needs_you || []).filter(jobRow).map(labelOf));
+    (D.needs_you || []).forEach((n, i) => { if(n.kind === "client-intake" || n.kind === "job" && here(n) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return;
+      const job = jobRow(n), down = n.kind === "xcode-license" || n.kind === "job" && / last exited (?!0\b)/.test(n.text || "") || ["host", "hub", "runner-stalled"].includes(n.kind);
+      need.push({ state: down ? "down" : "warn", name: job ? shortLabel(labelOf(n)) : n.harness ? tool(n.harness) : n.kind === "hub" ? "Hub" : /^runner-/.test(n.kind) ? "runner" : n.host || n.lane || n.node || n.kind,
+        detail: n.text, why:n.why, failure_output:n.failure_output, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: down ? 0 : 1, cause: "need:" + n.kind,
+        jump: n.harness ? {view:"tools",id:n.harness} : job ? {view:"jobs",id:labelOf(n)} : n.host ? {view:"hosts",id:n.host} : n.kind === "hub" ? {view:"hosts",id:hubName} : KIND_VIEW[n.kind] ? {view:KIND_VIEW[n.kind]} : null }); });
+    // A client whose intake failed is one row, from the clients list, which disassociation
+    // filters; the service's own client-intake row names it only inside a sentence.
+    (D.clients || h.clients || []).filter(c => c.state === "error" || c.state === "rejected").forEach(c => need.push({ state: "down", name: String(c.client_id || "unknown"),
+      detail: "Intake needs attention: " + (c.reason || "see rejected items in the hub receipt."), why: "What this client sent was received but not imported into raw.",
+      action: "Open Sources → Map and inspect this client and its hub intake receipt. Correct the source or intake connection, then rerun the configured intake job.",
+      verify: "Refresh after the next intake; the client reports imported.", age_h: null, jump: { view: "system" }, order: 0, cause: "intake-failed", causeLabel: "had their intake fail" }));
+    (D.jobs || []).filter(j => !coveredLocalJob(j) && !named.has(j.label)).filter(j => j.last_exit != null && j.last_exit !== 0).forEach(j => need.push({ state: "down", name: shortLabel(j.label), detail: `failed its last run (exit ${j.last_exit}) on ${m.host}`, age_h: j.stderr_age_h, jump: { view: "jobs", id: j.label }, order: 0, cause: "job-failed" }));
     Object.entries(h.jobs || {}).filter(([, j]) => j.exit != null && j.exit !== 0).forEach(([k,j]) => {
       const health = hubJob(j,D), paused = health.state === 'paused', pending = paused || health.state === 'awaiting_verification';
       (pending ? waiting : need).push({state:health.tone,name:k,detail:j.health ? health.summary : `exited ${j.exit} on the hub`,
@@ -196,9 +221,8 @@ window.SovStatus = (() => {
     });
     if (h.jobs_error) need.push({ state: "warn", name: "Hub jobs", detail: h.jobs_error, jump: { view: "jobs" }, order: 0, cause: "hub-jobs-unknown" });
     hosts.filter(x => x.net && x.net.online === false && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Sources → Devices.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
-    const hubName = h.hub_host || (m.hub_pointer || '').split(':')[0];
     if (h.reachable === false && !(D.needs_you||[]).some(n=>n.kind==='hub') && !hosts.some(x => x.host === hubName && x.net?.online === false))
-      need.push({state:'down',name:'Hub',detail:'unreachable; review and acceptance could not be checked',jump:{view:'jobs'},order:0});
+      need.push({state:'down',name:'Hub',detail:'unreachable; review and acceptance could not be checked',jump:{view:'hosts',id:hubName},order:0});
     (bk.hosts || []).forEach(x => {
       const b=backupState(x);if(!b.issue)return;
       need.push({state:b.state,name:x.host,detail:b.text,age_h:x.last_dump_age_h,
@@ -209,7 +233,7 @@ window.SovStatus = (() => {
         verify:'Refresh after the storage check or next successful backup; confirm the recorded backup and schedule coverage.'});
     });
     // cadence: mirrors here, mirrors on every host, producer pushes, hub jobs, the snapshot
-    (D.harnesses || []).forEach(x => { if (x.state !== "connected" || x.runs_on) return; const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run), cad = intervalOf(x) / 3600;
+    (D.harnesses || []).forEach(x => { if (x.state !== "connected" || x.runs_on) return; const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run, at), cad = intervalOf(x) / 3600;
       if (late(x.name || x.id, "mirror last ran", ah, cad, { view: "tools", id: x.id }, "mirror-late") === true && ah != null && ah <= cad) fresh.push({ state: "live", name: x.name || x.id, detail: `pulled ${age(ah)} ago on ${m.host}`, age_h: ah, jump: { view: "tools", id: x.id }, cause: "pull:" + m.host, host: m.host }); });
     // a remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
     // observable cadence is about an hour, not its own 15 minutes
@@ -246,15 +270,16 @@ window.SovStatus = (() => {
     Object.entries(h.jobs || {}).forEach(([k, j]) => { const cad = j.cadence_s ? j.cadence_s / 3600 : HUB_CADENCE_H[k]; if (!cad || j.exit) return; late(k, "last completed", ago(j.ts), cad, { view: "jobs", id: "hub:job:" + k }, "hub-job-late"); });
     if (bk.snapshots) late("daily snapshot", "last taken", bk.snapshots.newest_age_h, 24, { view: "backups", id: "bk:snapshots" }, "snapshot-late");
     // fresh: events, not states
-    const today = new Date().toISOString().slice(0, 10), a = arch(), landed = (a.cards || []).filter(c => c.created === today).length;
-    if (landed) fresh.unshift({ state: "live", name: "archive", detail: `${landed} card${landed === 1 ? "" : "s"} landed today`, age_h: null, jump: { view: "archive", id: "week:" + isoWeekKey(new Date()) } });
+    const landed = landedToday(D);
+    if (landed) fresh.unshift({ state: "live", name: "archive", detail: `${landed} card${landed === 1 ? "" : "s"} landed today`, age_h: null, jump: { view: "archive", id: "week:" + isoWeekKey(new Date(at)) } });
     if (st.judged != null) fresh.unshift({ state: "live", name: "judge", detail: `kept ${num(st.new_proposals)} of ${num(st.judged)} last run`, age_h: h.status_age_h, jump: { view: "jobs", id: "hub:judge" } });
     let prev = {}; try { prev = JSON.parse(storage.getItem("sov.online") || "{}"); } catch (e) {}
     const now = {}; hosts.forEach(x => { if (x.net && x.net.online != null) now[x.host] = x.net.online; if (x.net && x.net.online && prev[x.host] === false) fresh.push({ state: "live", name: x.host, detail: "came back", age_h: null, jump: { view: "hosts", id: x.host } }); });
     try { storage.setItem("sov.online", JSON.stringify(now)); } catch (e) {}
     // Derived alerts follow the same explanation contract as service-produced rows.
+    const where = v => ({ tools: "Sources", hosts: "Sources → Devices", system: "Sources → Map", backups: "Backups → Copies" })[v] || "Settings → Jobs";
     for(const r of [...need,...stale]){
-      const place=r.jump?.view==='tools'?'Sources':r.jump?.view==='hosts'?'Sources → Devices':r.jump?.view==='backups'?'Backups → Copies':'Settings → Jobs';
+      const place=where(r.jump?.view);
       const guidance=r.cause==='no-backup'?
         ['The node returned no recorded backup dump for this VM. A configured job alone does not prove a completed backup.', 'Open Backups → Copies and inspect this VM’s backup job and last dump. Arrange a backup with the node administrator if none exists.', 'Refresh after the next successful backup; the VM shows a recent last backup age.']:
         r.detail==='pushed, awaiting hub acceptance'?
@@ -267,7 +292,8 @@ window.SovStatus = (() => {
       r.why ||= guidance[0];r.action ||= guidance[1];r.verify ||= guidance[2];
     }
     fresh.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
-    need.sort((p, q) => p.order - q.order || (q.age_h || 0) - (p.age_h || 0));
+    const worse = (p, q) => p.order - q.order || (p.state === "down" ? 0 : 1) - (q.state === "down" ? 0 : 1);   // worst state first
+    need.sort((p, q) => worse(p, q) || (q.age_h || 0) - (p.age_h || 0));
     stale.sort((p, q) => (q.age_h || 0) - (p.age_h || 0));
     // one row per repeated cause; the drawer lists the members
     const collapse = (list, mk) => {
@@ -278,13 +304,15 @@ window.SovStatus = (() => {
     };
     const needG = collapse(need, (cause, rows) => {
       const label = rows[0].causeLabel || (cause === "job-failed" ? "failed their last run" : cause === "unreachable" ? "are unreachable" : cause === "mirror-late" ? "are past twice their mirror cadence" : "need a look");
-      return { state: rows.some(r => r.state === "down") ? "down" : "warn", name: `${rows.length} ${cause === "job-failed" || cause === "hub-job-late" ? "jobs" : "machines"}`,
-        detail: `${label}: ${rows.slice(0, 2).map(r => r.name).join(", ")}${rows.length > 2 ? " and " + (rows.length - 2) + " more" : ""}`, why:rows.some(r=>r.failure_output)?'Recorded failure details for each job are shown below.':rows[0].why, action:'Inspect each listed item in '+(rows[0].jump?.view==='backups'?'Backups → Copies':rows[0].jump?.view==='hosts'?'Sources → Devices':rows[0].jump?.view==='tools'?'Sources':'Settings → Jobs')+'. '+rows[0].action, verify:rows[0].verify, age_h: null, order: rows[0].order };
-    }).sort((p, q) => p.order - q.order);
+      // One noun per thing: a job, a source (a tool or lane that feeds the archive), or a device.
+      const noun = cause === "job-failed" || cause === "hub-job-late" ? "jobs" : cause === "mirror-late" || cause === "lane-late" ? "sources" : "devices";
+      return { state: rows.some(r => r.state === "down") ? "down" : "warn", name: `${rows.length} ${noun}`,
+        detail: `${label}: ${rows.map(r => r.name).join(", ")}`, why:rows.some(r=>r.failure_output)?'Recorded failure details for each job are shown below.':rows[0].why, action:'Inspect each listed item in '+where(rows[0].jump?.view)+'. '+rows[0].action, verify:rows[0].verify, age_h: null, order: rows[0].order };
+    }).sort(worse);
     const freshG = collapse(fresh, (cause, rows) => { const newest = Math.min(...rows.map(r => r.age_h == null ? Infinity : r.age_h));
       return { state: "live", name: `${rows.length} mirrors`, detail: `pulled on ${rows[0].host}, newest ${age(newest)} ago`, age_h: isFinite(newest) ? newest : null, order: 1 }; });
     freshG.sort((p, q) => (p.age_h == null ? -1 : p.age_h) - (q.age_h == null ? -1 : q.age_h));
-    return { need: needG, fresh: freshG, stale, waiting, completeness: completeness(D) };
+    return { need: needG, fresh: freshG, stale, waiting, queue, completeness: completeness(D) };
   }
   const safeURL=value=>{try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)&&u.hostname?u.href:null}catch(_){return null}};
   function caption(status) {
@@ -348,11 +376,15 @@ window.SovStatus = (() => {
     // A job the status service reports: it either failed, or ran and wrote to its error log.
     if (c === "need:job") return /error output/.test(r.detail || "") ? "errors logged" : /last exited|failed/.test(r.detail || "") ? "failed" : "";
     if (c === "job-failed") return "failed";
+    if (c === "intake-failed") return "intake failed";
     if (["mirror-late", "lane-late", "hub-job-late", "snapshot-late"].includes(c)) return r.age_h != null ? "silent " + age(r.age_h) : "late";
     if (c === "no-backup") return "no backup";
     if (c === "backup-stale") return "backup stale";
     if (c === "backup-unscheduled") return "not scheduled";
-    if (c === "backup-unknown") return "backup unknown";
+    if (c === "backup-unknown" || c === "need:hypervisor") return "backup unknown";
+    if (c === "need:xcode-license") return "cannot start";
+    if (c === "need:runner-stalled") return "stalled";
+    if (c === "need:runner-standing-down") return "standing down";
     if (c === "app-behind") return "ready to install";
     if (c === "app-ahead") return "nothing newer";
     if (c === "app-unstamped" || c === "app-source-unknown") return "cannot be checked";
@@ -363,6 +395,29 @@ window.SovStatus = (() => {
     if (r.detail === "pushed, awaiting hub acceptance") return "awaiting hub";
     return "";
   }
+  // The verdict: one sentence and the worst state, for the menu-bar crown and the Glance,
+  // from the same assessment wherever the window is.
+  function verdict(D, storage) {
+    if (D?._status?.error || D?.error) return { state: "down", text: D._status?.error || D.error };
+    if (D?._status?.pending) return { state: "warn", text: caption(D) };
+    if (!D?.machine?.connected) return { state: "idle", text: "Not connected." };
+    const A = assess(D, storage), st = (D.hub || {}).status || {}, hosts = ((D.fleet || {}).hosts || []);
+    const down = A.need.filter(r => r.state === "down");
+    // A service row's detail is already a sentence about its thing; a derived row's is not.
+    const say = f => String(f.group ? f.name + " " + f.detail.split(":")[0] : f.need != null ? f.detail : f.name + " " + f.detail).replace(/\.$/, "");
+    let state, text;
+    if (down.length) { state = "down"; text = `Attention: ${say(down[0])}${down.length > 1 ? `, and ${down.length - 1} more` : ""}.`; }
+    else if (A.need.length) { state = "warn"; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${say(A.need[0])}.`; }
+    else if (A.waiting.length) { state = "idle"; text = `${A.waiting.length} awaiting verification. No action required while the next run is pending.`; }
+    else if (A.stale.length) { state = "warn"; text = `Stale: ${A.stale[0].name} ${A.stale[0].detail}.`; }
+    else {
+      state = "live";
+      const landed = landedToday(D);
+      const fact = landed ? `${landed} card${landed === 1 ? "" : "s"} landed today` : st.judged != null ? `The judge kept ${num(st.new_proposals)} of ${num(st.judged)} last run` : `${hosts.filter(x => x.net && x.net.online).length} devices up`;
+      text = `All good. ${fact}.`;
+    }
+    return { state, text: text.replace(/\.\.$/, ".") };
+  }
   // When the status on screen was observed, as a clock time. The full caption (how long
   // ago, how long the check took) is evidence for a tooltip, never a line of the page.
   function seen(status) {
@@ -371,5 +426,5 @@ window.SovStatus = (() => {
     if (s.error || status?.error) return "refresh failed";
     return Number.isFinite(stamp) ? new Date(stamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   }
-  return {assess, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, week: isoWeekKey};
+  return {assess, verdict, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, week: isoWeekKey};
 })();

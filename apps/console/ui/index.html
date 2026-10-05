@@ -378,7 +378,7 @@ window.onerror = function (msg, src, line, col) {
     const page = settingsOpen ? "settings" : PAGE[view];
     $("#vault").textContent = settingsOpen ? "Settings" : TITLE[view] || "Sovereign";
     SovShell.select(page);
-    SovShell.archive(selectedRoot?.split("/").pop(), !D || D.error || D._status?.error ? "" : D.machine?.connected ? "live" : "");
+    SovShell.archive(selectedRoot?.split("/").pop(), !D || D.error || D._status?.error ? "" : D.machine?.connected && D.machine.vault === selectedRoot ? "live" : "");
     $("#controls").innerHTML = settingsOpen ? ""
       : view === "discover" ? `<button data-view="sources">Done</button>`
       : page === "sources" ? segment([["sources", "Tools"], ["hosts", "Devices"], ["system", "Map"]]) + `<button data-view="discover">Add</button>`
@@ -555,7 +555,7 @@ window.onerror = function (msg, src, line, col) {
     const hs = (D.harnesses || []).filter(h => ["connected", "partial", "removal incomplete", "removed"].includes(h.state) || h.job_loaded || h.hub_installed);
     const mine = new Set(hs.map(h => h.lane).filter(Boolean));
     const all = [...hs.map(h => ({ kind: "tool", id: h.id, o: { name: h.name, connector: h.id, detected: h.detected } })),
-                 ...(D.lanes || []).filter(l => !mine.has(l.lane)).map(l => ({ kind: "lane", id: l.lane, o: l }))];
+                 ...(D.lanes || []).filter(l => !mine.has(l.lane) && (l.retired || l.associated !== false)).map(l => ({ kind: "lane", id: l.lane, o: l }))];
     all.forEach(it => { it.s = sourceState(it); });
     const name = (it) => String((it.kind === "tool" ? it.o.name : it.o.lane) || "");
     all.sort((x, y) => x.s.rank - y.s.rank || name(x).localeCompare(name(y)));
@@ -571,24 +571,7 @@ window.onerror = function (msg, src, line, col) {
     return A;
   }
   // ---------- the verdict: one sentence, the worst state on screen ----------
-  function verdictSentence() {
-    if(D?._status?.error||D?.error)return {state:'down',text:D._status?.error||D.error};
-    if(D?._status?.pending)return {state:'warn',text:SovStatus.caption(D)};
-    const A = assess(), h = hub(), st = h.status || {}, hosts = ((D.fleet || {}).hosts || []);
-    const down = A.need.filter(r => r.state === "down"), warn = A.need.filter(r => r.state !== "down");
-    let state, text;
-    if (down.length) { state = "down"; const f = down[0]; text = `Attention: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.name + " " + f.detail}${down.length > 1 ? `, and ${down.length - 1} more` : ""}.`; }
-    else if (A.need.length) { state = "warn"; const f = A.need[0]; text = `${A.need.length} thing${A.need.length === 1 ? "" : "s"} need${A.need.length === 1 ? "s" : ""} you: ${f.group ? f.name + " " + f.detail.split(":")[0] : f.need != null ? f.detail : f.name + " " + f.detail}.`; }
-    else if (A.waiting.length) { state = "idle"; text = `${A.waiting.length} awaiting verification. No action required while the next run is pending.`; }
-    else if (A.stale.length) { state = "warn"; text = `Stale: ${A.stale[0].name} ${A.stale[0].detail}.`; }
-    else {
-      state = "live";
-      const a = arch(), today = new Date().toISOString().slice(0, 10), landed = (a.cards || []).filter(c => c.created === today).length;
-      const fact = landed ? `${landed} card${landed === 1 ? "" : "s"} landed today` : st.judged != null ? `the judge kept ${num(st.new_proposals)} of ${num(st.judged)} last run` : `${hosts.filter(x => x.net && x.net.online).length} hosts up`;
-      text = `All good. ${fact}.`;
-    }
-    return { state, text: text.replace(/\.\.$/, ".") };
-  }
+  function verdictSentence() { return SovStatus.verdict(D, localStorage); }
   function renderVerdict() {
     const v = $("#verdict"); if (!v || !D) return;
     const failed = D.error || D._status?.error;
@@ -711,6 +694,8 @@ window.onerror = function (msg, src, line, col) {
   // already says healthy, so a state word appears only when there is something to add.
   const tagClass = { live: "on", warn: "mid", down: "off" };
   const SAID_BY_DOT = new Set(["current", "connected", "Succeeded", "clear", "accepted", "backed up", "judging"]);
+  // A hub that is online on the network can still fail to answer for status: say so on its device.
+  const hubSilent = (host) => hub().reachable === false && host === ((D.machine?.hub_pointer || "").split(":")[0] || hub().hub_host);
   const stateTag = (word, cls) => `<span class="state">${word ? `<span class="tag ${cls || ""}">${esc(word)}</span>` : ""}</span>`;
   function rowHTML(it) {
     const o = it.o;
@@ -731,7 +716,7 @@ window.onerror = function (msg, src, line, col) {
       return `${dot(net.online == null ? "" : net.online ? "live" : "down", net.online == null ? "network unknown" : net.online ? "online" : "offline")}
         <span class="title mono" style="flex:0 0 168px">${esc(o.host)}</span>
         <span class="where">${esc([m.kind, m.where].filter(Boolean).join(" · "))}</span>
-        ${net.online === false ? stateTag("unreachable", "off") : stateTag(m.identity && m.identity !== domIdentity ? m.identity : "")}
+        ${net.online === false ? stateTag("unreachable", "off") : hubSilent(o.host) ? stateTag("not answering", "off") : stateTag(m.identity && m.identity !== domIdentity ? m.identity : "")}
         <span class="num" style="width:52px">${tools ? tools + (tools === 1 ? " tool" : " tools") : ""}</span>
         <span class="num" style="width:40px">${newest == null ? "" : age(newest)}</span>
         <span class="chev">›</span>`;
@@ -1070,7 +1055,7 @@ window.onerror = function (msg, src, line, col) {
         <div class="sect"><h2>Network</h2>${kv([
           ["state", o.associated===false ? "Disassociated; excluded from active monitoring" : `${dot(net.online == null ? "" : net.online ? "live" : "down", "")} ${net.online == null ? "unknown" : net.online ? "online" : "offline"}`, "raw"],
           ["address", net.ip ? `<span class="mono">${esc(net.ip)}</span>` : null, "raw"],
-          ["seen via", net.via], ["reach", m.reach]])}</div>
+          ["seen via", net.via], ["reach", m.reach], ["hub status", hubSilent(o.host) ? "The hub did not answer: " + (hub().error || "no route") : null]])}</div>
         <div class="sect"><h2>Reaches the archive</h2><div class="prose">${esc(m.transport || "no transport recorded")}
           ${m.notes ? `<div style="color:var(--muted);margin-top:4px">${esc(m.notes)}</div>` : ""}</div></div>
         ${o.associated!==false && !isMe && !hs.length ? connectMachineSect(o) : ""}
@@ -1231,7 +1216,7 @@ window.onerror = function (msg, src, line, col) {
         ${row({ view: "archive", section: "judge" }, "judge kept", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)}` : "?", (last ? "wk " + pct(last.kept, last.judged) : "") + sparkline(rates))}
         ${row({ view: "archive", section: "judge" }, "unjudged", num(st.deferred ?? cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
         ${row({ view: "archive", section: "composition" }, "cards", num(a.total), a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : "")}
-        ${row({ view: "hosts" }, "fleet", `${online} of ${fleet.length} up`, offline ? offline + " offline" : unknown ? unknown + " not probed" : "all reachable", offline ? "hot" : "")}
+        ${row({ view: "hosts" }, "fleet", fleet.length ? `${online} of ${fleet.length} up` : "?", offline ? offline + " offline" : unknown ? unknown + " not probed" : fleet.length ? "all reachable" : "not reported", offline ? "hot" : "")}
         ${needs.filter(n => n.cause !== "need:gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.jump ? {view:n.jump.view,sel:{id:n.jump.id}} : {view:'glance'}))}"><span class="l">${esc(n.name)}</span><span class="s wrap">${esc(n.detail)}</span><span class="chev">›</span></button>`).join("")}
         ${assessment.waiting.map(n => row({view:'jobs',sel:{id:n.jump.id}},n.name,'Awaiting verification','')).join('')}
       </div>
@@ -1642,7 +1627,7 @@ window.onerror = function (msg, src, line, col) {
         }else if(GateModel.queue(payload,selectedRoot,archiveKnown).available){gateCompleted.delete(slug);}
       }
       if(!GateModel.queue(payload,selectedRoot,archiveKnown).available){gateChecks.clear();gateResolutions.clear();}
-      if (GLANCE && payload.error) {D=payload;const g=$('#glance');g.hidden=false;g.innerHTML=`<div class="empty">${esc(payload.error)}</div><button id="g-refresh">Try again</button>`;return;}
+      if (GLANCE && payload.error) {D=payload;bridge({cmd:"verdict",state:"down",text:payload.error});const g=$('#glance');g.hidden=false;g.innerHTML=`<div class="empty">${esc(payload.error)}</div><button id="g-refresh">Try again</button>`;return;}
       if(!gatePending)for(const [slug,entry] of gateChecks){
         if(entry.key!==GateModel.reviewKey(payload,slug)){gateChecks.delete(slug);gateResolutions.delete(slug);}
       }

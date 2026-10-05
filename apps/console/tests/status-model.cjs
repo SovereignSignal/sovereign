@@ -24,6 +24,17 @@ assert.equal(result.need.find(x=>x.group==='job-failed').members.length,2);
 assert.equal(assess({hub:{reachable:false}}).need[0].state,'down');
 console.log('Status assessment: 4 unknown variants neutral; waiting, accepted freshness, failures, grouping and hub dedupe passed.');
 
+// Ages are measured at the observation. Re-rendering an hour-old status (a row opened,
+// a refresh pending or failed) must not age healthy jobs and mirrors into alerts.
+const hourAgo=new Date(Date.now()-3600000).toISOString();
+const observedHealthy={generated_at:hourAgo,_status:{observed_at:hourAgo},machine:{host:'here'},
+ hub:{jobs:{'verdict-poll':{ts:hourAgo,exit:0,cadence_s:60}}},harnesses:[{id:'tool',name:'tool',state:'connected',cadence_s:900,last_run:'Last run: '+hourAgo}],
+ backups:{lanes:[{lane:'producer',delivery:'accepted',pushed:hourAgo}]}};
+assert.equal(assess(observedHealthy).need.length,0,'healthy when observed stays healthy');
+assert.equal(assess(observedHealthy).stale.length,0);
+assert.equal(assess({...observedHealthy,_status:{}}).need.length,0,'generated_at stands in for the observation time');
+console.log('Ages: measured at the observation, never at render time.');
+
 const model=box.window.SovStatus;
 const liveProgress={phase:'judging',active:true,summary:'Judging 3/50',checked_at:Date.now()/1000,no_progress_s:90};
 const progressing=model.hubJob({exit:0,progress:liveProgress});
@@ -73,8 +84,9 @@ assert.equal(assess({hub:{jobs:{autocommit:{...recovering,exit:0}}}}).waiting.le
 assert.equal(assess({hub:{jobs:{autocommit:{...recovering,health:{state:'needs_attention'}}}}}).need.length,1);
 for(const via of ['ssh hub',undefined])for(const exit of [0,1]){
  const separate=assess({...snapshot,hub:{via,reachable:true,jobs:{autocommit:{...recovering,exit}}}});
- assert.ok(separate.need.some(n=>n.jump?.id==='com.sovereign.hub.autocommit'));
- assert.ok(separate.need.some(n=>n.need===0));
+ // One failure is one row: the service's own row, which lands on the job.
+ assert.equal(separate.need.filter(n=>n.jump?.id==='com.sovereign.hub.autocommit').length,1);
+ assert.ok(separate.need.some(n=>n.need===0&&n.state==='down'));
  assert.equal(separate.waiting.length,exit===1?1:0);
 }
 assert.ok(assess({...snapshot,hub:{...snapshot.hub,jobs:{autocommit:{...recovering,exit:0}}}}).need.length>0);
@@ -190,7 +202,9 @@ console.log('Permission drift: contract-vs-reality findings surface per lane, in
 // What is waiting for the curator. The hub always reported its queue depth and the app
 // showed none of it: "open Review" while thousands of items sat unjudged. The rate is
 // what makes the number mean anything to a person.
-const queueRows = d => assess(d).waiting.filter(x => (x.cause||'').startsWith('queue-'));
+// The reading queue is work the system does by itself: its own list, never 'waiting', which
+// holds runs awaiting verification and feeds the Glance and the crown's verdict.
+const queueRows = d => { const a = assess(d); assert.equal(a.waiting.filter(x => (x.cause||'').startsWith('queue-')).length, 0); return a.queue; };
 const hubQueue = (status) => ({machine:{host:'here'},hub:{reachable:true,status}});
 const q = queueRows(hubQueue({judged:50,deferred:2451,coverage:{processable:6740,judged_ever:3812,unjudged_in_window:2259,stranded_pre_watermark:669}}));
 assert.equal(q.length,2);
@@ -258,3 +272,88 @@ assert.equal(model.seen({machine:{},_status:{pending:true}}),'checking…');
 assert.equal(model.seen({machine:{},_status:{error:'probe failed'}}),'refresh failed');
 assert.match(model.seen({machine:{},generated_at:new Date().toISOString()}),/\d/);
 console.log('Short reasons and observed time: known causes have a short form, unknown ones fall back to their sentence.');
+
+// The crown's verdict comes from the same assessment wherever the window is, Today included.
+const verdict=d=>model.verdict(d,{getItem(){return null},setItem(){}});
+const connected={machine:{host:'here',connected:true},generated_at:new Date().toISOString()};
+for(const [d,text] of [[{...connected,_status:{error:'probe failed'}},'probe failed'],[{error:'no status'},'no status']]){const v=verdict(d);assert.equal(v.state,'down');assert.equal(v.text,text);}
+assert.equal(verdict({...connected,_status:{pending:true}}).state,'warn');
+assert.equal(verdict({machine:{connected:false}}).state,'idle','a local-only archive is not all good, it is not connected');
+assert.equal(verdict({...connected,jobs:[{label:'job-a',last_exit:1}]}).state,'down');
+assert.match(verdict({...connected,jobs:[{label:'job-a',last_exit:1}]}).text,/^Attention: job-a failed/);
+assert.equal(verdict({...connected,backups:{lanes:[{lane:'producer',delivery:'waiting'}]}}).state,'warn');
+assert.equal(verdict(connected).state,'live');
+console.log('Verdict: one sentence and the worst state from the shared assessment.');
+const backlog={...connected,hub:{reachable:true,status:{coverage:{unjudged_in_window:750,stranded_pre_watermark:2037}}}};
+assert.equal(verdict(backlog).state,'live','a reading queue is not awaiting verification');
+assert.equal(verdict({...backlog,harnesses:[{id:'tool',name:'tool',state:'connected',cadence_s:3600,run_age_h:1.5}]}).state,'warn','a backlog never hides a stale source');
+console.log('Verdict: the reading queue neither greys the crown nor hides staleness.');
+// Cards carry age_d, days since created on the service's own calendar, never created itself.
+const cards={...connected,archive:{cards:[{slug:'a',age_d:0},{slug:'b',age_d:0},{slug:'c',age_d:5},{slug:'d',age_d:null}]}};
+assert.equal(assess(cards).fresh.find(f=>f.name==='archive')?.detail,'2 cards landed today');
+assert.equal(verdict(cards).text,'All good. 2 cards landed today.');
+assert.equal(verdict({...connected,archive:{cards:[{age_d:3}]},hub:{status:{judged:50,new_proposals:1}}}).text,'All good. The judge kept 1 of 50 last run.');
+console.log('Cards landed today are counted from their age, in the Glance verdict too.');
+// A local job the service reports is one row: red, named by its job, first, landing on it.
+const runnerLabel='com.sovereign.connector.runner';
+for(const row of [{kind:'job',text:runnerLabel+' last exited 1. Check /tmp/runner.error.log.'},{kind:'xcode-license',text:runnerLabel+' cannot start: its program is /usr/bin/python3, an Xcode shim.'}]){
+ const one=assess({machine:{host:'here'},jobs:[{label:runnerLabel,last_exit:row.kind==='job'?1:69}],needs_you:[{kind:'gate',text:'2 waiting'},row]}).need;
+ assert.equal(one.length,2,row.kind+': one row for one failure');
+ assert.equal(one[0].name,'runner');assert.equal(one[0].state,'down');assert.equal(one[0].jump.view,'jobs');assert.equal(one[0].jump.id,runnerLabel);
+}
+// A job with only recent error output, or one that exited 0, stays amber.
+assert.equal(assess({machine:{host:'here'},needs_you:[{kind:'job',text:'Capture last exited 0; recent error output remains.'}]}).need[0].state,'warn');
+assert.equal(assess({machine:{host:'here'},jobs:[{label:runnerLabel,last_exit:0}],needs_you:[{kind:'job',text:runnerLabel+': last run exited 0; error output was recorded within the last day.'}]}).need[0].state,'warn');
+console.log('A failed local job is one row, named by its job, red and first.');
+// A refused client intake is one row, named by its client, and gone with its device.
+const refusedClient={machine:{host:'here',vault:'/a',connected:true},clients:[{client_id:'field-laptop',state:'rejected',reason:'git_fetch_failed'},{client_id:'desk',state:'imported'}],
+ needs_you:[{kind:'client-intake',text:'Client intake needs attention: field-laptop',why:'w',action:'a',verify:'v'}]};
+const intake=assess(refusedClient).need;
+assert.equal(intake.length,1,'one refused client, one row');
+assert.equal(intake[0].name,'field-laptop');assert.equal(intake[0].state,'down');assert.equal(model.brief(intake[0]),'intake failed');
+assert.match(intake[0].detail,/git_fetch_failed/);
+assert.equal(assess({...refusedClient,clients:undefined,hub:{clients:refusedClient.clients}}).need.length,1,'the hub list serves an older status');
+const disassociated=model.associations({...refusedClient,device_associations:{available:true,scope:'/a',disassociated:['field-laptop']}});
+assert.equal(assess(disassociated).need.length,0,'a disassociated client raises nothing');
+console.log('A refused client intake is one row, and disassociation hides it.');
+// A service row is named, coloured and sent where its own next step points, by its kind.
+const kinds=assess({machine:{host:'here',hub_pointer:'hubhost:/archive'},hub:{reachable:false,hub_host:'Hub-Machine-Name'},harnesses:[{id:'cursor-here',name:'Cursor'}],needs_you:[
+ {kind:'host',host:'vm-a',text:'This device cannot currently reach vm-a.'},
+ {kind:'hub',text:'The hub did not answer (ssh hubhost). Governance state is unknown until it does.'},
+ {kind:'hypervisor',node:'node-a',text:'Backup posture of 3 VMs on node-a is unknown.'},
+ {kind:'relay',text:"The mover's source /x is gone."},
+ {kind:'runner-stalled',text:'The connector job has not finished a tick since then.'},
+ {kind:'runner-standing-down',text:'The connector job has stood down 3 tick(s) in a row.'},
+ {kind:'lane-silent',harness:'cursor-here',text:'Cursor: the connector job is running but has not visited this lane.'},
+ {kind:'gate',text:'2 proposals waiting.'}]}).need;
+const byKind=k=>kinds.find(n=>n.cause==='need:'+k);
+assert.equal(byKind('host').state,'down','an unreachable device is red wherever it is reported');
+assert.equal(byKind('hub').name,'Hub');assert.equal(byKind('hub').state,'down');assert.equal(byKind('hub').jump.view,'hosts');assert.equal(byKind('hub').jump.id,'hubhost');
+assert.equal(model.brief(byKind('hub')),'unreachable');
+assert.equal(byKind('hypervisor').name,'node-a');assert.equal(byKind('hypervisor').jump.view,'backups');assert.equal(model.brief(byKind('hypervisor')),'backup unknown');
+assert.equal(byKind('relay').jump.view,'backups');
+assert.equal(byKind('runner-stalled').name,'runner');assert.equal(byKind('runner-stalled').state,'down');assert.equal(byKind('runner-stalled').jump.view,'jobs');
+assert.equal(byKind('runner-standing-down').jump.view,'jobs');assert.equal(model.brief(byKind('runner-standing-down')),'standing down');
+assert.equal(byKind('lane-silent').name,'Cursor');assert.equal(byKind('lane-silent').jump.view,'tools');assert.equal(byKind('lane-silent').jump.id,'cursor-here');
+const firstAmber=kinds.findIndex(n=>n.state!=='down'),lastRed=kinds.map(n=>n.state).lastIndexOf('down');
+assert.ok(lastRed<firstAmber,'red rows come first: '+kinds.map(n=>n.state+' '+n.name).join(', '));
+assert.equal(assess({machine:{host:'here'},hub:{reachable:false,hub_host:'hubhost'}}).need[0].jump.id,'hubhost','a derived hub alert lands on the hub too');
+console.log('Service rows: named, coloured and routed by kind; red rows first.');
+assert.equal(verdict({...connected,needs_you:[{kind:'legacy'}]}).state,'warn','a service row without a sentence still gives a verdict');
+assert.equal(verdict({...connected,needs_you:[{kind:'host',host:'vm-a',text:'This device cannot currently reach vm-a.'},{kind:'host',host:'vm-b',text:'This device cannot currently reach vm-b.'}]}).text,
+ 'Attention: This device cannot currently reach vm-a, and 1 more.','a service sentence is said once, without its name in front');
+// A group is counted in the noun of its members, and its drawer names every one of them.
+const lateMirrors=assess({machine:{host:'here'},fleet:{hosts:[{host:'other',harnesses:['a','b','c','d','e','f'].map(t=>({harness:t,lane:t,run_age_h:30}))}]}}).need;
+assert.equal(lateMirrors.length,1);assert.equal(lateMirrors[0].name,'6 sources','six late tools on one device are six sources');
+for(const t of ['a','b','c','d','e','f'])assert.match(lateMirrors[0].detail,new RegExp(t+' on other'));
+assert.equal(assess({backups:{hosts:[1,2,3].map(n=>({host:'vm-'+n,node:'node',reachable:true,inventory_complete:true,scheduled:true,last_dump_age_h:null}))}}).need[0].name,'3 devices');
+assert.equal(assess({fleet:{hosts:[{host:'a',net:{online:false}},{host:'b',net:{online:false}}]}}).need[0].name,'2 devices');
+assert.equal(assess({clients:[{client_id:'a',state:'rejected'},{client_id:'b',state:'error'}]}).need[0].action.startsWith('Inspect each listed item in Sources → Map.'),true);
+assert.equal(result.need.find(x=>x.group==='job-failed').name,'2 jobs');
+console.log('Groups: jobs, sources and devices, every member named.');
+// A lane on a disassociated device is not a producer this archive is waiting on.
+const assocLanes=model.associations({machine:{host:'here',vault:'/a'},device_associations:{available:true,scope:'/a',disassociated:['gone']},
+ lanes:[{lane:'live',host:'here',vault_age_h:1},{lane:'quiet',host:'here',vault_age_h:100},{lane:'away',host:'gone',vault_age_h:200},{lane:'away-fresh',host:'gone',vault_age_h:1}]});
+const producers=assess(assocLanes).completeness.producers;
+assert.equal(producers.total,2);assert.equal(producers.delivering,1);
+console.log('Completeness: lanes on disassociated devices are not counted.');
