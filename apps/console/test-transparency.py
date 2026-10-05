@@ -179,7 +179,7 @@ def main():
     if scene in ('to-home','to-operations'):assert result['invocations']==2,('navigation duplicated a probe',result)
     print(name,len(result['checks']),'checks passed',flush=True)
    finally:
-    subprocess.run(['defaults','delete',suite],capture_output=True)
+    subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
     (a.evidence/'native-transparency.json').write_text(json.dumps(results,indent=2)+'\n')
  print(sum(len(r['checks']) for r in results),'native transparency checks passed')
 if __name__=='__main__':main()

@@ -75,6 +75,6 @@ def main():
     assert sum('--apply' in c for c in calls)==(2 if phase=='flow' else 0)
     assert hashlib.sha256(history.read_bytes()).hexdigest()==digest
     reports.append(dict(phase=phase,checks=r[0]['checks'],calls=calls));print(phase,len(r[0]['checks']),'checks passed',flush=True)
-   finally:subprocess.run(['defaults','delete',suite],capture_output=True)
+   finally:subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
  (args.evidence/'native-producers.json').write_text(json.dumps(reports,indent=2)+'\n')
 if __name__=='__main__':main()

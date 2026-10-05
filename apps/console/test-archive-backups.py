@@ -111,6 +111,6 @@ def main():
      r[0]['checks']['Restored engine loads context without installed source']=True
     else:assert not key.exists() and not list(destination.iterdir())
     reports.append(dict(scene=scene,checks=r[0]['checks']));print(scene,len(r[0]['checks']),'checks passed',flush=True)
-   finally:subprocess.run(['defaults','delete',suite],capture_output=True)
+   finally:subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
  (a.evidence/'native-archive-backups.json').write_text(json.dumps(reports,indent=2)+'\n')
 if __name__=='__main__':main()

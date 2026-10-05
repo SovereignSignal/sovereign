@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix='sovereign-diag-') as directory:
  archive=p/'QA Archive';brain_local.create(archive,root.parents[1]);suite='com.sovereign.qa.diagnostics.'+uuid.uuid4().hex
  env=dict(os.environ,SOV_QA_DEFAULTS_SUITE=suite,SOV_QA_STATUS_COMMAND=str(cmd),SOV_QA_JS=js,SOV_SNAPSHOT=str(evidence/'diagnostics.png'),SOV_SNAPSHOT_DELAY='7',SOV_WINDOW='900x600',SOV_APPEARANCE='dark')
  try:result=subprocess.run([str(root/'build/Sovereign.app/Contents/MacOS/Sovereign'),'-sov.archive',str(archive.resolve())],env=env,capture_output=True,text=True,timeout=40)
- finally:subprocess.run(['defaults','delete',suite],capture_output=True)
+ finally:subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
  assert 'shortsecret' not in result.stderr and 'aB3' not in result.stderr
  (evidence/'diagnostics.log').write_text(result.stderr)
  marker='client error in diagnostics-qa: ';rows=[json.loads(l.split(marker)[1]) for l in result.stderr.splitlines() if marker in l];assert result.returncode==0 and len(rows)==1

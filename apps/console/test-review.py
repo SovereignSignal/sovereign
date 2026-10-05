@@ -162,7 +162,7 @@ def main():
    assert before==(t.proposals/(t.slug+'.md')).read_bytes(),'Read-only workflow wrote proposal'
    print(name,len(result[0]['checks']),'checks passed',flush=True)
   finally:
-   t.tearDown();subprocess.run(['defaults','delete',suite],capture_output=True)
+   t.tearDown();subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
    (a.evidence/'review-native.json').write_text(json.dumps(reports,indent=2)+'\n')
  print(sum(len(r['checks']) for r in reports),'Review checks passed')
 if __name__=='__main__':main()

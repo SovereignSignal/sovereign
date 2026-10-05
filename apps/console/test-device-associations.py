@@ -76,7 +76,7 @@ def main():
     assert hashlib.sha256(history.read_bytes()).hexdigest()==digest
     print(phase,len(report['checks']),'checks passed',flush=True)
   finally:
-   subprocess.run(['defaults','delete',suite],capture_output=True)
+   subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
    (args.evidence/'native-devices.json').write_text(json.dumps(results,indent=2)+'\n')
  print('Native persistence, restore, scope and unchanged history verified.')
 

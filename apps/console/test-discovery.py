@@ -80,6 +80,6 @@ def main():
     assert hashlib.sha256(history.read_bytes()).hexdigest()==digest
     assert not (home/'executed').exists()
     reports.append(dict(phase=phase,checks=r[0]['checks'],calls=calls));print(phase,len(r[0]['checks']),'checks passed',flush=True)
-   finally:subprocess.run(['defaults','delete',suite],capture_output=True)
+   finally:subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
  (a.evidence/'native-discovery.json').write_text(json.dumps(reports,indent=2)+'\n')
 if __name__=='__main__':main()

@@ -60,6 +60,6 @@ def main():
      assert (destination/'python/bin/python3').is_file();assert len(list((destination/'jobs').glob('*.plist')))==3
      assert not (destination/'receipts/activation.json').exists()
     reports.append(dict(phase=phase,checks=r[0]['checks'],schedules_created=False));print(phase,len(r[0]['checks']),'checks passed',flush=True)
-   finally:subprocess.run(['defaults','delete',suite],capture_output=True)
+   finally:subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
  (a.evidence/'native-hub.json').write_text(json.dumps(reports,indent=2)+'\n')
 if __name__=='__main__':main()

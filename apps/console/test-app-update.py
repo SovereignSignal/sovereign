@@ -58,6 +58,6 @@ def main():
                 assert not report['failures'],report
                 print(phase,len(report['checks']),'checks passed',flush=True)
             finally:
-                subprocess.run(['defaults','delete',suite],capture_output=True)
+                subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
     (args.evidence/'results.json').write_text(json.dumps(results,indent=2)+'\n')
 if __name__=='__main__':main()

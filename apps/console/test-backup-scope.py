@@ -114,7 +114,7 @@ def main():
                 assert str(archives[1]) not in saved
                 print(phase, len(report['checks']), 'checks passed', flush=True)
         finally:
-            subprocess.run(['defaults', 'delete', suite], capture_output=True)
+            subprocess.run(['defaults', 'delete', suite], capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True)
             (args.evidence / 'native-backups.json').write_text(json.dumps(results, indent=2) + '\n')
 
 

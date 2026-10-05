@@ -43,7 +43,7 @@ def main():
     cp=subprocess.run([str(HERE/'build/Sovereign.app/Contents/MacOS/Sovereign'),'-sov.archive',str(archive)],env=env,capture_output=True,text=True,timeout=30)
     (a.evidence/(name+'.log')).write_text(cp.stderr);marker='client error in client-pilot-qa: ';rows=[json.loads(x.split(marker,1)[1]) for x in cp.stderr.splitlines() if marker in x];assert cp.returncode==0 and len(rows)==1,(name,cp.stderr);v=dict(rows[0],scene=scene,theme=theme,size=size);reports.append(v);assert not v['failures'],v;print(name,len(v['checks']),'checks passed',flush=True)
    finally:
-    subprocess.run(['defaults','delete',suite],capture_output=True);(a.evidence/'native-clients.json').write_text(json.dumps(reports,indent=2)+'\n')
+    subprocess.run(['defaults','delete',suite],capture_output=True);Path.home().joinpath('Library/Preferences',suite+'.plist').unlink(missing_ok=True);(a.evidence/'native-clients.json').write_text(json.dumps(reports,indent=2)+'\n')
  with tempfile.TemporaryDirectory(prefix='sovereign-offline-') as tmp:
   b=Path(tmp);state=b/'state';state.mkdir();(state/'connectors.json').write_text(json.dumps({'machine':{'role':'client','mode':'contribute-only'}}));env=dict(os.environ,HOME=str(b),PATH='/nonexistent',SOV_STATE_DIR=str(state));env.pop('BRAIN_ROOT',None)
   helper=HERE/'build/Sovereign.app/Contents/MacOS/sov';cp=subprocess.run([str(helper),'about','--json'],env=env,cwd=tmp,capture_output=True,text=True,check=True);v=json.loads(cp.stdout);assert v['machine']['client_mode']=='contribute-only' and not v['network'] and not v['writes'];(a.evidence/'offline-introduction.json').write_text(cp.stdout);subprocess.run([str(helper)],env=env,cwd=tmp,capture_output=True,text=True,check=True)
