@@ -660,6 +660,9 @@ window.onerror = function (msg, src, line, col) {
     const b = D.backups || {}, out = [];
     const ageOf = (iso) => iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
     const row = (id, o) => out.push({ kind: "backup", id, o });
+    // The hub reports its own copies; when it does not answer they are unknown, not absent.
+    if (hub().reachable === false) row("bk:hub", { label: "archive · hub copies", desc: "the hub did not answer", state: "", stateText: "unknown", tag: "hub", age_h: null,
+      detail: [["error", hub().error]], note: "Its git copies, daily snapshot and lane acceptance could not be checked. Refresh once the hub answers." });
     (b.remotes || []).forEach(r => {
       const a = ageOf(r.remote_head), ex = ((b.exchange || {})[r.name] || (b.exchange || {})[r.host] || {});
       const local = r.host === "localhost" || r.host === "127.0.0.1";
