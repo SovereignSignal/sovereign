@@ -26,6 +26,7 @@ import uuid
 import brain_discovery
 from sovereign_intake.common import atomic, directory, json_read, locked, read_under
 from . import core, recovery
+from .core import same_path, within
 
 PROTOCOL = 1
 FORMAT = 2
@@ -61,10 +62,6 @@ def file_hash(path):
     return h.hexdigest()
 
 
-def within(path, root):
-    return path == root or root in path.parents
-
-
 def context(root):
     root = directory(absolute(root))
     for required in ('CLAUDE.md', 'knowledge', 'raw', 'workstreams'):
@@ -72,7 +69,7 @@ def context(root):
             raise ValueError('Select a Sovereign archive.')
     machine = brain_discovery.describe()['machine']
     configured = machine.get('vault')
-    same = configured and Path(configured).resolve() == root.resolve()
+    same = configured and same_path(configured, root)
     if same and (machine.get('role') == 'client' or machine.get('hub_pointer')):
         raise ValueError('This archive is maintained by another host. Back up its authoritative copy.')
     if same and machine.get('client_mode') == 'contribute-only':
@@ -83,10 +80,10 @@ def context(root):
     cfg = core.config_path()
     if cfg.exists():
         c = core.load(cfg)
-        if Path(c['archive']).resolve() == root.resolve():
+        if same_path(c['archive'], root):
             managed = c; kind = 'managed'
     inst = json_read(state / 'hub.json', {}) if state.exists() else {}
-    if inst and Path(inst.get('vault', '/')).resolve() == root.resolve(): kind = 'template'
+    if inst and same_path(inst.get('vault', '/'), root): kind = 'template'
     # This index is local lookup only. Persistent archive identity is the UUID in
     # the backup configuration and encrypted manifest, never the path hash.
     store = state / 'archive-backups' / hashlib.sha256(str(root).encode()).hexdigest()[:24]
@@ -213,7 +210,8 @@ def link_inventory(ctx):
             if not path.is_symlink(): continue
             try: target = path.resolve(strict=False)
             except (RuntimeError,OSError): raise ValueError('A cyclic or unreadable archive link cannot be backed up.') from None
-            if not within(target,root): raise ValueError('An archive link leaves the archive: '+str(path))
+            # Textual containment on purpose: the target is stored relative to this spelling of root.
+            if not (target==root or root in target.parents): raise ValueError('An archive link leaves the archive: '+str(path))
             links[str(PurePosixPath('archive')/path.relative_to(root))] = str(PurePosixPath('archive')/target.relative_to(root))
             if len(links)>MAX_ENTRIES: raise ValueError('Too many archive links.')
         dirs[:] = [d for d in dirs if not (Path(current)/d).is_symlink()]
@@ -585,9 +583,9 @@ def operate(req, serve=False):
     root=absolute(req.get('root'))
     machine=brain_discovery.describe()['machine']
     if serve:
-        if machine.get('role')!='hub' or not machine.get('vault') or Path(machine['vault']).resolve()!=root.resolve():
+        if machine.get('role')!='hub' or not machine.get('vault') or not same_path(machine['vault'],root):
             raise ValueError('This host is not the declared authority for the requested archive.')
-    elif machine.get('vault') and Path(machine['vault']).resolve()==root.resolve() and machine.get('role')=='client':
+    elif machine.get('vault') and same_path(machine['vault'],root) and machine.get('role')=='client':
         if machine.get('client_mode')!='read-and-contribute': raise ValueError('This client cannot access archive backups.')
         hub=machine.get('hub_pointer') or ''
         match=re.fullmatch(r'([A-Za-z0-9][A-Za-z0-9._-]{0,100}):(/[^\r\n]+)',hub)

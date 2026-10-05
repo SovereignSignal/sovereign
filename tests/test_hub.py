@@ -107,6 +107,18 @@ class HubTests(unittest.TestCase):
         self.assertFalse((self.archive/'secret').exists())
         with self.assertRaises(ValueError):recovery.configure(self.config,self.keys,self.key,True)
 
+    def test_06b_archive_guards_judge_the_folder_not_its_spelling(self):
+        # Case and /System/Volumes/Data firmlinks name one folder many ways on APFS.
+        inside=self.archive/'workstreams';found=[Path(v) for v in (str(inside).replace('/Archive/','/aRCHIVE/'),'/System/Volumes/Data'+str(inside)) if os.path.exists(v) and os.path.samefile(v,inside)]
+        if not found:self.skipTest('this volume spells each folder one way')
+        placed=inside/'placed.key';placed.write_bytes(os.urandom(32));placed.chmod(0o600)
+        try:
+            for spelled in found:
+                with self.assertRaisesRegex(ValueError,'outside both'):recovery.configure(self.config,self.backups,spelled/'placed.key')
+                with self.assertRaisesRegex(ValueError,'outside the archive'):recovery.snapshot(self.config,spelled/'inside.sovbackup',self.key)
+                with self.assertRaisesRegex(ValueError,'outside the archive'):core.install_plan(self.archive,spelled/'Hub','fixture-local')
+        finally:placed.unlink()
+
     def test_07_unsafe_tar_entries_refused_before_extraction(self):
         for name,kind in [('../escape',tarfile.REGTYPE),('archive/linked',tarfile.SYMTYPE),('/absolute',tarfile.REGTYPE)]:
             buf=io.BytesIO()

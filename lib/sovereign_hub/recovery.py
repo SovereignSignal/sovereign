@@ -12,7 +12,7 @@ import tempfile
 import time
 
 from sovereign_intake.common import directory, read_under, atomic, exclusive, locked
-from .core import absolute, crypto_tool, MAX_FILE, write_jobs, validate
+from .core import absolute, crypto_tool, MAX_FILE, write_jobs, validate, within
 
 MAX_TOTAL = 480 * 1024 * 1024
 MAX_MEMBERS = 100000
@@ -21,7 +21,7 @@ MAX_MEMBERS = 100000
 def check_key(path, archive=None, hub=None):
     path = absolute(path)
     for root in (archive, hub):
-        if root and (path == root or root in path.parents):
+        if root and within(path, root):
             raise ValueError('Keep the recovery key outside both the archive and Hub folder.')
     raw, info = read_under(path.parent, path.name, 32)
     if len(raw) != 32 or info.st_mode & 0o077:
@@ -46,7 +46,7 @@ def configure(config, folder, key, apply=False):
     if folder == key.parent:
         raise ValueError('Store capsules separately from the recovery key.')
     for root in (Path(config['archive']), Path(config['destination'])):
-        if folder == root or root in folder.parents:
+        if within(folder, root):
             raise ValueError('Store capsules outside the archive and Hub folder.')
     updated = dict(config, snapshot_folder=str(folder), recovery_key=str(key))
     if apply:
@@ -86,7 +86,7 @@ def snapshot(config, output, key, apply=False):
     output = absolute(output); archive = Path(config['archive']); hub = Path(config['destination'])
     key = check_key(key, archive, hub)
     for root in (archive, hub):
-        if output == root or root in output.parents:
+        if within(output, root):
             raise ValueError('Place the recovery capsule outside the archive and Hub folder.')
     if output.parent == key.parent:
         raise ValueError('Store capsules separately from the recovery key.')

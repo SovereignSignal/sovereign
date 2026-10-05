@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import urllib.parse
 
 from brain_local import archive_root
@@ -41,6 +42,40 @@ def absolute(value):
     if path.is_symlink():
         raise ValueError('Linked destinations are not supported.')
     return path
+
+
+def canonical(path):
+    # One spelling per folder, for when no folder exists to compare: links resolved,
+    # Unicode composed and case folded, as APFS ignores both form and case.
+    return unicodedata.normalize('NFC', os.path.realpath(path)).casefold()
+
+
+def within(path, root):
+    """Whether path is root or inside it, judged by the folders on disk, never by text.
+
+    Case, Unicode form and firmlinks (/System/Volumes/Data) give one folder many
+    spellings, and a string test let a typed variant put a key or a restore inside
+    the archive. A path that does not exist yet is judged by its existing parents."""
+    path = Path(os.path.abspath(path))
+    try:
+        target = os.stat(root)
+    except OSError:
+        text, base = canonical(path), canonical(root).rstrip('/')
+        return text == base or text.startswith(base + '/')
+    for p in (path, *path.parents):
+        try:
+            if os.path.samestat(os.stat(p), target): return True
+        except OSError:
+            pass
+    return False
+
+
+def same_path(a, b):
+    """Whether two paths name one folder; see within."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return canonical(a) == canonical(b)
 
 
 def inference_guard(endpoint, model):
@@ -122,7 +157,7 @@ def install_plan(archive, destination, model, endpoint='http://127.0.0.1:11434/v
     if client_hub():
         raise ValueError('This Mac is a Client. Existing roles require a reviewed migration.')
     destination = absolute(destination)
-    if destination.exists() or archive == destination or archive in destination.parents:
+    if destination.exists() or within(destination, archive):
         raise ValueError('Choose a new Hub folder outside the archive.')
     # Existing curator lanes and client pointers are never silently converted.
     if (archive / 'raw/workspaces' / lane).exists():
