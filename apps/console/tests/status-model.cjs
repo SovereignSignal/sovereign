@@ -145,7 +145,7 @@ const withApp = (app, rev) => ({machine:{host:'here',app,template_rev:rev}});
 // Built from what is here: a quiet confirmation, not an alert.
 const current = appRow(withApp({installed:true,version:'1.2.3',build:'9',source_commit:'abc1234'},'abc1234 2026-01-01'));
 assert.equal(current.state,'live'); assert.equal(current.name,'Up to date');
-assert.match(current.detail,/newest build of this machine's source/);
+assert.match(current.detail,/newest build of this device's source/);
 assert.match(current.why,/abc1234/,'the revision is evidence, so it belongs in the drawer');
 assert.ok(!/abc1234/.test(current.detail),'the headline must not lead with a commit hash');
 // Built from something else: a thing to do.

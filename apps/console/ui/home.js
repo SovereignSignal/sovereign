@@ -19,7 +19,7 @@ window.Home = (() => {
   function act(kind){
     if(kind!=='app-update')return;
     const template=status?.machine?.template;
-    if(!template){api.send({cmd:'clientError',error:"This machine's source location is not known, so there is nothing to build from."});return}
+    if(!template){api.send({cmd:'clientError',error:"This device's source location is not known, so there is nothing to build from."});return}
     api.send({cmd:'appUpdate',template});
   }
   // The one place a sentence is allowed: what happened, why, what to do, how to tell it worked.

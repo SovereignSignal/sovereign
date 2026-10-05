@@ -1474,7 +1474,7 @@ window.onerror = function (msg, src, line, col) {
       if (b.id === "set-reveal") return bridge({ cmd: "reveal", path: selectedRoot });
       if (b.id === "set-update") {
         const template = D && D.machine && D.machine.template;
-        if (!template) { SovSettings.note("set-update-state", "This machine\u2019s source location is not known, so there is nothing to build from."); return; }
+        if (!template) { SovSettings.note("set-update-state", "This device\u2019s source location is not known, so there is nothing to build from."); return; }
         SovSettings.note("set-update-state", "Building\u2026"); return bridge({ cmd: "appUpdate", template });
       }
       if (b.id === "g-gear") return bridge({ cmd: "showConsole", place: { settings: true } });
@@ -1515,7 +1515,7 @@ window.onerror = function (msg, src, line, col) {
         // source location; the updater refuses rather than guessing if it is missing.
         if (appUpdatePending) return;
         const template = D?.machine?.template;
-        if (!template) { appUpdateResult = "This machine's source location is not known, so there is nothing to build from."; renderInspector(); return; }
+        if (!template) { appUpdateResult = "This device's source location is not known, so there is nothing to build from."; renderInspector(); return; }
         appUpdatePending = true; appUpdateResult = null; renderInspector();
         return bridge({ cmd: 'appUpdate', template });
       }

@@ -139,29 +139,29 @@ window.SovStatus = (() => {
       const jump = { view: "system" };
       if (!appInfo.source_commit) {
         stale.push({ state: "warn", name: "Update status unknown", detail: `This build of Sovereign predates update checking, so it cannot tell you whether it is current. Installing once will fix that permanently.`,
-                     why: `The bundle records no source revision, so there is nothing to compare against this machine's source (${srcRev || "unknown"}).`,
+                     why: `The bundle records no source revision, so there is nothing to compare against this device's source (${srcRev || "unknown"}).`,
                      action: "Update now", actionKind: "app-update", age_h: null, jump, cause: "app-unstamped" });
       } else if (!srcRev) {
         stale.push({ state: "warn", name: "Update status unknown", detail: `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"} cannot be checked for updates right now.`,
-                     why: "This machine's source revision could not be read, so the installed build has nothing to be compared against.", age_h: null, jump, cause: "app-source-unknown" });
+                     why: "This device's source revision could not be read, so the installed build has nothing to be compared against.", age_h: null, jump, cause: "app-source-unknown" });
       } else if (appInfo.source_commit.replace("+local", "") !== srcRev && appInfo.behind === false) {
         // Unequal is not newer: built from a worktree or a later branch than this checkout.
-        stale.push({ state: "warn", name: "Source differs", detail: `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"} was built from newer or different source than this machine has, so there is nothing newer to install.`,
-                     why: `The installed app was built from source ${appInfo.source_commit}, which this machine's source (${srcRev}) does not contain.`,
-                     action: "Bring this machine's source up to the installed build, or install from the source you mean to run.",
-                     verify: "This row becomes \u201cUp to date\u201d once the installed build and this machine's source agree.", age_h: null, jump, cause: "app-ahead" });
+        stale.push({ state: "warn", name: "Source differs", detail: `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"} was built from newer or different source than this device has, so there is nothing newer to install.`,
+                     why: `The installed app was built from source ${appInfo.source_commit}, which this device's source (${srcRev}) does not contain.`,
+                     action: "Bring this device's source up to the installed build, or install from the source you mean to run.",
+                     verify: "This row becomes \u201cUp to date\u201d once the installed build and this device's source agree.", age_h: null, jump, cause: "app-ahead" });
       } else if (appInfo.source_commit.replace("+local", "") !== srcRev) {
         // Plainly: an update is ready. The revisions are evidence, so they belong in the
         // drawer with the rest of the evidence, not in the sentence that has to land first.
         need.push({ state: "warn", name: "Update available", detail: `A newer version of Sovereign is ready to install. You are running ${appInfo.version || "?"} build ${appInfo.build || "?"}.`,
-                    why: `The installed app was built from source ${appInfo.source_commit}; this machine's source is now ${srcRev}.`,
+                    why: `The installed app was built from source ${appInfo.source_commit}; this device's source is now ${srcRev}.`,
                     action: "Update now",
                     actionKind: "app-update",
                     verify: "This row becomes \u201cUp to date\u201d once the new build is installed.",
                     age_h: null, jump, order: 1, cause: "app-behind" });
       } else {
-        fresh.push({ state: "live", name: "Up to date", detail: `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"} is the newest build of this machine's source.`,
-                     why: `Built from source ${srcRev}, which is what this machine has.`,
+        fresh.push({ state: "live", name: "Up to date", detail: `Sovereign ${appInfo.version || "?"} build ${appInfo.build || "?"} is the newest build of this device's source.`,
+                     why: `Built from source ${srcRev}, which is what this device has.`,
                      age_h: null, jump, cause: "app-current" });
       }
     }

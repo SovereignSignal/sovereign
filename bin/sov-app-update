@@ -107,10 +107,10 @@ def plan(template=None):
     # older checkout, and rebuilding that checkout would quietly install an older Sovereign.
     p["ahead"] = bool(rev) and not same and not contains(template or TEMPLATE, commit)
     p["current"] = same or p["ahead"]  # nothing newer to install
-    p["summary"] = ("Sovereign is already the newest build of this machine's source." if same else
-                    "Sovereign was built from newer or different source than this machine has, "
+    p["summary"] = ("Sovereign is already the newest build of this device's source." if same else
+                    "Sovereign was built from newer or different source than this device has, "
                     "so there is nothing newer to install." if p["ahead"] else
-                    "Build Sovereign from this machine's source and install it.")
+                    "Build Sovereign from this device's source and install it.")
     p["effects"] = ("Sovereign will close and reopen. The current app is kept so it can be put back. "
                     "Your settings and the selected archive are not touched. Nothing is installed if the build fails.")
     # The token binds a confirmation to exactly the state that was previewed.
@@ -123,9 +123,9 @@ def apply(token, template=None):
     p = plan(template)
     template = p["template"]
     if token != p["token"]:
-        raise ValueError("This machine's state changed since the preview. Refresh and try again.")
+        raise ValueError("This device's state changed since the preview. Refresh and try again.")
     if not p["source_commit"]:
-        raise ValueError("This machine's source revision could not be read, so there is nothing to build.")
+        raise ValueError("This device's source revision could not be read, so there is nothing to build.")
     if not p["buildable"]:
         raise ValueError("No source checkout to build from was found. Pass --template with the path to one.")
     runtime = os.path.join(APP, "Contents", "Resources", "runtime")
@@ -172,7 +172,7 @@ def apply(token, template=None):
         raise ValueError("The installed app does not match the source it was built from. The previous app is at " + back)
     subprocess.run(["open", APP], capture_output=True, timeout=60)
     return {"state": "installed", "installed": now, "source_commit": p["source_commit"],
-            "rollback": back, "verification": "Sovereign was rebuilt from this machine's source and reopened."}
+            "rollback": back, "verification": "Sovereign was rebuilt from this device's source and reopened."}
 
 
 def main():

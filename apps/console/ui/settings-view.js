@@ -33,15 +33,15 @@ window.SovSettings = (() => {
   function appSection(D) {
     if (unread(D)) return sect("Version", say(unread(D)));
     const a = (D && D.machine && D.machine.app) || {}, src = String((D && D.machine && D.machine.template_rev) || "").split(" ")[0];
-    if (!a.installed) return sect("Version", `<p class="set-lead">Sovereign is running from a build this machine cannot identify.</p>`, "Install once from this machine's source and it will be able to check itself from then on.");
+    if (!a.installed) return sect("Version", `<p class="set-lead">Sovereign is running from a build this device cannot identify.</p>`, "Install once from this device's source and it will be able to check itself from then on.");
     const name = `Sovereign ${esc(a.version || "?")} build ${esc(a.build || "?")}`;
     const commit = String(a.source_commit || "").replace("+local", "");
     let lead, action = true, why = "";
-    if (!a.source_commit) { lead = `${name} predates update checking, so it cannot tell you whether it is current.`; why = `The bundle records no source revision${src ? `; this machine's source is ${esc(src)}` : ""}.`; }
-    else if (!src) { lead = `${name} cannot be checked right now.`; why = "This machine's source revision could not be read, so there is nothing to compare against."; action = false; }
-    else if (commit !== src && a.behind === false) { lead = `${name} was built from newer or different source than this machine has, so there is nothing newer to install.`; why = `Built from source ${esc(commit)}, which this machine's source ${esc(src)} does not contain.`; action = false; }
-    else if (commit !== src) { lead = `A newer version is ready to install. You are running ${name}.`; why = `Built from source ${esc(commit)}; this machine's source is now ${esc(src)}.`; }
-    else { lead = `${name} is the newest build of this machine's source.`; why = `Built from source ${esc(src)}, which is what this machine has.`; action = false; }
+    if (!a.source_commit) { lead = `${name} predates update checking, so it cannot tell you whether it is current.`; why = `The bundle records no source revision${src ? `; this device's source is ${esc(src)}` : ""}.`; }
+    else if (!src) { lead = `${name} cannot be checked right now.`; why = "This device's source revision could not be read, so there is nothing to compare against."; action = false; }
+    else if (commit !== src && a.behind === false) { lead = `${name} was built from newer or different source than this device has, so there is nothing newer to install.`; why = `Built from source ${esc(commit)}, which this device's source ${esc(src)} does not contain.`; action = false; }
+    else if (commit !== src) { lead = `A newer version is ready to install. You are running ${name}.`; why = `Built from source ${esc(commit)}; this device's source is now ${esc(src)}.`; }
+    else { lead = `${name} is the newest build of this device's source.`; why = `Built from source ${esc(src)}, which is what this device has.`; action = false; }
     return sect("Version", `<p class="set-lead">${lead}</p>${more("Details", `<p class="set-note">${why}</p>`)}<span class="pulls" id="set-update-state" aria-live="polite"></span>`, "",
       action ? `<button class="brass" id="set-update">Update now</button>` : `<button id="set-update">Check again</button>`);
   }
