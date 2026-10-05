@@ -56,9 +56,10 @@ for(const theme of ['dark','light']){
  check(theme+' selected node',home.querySelector('[data-node="tool:reader"]').getAttribute('aria-pressed')==='true');
  const fill=getComputedStyle(home.querySelector('.sv-block-top')).fill;
  check(theme+' map palette',fill===(theme==='light'?'rgb(245, 247, 247)':'rgb(32, 59, 78)'));
- tab('flow').click();const svg=home.querySelector('.sv-trace svg'),trace=home.querySelector('.sv-trace');
- check(theme+' full route fits',svg.getBoundingClientRect().width<=trace.clientWidth+1&&trace.scrollWidth<=trace.clientWidth+1);
- check(theme+' route endpoints remain visible',[...svg.querySelectorAll('.sv-route-station')].every(e=>{const r=e.getBoundingClientRect(),b=trace.getBoundingClientRect();return r.left>=b.left&&r.right<=b.right}));
+ tab('flow').click();const svg=home.querySelector('.sv-trace svg'),trace=home.querySelector('.sv-trace'),floor=Math.max(trace.clientWidth,Math.round(svg.viewBox.baseVal.width*.82));
+ // The route fills its pane but never drops below the scale that keeps labels legible; a narrower pane scrolls.
+ check(theme+' full route fits or scrolls at a legible scale',Math.abs(svg.getBoundingClientRect().width-floor)<=1&&trace.scrollWidth<=floor+1);
+ check(theme+' route endpoints within the route',[...svg.querySelectorAll('.sv-route-station')].every(e=>{const r=e.getBoundingClientRect(),b=trace.getBoundingClientRect();return r.left>=b.left&&r.right<=b.left+trace.scrollWidth+1}));
  check(theme+' no page overflow',document.documentElement.scrollWidth<=innerWidth);
  tab('inspect').click();check(theme+' selection survives panes',home.querySelector('.sv-inspect-detail').dataset.selection==='tool:reader');tab('learn').click();
 }
