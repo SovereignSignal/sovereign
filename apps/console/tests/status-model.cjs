@@ -291,7 +291,8 @@ for(const row of [{kind:'job',text:runnerLabel+' last exited 1. Check /tmp/runne
  assert.equal(one.length,2,row.kind+': one row for one failure');
  assert.equal(one[0].name,'runner');assert.equal(one[0].state,'down');assert.equal(one[0].jump.view,'jobs');assert.equal(one[0].jump.id,runnerLabel);
 }
-// A job with only recent error output stays amber.
+// A job with only recent error output, or one that exited 0, stays amber.
+assert.equal(assess({machine:{host:'here'},needs_you:[{kind:'job',text:'Capture last exited 0; recent error output remains.'}]}).need[0].state,'warn');
 assert.equal(assess({machine:{host:'here'},jobs:[{label:runnerLabel,last_exit:0}],needs_you:[{kind:'job',text:runnerLabel+': last run exited 0; error output was recorded within the last day.'}]}).need[0].state,'warn');
 console.log('A failed local job is one row, named by its job, red and first.');
 // A refused client intake is one row, named by its client, and gone with its device.

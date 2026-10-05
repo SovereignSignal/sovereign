@@ -195,7 +195,7 @@ window.SovStatus = (() => {
     const here = n => !n.host || n.host === m.host, labelOf = n => String(n.text || "").split(/[:\s]/)[0];
     const jobRow = n => (n.kind === "job" || n.kind === "xcode-license") && here(n) && !!labelOf(n), named = new Set((D.needs_you || []).filter(jobRow).map(labelOf));
     (D.needs_you || []).forEach((n, i) => { if(n.kind === "client-intake" || n.kind === "job" && here(n) && (D.jobs||[]).some(j=>coveredLocalJob(j)&&n.text?.startsWith(j.label+' last exited ')))return;
-      const job = jobRow(n), down = n.kind === "xcode-license" || n.kind === "job" && / last exited /.test(n.text || "") || ["host", "hub", "runner-stalled"].includes(n.kind);
+      const job = jobRow(n), down = n.kind === "xcode-license" || n.kind === "job" && / last exited (?!0\b)/.test(n.text || "") || ["host", "hub", "runner-stalled"].includes(n.kind);
       need.push({ state: down ? "down" : "warn", name: job ? shortLabel(labelOf(n)) : n.harness ? tool(n.harness) : n.kind === "hub" ? "Hub" : /^runner-/.test(n.kind) ? "runner" : n.host || n.lane || n.node || n.kind,
         detail: n.text, why:n.why, failure_output:n.failure_output, action:n.action, url:n.url, verify:n.verify, age_h: null, need: i, order: down ? 0 : 1, cause: "need:" + n.kind,
         jump: n.harness ? {view:"tools",id:n.harness} : job ? {view:"jobs",id:labelOf(n)} : n.host ? {view:"hosts",id:n.host} : n.kind === "hub" ? {view:"hosts",id:hubName} : KIND_VIEW[n.kind] ? {view:KIND_VIEW[n.kind]} : null }); });
