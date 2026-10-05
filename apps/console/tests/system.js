@@ -41,7 +41,9 @@
   assert('the map is a face of Sources',$('sources-tab').getAttribute('aria-pressed')==='true'&&!!document.querySelector('#controls [data-view="system"][aria-pressed="true"]'));
   assert('restored archive repopulates dynamic map',!!view().querySelector('[data-node="tool:read"]'));
   view().querySelector('[aria-label="Zoom in"]').click();view().querySelector('[aria-label="Fit environment"]').click();
-  assert('Fit contains the map within its viewport',view().querySelector('.sv-world-map').getBoundingClientRect().width<=view().querySelector('.sv-map-scroll').clientWidth+1);
+  const fit=view().querySelector('.sv-world-map').getBoundingClientRect().width,pane=view().querySelector('.sv-map-scroll').clientWidth;
+  assert('Fit fills the map pane, down to the width that keeps labels legible',Math.abs(fit-Math.max(pane,861))<=1);
+  assert('map labels stay legible at Fit',10*fit/1050>=8);
   assert('no page-level horizontal overflow',document.documentElement.scrollWidth<=document.documentElement.clientWidth);
  }catch(e){failures.push(String(e.stack||e))}
  window.webkit.messageHandlers.sov.postMessage({cmd:'clientError',where:'system-qa',msg:JSON.stringify({checks,failures})});
