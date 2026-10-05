@@ -1126,7 +1126,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
                 }
                 guard let root = result["root"] as? String else { return }
                 Settings.archive = root
+                // The Glance is a second document on its own bridge; it asked once, at load.
                 self.bridge.deliver("localState", ["root": root])
+                self.glanceBridge?.deliver("localState", ["root": root])
             }
         }
     }
