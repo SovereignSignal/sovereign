@@ -1061,7 +1061,7 @@ window.onerror = function (msg, src, line, col) {
     }
     if (it.kind === "host") {
       const m = o.meta || {}, net = o.net || {}, isMe = o.host === me;
-      const hs = (o.harnesses || []).map(hz);
+      const hs = (o.harnesses || []).map(hz), src = sourceItems();
       box.innerHTML = head(esc(o.host), esc([m.kind, m.where].filter(Boolean).join(" · ") || "not in the host registry"), isMe ? "this machine" : "") + `
         ${deviceAssociationSect(o)}
         <div class="sect"><h2>Network</h2>${kv([
@@ -1075,7 +1075,8 @@ window.onerror = function (msg, src, line, col) {
           ${hs.length ? hs.map(t => toolBlock(t, isMe ? localTool(t.id) : null)).join("") : `<div class="prose" style="color:var(--warn)">No tools deployed on this host.</div>`}</div>
         ${contribSect(o.lanes || [])}
         <div class="sect"><h2>Lanes · ${(o.lanes || []).length}</h2><div class="chips">
-          ${(o.lanes || []).map(l => `<button class="chip" data-goto="lane:${esc(l.lane)}">${dot(freshDot(l.newest_age_h), "")}${esc(l.lane)} ${age(l.newest_age_h)}</button>`).join("") || `<span class="prose" style="color:var(--muted)">none</span>`}</div></div>
+          ${(o.lanes || []).map(l => { const c = `${dot(freshDot(l.newest_age_h), "")}${esc(l.lane)} ${age(l.newest_age_h)}`;
+            return findRow("lane:" + l.lane, src) ? `<button class="chip" data-goto="lane:${esc(l.lane)}">${c}</button>` : `<span class="chip">${c}</span>`; }).join("") || `<span class="prose" style="color:var(--muted)">none</span>`}</div></div>
         ${m.identity ? `<div class="sect"><h2>Identity</h2><div class="prose">Sessions here default to <span class="mono">${esc(m.identity)}</span>.</div></div>` : ""}`;
       return;
     }
@@ -1244,9 +1245,11 @@ window.onerror = function (msg, src, line, col) {
     if (hist.i < 0) commit();
   }
   // A bare name is a row id first (a tool), then a lane; "lane:<name>" is that lane. A lane
-  // that a tool on this machine owns is listed as that tool.
+  // that a tool on this machine owns is listed as that tool, and a guest's sub-lane
+  // (parallels-<host>/<guest>) as the lane it sits in.
   const findRow = (id, list = items()) => { const lane = String(id).replace(/^lane:/, "");
-    return list.find(i => i.id === id) || list.find(i => i.kind === "tool" && localTool(i.id)?.lane === lane) || list.find(i => i.id === "lane:" + lane); };
+    return list.find(i => i.id === id) || list.find(i => i.kind === "tool" && localTool(i.id)?.lane === lane) || list.find(i => i.id === "lane:" + lane)
+      || (lane.includes("/") ? findRow(lane.split("/")[0], list) : undefined); };
   function select(kind, id, open) {
     if (!sel || sel.id !== id) reviewTab = null;
     sel = { view, kind, id };
@@ -1403,7 +1406,8 @@ window.onerror = function (msg, src, line, col) {
     const nav = e.target.closest("#controls [data-view]"); if (nav) return setView(nav.dataset.view);
     const tab = e.target.closest("[data-tab]"); if (tab) { reviewTab = tab.dataset.tab; renderInspector(); return; }
     const chip = e.target.closest("[data-goto]");
-    if (chip) { const p = chip.dataset.goto.split(":"); setView(p[0] + "s", { silent: true }); const it = findRow(chip.dataset.goto); if (it) select(it.kind, it.id, true); else commit(); return; }
+    // a lane chip lands on its Sources row; one with no row is not rendered as a button
+    if (chip) { const it = findRow(chip.dataset.goto, sourceItems()); if (it) { setView("sources", { silent: true }); if (view === "sources") select(it.kind, it.id, true); } return; }
     const grow = e.target.closest(".g-row[data-place]");
     if (grow) { let pl = null; try { pl = JSON.parse(grow.dataset.place); } catch (x) {} return bridge({ cmd: "showConsole", place: pl }); }
     const opn = e.target.closest("[data-open]");
