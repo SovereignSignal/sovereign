@@ -1358,16 +1358,21 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         appMenu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r")
         appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Sovereign", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Sovereign", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
+        // Cmd+W, Cmd+M and Cmd+H reach AppKit only as menu key equivalents.
+        let fileItem = NSMenuItem(); main.addItem(fileItem)
+        let file = NSMenu(title: "File")
         if localMode {
-            let fileItem = NSMenuItem(); main.addItem(fileItem)
-            let file = NSMenu(title: "File")
             file.addItem(withTitle: "Today", action: #selector(openHome), keyEquivalent: "")
             file.addItem(withTitle: "New Archive…", action: #selector(newArchive), keyEquivalent: "")
             file.addItem(withTitle: "Open Archive…", action: #selector(openArchive), keyEquivalent: "o")
-            fileItem.submenu = file
+            file.addItem(.separator())
         }
+        file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileItem.submenu = file
         let editItem = NSMenuItem(); main.addItem(editItem)
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -1390,6 +1395,11 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         }
         appearanceItem.submenu = choices; appearanceMenu = choices
         viewMenu.addItem(appearanceItem); viewItem.submenu = viewMenu
+        let windowItem = NSMenuItem(); main.addItem(windowItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowItem.submenu = windowMenu; NSApp.windowsMenu = windowMenu
         NSApp.mainMenu = main
     }
 
