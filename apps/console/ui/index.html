@@ -419,7 +419,7 @@ window.onerror = function (msg, src, line, col) {
       kv: [["this week", last ? `${num(last.kept)} of ${num(last.judged)} kept · ${pct(last.kept, last.judged)}` : "no judgments yet"],
            ["all time", num((h.judge || {}).total_judged) + " judged"],
            ["last run", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)} kept` : "?"],
-           ["unjudged", num(st.deferred ?? cov.unjudged_in_window) + " of " + num(cov.processable) + " in scope"],
+           ["unjudged", num(cov.unjudged_in_window) + " of " + num(cov.processable) + " in scope"],
            ["stranded", num(cov.stranded_pre_watermark) + " behind the watermark"],
            ["burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "running every 2h, stops itself under 2% kept"]],
       gears: h.gears || {}, gears_note: h.gears_note });
@@ -461,7 +461,7 @@ window.onerror = function (msg, src, line, col) {
     const judge = `<section class="tiles4" data-dash="judge">
       ${fig("judge", "Read", read == null ? "–" : String(read), read == null ? "" : "%", cov.processable ? num(cov.judged_ever) + " of " + num(cov.processable) : "not reported")}
       ${fig("judge", "Kept", last && last.judged ? String(Math.round(100 * last.kept / last.judged)) : "–", last && last.judged ? "%" : "", "this week")}
-      ${fig("judge", "Waiting", num(st.deferred ?? cov.unjudged_in_window ?? 0), "", "not read yet")}
+      ${fig("judge", "Waiting", num(cov.unjudged_in_window ?? 0), "", "not read yet")}
       ${fig("judge", "Out of reach", num(cov.stranded_pre_watermark ?? 0), "", "before the start")}</section>`;
 
     const bs = a.by_src || {}, desk = bs.desk || 0, unat = (bs.web || 0) + (bs.legacy || 0) + (bs.other || 0);
@@ -620,8 +620,8 @@ window.onerror = function (msg, src, line, col) {
     if (!h.reachable) out.push({ kind: "quiet", id: "hub-off", text: "The hub did not answer: " + (h.error || "no route") });
     else {
       const bd = h.burndown || {};
-      row("hub:judge", { label: "judge", desc: `last run kept ${num(st.new_proposals)} of ${num(st.judged)} · ${num(st.deferred ?? cov.unjudged_in_window)} unjudged in scope`, state: st.judged != null ? "live" : "", stateText: bd.stopped ? "burn-down stopped" : "judging", age_h: h.status_age_h, goto: "judge",
-        detail: [["last run", `${num(st.new_proposals)} kept of ${num(st.judged)} judged`], ["digest", h.digest_at], ["unjudged in scope", `${num(st.deferred ?? cov.unjudged_in_window)} of ${num(cov.processable)}`], ["stranded behind the watermark", num(cov.stranded_pre_watermark)], ["judged ever", num((h.judge || {}).total_judged)], ["burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "running, 10-minute tick, stops itself under 2% kept"]],
+      row("hub:judge", { label: "judge", desc: `last run kept ${num(st.new_proposals)} of ${num(st.judged)} · ${num(cov.unjudged_in_window)} unjudged in scope`, state: st.judged != null ? "live" : "", stateText: bd.stopped ? "burn-down stopped" : "judging", age_h: h.status_age_h, goto: "judge",
+        detail: [["last run", `${num(st.new_proposals)} kept of ${num(st.judged)} judged`], ["digest", h.digest_at], ["unjudged in scope", `${num(cov.unjudged_in_window)} of ${num(cov.processable)}`], ["stranded behind the watermark", num(cov.stranded_pre_watermark)], ["judged ever", num((h.judge || {}).total_judged)], ["burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "running, 10-minute tick, stops itself under 2% kept"]],
         note: "The judge runs on the hub's own inference. Nothing it keeps lands without the gate." });
       row("hub:gate", { label: "gate", desc: h.pending ? `${num(h.pending)} waiting for you` : "nothing waiting", state: h.pending ? "warn" : "live", stateText: h.pending ? "needs you" : "clear", age_h: null, gate: true,
         detail: [["waiting", num(h.pending)], ["audit items", num(st.audit_pending)]], note: "Open Sovereign → Review to compare proposals and approve or reject them." });
@@ -1238,7 +1238,7 @@ window.onerror = function (msg, src, line, col) {
         ${(() => { const vd = verdictSentence(); bridge({ cmd: "verdict", state: vd.state, text: vd.text }); return `<button class="g-row verdict ${vd.state}" data-place="${esc(JSON.stringify({ view: "glance" }))}"><span class="vdot"></span><span class="vt">${esc(vd.text)}</span></button>`; })()}
         ${row({ view: "review" }, "Review proposals", pending == null ? "Unverified" : num(pending), "Open your review queue")}
         ${row({ view: "archive", section: "judge" }, "judge kept", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)}` : "?", (last ? "wk " + pct(last.kept, last.judged) : "") + sparkline(rates))}
-        ${row({ view: "archive", section: "judge" }, "unjudged", num(st.deferred ?? cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
+        ${row({ view: "archive", section: "judge" }, "unjudged", num(cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
         ${row({ view: "archive", section: "composition" }, "cards", num(a.total), a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : "")}
         ${row({ view: "hosts" }, "fleet", `${online} of ${fleet.length} up`, offline ? offline + " offline" : unknown ? unknown + " not probed" : "all reachable", offline ? "hot" : "")}
         ${needs.filter(n => n.cause !== "need:gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.jump ? {view:n.jump.view,sel:{id:n.jump.id}} : {view:'glance'}))}"><span class="l">${esc(n.name)}</span><span class="s wrap">${esc(n.detail)}</span><span class="chev">›</span></button>`).join("")}
