@@ -375,6 +375,22 @@ def job_error_output(path):
         return ""
 
 
+def redacted_tail(text, limit=400):
+    """Captured output as the console may show it: credentials redacted before the tail is
+    cut, and nothing when redaction fails, never the raw text."""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    try:
+        from brain_redact import redact_text
+        return redact_text(text or "")[0].strip()[-limit:]
+    except Exception:
+        return ""
+
+
+def last_line(text):
+    return next((l.strip() for l in reversed((text or "").splitlines()) if l.strip()), "")
+
+
 def lane_log_info(h, manifest, runs=None):
     """The plist-shaped record the console already reads, sourced from the runner instead of a
     per-tool job. One log pair per lane, same path formula on both platforms, so a clean lane
@@ -1012,6 +1028,12 @@ def backups_view(root, hub, fleet):
             return {"why": "hang", "url": None, "action": "ssh to the node connected but never answered within %d s. Check the node's Tailscale SSH policy from this machine: `ssh -v %%s`." % PROBE_BUDGET}
         if "closed or filtered" in str(exc):
             return {"why": "port-closed", "url": None, "action": "Port 22 did not answer from this machine. Check the node is powered on and on the tailnet, then refresh."}
+        if isinstance(exc, subprocess.CalledProcessError):
+            # ssh says why on its last stderr line (a changed host key, a refused key, a
+            # policy deny); the exception's own text is only the argv.
+            said = last_line(redacted_tail(err))[:160].rstrip(".").replace("%", "%%")
+            return {"why": "ssh-failed" if said else "error", "url": None,
+                    "action": "ssh to the node exited %d: %s. Run `ssh %%s` in a terminal to see the whole message, then refresh." % (exc.returncode, said or "no error output")}
         return {"why": "error", "url": None, "action": "ssh to the node failed: %s" % (str(exc)[:120] or type(exc).__name__)}
     def _probe(node):
         result = {"jobs": None, "dumps": {}, "reachable": False, "detail": None}
@@ -1087,6 +1109,7 @@ def hypervisor_needs(backups):
         cause = {"tailscale-check": "Tailscale SSH requires a browser re-check from this machine.",
                  "hang": "The SSH probe did not answer within its 6 second budget.",
                  "port-closed": "The node's SSH port did not answer the connection probe.",
+                 "ssh-failed": "ssh to the node exited with an error, quoted in the next step.",
                  "error": "The SSH probe failed; the underlying cause is unconfirmed."}.get(d.get("why"), "The node did not return backup information.")
         row = {"kind": "hypervisor", "node": node, "text": text,
                "why": cause, "action": action,
