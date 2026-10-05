@@ -785,7 +785,12 @@ window.onerror = function (msg, src, line, col) {
     const rows=$('#rows');
     $('#review-intro').hidden=true;rows.className='';
     const region=(label)=>{rows.setAttribute('role','region');rows.setAttribute('aria-label',label);rows.removeAttribute('aria-activedescendant');};
-    if(settingsOpen){region('Settings');SovSettings.mount(rows,{S,D,root:selectedRoot,pinned});footerMeta(0);return;}
+    if(settingsOpen){region('Settings');
+      // A redraw keeps the disclosures the owner opened and the last update result.
+      const open=[...rows.querySelectorAll('.set-pane details')].map(x=>x.open),note=$('#set-update-state')?.textContent;
+      SovSettings.mount(rows,{S,D,root:selectedRoot,pinned});
+      const now=rows.querySelectorAll('.set-pane details');if(now.length===open.length)now.forEach((x,i)=>{x.open=open[i];});
+      if(note)SovSettings.note('set-update-state',note);footerMeta(0);return;}
     if(view==='recovery'){region('Archive backups');SovBackups.mount(rows,selectedRoot);footerMeta(0);return;}
     if(view==='setup'){region('Hub setup and recovery');SovHub.mount(rows,selectedRoot);footerMeta(0);return;}
     rows.setAttribute('role','listbox');rows.setAttribute('aria-label',review?'Proposals awaiting your decision':'Records');
@@ -800,7 +805,8 @@ window.onerror = function (msg, src, line, col) {
     }
     const n = list.filter(selectable).length;
     footerMeta(n);
-    if (sel && (sel.view !== view || !list.some(i => i.id === sel.id))) sel = null;
+    // A queue that cannot be read says nothing about which proposals remain: keep the open one.
+    if (sel && (sel.view !== view || (!review || q.available) && !list.some(i => i.id === sel.id))) sel = null;
     const shown = view === "archive" ? [] : list;
     const rowsHTML = shown.map((it, i) => selectable(it)
       ? `<div class="row ${it.kind==='candidate'?'discovery-row':''}" id="r${i}" role="option" data-id="${esc(it.id)}" aria-selected="${String(!!sel && sel.id === it.id)}">${rowHTML(it)}</div>`
@@ -889,7 +895,8 @@ window.onerror = function (msg, src, line, col) {
   });
   window.addEventListener("sov-appearance", e => {
     S.appearance = e.detail;
-    const control = $("#s-appearance"); if (control) control.value = e.detail;
+    // Appearance is saved the moment it changes, so the control shows it as drawn, never as an unsaved edit.
+    const control = $("#s-appearance"); if (control) { control.value = e.detail; [...control.options].forEach(o => { o.defaultSelected = o.selected; }); }
   });
   function openSettings() {
     settingsOpen = true; sel = null;
@@ -910,7 +917,7 @@ window.onerror = function (msg, src, line, col) {
   // A card's text is material that came in through raw. Every character is escaped
   // first; only headings, list items, bold and code are then given back as markup,
   // so nothing a proposal contains can become an element.
-  function mdBlocks(text) {
+  function mdBlocks(text, keepTitle) {
     const out = []; let para = [];
     const flush = () => { if (para.length) { out.push(para.join(" ")); para = []; } };
     for (const line of String(text || "").replace(/\r/g, "").split("\n")) {
@@ -919,7 +926,8 @@ window.onerror = function (msg, src, line, col) {
       else para.push(line.trim());
     }
     flush();
-    return out.length && /^#\s/.test(out[0]) ? out.slice(1) : out;   // the title is already the heading above
+    // The title is already the heading above. A comparison keeps it: a retitle is a change.
+    return !keepTitle && out.length && /^#\s/.test(out[0]) ? out.slice(1) : out;
   }
   const mdInline = (text) => esc(text).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
   function mdBlock(block, cls) {
@@ -941,7 +949,7 @@ window.onerror = function (msg, src, line, col) {
   }
   // What changed, with one block of context either side and longer unchanged runs folded.
   function changesHTML(current, proposed, unfolded) {
-    const d = diffBlocks(mdBlocks(current), mdBlocks(proposed)), changed = (k) => !!d[k] && d[k][0] !== "same", out = [];
+    const d = diffBlocks(mdBlocks(current, true), mdBlocks(proposed, true)), changed = (k) => !!d[k] && d[k][0] !== "same", out = [];
     for (let k = 0; k < d.length; k++) {
       if (unfolded || changed(k) || changed(k - 1) || changed(k + 1)) { out.push(mdBlock(d[k][1], d[k][0] === "same" ? "" : d[k][0])); continue; }
       let e = k; while (e < d.length && !changed(e) && !changed(e - 1) && !changed(e + 1)) e++;
@@ -1040,7 +1048,7 @@ window.onerror = function (msg, src, line, col) {
         `${(p.flags||[]).length?`<div class="note">${esc(p.flags.join(', '))}: requires your review.</div>`:''}`+
         (check?.review_notes||[]).map(note=>`<div class="note">${esc(note)}</div>`).join('')+
         (existing.length?`<div class="rv-tabs" role="tablist">${[['changes','Changes'],['proposed','Proposed'],['current','Current']].map(([k,label])=>`<button role="tab" data-tab="${k}" aria-selected="${String(tab===k)}">${label}</button>`).join('')}<span class="rv-stat">+${changes.adds} −${changes.dels}</span></div>`:'')+
-        `<div class="rv-card" id="${tab==='proposed'?'gate-proposed':'gate-comparison'}">${tab==='changes'?changes.html:tab==='current'?existing.map(c=>`<p class="mono rv-path">${esc(c.path)}</p>${mdBlocks(c.body).map(b=>mdBlock(b)).join('')}`).join(''):proposed}</div>`+
+        `<div class="rv-card" id="${tab==='proposed'?'gate-proposed':'gate-comparison'}">${tab==='changes'?changes.html:tab==='current'?existing.map(c=>`<p class="mono rv-path">${esc(c.path)} · ${esc(c.type)}</p>${mdBlocks(c.body, true).map(b=>mdBlock(b)).join('')}`).join(''):proposed}</div>`+
         `<div class="acts">${resolvable ? `<button class="brass" data-act="${resolving?'gate':'gate-resolve'}" data-verb="resolve" data-slug="${esc(p.slug)}">${resolving?'Approve update as '+esc(retained):'Resolve and review'}</button>` : `<button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}" ${GateModel.canApprove(check,gatePending)?'':'disabled'}>${state==='running'?'Saving…':'Approve'}</button>`}<kbd title="Approve">⌘↵</kbd>
         <button class="danger" data-act="gate" data-verb="reject" data-slug="${esc(p.slug)}" ${GateModel.canReject(check,gatePending)?'':'disabled'}>Reject</button><kbd title="Reject, pressed twice">R</kbd>
         <button class="quiet rv-check ${esc(state)}" data-act="gate-check" data-slug="${esc(p.slug)}" title="${esc(message)}" ${['checking','running'].includes(state)||gatePending?'disabled':''}>${dot(tone,title)}${state==='checking'?'Checking…':state==='running'?'Saving…':state==='ready'?'Checked':'Check again'}</button>
@@ -1159,7 +1167,7 @@ window.onerror = function (msg, src, line, col) {
   }
 
   function openInspector() { $("#inspector").classList.add("open"); $("#inspector").setAttribute("aria-hidden", "false"); }
-  function closeInspector() { settingsOpen = false; if(splitReview()){sel=null;renderInspector();syncActive();return;} if (pinned) { renderInspector(); return; } $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
+  function closeInspector() { settingsOpen = false; if(splitReview()){sel=null;document.querySelectorAll(".row[role=option]").forEach(r=>r.setAttribute("aria-selected","false"));renderInspector();syncActive();return;} if (pinned) { renderInspector(); return; } $("#inspector").classList.remove("open"); $("#inspector").setAttribute("aria-hidden", "true"); }
   function setPinned(v) {
     pinned = !!v; document.body.classList.toggle("pinned", pinned);
     try { localStorage.setItem("sov.pinned", pinned ? "1" : "0"); } catch (e) {}
@@ -1224,10 +1232,27 @@ window.onerror = function (msg, src, line, col) {
     requestAnimationFrame(() => bridge({ cmd: "glanceSize", h: Math.ceil(g.scrollHeight) }));
   }
 
-  function render(d) {
+  // A pane the owner is in the middle of: a field has focus, or a control no longer shows what was drawn.
+  const inUse = (el) => [...el.querySelectorAll("input,select,textarea")].some(f => f === document.activeElement
+    || (f.type === "checkbox" || f.type === "radio" ? f.checked !== f.defaultChecked
+      : f.tagName === "SELECT" ? f.value !== ([...f.options].find(o => o.defaultSelected) || f.options[0] || {}).value : f.value !== f.defaultValue));
+  // Text typed into the detail survives its redraw: the same field, drawn again, gets it back,
+  // and the focused one its caret.
+  function keepTyped(draw) {
+    const box = $("#insp"), a = document.activeElement;
+    const typed = [...box.querySelectorAll("input[id]")].filter(f => f === a || f.value !== f.defaultValue).map(f => [f.id, f.value, f === a && [f.selectionStart, f.selectionEnd]]);
+    draw();
+    for (const [id, value, caret] of typed) {
+      const f = document.getElementById(id); if (!f || !box.contains(f)) continue;
+      f.value = value; if (caret) { f.focus(); try { f.setSelectionRange(caret[0], caret[1]); } catch (e) {} }
+    }
+  }
+  // A status tick never redraws under the owner: the list pane waits while a form in it is
+  // in use, and the detail keeps what was typed into it.
+  function render(d, tick) {
     D = d;
     if (GLANCE) return renderGlance();
-    renderTop(); renderList(); renderInspector();
+    renderTop(); keepTyped(() => { if (!tick || !inUse($("#rows"))) renderList(); renderInspector(); });
     if(view==='discover'&&!discovery)scanTools();
     if (hist.i < 0) commit();
   }
@@ -1491,6 +1516,8 @@ window.onerror = function (msg, src, line, col) {
     if (row) { const it = items().find(i => i.id === row.dataset.id); if (it) select(it.kind, it.id, true); }
   }
   $("#rows").addEventListener("keydown", (e) => {
+    // Text typed into a field in the list, and chords such as ⌘↵, are not list navigation.
+    if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     const dom = new Set([...document.querySelectorAll(".row[role=option]")].map(r => r.dataset.id));
     const list = items().filter(i => selectable(i) && dom.has(i.id)); if (!list.length) return;
     let i = list.findIndex(x => sel && x.id === sel.id);
@@ -1511,8 +1538,9 @@ window.onerror = function (msg, src, line, col) {
     if ((e.metaKey || e.ctrlKey) && e.key === "[") { e.preventDefault(); back(); }
     if ((e.metaKey || e.ctrlKey) && e.key === "]") { e.preventDefault(); forward(); }
     if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); openSettings(); }
-    // Approving puts a card into trusted knowledge, so its key takes a modifier.
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && view === "review" && !settingsOpen) { e.preventDefault(); $('#insp [data-act="gate"]:not(.danger), #insp [data-act="gate-resolve"]')?.click(); }
+    // Approving puts a card into trusted knowledge, so its key takes a modifier, and it
+    // acts only on the proposal open on screen.
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && view === "review" && !settingsOpen) { e.preventDefault(); const b = $('#insp [data-act="gate"]:not(.danger), #insp [data-act="gate-resolve"]'); if (b && sel?.kind === "prop" && b.dataset.slug === sel.id.slice(2)) b.click(); }
     if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !pinned) { closeInspector(); commit(); } }
     if (typing || e.metaKey || e.ctrlKey) return;
     if (GLANCE) return;   // the menu-bar panel has its own rows, and no rail to walk
@@ -1615,7 +1643,15 @@ window.onerror = function (msg, src, line, col) {
       return;
     }
     if (kind === "status") {
-      const resumeReview=view==='review'&&!reviewQueue().available;
+      // Before every probe the bridge re-sends the observation already on screen, marked
+      // pending. It changes the refreshing caption only: queue, selection, checks and forms stay.
+      // A device association or backup scope saved on this Mac rides along and applies at once.
+      if(!GLANCE&&payload._status?.pending&&!payload._status.error&&payload.machine&&D?.machine){
+        const local=v=>JSON.stringify([v.device_associations,v.backup_scope]),s={...D,_status:{...D._status,...payload._status}};
+        if(local(payload)!==local(D))payload={...payload,_status:D._status};
+        else{$("#vmeta").textContent=SovStatus.seen(s);$("#vmeta").title=SovStatus.caption(s);return;}
+      }
+      const resumeReview=view==='review'&&!sel&&!reviewQueue().available;
       payload=SovStatus.retain(D,payload);
       // A status probe started before a decision can return its old queue afterwards.
       // Suppress only the exact completed proposal, and retire receipts on a fresh absence.
@@ -1631,8 +1667,8 @@ window.onerror = function (msg, src, line, col) {
       if(!gatePending)for(const [slug,entry] of gateChecks){
         if(entry.key!==GateModel.reviewKey(payload,slug)){gateChecks.delete(slug);gateResolutions.delete(slug);}
       }
-      render(payload);
-      if(resumeReview&&view==='review'&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
+      render(payload,true);
+      if(resumeReview&&view==='review'&&!settingsOpen&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
     } else if (kind === "appUpdateResult") {
       appUpdatePending = payload.state === 'started';
@@ -1668,11 +1704,12 @@ window.onerror = function (msg, src, line, col) {
       $("#drawer-state").textContent = payload.exit === 0 ? "started" : "failed";
       setTimeout(refresh, 4000);
     } else if (kind === "settings") {
-      S = Object.assign({}, S, payload);
+      S = Object.assign({}, S, { error: null }, payload);   // an answer without an error clears the last one
       const first = !gotSettings; gotSettings = true;
       if (first && !GLANCE && !D && S.defaultView) { const saved = RENAMED[S.defaultView] || S.defaultView; if (PAGE[saved]) view = saved; }
       resetTimer();
-      if (settingsOpen) { renderInspector(); const st = $("#s-state"); if (st && saving) st.textContent = payload.error ? "" : "Saved"; }
+      // The pane shows the answer: a save's always, a probe's once no change is in progress.
+      if (settingsOpen && (saving || !inUse($("#rows")))) { renderList(); const st = $("#s-state"); if (st && saving && !payload.error) st.textContent = "Saved"; }
       saving = false;
     } else if (kind === "goto") {
       if(!window.sovCanQuit())return;

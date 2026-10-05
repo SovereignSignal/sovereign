@@ -90,7 +90,7 @@ window.SovBackups=(()=>{
     if(b.id==='ab-use-folder'){values[browser.field]=browser.folder;browser=null;ready=false;result=null;render();}
     if(b.id==='ab-close-browser'){browser=null;render();}
   });
-  return {protection,age,get busy(){return !!pending;},mount(el,archive){const changed=root!==archive;host=el;if(changed){root=archive;action='configure';storage='external';state=null;result=null;ready=false;browser=null;for(const k in values)values[k]='';}render();if(!state&&!pending&&root)send('status');},deliver(kind,p){
+  return {protection,age,get busy(){return !!pending;},mount(el,archive){const changed=root!==archive,drawn=!changed&&host===el&&el.firstElementChild?.classList.contains('archive-backups');host=el;if(changed){root=archive;action='configure';storage='external';state=null;result=null;ready=false;browser=null;for(const k in values)values[k]='';}if(!drawn)render();if((!state||state.error)&&!pending&&root)send('status');},deliver(kind,p){
     if(kind==='archiveBackupPicked'){if(p.field in values){values[p.field]=p.path;ready=false;result=null;render();}return;}
     if(kind!=='archiveBackupResult'||p.request!==pending?.request)return;
     const old=pending;pending=null;
