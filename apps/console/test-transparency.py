@@ -12,7 +12,8 @@ service=importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.n
 COMMON=r'''
 const checks={},post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
 const check=(name,ok)=>{checks[name]=!!ok};
-const wait=async fn=>{for(let n=0;n<160;n++){if(fn())return;await pause(50)}throw Error('Timed out: '+fn)};
+// Bounded by the clock: a background window throttles timers, so a count of polls outlasts the snapshot watchdog and the failure goes unnamed.
+const wait=async fn=>{for(const end=Date.now()+10000;Date.now()<end;await pause(50))if(fn())return;throw Error('Timed out: '+fn)};
 const text=()=>document.body.textContent;
 const caption=()=>document.getElementById('seen')?.title||document.getElementById('vmeta')?.title||'';
 const needs=()=>document.querySelector('.today-needs');

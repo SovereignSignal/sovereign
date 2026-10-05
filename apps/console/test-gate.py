@@ -7,7 +7,8 @@ spec=importlib.util.spec_from_file_location('gate_fixture',HERE/'tests/test_gate
 
 QA=r'''
 const scenario=SCENARIO,fixtureStatus=STATUS,checks={};
-const wait=async(test)=>{for(let i=0;i<180;i++){if(test())return;await new Promise(r=>setTimeout(r,50))}throw Error('Timed out waiting for '+scenario+': '+document.querySelector('#insp').textContent.slice(0,1400))};
+// Bounded by the clock: a background window throttles timers, so a count of polls outlasts the snapshot watchdog and the failure goes unnamed.
+const wait=async(test)=>{for(const end=Date.now()+10000;Date.now()<end;await new Promise(r=>setTimeout(r,50)))if(test())return;throw Error('Timed out waiting for '+scenario+': '+document.querySelector('#insp').textContent.slice(0,1400))};
 await wait(()=>document.querySelector('#insp .rv-check')&&!document.querySelector('#insp .checking'));
 const approve=()=>document.querySelector('[data-act="gate"][data-verb="approve"]');
 checks.rail=!!document.querySelector('.shell-rail');checks.noHorizontalOverflow=document.documentElement.scrollWidth<=innerWidth;

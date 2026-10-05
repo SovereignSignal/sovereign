@@ -8,7 +8,8 @@ sys.path.insert(0,str(ROOT/'lib'));import brain_local
 spec=importlib.util.spec_from_file_location('producer_qa',HERE/'test-producers.py');fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
 PROBE=r'''
 const checks={},check=(n,x)=>{checks[n]=!!x},post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
-const wait=async fn=>{for(let i=0;i<180;i++){if(fn())return;await pause(40)}throw Error('Timed out: '+fn)};
+// Bounded by the clock: a background window throttles timers, so a count of polls outlasts the snapshot watchdog and the failure goes unnamed.
+const wait=async fn=>{for(const end=Date.now()+10000;Date.now()<end;await pause(40))if(fn())return;throw Error('Timed out: '+fn)};
 const replies=[],scans=[],deliver=window.sovDeliver;window.sovDeliver=(kind,p)=>{if(kind==='log'&&p.state==='end')replies.push(p);if(kind==='discovery')scans.push(p);deliver(kind,p)};
 await wait(()=>document.querySelector('[data-id="gemini-cli"]'));
 const row=id=>document.querySelector('[data-id="'+id+'"]'),apply=()=>document.querySelector('#drawer-apply');

@@ -7,7 +7,8 @@ sys.path.insert(0,str(ROOT/'lib'))
 import brain_local
 PROBE=r'''
 const checks={},check=(n,v)=>checks[n]=!!v,post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
-const wait=async fn=>{for(let n=0;n<2500;n++){if(fn())return;await pause(40)}throw Error('Timeout: '+fn)};
+// Bounded by the clock: a background window throttles timers, so a count of polls outlasts the snapshot watchdog and the failure goes unnamed.
+const wait=async fn=>{for(const end=Date.now()+100000;Date.now()<end;await pause(40))if(fn())return;throw Error('Timeout: '+fn)};
 // Only a change holds the guard; the status read that follows one shows only as the working line.
 const settled=()=>!window.SovBackups.busy&&!document.querySelector('.archive-backups [role="status"]')?.textContent.includes('is working');
 const replies=[],deliver=window.sovDeliver;window.sovDeliver=(kind,p)=>{if(kind==='archiveBackupResult')replies.push(p);deliver(kind,p)};

@@ -7,7 +7,8 @@ sys.path.insert(0,str(REPO/'lib'));import brain_local
 spec=importlib.util.spec_from_file_location('gate_fixture',HERE/'tests/test_gate_check.py');fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
 COMMON=r'''
 const checks={},pause=ms=>new Promise(r=>setTimeout(r,ms));
-const wait=async fn=>{for(let i=0;i<160;i++){if(fn())return;await pause(50)}throw Error('Timed out: '+fn)};
+// Bounded by the clock: a background window throttles timers, so a count of polls outlasts the snapshot watchdog and the failure goes unnamed.
+const wait=async fn=>{for(const end=Date.now()+10000;Date.now()<end;await pause(50))if(fn())return;throw Error('Timed out: '+fn)};
 const post=o=>window.webkit.messageHandlers.sov.postMessage(o);
 const check=(name,ok)=>{checks[name]=!!ok};
 const change=async value=>{post({cmd:'appearance',value});await wait(()=>document.documentElement.dataset.theme===value);await pause(80)};

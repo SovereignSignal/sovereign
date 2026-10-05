@@ -11,7 +11,8 @@ import brain_local
 
 PROBE=r'''
 const checks={},check=(name,ok)=>{checks[name]=!!ok},post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
-const wait=async fn=>{for(let i=0;i<100;i++){if(fn())return;await pause(40)}throw Error('UI state did not arrive')};
+// Bounded by the clock: a background window throttles timers, so a count of polls outlasts the snapshot watchdog and the failure goes unnamed.
+const wait=async fn=>{for(const end=Date.now()+10000;Date.now()<end;await pause(40))if(fn())return;throw Error('UI state did not arrive')};
 const button=()=>document.querySelector('[data-act="device-disassociate"]');
 const restore=()=>document.querySelector('[data-act="device-restore"]');
 const replies=[],deliver=window.sovDeliver;

@@ -7,7 +7,8 @@ HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[1]
 sys.path.insert(0,str(ROOT/'lib'));import brain_local
 PROBE=r'''
 const checks={},check=(n,x)=>{checks[n]=!!x},post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
-const wait=async fn=>{for(let i=0;i<200;i++){if(fn())return;await pause(40)}throw Error('Timed out: '+fn+'; replies='+JSON.stringify(replies)+'; drawer='+document.querySelector('#drawer-log')?.textContent)};
+// Bounded by the clock: a background window throttles timers, so a count of polls outlasts the snapshot watchdog and the failure goes unnamed.
+const wait=async fn=>{for(const end=Date.now()+10000;Date.now()<end;await pause(40))if(fn())return;throw Error('Timed out: '+fn+'; replies='+JSON.stringify(replies)+'; drawer='+document.querySelector('#drawer-log')?.textContent)};
 const replies=[],deliver=window.sovDeliver;window.sovDeliver=(kind,p)=>{if(kind==='log'&&p.state==='end')replies.push(p);deliver(kind,p)};
 const apply=()=>document.querySelector('#drawer-apply'),remove=()=>document.querySelector('[data-act="remove-producer"]');
 check('Connected source listed once, with its lane',document.querySelector('[data-id="windsurf"]')&&!document.querySelector('[data-id="lane:windsurf-qa"]'));

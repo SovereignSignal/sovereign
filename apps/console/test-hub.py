@@ -6,7 +6,8 @@ HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[1]
 sys.path.insert(0,str(ROOT/'lib'));import brain_local
 PROBE=r'''
 const checks={},check=(n,v)=>{checks[n]=!!v},post=o=>window.webkit.messageHandlers.sov.postMessage(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
-const wait=async fn=>{for(let i=0;i<500;i++){if(fn())return;await pause(40)}throw Error('Timed out: '+fn)};
+// Bounded by the clock: a background window throttles timers, so a count of polls outlasts the snapshot watchdog and the failure goes unnamed.
+const wait=async fn=>{for(const end=Date.now()+20000;Date.now()<end;await pause(40))if(fn())return;throw Error('Timed out: '+fn)};
 const replies=[],deliver=window.sovDeliver;window.sovDeliver=(kind,p)=>{if(kind==='hubResult')replies.push(p);deliver(kind,p)};
 await wait(()=>document.querySelector('[data-goto-view="setup"]'));
 check('Setup reachable without connector service',true);document.querySelector('[data-goto-view="setup"]').click();
