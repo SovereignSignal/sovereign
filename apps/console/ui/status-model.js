@@ -148,7 +148,7 @@ window.SovStatus = (() => {
       stale.push({ state: "warn", name: `lane ${l.lane}`, detail: f.text,
                    why: "The lane's own contract is what grants a producer its read and write permissions; this one does not say what it should.",
                    action: `Open the lane's LANE.md and settle it: ${l.relative_path || "raw/workspaces/" + l.lane}/LANE.md`,
-                   age_h: null, jump: { view: "tools", id: l.lane },
+                   age_h: null, jump: { view: "tools", id: "lane:" + l.lane },
                    cause: "permission-drift", causeLabel: "have a permission their contract does not settle" });
     }));
     // What is waiting. The hub has always reported its queue depth and the app showed
