@@ -187,7 +187,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         case "producer":
             manageProducer(d, generation: generation)
         case "connect":
-            guard let sov = sov, let h = d["harness"] as? String else { return }
+            guard let sov = sov else { refuse(d, "connect", "sov is not installed on this machine.", generation: generation); return }
+            guard let h = d["harness"] as? String else { refuse(d, "connect", "No tool was named.", generation: generation); return }
             var args = [sov, "connect", h]
             for (flag, key) in [("--host", "host"), ("--vault", "vault"), ("--core", "core"), ("--hub", "hub")] {
                 if let v = d[key] as? String, !v.isEmpty { args += [flag, v] }
@@ -200,8 +201,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             stream(args, id: "connect", request: d["request"], generation: generation, env: secretEnv)
         case "hostadd":
             // the hub does the work (sov routes there); the drawer streams it
-            guard let sov = sov, let name = d["name"] as? String,
-                  name.range(of: "^[a-z0-9][a-z0-9-]{1,40}$", options: .regularExpression) != nil else { return }
+            guard let sov = sov else { refuse(d, "hostadd", "sov is not installed on this machine.", generation: generation); return }
+            guard let name = d["name"] as? String,
+                  name.range(of: "^[a-z0-9][a-z0-9-]{1,40}$", options: .regularExpression) != nil else {
+                refuse(d, "hostadd", "\((d["name"] as? String) ?? "This device") cannot join through host add: its name must be lowercase letters, digits and hyphens.", generation: generation); return
+            }
             var args = [sov, "host", "add", name]
             for (flag, key) in [("--user", "user"), ("--addr", "addr"), ("--identity", "identity"), ("--workstreams", "workstreams")] {
                 if let v = d[key] as? String, !v.isEmpty { args += [flag, v] }
@@ -214,7 +218,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 self.deliver("vmstart", ["name": name, "exit": code, "out": out + err])
             }
         case "kickstart":
-            guard let label = d["label"] as? String else { return }
+            guard let label = d["label"] as? String else {
+                deliver("kickstart", ["label": "", "exit": 64, "out": "No job was named.", "request": d["request"] ?? NSNull()], generation: generation); return
+            }
             // A lane row asks for ITS lane, not the whole job. The shared runner takes --only, so
             // run that directly: kickstarting the job would kill the tick in flight (-k) and then
             // run every lane, which is not what the row said it would do. The runner sits beside
@@ -238,6 +244,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             if let p = d["path"] as? String, p.hasSuffix(".log"), p.hasPrefix(NSHomeDirectory()) {
                 try? "".write(toFile: p, atomically: true, encoding: .utf8)
                 deliver("kickstart", ["label": "cleared " + (p as NSString).lastPathComponent, "exit": 0, "out": "", "request": d["request"] ?? NSNull()], generation: generation)
+            } else {
+                deliver("kickstart", ["label": "clear log", "exit": 1, "out": "Only a .log file in your home folder can be cleared here.", "request": d["request"] ?? NSNull()], generation: generation)
             }
         case "reveal":
             if let p = d["path"] as? String { NSWorkspace.shared.selectFile(p, inFileViewerRootedAtPath: "") }
@@ -837,6 +845,12 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             p.waitUntilExit()
             done(String(data: od, encoding: .utf8) ?? "", String(data: ed, encoding: .utf8) ?? "", p.terminationStatus)
         }
+    }
+
+    // A drawer request the bridge will not run still ends its run, so the drawer never waits
+    // on a reply that is not coming.
+    private func refuse(_ d: [String: Any], _ id: String, _ line: String, generation: UUID) {
+        deliver("log", ["id": id, "request": d["request"] ?? NSNull(), "line": line, "state": "end", "exit": 64], generation: generation)
     }
 
     // Every line names the drawer run that asked for it (the page drops any other run's

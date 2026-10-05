@@ -1165,7 +1165,7 @@ window.onerror = function (msg, src, line, col) {
       <div class="acts">
         <button data-act="kickstart" data-label="${esc(j.kick || j.label)}"${j.harness && j.kick && j.kick !== j.label ? ` data-lane="${esc(j.harness)}"` : ""}>Run now</button>
         ${j.stderr ? `<button data-act="open" data-path="${esc(j.stderr)}">Open log</button>` : ""}
-        ${j.stderr_lines ? `<button class="danger" data-act="clearlog" data-path="${esc(j.stderr)}">Clear log</button>` : ""}</div>`;
+        ${j.stderr_lines && /\.log$/.test(j.stderr || "") ? `<button class="danger" data-act="clearlog" data-path="${esc(j.stderr)}">Clear log</button>` : ""}</div>`;
   }
   function compositionSect() {
     const a = arch(), bt = a.by_type || {}, total = a.total || 1;
