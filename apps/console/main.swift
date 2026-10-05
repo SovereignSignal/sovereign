@@ -424,6 +424,10 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     private func sendStatus(pending: Bool, error: String? = nil, detail: String = "") {
         guard let waiter = statusWaiter else { return }
         var value = statusCache ?? [:]
+        // archiveKey decides identity here; the pages compare spellings. A connected vault that is
+        // the open archive written another way (case, Unicode form, a link) reaches them as the open one.
+        if let root = Settings.archive, var machine = value["machine"] as? [String: Any], let vault = machine["vault"] as? String,
+           Settings.archiveKey(vault) == Settings.archiveKey(root) { machine["vault"] = root; value["machine"] = machine }
         var state = value["_status"] as? [String: Any] ?? [:]
         state["pending"] = pending; state["stale"] = pending || error != nil
         state["budget_s"] = statusBudget
@@ -737,7 +741,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
               let vault = machine["vault"] as? String, Settings.archiveKey(root) == Settings.archiveKey(vault) else {
             return ["available": false]
         }
-        return ["available": true, "scope": vault, "excluded": Settings.backupExclusions(root)]
+        return ["available": true, "scope": root, "excluded": Settings.backupExclusions(root)]
     }
 
     private func setBackupScope(_ request: [String: Any], generation: UUID) {
@@ -766,7 +770,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         let hubAlias = (machine["hub_pointer"] as? String ?? "").components(separatedBy: ":").first ?? ""
         let protected = [machine["host"] as? String ?? "", hubAlias, hub["hub_host"] as? String ?? ""]
             .filter { !$0.isEmpty }
-        return ["available": true, "scope": vault, "protected_hosts": protected,
+        return ["available": true, "scope": root, "protected_hosts": protected,
                 "disassociated": Settings.disassociatedDevices(root)]
     }
 
