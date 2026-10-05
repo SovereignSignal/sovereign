@@ -87,7 +87,9 @@ def frontmatter(path):
             break
         m = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
         if m:
-            out[m.group(1)] = m.group(2).strip()
+            # A '#' that opens the value or follows a space starts a YAML comment, which an
+            # owner's note on a contract line is; one inside a URL or a name stays.
+            out[m.group(1)] = re.sub(r"(^|\s)#.*$", "", m.group(2)).strip()
     return out
 
 
