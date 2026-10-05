@@ -70,9 +70,10 @@ window.SovStatus = (() => {
     const total = Number(cov.processable) || 0, judged = Number(cov.judged_ever) || 0;
     // A lane on a device the owner disassociated is not a producer this archive waits on.
     const lanes = (D && D.lanes || []).filter(l => !l.retired && l.associated !== false);
-    // "Delivering" is one 48-hour clock for every lane: the status service reports no
-    // per-lane cadence yet, so a lane that collects weekly reads quiet between runs.
-    const live = lanes.filter(l => l.vault_age_h != null && l.vault_age_h <= 48).length;
+    // "Delivering" is read as Sources reads it: a lane a mirror on another device writes, at
+    // that mirror's observable cadence; any other lane by one 48-hour clock, since the status
+    // service reports no cadence for it, so a lane that collects weekly reads quiet between runs.
+    const live = lanes.filter(l => { const rm = remoteMirror(D, l.lane); return rm ? rm.age_h <= rm.cadence_h : l.vault_age_h != null && l.vault_age_h <= 48; }).length;
     const gate = Number((D && D.hub && D.hub.pending)) || 0;
     const pct = total > 0 ? Math.round((judged / total) * 100) : null;
     const parts = [];

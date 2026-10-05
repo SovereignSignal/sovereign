@@ -363,3 +363,11 @@ const unreadable=assess({machine:{host:'here'},needs_you:[{kind:'archive',text:'
 assert.equal(unreadable.name,'Archive');assert.equal(unreadable.state,'down');assert.equal(model.brief(unreadable),'unreadable');
 assert.equal(unreadable.jump.view,'archive');assert.match(unreadable.action,/Library/);
 console.log('An unreadable archive is one red row that lands on Library.');
+// The Sources tile counts a lane another device's mirror writes by that mirror's observable
+// cadence, as Sources and Today's mirror rows do, and any other lane by the 48-hour clock.
+const mirrored=assess({machine:{host:'here'},fleet:{hosts:[{host:'other',harnesses:[{harness:'tool',lane:'far',run_age_h:30}]}]},
+ lanes:[{lane:'far',vault_age_h:30},{lane:'near',vault_age_h:30}]});
+assert.equal(mirrored.completeness.producers.delivering,1,'a mirror past its cadence is not delivering on the tile');
+assert.ok(mirrored.need.some(n=>n.cause==='mirror-late'),'while Today calls it late');
+assert.equal(assess({machine:{host:'here'},fleet:{hosts:[{host:'other',harnesses:[{harness:'tool',lane:'far',run_age_h:0.5}]}]},lanes:[{lane:'far',vault_age_h:30}]}).completeness.producers.delivering,1);
+console.log('Completeness: a remote mirror lane is counted at its own cadence, as Sources reads it.');
