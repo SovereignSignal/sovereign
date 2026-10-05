@@ -1339,6 +1339,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         web.evaluateJavaScript("window.sovCanQuit ? window.sovCanQuit() : true") { result, error in
             let allowed = error != nil || (result as? Bool) == true
             if self.snapshotting { log("native quit decision: \(allowed ? "allowed" : "blocked")") }
+            // The page says what is holding it; a closed window would hide that.
+            if !allowed { self.window.makeKeyAndOrderFront(nil) }
             sender.reply(toApplicationShouldTerminate: allowed)
         }
         return .terminateLater
