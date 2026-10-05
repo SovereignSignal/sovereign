@@ -4,9 +4,9 @@
    what ui/index.html uses today; new tokens are added, none removed. */
 :root {
   --ground: #FAFAF7; --panel: #FFFFFF; --sunk: #F2F2EE; --rule: #E4E4DE; --rule-soft: #EFEFEA;
-  --ink: #15181C; --ink-2: #3D444E; --muted: #6A7280; --faint: #98A0AC;
-  --brass: #A87C12; --brass-ink: #6E5008; --brass-wash: #FBF3DE;
-  --live: #2E8B57; --warn: #B5810E; --down: #C23B31; --idle: #B9BEC6;
+  --ink: #15181C; --ink-2: #3D444E; --muted: #505762; --faint: #626B79;
+  --brass: #A87C12; --brass-ink: #6E5008; --brass-wash: #FBF3DE; --brass-text: var(--brass-ink);
+  --live: #25784A; --warn: #8A6208; --down: #C23B31; --idle: #B9BEC6;
   --sel: #EDF1F6;
   --series-1: #A87C12; --series-2: #2F6FBF; --series-3: #2E8B57;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
@@ -29,7 +29,7 @@
 :root:not([data-theme="light"]) {
  --ground:#00060f; --panel:#0f1a2a; --sunk:#060e1a; --rule:#1a2a3d; --rule-soft:#142236;
  --ink:#eaf1f6; --ink-2:#bacbd6; --muted:#93a7b4; --faint:#8297a6;
- --brass:#fd881e; --brass-ink:#fd9c44; --brass-wash:#302315;
+ --brass:#fd881e; --brass-ink:#fd9c44; --brass-wash:#302315; --brass-text:var(--brass);
  --live:#4ade80; --warn:#e7b06c; --down:#f08078; --idle:#688094; --sel:#132639;
  --series-1:#c9821c; --series-2:#4F89D2; --series-3:#39A064;
  --cyan:#2fd4e0; --depth:#0b1a2d; --atmosphere:#fd881e0d; --shadow:none; color-scheme:dark;

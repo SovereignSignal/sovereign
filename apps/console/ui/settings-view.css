@@ -30,9 +30,9 @@
 .set-badge{display:inline-flex;align-items:center;gap:6px;font:10px var(--mono);color:var(--muted)}
 .set-badge:before{content:'';height:5px;width:5px;border-radius:50%;background:currentColor}
 .set-badge.narrow{color:var(--cyan)}
-.set-badge.wide{color:var(--brass)}
+.set-badge.wide{color:var(--brass-text)}
 .set-finding{display:block;font-size:10px;line-height:1.6;margin-bottom:5px}
-.set-finding.warn{color:var(--brass)}
+.set-finding.warn{color:var(--brass-text)}
 .set-finding.bad{color:var(--down)}
 
 @media(max-width:850px){
