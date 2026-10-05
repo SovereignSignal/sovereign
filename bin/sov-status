@@ -1337,6 +1337,19 @@ def archive_shape(root):
             "dangling": [{"target": k, "from": v} for k, v in sorted(dangling.items(), key=lambda kv: -len(kv[1]))]}
 
 
+def hub_failure(via, exc=None, said=""):
+    """Why the hub did not answer, as a phrase the console can show whole after "The hub
+    did not answer: ", with the captured text, redacted, kept in error_detail."""
+    detail = redacted_tail((getattr(exc, "stderr", None) or str(exc)) if exc is not None else said)
+    if isinstance(exc, subprocess.TimeoutExpired):
+        why = "no reply within %d seconds" % exc.timeout
+    elif isinstance(exc, ValueError):
+        why = "incomplete status report"
+    else:
+        why = last_line(detail)[:160] or (type(exc).__name__ if exc is not None else "no output")
+    return {"reachable": False, "error": why, "error_detail": detail or None, "via": via}
+
+
 def fetch_hub(root, hub_pointer, want):
     if not want:
         return {"reachable": None, "skipped": True}
@@ -1349,9 +1362,9 @@ def fetch_hub(root, hub_pointer, want):
                 d = json.loads(res.stdout)
                 d["via"] = "ssh " + alias
                 return d
-            return {"reachable": False, "error": (res.stderr or "no output").strip()[-200:], "via": "ssh " + alias}
+            return hub_failure("ssh " + alias, said=res.stderr)
         except Exception as e:
-            return {"reachable": False, "error": str(e)[:200], "via": "ssh " + alias}
+            return hub_failure("ssh " + alias, e)
     # this machine may be the hub
     if root and glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json")):
         try:
@@ -1360,7 +1373,7 @@ def fetch_hub(root, hub_pointer, want):
             d["via"] = "local"
             return d
         except Exception as e:
-            return {"reachable": False, "error": str(e)[:200], "via": "local"}
+            return hub_failure("local", e)
     return {"reachable": None, "error": "no ~/.brain-hub pointer and this machine holds no hub lane"}
 
 
