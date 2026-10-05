@@ -32,5 +32,5 @@ body button:focus-visible,body input:focus-visible,body textarea:focus-visible{o
 .home-message{color:var(--muted);font-size:12px;line-height:1.7;margin:0 0 12px;overflow-wrap:anywhere}
 .home-banner{padding:10px 14px;background:var(--panel);border:1px solid var(--rule);border-left:2px solid var(--warn);border-radius:4px;font-size:12px;line-height:1.6;margin-bottom:16px;overflow-wrap:anywhere}
 
-@media(max-width:900px){body{grid-template-columns:140px minmax(0,1fr)}#system-home{padding:18px 20px 22px}}
+@media(max-width:899px){body{grid-template-columns:140px minmax(0,1fr)}#system-home{padding:18px 20px 22px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
