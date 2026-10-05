@@ -9,6 +9,18 @@ window.SovStatus = (() => {
 
   const intervalOf = (t) => { if (t && t.cadence_s) return +t.cadence_s;
     const m = /every (\d+)s/.exec(((t && t.plist) || {}).schedule || ""); return m ? +m[1] : 900; };
+  // A remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
+  // observable cadence is about an hour, not its own fifteen minutes. Its age is the fresher
+  // of its own last run and the hub's newest file in its lane.
+  const REMOTE_MIRROR_H = 1;
+  const mirrorAge = (D, t) => { const v = [t.run_age_h, (((D.hub || {}).lanes || {})[t.lane] || {}).age_h].filter(x => x != null); return v.length ? Math.min(...v) : null; };
+  // The same reading for a lane, so Sources and Today never disagree: the latest of the
+  // mirrors on other devices that write it, or null when none does.
+  function remoteMirror(D, lane) {
+    const me = (D.machine || {}).host, ages = ((D.fleet || {}).hosts || []).filter(x => x.host !== me)
+      .flatMap(x => (x.harnesses || []).filter(t => t.lane === lane)).map(t => mirrorAge(D, t)).filter(x => x != null);
+    return ages.length ? { age_h: Math.max(...ages), cadence_h: REMOTE_MIRROR_H } : null;
+  }
   function isoWeekKey(d) {
     const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
     const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day);
@@ -160,7 +172,7 @@ window.SovStatus = (() => {
       stale.push({ state: "warn", name: `lane ${l.lane}`, detail: f.text,
                    why: "The lane's own contract is what grants a producer its read and write permissions; this one does not say what it should.",
                    action: `Open the lane's LANE.md and settle it: ${l.relative_path || "raw/workspaces/" + l.lane}/LANE.md`,
-                   age_h: null, jump: { view: "tools", id: l.lane },
+                   age_h: null, jump: { view: "tools", id: "lane:" + l.lane },
                    cause: "permission-drift", causeLabel: "have a permission their contract does not settle" });
     }));
     // What is waiting. The hub has always reported its queue depth and the app showed
@@ -235,14 +247,13 @@ window.SovStatus = (() => {
     // cadence: mirrors here, mirrors on every host, producer pushes, hub jobs, the snapshot
     (D.harnesses || []).forEach(x => { if (x.state !== "connected" || x.runs_on) return; const ah = x.run_age_h != null ? x.run_age_h : runAge(x.last_run, at), cad = intervalOf(x) / 3600;
       if (late(x.name || x.id, "mirror last ran", ah, cad, { view: "tools", id: x.id }, "mirror-late") === true && ah != null && ah <= cad) fresh.push({ state: "live", name: x.name || x.id, detail: `pulled ${age(ah)} ago on ${m.host}`, age_h: ah, jump: { view: "tools", id: x.id }, cause: "pull:" + m.host, host: m.host }); });
-    // a remote mirror's heartbeat reaches this copy through the exchange and the sync, so its
-    // observable cadence is about an hour, not its own 15 minutes
-    // A remote mirror's heartbeat reaches this copy through the exchange and the sync, so
-    // its observable cadence is about an hour, not its own fifteen minutes.
-    const hubLanes = h.lanes || {};
+    // Remote mirrors at their observable cadence (mirrorAge); a mirror into a retired lane
+    // is not expected to deliver.
+    const retiredLanes = new Set((D.lanes || []).filter(l => l.retired).map(l => l.lane));
     hosts.filter(x => x.host !== m.host).forEach(x => (x.harnesses || []).forEach(t => {
-      const here = t.run_age_h, there = (hubLanes[t.lane] || {}).age_h, ah = [here, there].filter(v => v != null).length ? Math.min(...[here, there].filter(v => v != null)) : null;
-      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = 1, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host }, cause: "pull:" + x.host, host: x.host }); }));
+      if (retiredLanes.has(t.lane)) return;
+      const ah = mirrorAge(D, t);
+      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = REMOTE_MIRROR_H, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host }, cause: "pull:" + x.host, host: x.host }); }));
     // Is THIS copy behind the hub? Compare the same lane's newest content in both places.
     // It used to subtract a hub lane's age from a REMOTE HOST'S harness run age, which are
     // not two views of one thing: a mirror that had not run in sixteen days on another
@@ -330,9 +341,12 @@ window.SovStatus = (() => {
   // Keep raw status and archive history intact. Every app surface uses this projection.
   function associations(value) {
     value=backupScope(value);
+    // A lane whose own contract says retired is provenance, not a live source. The status
+    // service's retired flag (from the connector manifest) is kept, never replaced.
+    if(value?.lanes)value={...value,lanes:value.lanes.map(l=>!l.retired&&/^retired\b/i.test(String(l.status||'').trim())?{...l,retired:true}:l)};
     const retired=new Set((value?.harnesses||[]).filter(h=>h.state==='removed').map(h=>h.lane));
     if(retired.size)value={...value,
-      lanes:(value.lanes||[]).map(l=>({...l,retired:retired.has(l.lane),associated:retired.has(l.lane)?false:l.associated})),
+      lanes:(value.lanes||[]).map(l=>({...l,retired:!!l.retired||retired.has(l.lane),associated:retired.has(l.lane)?false:l.associated})),
       fleet:{...value.fleet,hosts:(value.fleet?.hosts||[]).map(h=>({...h,harnesses:(h.harnesses||[]).filter(t=>!retired.has(t.lane)),lanes:(h.lanes||[]).filter(l=>!retired.has(l.lane))}))},
       backups:{...value.backups,lanes:(value.backups?.lanes||[]).filter(l=>!retired.has(l.lane))}};
     const config=value?.device_associations;
@@ -426,5 +440,5 @@ window.SovStatus = (() => {
     if (s.error || status?.error) return "refresh failed";
     return Number.isFinite(stamp) ? new Date(stamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   }
-  return {assess, verdict, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, week: isoWeekKey};
+  return {assess, verdict, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, remoteMirror, week: isoWeekKey};
 })();
