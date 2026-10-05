@@ -101,10 +101,12 @@ class HubTests(unittest.TestCase):
             self.assertFalse(dest.exists())
 
     def test_05_linked_data_and_inflight_job_refuse_snapshot(self):
-        link=self.archive/'linked';link.symlink_to(self.key)
-        try:
-            with self.assertRaises((IntakeError,OSError)):recovery.snapshot(self.config,self.backups/'linked.sovbackup',self.key,True)
-        finally:link.unlink()
+        # Capsules carry no links. Refuse by name, never as a bare "[Errno 62] alias.md".
+        for link,target in ((self.archive/'linked',self.key),(self.archive/'knowledge/alias.md','../CLAUDE.md')):
+            link.symlink_to(target)
+            try:
+                with self.assertRaisesRegex(ValueError,'linked file: '+str(link)):recovery.snapshot(self.config,self.backups/'linked.sovbackup',self.key,True)
+            finally:link.unlink()
         with locked(self.destination/'operation.lock'):
             with self.assertRaises(IntakeError):recovery.snapshot(self.config,self.backups/'busy.sovbackup',self.key,True)
         self.assertFalse((self.backups/'linked.sovbackup').exists())

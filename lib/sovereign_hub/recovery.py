@@ -77,6 +77,8 @@ def inventory(config):
             entries.append((str(PurePosixPath(prefix) / rel), None, None))
             for name in sorted(files):
                 path = current / name
+                if path.is_symlink():
+                    raise ValueError('Snapshot refused a linked file: ' + str(path))
                 raw, info = read_under(root, str(rel / name), MAX_FILE)
                 total += len(raw)
                 if total > MAX_TOTAL or len(entries) >= MAX_MEMBERS: raise ValueError('Recovery capsule exceeds its size limit.')
