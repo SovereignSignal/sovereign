@@ -1767,13 +1767,15 @@ def main():
             row["last_run"], row["last_ok"] = _receipt("last-run"), _receipt("last-ok")
             if _receipt("last-exit") is not None:
                 row["last_exit"] = _receipt("last-exit")
-            # The runner captures the program's output here; launchd's stderr
-            # only contains failures outside the program (for example startup).
-            err = os.path.join(hub_state, jid + ".last-output")
-            if not os.path.exists(err):
-                err = os.path.join(hub_state, jid + ".error.log")
+            # The runner captures the program's whole output, stdout too, in .last-output:
+            # a kit receipt or "updates=0" is normal there, so it is what a failure points
+            # at, never an error log. launchd's stderr is the error log; it only holds
+            # failures outside the program (for example startup).
+            err = os.path.join(hub_state, jid + ".error.log")
             n, a = _log_lines(err)
             row["stderr"], row["stderr_lines"], row["stderr_age_h"] = err, n, a
+            out_p = os.path.join(hub_state, jid + ".last-output")
+            row["last_output"] = out_p if os.path.exists(out_p) else None
     real = {j["label"] for j in jobs}
     for hid, ent in sorted(served.items()):
         lbl = ent.get("label") or (("com.sovereign.connector.%s" if sys.platform == "darwin" else "sovereign-connector-%s") % hid)
@@ -1895,7 +1897,8 @@ def main():
                           "action": "Run: sudo xcodebuild -license accept   then: launchctl kickstart gui/$(id -u)/%s. Reconnecting any tool with sov connect points the job at the Command Line Tools interpreter, which an Xcode update cannot revoke." % j["label"],
                           "verify": "Refresh after the kickstart; the job's last exit is 0 and its lanes report a fresh run."})
         elif j.get("last_exit") not in (None, 0):
-            n = {"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], j.get("stderr") or "its log"), "failure_output": job_error_output(j.get("stderr"))}
+            log = j.get("last_output") or j.get("stderr")     # a hub job's failure is in what its program printed
+            n = {"kind": "job", "text": "%s last exited %s. Check %s." % (j["label"], j["last_exit"], log or "its log"), "failure_output": job_error_output(log)}
             if j.get("harness"):
                 n["harness"] = j["harness"]        # a lane row routes to the tool, not to the job list
             needs.append(n)
