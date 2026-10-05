@@ -71,3 +71,15 @@ assert.doesNotMatch(host.innerHTML,/Destination connected/,'B\'s reply is not sh
 assert.deepEqual([last().action,last().root],['status','/archive/C'],'C is asked for its own status');
 console.log('Archive backups: only a change holds navigation, and a reply for another archive is dropped.');
 
+// On a remote archive host the in-page browser is the only chooser, so it must be able to set the restore folder.
+backups.deliver('archiveBackupResult',{request:last().request,...remote});
+click('',{abAction:'restore'});
+click('',{abPick:'destination'});
+assert.deepEqual([last().action,last().folder],['browse','/Users/owner']);
+backups.deliver('archiveBackupResult',{request:last().request,folder:'/Users/owner/Restores',parent:'/Users/owner',entries:[]});
+assert.match(host.innerHTML,/id="ab-use-folder"/,'the destination browser offers its folder');
+click('ab-use-folder');
+// The restore folder must not exist yet, so the choice is a new folder inside the browsed one.
+assert.match(host.innerHTML,/data-ab-field="destination" value="\/Users\/owner\/Restores\/Restored Sovereign"/);
+console.log('Archive backups: a remote restore can choose its new folder in the browser.');
+
