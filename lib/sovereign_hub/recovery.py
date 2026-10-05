@@ -11,7 +11,7 @@ import tarfile
 import tempfile
 import time
 
-from sovereign_intake.common import directory, read_under, atomic, exclusive, locked
+from sovereign_intake.common import IntakeError, directory, read_under, atomic, exclusive, locked
 from .core import absolute, crypto_tool, MAX_FILE, write_jobs, validate, within
 
 MAX_TOTAL = 480 * 1024 * 1024
@@ -23,7 +23,13 @@ def check_key(path, archive=None, hub=None):
     for root in (archive, hub):
         if root and within(path, root):
             raise ValueError('Keep the recovery key outside both the archive and Hub folder.')
-    raw, info = read_under(path.parent, path.name, 32)
+    try:
+        raw, info = read_under(path.parent, path.name, 32)
+    except (IsADirectoryError, IntakeError) as exc:
+        # A folder, or a file of the wrong kind or size: say what it is, never the boundary code.
+        if isinstance(exc, IntakeError) and str(exc) not in ('input_type_or_size', 'input_changed_or_too_large'):
+            raise
+        raise ValueError('That file is not a Sovereign recovery key.') from None
     if len(raw) != 32 or info.st_mode & 0o077:
         raise ValueError('The recovery key must contain 32 bytes and be readable only by its owner (0600).')
     return path

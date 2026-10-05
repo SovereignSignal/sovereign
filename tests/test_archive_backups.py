@@ -1,4 +1,5 @@
 import hashlib
+import contextlib
 import errno
 import io
 import json
@@ -217,6 +218,13 @@ class ArchiveBackups(unittest.TestCase):
             served=b.operate(dict(protocol=1,root=spelling,action='status'),serve=True)
             self.assertEqual(len(served['destinations']),1,spelling);self.assertEqual(served.get('archive_id'),own.get('archive_id'),spelling)
         self.assertEqual(len(list((state/'archive-backups').iterdir())),1,'one archive, one store')
+    def test_a_wrong_key_file_is_named_not_coded(self):
+        saved=self.backup();large=self.home/'notes.txt';large.write_text('x'*100)
+        for key,fields in ((saved['backup'],dict(backup=saved['backup'],destination=str(self.restore))),(str(self.home),dict(backup=saved['backup'],destination=str(self.restore))),(str(large),dict(folder=str(self.folder)))):
+            out=io.StringIO();req=dict(protocol=1,root=str(self.archive),action='restore' if 'backup' in fields else 'configure',key=key,**fields)
+            with patch.object(sys,'argv',['sov-backup','--request',json.dumps(req)]),contextlib.redirect_stdout(out):
+                self.assertEqual(b.main(),1)
+            self.assertEqual(json.loads(out.getvalue())['error'],'That file is not a Sovereign recovery key.',key)
     def test_folder_problems_are_sentences_not_codes(self):
         import contextlib
         link=self.base/'alias';link.symlink_to(self.folder)
