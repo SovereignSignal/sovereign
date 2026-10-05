@@ -10,7 +10,7 @@ const checks={},check=(n,x)=>{checks[n]=!!x},post=o=>window.webkit.messageHandle
 const wait=async fn=>{for(let i=0;i<200;i++){if(fn())return;await pause(40)}throw Error('Timed out: '+fn+'; replies='+JSON.stringify(replies)+'; drawer='+document.querySelector('#drawer-log')?.textContent)};
 const replies=[],deliver=window.sovDeliver;window.sovDeliver=(kind,p)=>{if(kind==='log'&&p.state==='end')replies.push(p);deliver(kind,p)};
 const apply=()=>document.querySelector('#drawer-apply'),remove=()=>document.querySelector('[data-act="remove-producer"]');
-check('Connected source listed once, with its lane',document.querySelector('[data-id="windsurf"]')&&!document.querySelector('[data-id="windsurf-qa"]'));
+check('Connected source listed once, with its lane',document.querySelector('[data-id="windsurf"]')&&!document.querySelector('[data-id="lane:windsurf-qa"]'));
 check('Add entry point',document.querySelector('#controls [data-view="discover"]')?.textContent==='Add');
 if(PHASE==='flow'){
  const base={cmd:'producer',action:'remove',harness:'windsurf',root:ROOT_PATH,apply:true};
