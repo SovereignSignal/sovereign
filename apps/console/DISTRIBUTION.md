@@ -57,8 +57,11 @@ System provides four panes over the same archive-scoped observations:
   are shown separately from route configuration.
 - Inspect preserves the selected component, with search, context records,
   reported relationships and links to existing operational actions.
-- How it works explains connection, capture, review and context reuse using the
-  configured environment's tools and archive.
+- How it works, behind the "?" beside the other three, explains connection,
+  capture, review and context reuse using the configured environment's tools and archive.
+
+The page header carries the device and tool counts and the observed time; the panes
+keep one slim row above the drawing, and the zoom floats over its corner.
 
 Selection carries across panes. Archive changes reset selection and hide foreign
 connections and receipts. Environment groups lane relationships; Flow retains their
