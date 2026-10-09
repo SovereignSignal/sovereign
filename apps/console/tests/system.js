@@ -53,7 +53,7 @@
   assert('no hero title above the drawing',!view().querySelector('h2'));
   assert('three faces in one segment, the guide behind ?',[...view().querySelectorAll('.sv-seg .sv-tab')].map(b=>b.textContent).join()==='Environment,Flow,Inspect'&&view().querySelector('.sv-help').getAttribute('aria-label')==='How the map works');
   const zoomBox=view().querySelector('.sv-zoom').getBoundingClientRect(),drawing=view().querySelector('.sv-map-scroll').getBoundingClientRect();
-  assert('zoom floats over the drawing\'s bottom-right corner',zoomBox.right<=drawing.right&&zoomBox.bottom<=drawing.bottom&&zoomBox.right>drawing.right-40&&zoomBox.bottom>drawing.bottom-40);
+  assert('zoom sits at the right end of the legend, below the drawing, covering no node',zoomBox.top>=drawing.bottom-1&&zoomBox.right>drawing.right-60&&!!view().querySelector('.sv-legend .sv-zoom'));
   tab('flow').click();view().querySelector('.sv-help').click();
   assert('? opens the guide',view().dataset.pane==='learn'&&!!view().querySelector('.sv-lesson')&&view().querySelector('.sv-help').getAttribute('aria-pressed')==='true');
   view().querySelector('.sv-help').click();

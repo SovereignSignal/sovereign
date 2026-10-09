@@ -44,12 +44,12 @@ window.SystemView=(()=>{
     const nodeButton=(target,next=pane)=>{const b=B('',()=>choose(target.id,next),'sv-component');b.dataset.node=target.id;b.setAttribute('aria-pressed',String(target.id===selected));const [label,tone]=health(target);b.append(E('i',null,'sv-dot '+tone),E('span',target.name),E('small',kind(target)));return b;};
     if(pane==='world'){
       const layout=E('div',null,'sv-world-layout'),stage=E('section',null,'sv-stage');
-      // The zoom floats over the drawing's corner, outside the scroller, so it stays put while the drawing scrolls.
+      // The zoom sits at the end of the legend strip under the drawing: it stays put while the drawing scrolls and never covers a node.
       const canvas=E('div',null,'sv-canvas'),scroll=E('div',null,'sv-map-scroll');scroll.setAttribute('aria-label','Scrollable environment map');scroll.tabIndex=0;
       const controls=E('div',null,'sv-zoom');controls.setAttribute('role','group');controls.setAttribute('aria-label','Zoom');for(const[label,fn]of[['−',()=>{zoom=Math.max(.7,zoom-.2);rerender();}],['Fit',()=>{zoom=1;worldScroll={top:0,left:0};rerender();}],['+',()=>{zoom=Math.min(2.4,zoom+.2);rerender();}]]){const b=B(label,fn);b.setAttribute('aria-label',label==='−'?'Zoom out':label==='+'?'Zoom in':'Fit environment');controls.append(b);}
       // Laid out for its pane: it is measured before the drawing, and the columns are the fewest rows that fit at the legible
       // scale (one or two of tools, two or three of devices), so a narrow window scrolls down to a device, not sideways.
-      canvas.append(scroll,controls);stage.append(canvas);layout.append(stage,overview(n));host.append(layout);
+      canvas.append(scroll);stage.append(canvas);layout.append(stage,overview(n));host.append(layout);
       const peripheral=[...m.tools,...m.clients,...m.nodes.filter(x=>x.kind==='relay')],devices=m.devices,room=scroll.clientWidth/legible;
       const plan=(tc,dc)=>{const tw=tc===2?340:190,ax=25+tw+(tc===2?50:30),dx=ax+220+(tc===2?60:40);return {tc,dc,tw,ax,dx,width:dx+110*dc+25,height:Math.max(610,180+Math.max(Math.ceil(peripheral.length/tc),Math.ceil(devices.length/dc))*110)};};
       const plans=[plan(2,3),plan(2,2),plan(1,3),plan(1,2)],fits=plans.filter(p=>p.width<=room);
@@ -72,7 +72,7 @@ window.SystemView=(()=>{
         g.append(S('circle',{cx:0,cy:-z,r:big?6:3,class:'sv-node-light'}),S('text',{x:0,y:big?58:45,'text-anchor':'middle',class:'sv-node-name'},short(target.name,big?25:target.kind==='device'?14:22)),S('text',{x:0,y:big?77:61,'text-anchor':'middle',class:'sv-node-kind'},big?(m.pending==null?'REVIEW UNVERIFIED':m.pending+' AWAITING REVIEW'):(target.role?kind(target)+' · '+label:label)));
         g.onclick=()=>choose(id);g.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose(id);host.querySelector('[data-node="'+CSS.escape(id)+'"]')?.focus({preventScroll:true});}};svg.append(g);}
       scroll.append(svg);scroll.onscroll=()=>{worldScroll={top:scroll.scrollTop,left:scroll.scrollLeft};};requestAnimationFrame(()=>{if(scroll.isConnected){scroll.scrollTop=worldScroll.top;scroll.scrollLeft=worldScroll.left;}});
-      const legend=E('div',null,'sv-legend');legend.append(E('span','● Context access','context'),E('span','● Collection / control','capture'),E('span','┄ Grouped lane relationship'),E('span','Select a component to follow its paths'));stage.append(legend);
+      const legend=E('div',null,'sv-legend');legend.append(E('span','● Context access','context'),E('span','● Collection / control','capture'),E('span','┄ Grouped lane relationship'),E('span','Select a component to follow its paths'),controls);stage.append(legend);
     }else if(pane==='flow'){
       const layout=E('div',null,'sv-flow-layout'),rail=E('aside',null,'sv-route-list');rail.append(E('div','ROUTES / '+n.name,'sv-eyebrow'));
       const selector=E('select');selector.setAttribute('aria-label','Component to trace');for(const c of m.nodes){const o=E('option',c.name);o.value=c.id;o.selected=c.id===selected;selector.append(o);}selector.onchange=()=>choose(selector.value,'flow');rail.append(selector);
