@@ -777,8 +777,9 @@ window.onerror = function (msg, src, line, col) {
     let text = "";
     if (settingsOpen || !D) text = "";
     else if (view === "review") { const q = reviewQueue(); text = q.count ? q.count + " waiting" : ""; }
-    else if (view === "sources") { const all = sourceItems().filter(selectable), live = all.filter(i => i.s.dot === "live").length, down = all.filter(i => i.s.dot === "down").length;
-      text = `${live} delivering${down ? " · " + down + " silent" : ""}`; }
+    // The same count as Today's Sources tile, so the two never disagree; blank until status has lanes.
+    else if (view === "sources") { const p = SovStatus.assess(D, localStorage).completeness.producers;
+      text = p.total ? `${p.delivering} of ${p.total} delivering` : ""; }
     else if (view === "hosts") { const gone = D.fleet?.disassociated?.length || 0; text = `${D.fleet?.hosts?.length || 0} active${gone ? " · " + gone + " disassociated" : ""}`; }
     else if (view === "discover") text = `${n} found`;
     else if (view === "archive") text = arch().total ? num(arch().total) + " cards" : "";
