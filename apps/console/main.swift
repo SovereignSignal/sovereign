@@ -164,6 +164,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         case "archiveBackupPick":
             guard !archiveBackupBusy, let field = d["field"] as? String,
                   ["folder", "key", "backup", "destination"].contains(field) else { return }
+            // Snapshot QA never puts a dialog on the owner's screen: it takes SOV_QA_PICK, else nothing.
+            if App.shared.snapshotting { if let path = ProcessInfo.processInfo.environment["SOV_QA_PICK"] { deliver("archiveBackupPicked", ["field": field, "path": path]) }; return }
             // Restore reads a key that exists; a Save panel would ask to replace it.
             let existingKey = field == "key" && d["action"] as? String == "restore"
             if (field == "key" && !existingKey) || field == "destination" {
@@ -188,6 +190,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             deliver("hubDefaults", ["home": home])
         case "hubPick":
             guard !hubBusy, let field = d["field"] as? String, ["config", "key-file", "capsule", "folder"].contains(field) else { return }
+            if App.shared.snapshotting { if let path = ProcessInfo.processInfo.environment["SOV_QA_PICK"] { deliver("hubPicked", ["field": field, "path": path]) }; return }
             let panel = NSOpenPanel()
             panel.canChooseDirectories = field == "folder"
             panel.canChooseFiles = !panel.canChooseDirectories
@@ -962,6 +965,8 @@ func qaFrame(_ f: NSRect) -> NSRect {
 @main
 final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        // Snapshot QA answers without a dialog on the owner's screen: SOV_QA_CONFIRM=1 discards, anything else keeps editing.
+        if snapshotting { completionHandler(ProcessInfo.processInfo.environment["SOV_QA_CONFIRM"] == "1"); return }
         let alert = NSAlert(); alert.messageText = message
         alert.window.appearance = nil; alert.window.backgroundColor = pageGround
         alert.addButton(withTitle: "Discard"); alert.addButton(withTitle: "Keep editing")
