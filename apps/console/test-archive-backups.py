@@ -22,7 +22,9 @@ check('Same disk limitation is explained',document.querySelector('.ab-storage').
 document.querySelector('[data-ab-storage="external"]').click();
 check('External drive choice does not pretend to format storage',document.querySelector('.ab-storage').textContent.includes('does not format drives'));
 check('Protection summary offers first destination',document.querySelector('#ab-next').textContent==='Choose a destination');
-check('Offsite and independent key are explicitly unverified',document.querySelector('.ab-coverage').textContent.includes('Not verified here')&&document.querySelector('.ab-coverage').textContent.includes('Independent copy not verified'));
+check('Offsite copy is explicitly unverified',document.querySelector('[data-ab-row="offsite"] .ab-value').textContent==='not verified');
+check('The face is four rows, each with a name and a value',[...document.querySelectorAll('.ab-row')].map(r=>r.dataset.abRow).join()==='destination,schedule,offsite,restore');
+check('Technical evidence starts folded',document.querySelector('.ab-details')&&!document.querySelector('.ab-details').open);
 const input=(field,value)=>{const e=document.querySelector('[data-ab-field="'+field+'"]');e.value=value;e.dispatchEvent(new Event('input',{bubbles:true}));};
 const preview=()=>document.querySelector('#ab-preview'),apply=()=>document.querySelector('#ab-apply');
 const rejected=replies.length;post({cmd:'archiveBackup',root:ARCHIVE,action:'configure',folder:FOLDER,key:KEY,apply:true});
@@ -35,29 +37,30 @@ if(SCENE==='narrow'){
  check('No horizontal form overflow',document.querySelector('#rows').scrollWidth<=document.querySelector('#rows').clientWidth);
 }else{
  apply().click();check('A running change holds navigation and says so',!window.sovCanQuit()&&document.querySelector('#gate-notice').textContent.includes('Destination change running'));
- await wait(()=>document.querySelector('.ab-card')&&settled());check('The hold clears when it lands',document.querySelector('#gate-notice').hidden);
+ await wait(()=>document.querySelector('.ab-rows [data-ab-row="destination"] button')&&settled());check('The hold clears when it lands',document.querySelector('#gate-notice').hidden);
  check('Destination saved on correct host',replies.some(r=>r.state==='configured'&&r.applied));
- check('Configured archive opens backup action',document.querySelector('[data-ab-action="backup"]').getAttribute('aria-pressed')==='true');
- check('Manual cadence is explicit',document.querySelector('.ab-mode').textContent.includes('Automatic backups are not enabled'));
+ check('Configured archive opens backup action',document.querySelector('[data-ab-action="backup"]').getAttribute('aria-expanded')==='true'&&document.querySelector('#ab-step'));
+ check('Manual cadence is explicit',document.querySelector('[data-ab-row="schedule"] .ab-value').textContent==='off');
+ check('Independent recovery key copy is explicitly unverified',document.querySelector('.ab-details').textContent.includes('Independent copy not verified'));
  document.querySelector('[data-ab-action="backup"]').click();preview().click();await wait(()=>!apply().disabled);
  check('Backup preview includes files',replies.at(-1).files>0);apply().click();await wait(()=>replies.some(r=>r.state==='completed')&&settled());
  check('Saved bytes authenticated',replies.find(r=>r.state==='completed')?.integrity_verified===true);
  check('Backup does not claim restore drill',!replies.find(r=>r.state==='completed')?.restore_tested);
  check('Next action tests the saved backup',document.querySelector('#ab-next').textContent==='Test a restore');
- check('Backup age is visible',document.querySelector('.ab-age').textContent.includes('Backup age at that check'));
+ check('Backup age is the headline',/^Last backup /.test(document.querySelector('.ab-age').textContent));
  document.querySelector('[data-ab-action="restore"]').click();input('destination',RESTORE);preview().click();await wait(()=>!apply().disabled);apply().click();
  await wait(()=>replies.some(r=>r.state==='restored')&&settled());
  check('Restore stays inactive',replies.find(r=>r.state==='restored')?.activation_required===true&&replies.find(r=>r.state==='restored')?.scheduled===false);
- check('Latest backup restore proof is visible',document.querySelector('.ab-card').textContent.includes('Restore tested'));
+ check('Latest backup restore proof is visible',document.querySelector('[data-ab-row="restore"] .ab-value').textContent.endsWith('passed'));
  check('Successful same-disk restore still warns about disk failure',document.querySelector('.ab-readiness').textContent.includes('disk failure'));
  document.querySelector('[data-ab-action="reconnect"]').click();input('folder',FOLDER);preview().click();await wait(()=>!apply().disabled);apply().click();
  await wait(()=>replies.some(r=>r.state==='reconnected')&&settled());
- check('Reconnect keeps successful restore proof',document.querySelector('.ab-card').textContent.includes('Restore tested'));
+ check('Reconnect keeps successful restore proof',document.querySelector('[data-ab-row="restore"] .ab-value').textContent.endsWith('passed'));
  check('Navigation released',window.sovCanQuit());
  if(SCENE==='remote'){
   check('Authority is visible',document.querySelector('.archive-backups').textContent.includes('fixture-hub'));
   document.querySelector('#ab-refresh').click();await wait(()=>settled());
-  check('Unreachable authority shows dated prior receipts',document.querySelector('.ab-card')?.textContent.includes('previously observed receipts')&&document.querySelector('.ab-card h3')?.textContent==='Destination status unavailable');
+  check('Unreachable authority shows dated prior receipts',document.querySelector('.ab-readiness').textContent.includes('Rows show the last receipts')&&document.querySelector('[data-ab-row="destination"] .ab-value')?.textContent.endsWith('unchecked')&&document.getElementById('vmeta').title.includes('Backups checked'));
   check('Unreachable authority cannot fall back to local backup',!document.querySelector('#ab-apply'));
   check('Unreachable authority cannot retain a healthy protection summary',document.querySelector('.ab-readiness').textContent.includes('fresh check'));
  }

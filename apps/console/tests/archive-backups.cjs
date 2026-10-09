@@ -28,6 +28,26 @@ assert.equal(age(1000,173800),'2 days old');
 assert.equal(age(2000,1000),'Age unavailable');
 assert.equal(age(undefined,2000),'Age unavailable');
 console.log('Archive backup protection: unavailable, unconfigured, missing, legacy, untested, same-disk, restored and age states passed.');
+// The face states the backup's age once, in the headline; the sentence says what is not in it.
+{
+const {verdict}=context.window.SovBackups,day=86400;
+const healthy=verdict({observed_at:13*day,destinations:[{...saved,last_success:{backup_id:'saved',finished:day,started:day}}]});
+assert.equal(healthy.headline,'Last backup 12 days ago');assert.equal(healthy.dot,'warn','a twelve-day-old backup is not fresh');
+assert.match(healthy.say,/^It passed a restore test\. Work since .+ is not in it yet\.$/);
+assert.equal(verdict({observed_at:2*day,destinations:[{...saved,last_success:{backup_id:'saved',finished:day+day/2}}]}).dot,'live');
+assert.equal(verdict({observed_at:day+3600,destinations:[{...saved,last_success:{backup_id:'saved',finished:day}}]}).headline,'Last backup 1 hour ago');
+assert.match(verdict({...state(saved),error:'Host down'}).headline,/fresh check/);
+assert.equal(verdict({...state(saved),error:'Host down'}).say,'Host down. Rows show the last receipts.');
+assert.equal(verdict({...state(saved),error:'Host is down.'}).say,'Host is down. Rows show the last receipts.');
+assert.equal(verdict(state()).headline,'No backup yet');
+assert.equal(verdict(state({available:true})).headline,'No backup yet');
+assert.equal(verdict(state({...saved,available:false})).dot,'down');
+assert.match(verdict(state({...saved,latest_restored:false})).say,/not passed a restore test/);
+assert.match(verdict(state({...saved,same_disk:true})).say,/disk failure/);
+assert.equal(verdict(state({...saved,latest_present:false})).headline,'Latest backup missing');
+assert.equal(verdict(null),null);
+console.log('Archive backups: the verdict states the age once and says what is not in the backup.');
+}
 {
 // A status refresh mounts the pane again. A drawn form is left alone, so focus, typed paths
 // and open disclosures survive; after another view used the pane it is drawn again.
@@ -104,8 +124,27 @@ context.document.body.dataset.view='settings';host.innerHTML='<div class="set-pa
 backups.deliver('archiveBackupResult',{request:last().request,...remote});
 assert.equal(host.innerHTML,'<div class="set-pane">Settings</div>');
 context.document.body.dataset.view='recovery';backups.mount(host,'/archive/A');
-assert.match(host.innerHTML,/Destination connected/,'coming back shows the reply that arrived meanwhile');
+assert.match(host.innerHTML,/data-ab-row="destination".*Disk · connected/,'coming back shows the reply that arrived meanwhile');
 console.log('Archive backups: a late reply never paints over another view.');
+// Four rows, each with its own action; an action the verdict already offers is not repeated, and
+// rare actions and technical evidence stay folded until asked for.
+{
+const rowOf=k=>new RegExp('data-ab-row="'+k+'">(.*?)</div>').exec(host.innerHTML)?.[1]||'';
+assert.deepEqual([...host.innerHTML.matchAll(/data-ab-row="(\w+)"/g)].map(m=>m[1]),['destination','schedule','offsite','restore']);
+assert.match(rowOf('destination'),/Disk · connected<\/span><button data-ab-action="configure"[^>]*>Change…/);
+assert.match(rowOf('schedule'),/>off<\/span><span><\/span>$/,'no schedule control exists, so none is offered');
+assert.match(rowOf('offsite'),/>not verified<\/span><span><\/span>$/);
+assert.match(host.innerHTML,/id="ab-next"[^>]*data-ab-action="restore"[^>]*>Test a restore/);
+assert.doesNotMatch(rowOf('restore'),/<button/,'the verdict already offers the restore test');
+assert.match(host.innerHTML,/<details class="ab-more"><summary[^>]*>More<\/summary>.*data-ab-action="reconnect".*id="ab-refresh"/);
+assert.match(host.innerHTML,/<details class="ab-details"><summary>Details<\/summary>.*\/Volumes\/Disk\/Backups/);
+assert.doesNotMatch(host.innerHTML,/id="ab-step"/,'no step is open until one is chosen');
+click('',{abAction:'configure'});
+assert.match(host.innerHTML,/id="ab-step"/);assert.match(host.innerHTML,/data-ab-row="destination".*aria-expanded="true"/);
+click('ab-close-step');
+assert.doesNotMatch(host.innerHTML,/id="ab-step"/,'Cancel folds the step away');
+console.log('Archive backups: four rows with their own actions, rare ones under More, evidence under Details.');
+}
 
 // Reading never holds navigation or quit; only a change on the archive host does.
 click('ab-refresh');
@@ -130,7 +169,7 @@ const stale=sent.filter(m=>m.action==='status').length;
 backups.mount(host,'/archive/C');
 assert.equal(sent.filter(m=>m.action==='status').length,stale,'one read at a time');
 backups.deliver('archiveBackupResult',{request:last().request,...remote});
-assert.doesNotMatch(host.innerHTML,/Destination connected/,'B\'s reply is not shown for C');
+assert.doesNotMatch(host.innerHTML,/data-ab-row="destination"/,'B\'s reply is not shown for C');
 assert.deepEqual([last().action,last().root],['status','/archive/C'],'C is asked for its own status');
 console.log('Archive backups: only a change holds navigation, and a reply for another archive is dropped.');
 
