@@ -385,3 +385,11 @@ assert.equal(onlyPaused.state,'idle');assert.match(onlyPaused.text,/^burndown pa
 const pausedStale=verdict(pausedHub({backups:{snapshots:{newest_age_h:30}}}));
 assert.equal(pausedStale.state,'warn','a paused job never hides staleness');assert.match(pausedStale.text,/^Stale: daily snapshot/);
 console.log('Verdict: a paused job is named as paused and never hides a stale item.');
+
+// Today and the Glance take their headline from one function: attention items, never proposals.
+{ const H=box.window.SovStatus.headline;
+  assert.deepEqual({...H({machine:{connected:false}},{need:[]})},{state:'',text:'Not connected'});
+  assert.deepEqual({...H({machine:{connected:true}},{need:[]})},{state:'live',text:'All clear'});
+  assert.deepEqual({...H({machine:{connected:true}},{need:[{state:'warn'}]})},{state:'warn',text:'1 thing needs you'});
+  assert.deepEqual({...H({machine:{connected:true}},{need:[{state:'warn'},{state:'down'}]})},{state:'down',text:'2 things need you'});
+  console.log('Headline: one function words Today and the Glance.'); }

@@ -1405,10 +1405,8 @@ window.onerror = function (msg, src, line, col) {
     bridge({ cmd: "verdict", ...verdictSentence() });
     const place = pl => esc(JSON.stringify(pl));
     const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
-    // Today's headline: attention items, never individual proposals.
-    const down = needs.some(n => n.state === "down"), count = needs.length;
-    const [state, headline] = !m.connected ? ["", "Not connected"]
-      : [down ? "down" : count ? "warn" : "live", count ? `${plural(count, "thing")} need${count === 1 ? "s" : ""} you` : "All clear"];
+    // Today's headline, from the same function Today uses.
+    const { state, text: headline } = SovStatus.headline(D, A);
     // Where a thing is: the hub by that word, any other device by its name.
     const hubName = (m.hub_pointer || "").split(":")[0] || h.hub_host || "";
     const device = x => !x ? "" : x === hubName ? "hub" : x;

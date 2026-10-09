@@ -447,5 +447,12 @@ window.SovStatus = (() => {
     if (s.error || status?.error) return "refresh failed";
     return Number.isFinite(stamp) ? new Date(stamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   }
-  return {assess, verdict, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, remoteMirror, week: isoWeekKey};
+  // Today's headline, which the Glance shares: it counts attention items, never individual proposals.
+  function headline(D, A) {
+    if (!D?.machine?.connected) return { state: "", text: "Not connected" };
+    const count = A.need.length;
+    return { state: A.need.some(n => n.state === "down") ? "down" : count ? "warn" : "live",
+      text: count ? count + (count === 1 ? " thing needs" : " things need") + " you" : "All clear" };
+  }
+  return {assess, verdict, headline, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, remoteMirror, week: isoWeekKey};
 })();

@@ -65,9 +65,8 @@ window.Home = (() => {
       headline(host,'','Not connected');
       const connect=element('button','Connect tools');connect.onclick=()=>go('sources');host.append(connect);return;
     }
-    const assessment=SovStatus.assess(status,localStorage),needs=assessment.need,count=needs.length;
-    headline(host,needs.some(n=>n.state==='down')?'down':count?'warn':'live',
-      count?`${plural(count,'thing')} need${count===1?'s':''} you`:'All clear');
+    const assessment=SovStatus.assess(status,localStorage),needs=assessment.need,count=needs.length,top=SovStatus.headline(status,assessment);
+    headline(host,top.state,top.text);
     if(count){
       const list=element('div',null,'plain-list today-needs');
       for(const need of needs){

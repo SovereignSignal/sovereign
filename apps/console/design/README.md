@@ -34,6 +34,9 @@ These rules are what brought it to about a tenth of that, and they are part of t
 - How long ago status was read, and how long the check took, is evidence. It lives in
   the tooltip on the observed time, never in a line of the page.
 - A row's action names where it lands, in one word.
+- Every detail panel has one shape: a head (dot, name, then where · state · age), one
+  sentence, three or four facts, at most two buttons with every rarer action under More,
+  and the technical evidence (wires, paths, labels, addresses) folded under Details.
 
 ## Appearance and shell
 
@@ -96,9 +99,10 @@ Watching, never in the count. Cadence is per kind, never one global age. Unknown
 acceptance is not a failed or late delivery observation. Status failures are the only
 banner; a healthy app has none.
 
-The menu-bar Glance retains its compact header, verdict, operational summary rows,
-footer, keyboard shortcuts and drawer behavior. It does not show the full-window
-rail. Neither frame changes approval, capture or producer write contracts.
+The menu-bar Glance is Today in small: the archive name, the same headline from
+`SovStatus.headline`, the same attention rows in the row shape, the same four figures,
+and one Open Sovereign button. Observed time and status duration live in the
+headline's tooltip. It does not show the full-window rail. Neither frame changes approval, capture or producer write contracts.
 
 ## Review
 
