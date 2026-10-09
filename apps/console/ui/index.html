@@ -138,17 +138,54 @@
   .kv { display: grid; grid-template-columns: 82px 1fr; gap: 3px 10px; font-size: 12px; margin: 0; }
   .kv dt { font-family: var(--mono); font-size: 10.5px; color: var(--faint); padding-top: 1px; }
   .kv dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
-  .tool { border: 1px solid var(--rule); border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; }
-  .tool .top { display: flex; align-items: center; gap: 8px; }
-  .tool .top b { font: 600 12px var(--mono); }
-  .tool .top .sp { flex: 1; }
-  .wire { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-  .wire .lab { width: 54px; color: var(--ink-2); flex: none; white-space: nowrap; }
-  .wire .track { flex: 1; height: 3px; border-radius: 2px; background: var(--rule); position: relative; }
-  .wire .track i { position: absolute; inset: 0; border-radius: 2px; background: var(--idle); }
-  .wire .track i.live { background: var(--live); } .wire .track i.warn { background: var(--warn); } .wire .track i.down { background: var(--down); }
-  .wire .track i.none { background: transparent; }
-  .wire .v { width: 96px; text-align: right; color: var(--ink-2); flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* One shape for every detail panel: a head (dot, name, where · state · age), one sentence,
+     a few facts, at most two actions with the rest under More, and Details folded at the foot. */
+  #insp:has(> .pnl) { min-height: 100%; display: flex; flex-direction: column; }
+  .pnl { flex: 1; display: flex; flex-direction: column; gap: 14px; }
+  .pnl .insp-head { margin-bottom: 0; align-items: flex-start; gap: 10px; }
+  .pnl-head > .dot { margin-top: 7px; width: 8px; height: 8px; }
+  .pnl-id { min-width: 0; }
+  .pnl-name { font: 600 15px/20px var(--sans); color: var(--ink); overflow-wrap: anywhere; }
+  .pnl-meta { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+  .pnl-say { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+  .pnl .note { margin-top: 0; }
+  .pnl-hint { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ink-2); }
+  .pnl-help { margin: 2px 2px 4px; font-size: 11px; line-height: 1.45; color: var(--muted); }
+  .pnl-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 14px; margin: 0; font-size: 12px; }
+  .pnl-facts dt { color: var(--muted); }
+  .pnl-facts dd { margin: 0; font: 12px/18px var(--mono); color: var(--ink); text-align: right; overflow-wrap: anywhere; }
+  #inspector .pnl .acts { position: static; margin: 0; padding: 0; border: 0; background: none; gap: 8px; align-items: flex-start; }
+  .pnl .acts:empty { display: none; }
+  .pnl p[role="status"]:empty { display: none; }
+  .pnl-more { position: relative; }
+  .pnl-more > summary, .pnl-fold > summary, .pnl-details > summary { list-style: none; cursor: pointer; }
+  .pnl-more > summary::-webkit-details-marker, .pnl-fold > summary::-webkit-details-marker, .pnl-details > summary::-webkit-details-marker { display: none; }
+  .pnl-more > summary { font: 500 12px var(--sans); color: var(--ink-2); background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 4px 10px; }
+  .pnl-more > summary::after { content: " ▾"; color: var(--faint); }
+  .pnl-more > summary:hover { border-color: var(--faint); color: var(--ink); }
+  .pnl summary:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; border-radius: 4px; }
+  .pnl-menu { position: absolute; left: 0; top: calc(100% + 4px); z-index: 5; width: max-content; min-width: 200px; max-width: min(300px, 80vw);
+    display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 6px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); }
+  .pnl-menu.end { left: auto; right: 0; }
+  .pnl-menu > button { text-align: left; }
+  .pnl-fold .secret-help { font-size: 11px; line-height: 1.45; color: var(--muted); margin-top: 6px; }
+  .pnl-menu label, .pnl-secret { font-size: 11px; color: var(--muted); }
+  .pnl-menu input.secret, .pnl-secret input.secret { width: 100%; margin: 4px 0 2px; }
+  .pnl-cap { font: 500 10.5px/14px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-bottom: -8px; }
+  .pnl-srcs { display: flex; flex-direction: column; }
+  .pnl-src { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 2px;
+    border: 0; border-bottom: 1px solid var(--rule-soft); border-radius: 0; background: transparent; text-align: left; font: 12.5px var(--sans); color: var(--ink); }
+  button.pnl-src:hover { background: var(--sunk); color: var(--ink); }
+  .pnl-src-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pnl-src-age { font: 11px var(--mono); color: var(--faint); }
+  .pnl-fold > summary, .pnl-details > summary { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .pnl-fold > summary::after, .pnl-details > summary::after { content: "›"; display: inline-block; color: var(--faint); transition: transform var(--dur) var(--ease); }
+  .pnl-fold[open] > summary::after, .pnl-details[open] > summary::after { transform: rotate(90deg); }
+  .pnl-fold-body { margin-top: 8px; }
+  .pnl-fold pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 var(--mono); color: var(--ink-2); background: var(--sunk); border-radius: 6px; padding: 8px; }
+  .pnl-details { margin-top: auto; border-top: 1px solid var(--rule-soft); padding-top: 10px; }
+  .pnl-details > .sect:first-of-type { margin-top: 10px; }
+  @media (prefers-reduced-motion: reduce) { .pnl-fold > summary::after, .pnl-details > summary::after { transition: none; } }
   .pulls { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 5px; }
   .chips { display: flex; flex-wrap: wrap; gap: 5px; }
   .chip { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); background: var(--sunk);
@@ -348,9 +385,6 @@ window.onerror = function (msg, src, line, col) {
   const num = (n) => n == null ? "?" : Number(n).toLocaleString();
   const pct = (a, b) => b ? Math.round(100 * a / b) + "%" : "–";
   const freshDot = (h) => h == null ? "" : h <= 24 ? "live" : h <= 168 ? "warn" : "";
-  const runDot = (h, iv) => h == null ? "" : h * 3600 <= (iv || 900) * 2.5 ? "live" : h <= 24 ? "warn" : "down";
-  const readDot = (t) => t.read === "instruction" ? (t.hook_registered === false ? "warn" : "live")
-    : t.trusted === false ? "down" : t.hook_registered ? ((t.reads_7d || {}).real > 0 ? "live" : "warn") : "down";
   const runAge = (s) => { const m = /Last run: (\S+)/.exec(s || ""); if (!m) return null; const t = Date.parse(m[1]); return isNaN(t) ? null : (Date.now() - t) / 36e5; };
   // The lane declares its own cadence; the schedule string is the fallback for a machine still
   // on a per-tool job, and only a machine that says neither falls back to the tick default.
@@ -532,9 +566,8 @@ window.onerror = function (msg, src, line, col) {
   }
   function producerActions(h){
     if(!h)return '';
-    const removable=h.declared||h.job_loaded||h.hook_registered||h.state==='partial'||h.state==='removal incomplete';
     return `<div class="sect"><h2>Producer</h2><p class="prose">${h.state==='removed'?'Removed. Its history is preserved.':`Runs ${h.runs_on?'on '+esc(h.runs_on):'on this Mac'}. Removal stops collection and removes Sovereign’s context setup. Saved captures stay.`}${h.read!=='none'?' Restart the tool to clear context already loaded.':''}</p>
-      ${removable?`<button data-act="remove-producer" data-harness="${esc(h.id)}">Remove producer…</button>`:h.state==='removed'&&h.detected!==false?`<button class="brass" data-act="connect" data-harness="${esc(h.id)}">Add again…</button>`:''}</div>`;
+      ${removeBtn(h)||addAgainBtn(h)}</div>`;
   }
   // Library and Copies describe the connected archive; another archive opened here is not it.
   const elsewhere = () => (view === "archive" || view === "backups") && archiveKnown && !!selectedRoot && !!D?.machine?.vault && selectedRoot !== D.machine.vault;
@@ -631,17 +664,25 @@ window.onerror = function (msg, src, line, col) {
     else {
       const bd = h.burndown || {};
       row("hub:judge", { label: "judge", desc: `last run kept ${num(st.new_proposals)} of ${num(st.judged)} · ${num(cov.unjudged_in_window)} unjudged in scope`, state: st.judged != null ? "live" : "", stateText: bd.stopped ? "burn-down stopped" : "judging", age_h: h.status_age_h, goto: "judge",
+        say: st.judged != null ? `Kept ${num(st.new_proposals)} of the ${num(st.judged)} it read last run. Nothing lands without your review.` : "It has not reported a run yet.",
+        facts: [["Waiting to be read", num(cov.unjudged_in_window)], ["Out of reach", num(cov.stranded_pre_watermark)], ["Catch-up", bd.stopped ? "stopped" : "running"]],
         detail: [["last run", `${num(st.new_proposals)} kept of ${num(st.judged)} judged`], ["digest", h.digest_at], ["unjudged in scope", `${num(cov.unjudged_in_window)} of ${num(cov.processable)}`], ["stranded behind the watermark", num(cov.stranded_pre_watermark)], ["judged ever", num((h.judge || {}).total_judged)], ["burn-down", bd.stopped ? "stopped: " + (bd.note || "under the keep floor") : "running, 10-minute tick, stops itself under 2% kept"]],
         note: "The judge runs on the hub's own inference. Nothing it keeps lands without the gate." });
       row("hub:gate", { label: "gate", desc: h.pending ? `${num(h.pending)} waiting for you` : "nothing waiting", state: h.pending ? "warn" : "live", stateText: h.pending ? "needs you" : "clear", age_h: null, gate: true,
+        say: h.pending ? `${num(h.pending)} proposal${h.pending === 1 ? " waits" : "s wait"} for your review.` : "Nothing waits for your review.",
+        facts: [["Waiting", num(h.pending)], ["Audit items", st.audit_pending == null ? null : num(st.audit_pending)]],
         detail: [["waiting", num(h.pending)], ["audit items", num(st.audit_pending)]], note: "Open Sovereign → Review to compare proposals and approve or reject them." });
       (bk.remotes || []).forEach(r => { const ex = ((bk.exchange || {})[r.name] || (bk.exchange || {})[r.host] || {}), local = r.host === "localhost" || r.host === "127.0.0.1";
         const failing = ex.fail && (!ex.ok || ex.fail > ex.ok);
         row("hub:remote:" + r.name, { label: local ? "canonical git" : "mirror · " + r.host, desc: r.ahead === 0 ? "every commit is there" : `${r.ahead} commit${r.ahead === 1 ? "" : "s"} not there yet`, state: failing ? "down" : r.ahead === 0 ? "live" : "warn", stateText: failing ? "push failing" : r.ahead === 0 ? "current" : "behind", age_h: ago(r.remote_head), goto: "backups",
+          say: remoteSay(r, failing, local), facts: remoteFacts(r, ex),
           detail: [["last push ok", ex.ok || "unknown"], ["last push failed", ex.fail || "never"], ["commits ahead", r.ahead]], note: "The exchange job pushes every commit and fetches the producers' lanes every 30 minutes." }); });
       (h.cloud_harnesses || []).forEach(c => row("hub:cloud:" + c.id, { label: "cloud pull · " + c.name, desc: c.installed ? (c.job_loaded ? "installed, job loaded" : "installed, job not loaded (your gate)") : "not installed on the hub", state: c.job_loaded ? "live" : c.installed ? "warn" : "", stateText: c.state, age_h: ago(c.last_success),
+        say: c.installed ? (c.job_loaded ? `Pulls ${c.name} from the cloud on the hub.` : "Installed on the hub; its job waits for you to load it.") : "Not installed on the hub.",
+        facts: [["Last success", agoISO(c.last_success) || "never"], ["Lane", c.lane]],
         detail: [["lane", c.lane], ["job", c.label], ["last success", c.last_success || "never"], ["last status", c.last_status || "none yet"]], note: "A cloud pull runs on the hub; every console shows this same record." }));
-      row("hub:audit", { label: "audit", desc: h.audit_latest ? "latest: " + h.audit_latest : "no audit yet", state: "", stateText: "weekly", age_h: null, detail: [["latest report", h.audit_latest || "none"]], note: "The Friday audit and the packets in between: findings become boxes you tick, the hub applies." });
+      row("hub:audit", { label: "audit", desc: h.audit_latest ? "latest: " + h.audit_latest : "no audit yet", state: "", stateText: "weekly", age_h: null,
+        say: "The weekly audit: its findings become boxes you tick, and the hub applies them.", facts: [["Latest report", h.audit_latest || "none"]], detail: [["latest report", h.audit_latest || "none"]], note: "The Friday audit and the packets in between: findings become boxes you tick, the hub applies." });
       const hj = h.jobs || {};
       if (h.jobs_error) row("hub:jobs:unknown", { label: "Hub jobs", desc: h.jobs_error, state: "warn", stateText: "unknown" });
       Object.keys(hj).sort().forEach(k => { const j = hj[k],health=SovStatus.hubJob(j,D); row("hub:job:" + k, { label: k, desc: health.summary, state: health.tone, stateText: health.label, age_h: ago(j.ts), job:k,health,
@@ -665,6 +706,14 @@ window.onerror = function (msg, src, line, col) {
     }
     return out;
   }
+  // One sentence for a git copy: what it is when healthy, what is wrong when it is not.
+  function remoteSay(r, failing, local) {
+    const n = r.ahead > 0 ? r.ahead : 0, behind = `${n} commit${n === 1 ? " is" : "s are"} not there yet`;
+    if (failing) return "Pushes to it are failing" + (n ? "; " + behind : "") + ".";
+    if (n) return `${capital(behind)}; the next push carries ${n === 1 ? "it" : "them"}.`;
+    return local ? "A copy on the hub's own disk; every commit is there." : "The off-machine copy of the whole history; every commit is there.";
+  }
+  const remoteFacts = (r, ex) => [["Not there yet", r.ahead == null ? "unknown" : r.ahead ? r.ahead + " commit" + (r.ahead === 1 ? "" : "s") : "none"], ["Last push", agoISO(ex.ok) || "unknown"], ["Last failure", agoISO(ex.fail) || "never"]];
   // ---------- backups: where copies are and how old, read-only ----------
   function backupItems() {
     const b = D.backups || {}, out = [];
@@ -672,7 +721,7 @@ window.onerror = function (msg, src, line, col) {
     const row = (id, o) => out.push({ kind: "backup", id, o });
     // The hub reports its own copies; when it does not answer they are unknown, not absent.
     if (hub().reachable === false) row("bk:hub", { label: "archive · hub copies", desc: "the hub did not answer", state: "", stateText: "unknown", tag: "hub", age_h: null,
-      detail: [["error", hub().error]], note: "Its git copies, daily snapshot and lane acceptance could not be checked. Refresh once the hub answers." });
+      say: "The hub did not answer, so its copies could not be checked.", detail: [["error", hub().error]], note: "Its git copies, daily snapshot and lane acceptance could not be checked. Refresh once the hub answers." });
     (b.remotes || []).forEach(r => {
       const a = ageOf(r.remote_head), ex = ((b.exchange || {})[r.name] || (b.exchange || {})[r.host] || {});
       const local = r.host === "localhost" || r.host === "127.0.0.1";
@@ -680,17 +729,21 @@ window.onerror = function (msg, src, line, col) {
       row("bk:remote:" + r.name, { label: "archive · " + (local ? "canonical git on the hub" : "mirror on " + r.host),
         desc: r.ahead === 0 ? "every commit is there" : `${r.ahead} commit${r.ahead === 1 ? "" : "s"} not there yet`,
         state, stateText: state === "down" ? "push failing" : state === "live" ? "current" : "behind", tag: local ? "same machine" : "off-machine", age_h: a,
+        say: remoteSay(r, state === "down", local), facts: [...remoteFacts(r, ex), ["Last commit there", agoISO(r.remote_head) || "unknown"]],
         detail: [["remote", r.name + " (" + r.host + ")"], ["last commit there", r.remote_head], ["commits ahead", r.ahead], ["last push ok", ex.ok || "unknown"], ["last push failed", ex.fail || "never"]],
         note: local ? "A copy on the hub's own disk protects against a bad commit, not against losing the machine." : "The off-machine copy of the whole history. The exchange job pushes every commit; behind means its next run has not fired yet." });
     });
     if (b.snapshots) {
       const sn = b.snapshots, state = sn.newest_age_h == null ? "down" : sn.newest_age_h < 30 ? "live" : "warn";
       row("bk:snapshots", { label: "archive · daily snapshot", desc: sn.count + " days kept on the hub's disk", state, stateText: state === "live" ? "current" : state === "warn" ? "stale" : "none", tag: "same disk", age_h: sn.newest_age_h,
+        say: state === "live" ? "A daily snapshot on the hub's own disk: a fast restore of yesterday, no help if the disk dies." : sn.newest_age_h == null ? "No daily snapshot was found." : `The newest daily snapshot is ${age(sn.newest_age_h)} old.`,
+        facts: [["Newest", agoText(sn.newest_age_h) || "none"], ["Days kept", sn.count], ["Archive tarballs", b.archive ? String(b.archive.count) : "none"]],
         detail: [["folder", sn.dir], ["newest", sn.newest], ["days kept", sn.count], ["archive tarballs", b.archive ? b.archive.count + ", newest " + age(b.archive.newest_age_h) + " ago" : "none"]],
         note: "Rsync snapshots with hard links, one per day, on the same disk as the vault: a fast restore of yesterday, no protection if the disk dies. A target on another machine is what track 8 adds." });
     }
     const ob = D.obsidian;
     if (ob) row("bk:obsidian", { label: "archive · other devices", desc: "Obsidian Sync carries the notes to every signed-in device", state: ob.sync === "synced" ? "live" : ob.sync ? "warn" : "", stateText: ob.sync || "unknown", tag: "notes only", age_h: null,
+      say: "Obsidian Sync carries the notes to your other devices; history and lane state never cross it.", facts: [["Sync", ob.sync || "unknown"], ["Vault", ob.vault_name]],
       detail: [["state", ob.sync], ["vault", ob.vault_name], ["carries", "markdown only: no git history, no lane state, no spreadsheets or code"]],
       note: "A live copy of the notes, not of the archive: governance files and anything that is not markdown never cross it." });
     (b.lanes || []).forEach(l => {
@@ -698,6 +751,8 @@ window.onerror = function (msg, src, line, col) {
       // Unknown acceptance keeps its reason and how to tell it worked for the detail; the row stays a phrase.
       const known = accepted || l.delivery === "waiting", issue = known ? null : SovStatus.contributionIssue(l);
       row("bk:lane:" + l.lane, { label: "lane " + l.lane, desc: accepted ? "latest observed source is included on the hub" : l.delivery === "waiting" ? "on the keep; awaiting hub acceptance" : "hub acceptance not verified", state, stateText: accepted ? "accepted" : l.delivery === "waiting" ? "waiting" : "unknown", tag: "git", age_h: p,
+        say: accepted ? "The hub has accepted the latest source from this lane." : l.delivery === "waiting" ? "Delivered to the keep; waiting for the hub to accept it." : issue.why,
+        facts: [["Source commit", agoISO(l.pushed) || "unknown"], ["On main", agoISO(l.merged) || "unknown"], ["Commit", l.source_head || "unknown"]],
         detail: [["source commit time", l.pushed || "unknown"], ["last change on main", l.merged || "unknown"], ["source commit", l.source_head || "unknown"], ["observed at", l.observed_at || "unknown"], ["keep", l.keep]],
         note: (issue ? issue.why + " " + issue.verify + " " : "") + "A producer's captures live in three places once merged: its own clone, the keep's lane branch, and the hub's main, which the mirror and the snapshot then carry." });
     });
@@ -705,6 +760,8 @@ window.onerror = function (msg, src, line, col) {
       const status = SovStatus.backupState(h), last=h.last_backup;
       row("bk:host:" + h.host, { label: h.host + " · VM " + h.vmid + " on " + h.node,
         desc: status.text, state: status.state, stateText: status.label, tag: "vm image", age_h: h.last_dump_age_h, backupHost:h,
+        say: sentence(status.text),
+        facts: [["Last backup", h.last_dump_age_h==null?'none reported':age(h.last_dump_age_h)+' ago'], ["Storage", last?.storage||'none reported'], ["Backup jobs", h.jobs == null ? 'unknown' : String(h.jobs)]],
         detail: [["node", h.node], ["VM", h.vmid], ["monitoring",h.backup_required===false?'Not required on this Mac':'Required'],
           ["enabled jobs including this VM",h.jobs == null ? 'unknown' : h.jobs],
           ["schedule",(h.backup_jobs||[]).map(j=>j.id+': '+(j.schedule||'unknown')+' → '+(j.storage||'default storage')).join('; ')||'none reported'],
@@ -723,6 +780,7 @@ window.onerror = function (msg, src, line, col) {
   const SAID_BY_DOT = new Set(["current", "connected", "Succeeded", "clear", "accepted", "backed up", "judging"]);
   // A hub that is online on the network can still fail to answer for status: say so on its device.
   const hubSilent = (host) => hub().reachable === false && host === ((D.machine?.hub_pointer || "").split(":")[0] || hub().hub_host);
+  const hubHost = () => (D?.machine?.hub_pointer || "").split(":")[0] || hub().hub_host || "hub";
   const stateTag = (word, cls) => `<span class="state">${word ? `<span class="tag ${cls || ""}">${esc(word)}</span>` : ""}</span>`;
   function rowHTML(it) {
     const o = it.o;
@@ -853,21 +911,50 @@ window.onerror = function (msg, src, line, col) {
   function kv(pairs) {
     return `<dl class="kv">${pairs.filter(p => p[1] != null && p[1] !== "").map(p => `<dt>${esc(p[0])}</dt><dd>${p[2] === "raw" ? p[1] : esc(p[1])}</dd>`).join("")}</dl>`;
   }
-  function toolBlock(t, local, title) {
-    const pullOnly = !!(local && local.read === "none");
-    const rd = pullOnly ? "none" : local ? readDot(local) : (t.reads > 0 ? "live" : "warn");
-    const wd = runDot(t.run, intervalOf(local));
-    const readLabel = pullOnly ? "pull only" : local && local.read === "instruction" ? "instructions set" : local && local.trusted === false ? "not trusted"
+  // One tool's two wires in a line of evidence: what preparation reports, then when it last wrote.
+  // Preparation receipts establish preparation only; delivery and loading stay unverified.
+  function wireText(t, local) {
+    const prep = local && local.read === "none" ? "pull only" : local && local.read === "instruction" ? "instructions set" : local && local.trusted === false ? "not trusted"
       : local && local.hook_registered === false ? "hook missing" : t.reads + " prepared this week";
-    if (pullOnly && title === "both wires") title = "write wire only";
-    return `<div class="tool">
-      <div class="top"><b>${esc(title || t.name || t.id)}</b><span class="sp"></span>
-        ${local && local.state ? `<span class="tag ${local.state === "connected" ? "on" : "mid"}" style="font-family:var(--mono);font-size:10px;border:1px solid var(--rule);border-radius:4px;padding:0 5px">${esc(local.state)}</span>` : ""}</div>
-      <div class="wire"><span class="lab" title="Context preparation; delivery and loading unverified">◀ prep</span><span class="track"><i class="${rd}"></i></span><span class="v">${esc(readLabel)}</span></div>
-      <div class="wire"><span class="lab">write ▶</span><span class="track"><i class="${wd}"></i></span><span class="v">${age(t.run)} ago</span></div>
-      ${t.pulls ? `<div class="pulls">pulls ${esc(t.pulls)}${t.lane ? " · " + esc(t.lane) : ""}</div>` : ""}
-      ${local && local.manual_step ? `<div class="note">${esc(local.manual_step)}</div>` : ""}</div>`;
+    return [prep, "wrote " + age(t.run) + " ago", t.pulls ? "pulls " + t.pulls : "", t.lane || "", local && local.manual_step ? local.manual_step : ""].filter(Boolean).join(" · ");
   }
+
+  // ---------- one shape for every detail panel ----------
+  // A head (dot, name, one muted line: where · state · age), one sentence, three or four
+  // facts, at most two actions with every rarer one under More, and the technical evidence
+  // folded under Details. A state word appears only when the dot does not already say it.
+  const capital = (s) => { s = String(s == null ? "" : s).trim(); return s ? s[0].toUpperCase() + s.slice(1) : ""; };
+  const sentence = (s) => { s = capital(s); return s && !/[.!?…]$/.test(s) ? s + "." : s; };
+  const agoText = (h) => h == null ? null : age(h) + " ago";
+  const agoISO = (iso) => { if (!iso) return null; const t = Date.parse(iso); return isNaN(t) ? String(iso) : agoText(Math.max(0, (Date.now() - t) / 36e5)); };
+  const every = (s) => { const m = /every (\d+)s/.exec(s || ""); return m ? "every " + age(+m[1] / 3600) : s || null; };
+  const pinClose = () => `<button class="quiet" id="pin" aria-pressed="${String(pinned)}" title="Keep the panel open (p)">${pinned ? "Unpin" : "Pin"}</button>
+    <button class="quiet" id="insp-close" title="Close (Esc)" aria-label="Close">✕</button>`;
+  function panel(p) {
+    const when = p.age == null ? "" : `<span${p.ageTitle ? ` title="${esc(p.ageTitle)}"` : ""}>${esc(age(p.age))}</span>`;
+    const meta = [p.where ? esc(p.where) : "", p.state ? esc(p.state) : "", when].filter(Boolean).join(" · ");
+    const facts = (p.facts || []).filter(f => f && f[1] != null && f[1] !== "");
+    const details = (p.details || []).filter(Boolean);
+    return `<div class="pnl">
+      <div class="insp-head pnl-head">${dot(p.dot || "", p.dotText || p.state || "healthy")}<div class="pnl-id"><div class="pnl-name">${esc(p.name)}</div>${meta ? `<div class="pnl-meta">${meta}</div>` : ""}</div><span class="sp"></span>${pinClose()}</div>
+      ${p.say ? `<p class="pnl-say">${esc(p.say)}</p>` : ""}${p.note || ""}
+      ${facts.length ? `<dl class="pnl-facts">${facts.map(f => `<dt>${esc(f[0])}</dt><dd>${f[2] === "raw" ? f[1] : esc(f[1])}</dd>`).join("")}</dl>` : ""}
+      ${p.body || ""}${p.acts || ""}${p.folds || ""}
+      ${details.length ? `<details class="pnl-details" data-fold="details"><summary>Details</summary>${details.join("")}</details>` : ""}</div>`;
+  }
+  // At most two buttons show; anything rarer sits in More, a native disclosure the keyboard opens.
+  function actions(common, rare) {
+    const shown = (common || []).filter(Boolean), extra = [...shown.slice(2), ...(rare || []).filter(Boolean)];
+    return shown.slice(0, 2).join("") + (extra.length ? `<details class="pnl-more" data-fold="more"><summary>More</summary><div class="pnl-menu">${extra.join("")}</div></details>` : "");
+  }
+  const fold = (id, summary, html) => html ? `<details class="pnl-fold" data-fold="${esc(id)}"><summary>${esc(summary)}</summary><div class="pnl-fold-body">${html}</div></details>` : "";
+  const sect = (title, html) => html ? `<div class="sect"><h2>${esc(title)}</h2>${html}</div>` : "";
+  const help = (text) => text ? `<p class="pnl-help">${esc(text)}</p>` : "";
+  // Producer buttons, shared by a tool's panel, a lane's panel and the discovery panel.
+  const removable = (h) => !!h && (h.declared || h.job_loaded || h.hook_registered || h.state === "partial" || h.state === "removal incomplete");
+  const removeBtn = (h) => removable(h) ? `<button data-act="remove-producer" data-harness="${esc(h.id)}">Remove producer…</button>` : "";
+  const addAgainBtn = (h) => h && !removable(h) && h.state === "removed" && h.detected !== false ? `<button class="brass" data-act="connect" data-harness="${esc(h.id)}">Add again…</button>` : "";
+  const removeHelp = (h) => removable(h) ? help("Removal stops collection and removes Sovereign’s context setup. Saved captures stay." + (h.read !== "none" ? " Restart the tool to clear context already loaded." : "")) : "";
   function cardLink(rel, name) {
     const o = D.obsidian || {};
     if (!o.vault_name) return `<span class="chip">${esc(name)}</span>`;
@@ -912,8 +999,7 @@ window.onerror = function (msg, src, line, col) {
     return `<button data-act="kickstart" data-label="${esc(job)}"${job === h.label ? "" : ` data-lane="${esc(h.id)}"`}>${esc(label || "Run mirror now")}</button>`;
   }
   const head = (title, sub, badge) => `<div class="insp-head"><div style="min-width:0"><div class="insp-title">${title}${badge ? `<span class="badge">${esc(badge)}</span>` : ""}</div>${sub ? `<div class="insp-sub">${sub}</div>` : ""}</div><span class="sp"></span>
-    <button class="quiet" id="pin" aria-pressed="${String(pinned)}" title="Keep the panel open (p)">${pinned ? "Unpin" : "Pin"}</button>
-    <button class="quiet" id="insp-close" title="Close (Esc)" aria-label="Close">✕</button></div>`;
+    ${pinClose()}</div>`;
 
   document.addEventListener('input',e=>{
     if(e.target.id!=='discovery-search')return;
@@ -1027,15 +1113,25 @@ window.onerror = function (msg, src, line, col) {
   const splitReview=()=>view==="review";   // the queue and the proposal are always side by side
   let backupPending=false,backupResult=null;
   let appUpdatePending=false,appUpdateResult=null;
-  function backupActions(o){
-    if(!o.job)return '';
+  // A hub job the owner can retry from here: the button, why it may be held, and the honest outcome.
+  function retryActions(o){
     const health=o.health||{},fresh=!D?._status?.stale&&!D?._status?.error&&hub().reachable===true&&selectedRoot===D?.machine?.vault;
-    return `<div class="sect"><h2>${esc(health.label)}</h2>${health.action?`<p class="prose">${esc(health.action)}</p>`:''}
-      ${health.retry_supported?`<button class="brass" data-act="retry-backup" ${!fresh||backupPending?'disabled':''}>${backupPending?'Checking backup…':'Run backup now'}</button>${!fresh?'<p class="prose">Refresh the configured archive before retrying.</p>':''}`:''}
-      ${backupResult&&o.job==='autocommit'?`<p role="status" class="prose">${esc(backupResult)}</p>`:''}
-      ${health.failure_output?`<details><summary>View failure details</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(health.failure_output)}</pre></details>`:''}</div>`;
+    return health.retry_supported?`<button class="brass" data-act="retry-backup" ${!fresh||backupPending?'disabled':''}>${backupPending?'Checking backup…':'Run backup now'}</button>`:'';
   }
+  function retryNotes(o){
+    const health=o.health||{},fresh=!D?._status?.stale&&!D?._status?.error&&hub().reachable===true&&selectedRoot===D?.machine?.vault;
+    return (health.retry_supported&&!fresh?'<p class="pnl-help">Refresh the configured archive before retrying.</p>':'')+
+      (backupResult&&o.job==='autocommit'?`<p role="status" class="pnl-hint">${esc(backupResult)}</p>`:'');
+  }
+  // The inspector keeps the disclosures the owner opened when the same panel is drawn again.
   function renderInspector() {
+    const box = $("#insp"), id = sel ? sel.view + "\n" + sel.id : "";
+    const open = box.dataset.sel === id ? [...box.querySelectorAll("details[data-fold]")].filter(d => d.open).map(d => d.dataset.fold) : [];
+    drawInspector();
+    box.dataset.sel = id;
+    open.forEach(f => { const d = box.querySelector('details[data-fold="' + CSS.escape(f) + '"]'); if (d) d.open = true; });
+  }
+  function drawInspector() {
     if(view==='setup'||view==='recovery')return;
     if(!settingsOpen&&view!=="review"&&view!=="discover"&&D?.machine?.connected===false){renderSetup(D);return;}
     if(splitReview())$("#inspector").setAttribute("aria-hidden","false");
@@ -1095,109 +1191,158 @@ window.onerror = function (msg, src, line, col) {
       return;
     }
     if (it.kind === "host") {
-      const m = o.meta || {}, net = o.net || {}, isMe = o.host === me;
-      const hs = (o.harnesses || []).map(hz), src = sourceItems();
-      box.innerHTML = head(esc(o.host), esc([m.kind, m.where].filter(Boolean).join(" · ") || "not in the host registry"), isMe ? "this machine" : "") + `
-        ${deviceAssociationSect(o)}
-        <div class="sect"><h2>Network</h2>${kv([
-          ["state", o.associated===false ? "Disassociated; excluded from active monitoring" : `${dot(net.online == null ? "" : net.online ? "live" : "down", "")} ${net.online == null ? "unknown" : net.online ? "online" : "offline"}`, "raw"],
-          ["address", net.ip ? `<span class="mono">${esc(net.ip)}</span>` : null, "raw"],
-          ["seen via", net.via], ["reach", m.reach], ["hub status", hubSilent(o.host) ? "The hub did not answer: " + (hub().error || "no route") : null]])}</div>
-        <div class="sect"><h2>Reaches the archive</h2><div class="prose">${esc(m.transport || "no transport recorded")}
-          ${m.notes ? `<div style="color:var(--muted);margin-top:4px">${esc(m.notes)}</div>` : ""}</div></div>
-        ${o.associated!==false && !isMe && !hs.length ? connectMachineSect(o) : ""}
-        <div class="sect"><h2>Tools deployed · ${hs.length}</h2>
-          ${hs.length ? hs.map(t => toolBlock(t, isMe ? localTool(t.id) : null)).join("") : `<div class="prose" style="color:var(--warn)">No tools deployed on this host.</div>`}</div>
-        ${contribSect(o.lanes || [])}
-        <div class="sect"><h2>Lanes · ${(o.lanes || []).length}</h2><div class="chips">
-          ${(o.lanes || []).map(l => { const c = `${dot(freshDot(l.newest_age_h), "")}${esc(l.lane)} ${age(l.newest_age_h)}`;
-            return findRow("lane:" + l.lane, src) ? `<button class="chip" data-goto="lane:${esc(l.lane)}">${c}</button>` : `<span class="chip">${c}</span>`; }).join("") || `<span class="prose" style="color:var(--muted)">none</span>`}</div></div>
-        ${m.identity ? `<div class="sect"><h2>Identity</h2><div class="prose">Sessions here default to <span class="mono">${esc(m.identity)}</span>.</div></div>` : ""}`;
+      const m = o.meta || {}, net = o.net || {}, isMe = o.host === me, isHub = o.host === hubHost(), inactive = o.associated === false;
+      const hs = (o.harnesses || []).map(hz), src = sourceItems(), many = (k, w) => k + " " + w + (k === 1 ? "" : "s");
+      // The sources on this device, one compact row each (dot, name, age), each opening that source.
+      const lanes = (o.lanes || []).map(l => ({ lane: l.lane, age: l.newest_age_h }));
+      hs.forEach(t => { if (t.lane && !lanes.some(l => l.lane === t.lane)) lanes.push({ lane: t.lane, age: t.run }); });
+      const seen = new Set(), here = [];
+      lanes.forEach(l => {
+        const row = findRow("lane:" + l.lane, src), key = row ? row.id : "lane:" + l.lane;
+        if (seen.has(key)) return; seen.add(key);
+        const s = row && row.s, d = s ? s.dot : freshDot(l.age), a = s && s.age != null ? s.age : l.age, name = row ? (row.kind === "tool" ? row.o.name : row.o.lane) : l.lane;
+        const inner = `${dot(d, (s && s.word) || (d === "live" ? "delivering" : d === "warn" ? "quiet" : "unknown"))}<span class="pnl-src-name">${esc(name)}</span><span class="pnl-src-age">${a == null ? "" : esc(age(a))}</span>`;
+        here.push(row ? `<button class="pnl-src" data-goto="lane:${esc(l.lane)}" title="Open ${esc(name)}">${inner}</button>` : `<div class="pnl-src">${inner}</div>`);
+      });
+      const assoc = D.device_associations || {}, own = assoc.available && selectedRoot === D.machine?.vault;
+      const guarded = own && (assoc.protected_hosts || []).some(n => n.toLowerCase() === o.host.toLowerCase()), manage = own && !guarded;
+      const say = inactive ? "Disassociated: kept off the map and out of warnings. Past notes stay in the archive."
+        : net.online === false ? "Not reachable on the network."
+        : hubSilent(o.host) ? "Online, but the hub did not answer for status."
+        : isMe ? `Runs Sovereign${here.length ? " and " + (here.length === 1 ? "one" : here.length) + " of your sources" : ""}.`
+        : isHub ? `Holds the archive and judges what arrives${here.length ? "; " + many(here.length, "source") + " write here" : ""}.`
+        : here.length ? `Feeds ${many(here.length, "source")} into the archive.` : "Nothing from this device feeds the archive yet.";
+      const where = [isHub ? "the hub" : "", isMe ? "this Mac" : ""].filter(Boolean).join(", ");
+      box.innerHTML = panel({ dot: inactive || net.online == null ? "" : net.online ? "live" : "down", dotText: inactive ? "disassociated" : net.online == null ? "network unknown" : net.online ? "online" : "offline",
+        name: o.host, where: where || m.kind || "", state: inactive ? "disassociated" : net.online === false ? "unreachable" : hubSilent(o.host) ? "not answering" : "", say,
+        facts: [["Kind", where ? m.kind : null], ["Role", m.where], ["Identity", m.identity]],
+        body: here.length ? `<div class="pnl-cap">Sources here</div><div class="pnl-srcs">${here.join("")}</div>` : "",
+        acts: `<div class="acts">${actions([manage && inactive ? `<button class="brass" data-act="device-restore" data-host="${esc(o.host)}">Associate again</button>` : ""],
+          [manage && !inactive ? `<button data-act="device-disassociate" data-host="${esc(o.host)}">Disassociate device…</button>` + help("Removes it from the active map and app warnings. Saved for this archive on this Mac.") : ""])}</div>${manage ? `<p id="device-inline-message" role="status"></p>` : ""}`,
+        folds: !inactive && !isMe && !hs.length ? fold("connect", "Connect this device", connectMachineSect(o)) : "",
+        details: [
+          sect("Network", kv([["state", inactive ? "Disassociated; excluded from active monitoring" : net.online == null ? "unknown" : net.online ? "online" : "offline"],
+            ["address", net.ip ? `<span class="mono">${esc(net.ip)}</span>` : null, "raw"], ["seen via", net.via], ["reach", m.reach], ["hub status", hubSilent(o.host) ? "The hub did not answer: " + (hub().error || "no route") : null]])),
+          sect("Reaches the archive", `<div class="prose">${esc(m.transport || "no transport recorded")}${m.notes ? `<div style="color:var(--muted);margin-top:4px">${esc(m.notes)}</div>` : ""}</div>`),
+          guarded ? sect("Association", `<div class="prose">The current device and Hub stay associated.</div>`) : inactive && own ? sect("Association", `<div class="prose">Excluded from the active map and app warnings. Past notes remain available. Saved for this archive on this Mac.</div>`) : "",
+          sect("Tools deployed · " + hs.length, hs.length ? kv(hs.map(t => [t.name, wireText(t, isMe ? localTool(t.id) : null)])) : `<div class="prose">No tools deployed on this host.</div>`),
+          contribSect(o.lanes || []),
+          (o.lanes || []).length ? sect("Lanes · " + o.lanes.length, kv(o.lanes.map(l => [l.lane, agoText(l.newest_age_h) || "no files yet"]))) : ""] });
       return;
     }
     if (it.kind === "hub" && o.job) {
-      box.innerHTML=head(esc(o.label),esc(o.desc))+`<div class="sect"><p class="prose">${esc(o.note)}</p></div>`+backupActions(o)+
-        `<details class="sect"><summary>Run record</summary>${kv(o.detail.map(([k,v])=>[k,v==null?'–':String(v)]))}${o.health?.verify?`<p class="prose">${esc(o.health.verify)}</p>`:''}</details>`;
+      const health = o.health || {}, rec = Object.fromEntries(o.detail || []);
+      box.innerHTML = panel({ dot: o.state, dotText: o.stateText, name: o.label, where: hubHost(), state: o.state === "live" && SAID_BY_DOT.has(o.stateText) ? "" : o.stateText,
+        age: o.age_h, ageTitle: rec["last completed"] ? "last completed " + new Date(rec["last completed"]).toLocaleString() : "",
+        say: sentence(o.desc), note: health.action ? `<p class="pnl-hint">${esc(health.action)}</p>` : "",
+        facts: [["Last completed", agoISO(rec["last completed"]) || "never"], ["Schedule", rec.schedule], ["Exit", rec.exit == null ? null : String(rec.exit)]],
+        acts: `<div class="acts">${actions([retryActions(o)])}</div>${retryNotes(o)}`,
+        folds: health.failure_output ? fold("failure", "View failure details", `<pre>${esc(health.failure_output)}</pre>`) : "",
+        details: [sect("Run record", kv(o.detail.map(([k, v]) => [k, v == null ? "–" : String(v)])) + (health.verify ? `<p class="prose">${esc(health.verify)}</p>` : "")),
+          o.note ? sect("What it means", `<p class="prose">${esc(o.note)}</p>`) : ""] });
       return;
     }
     if (it.kind === "backup" || it.kind === "hub") {
-      box.innerHTML = head(esc(o.label), esc(o.desc), o.tag) + backupScopeActions(o) + `
-        <div class="sect"><h2>Where it stands</h2>${kv(o.detail.map(([k, v]) => [k, v == null ? "–" : String(v)]))}</div>
-        <div class="sect"><h2>What it means</h2><div class="prose">${esc(o.note)}</div></div>${backupActions(o)}
-        ${o.gate || o.goto ? `<div class="acts">${o.gate ? `<button class="brass" data-act="gotogate">Open Review</button>` : ""}${o.goto ? `<button data-goto-view="${o.goto === "backups" ? "backups" : "archive"}" data-goto-sec="${esc(o.goto)}">${o.goto === "backups" ? "Copies" : "Library"}</button>` : ""}</div>` : ""}`;
+      const scope = backupScopeActions(o);
+      box.innerHTML = panel({ dot: o.state, dotText: o.stateText, name: o.label, where: it.kind === "hub" ? hubHost() : o.tag,
+        state: o.state === "live" && SAID_BY_DOT.has(o.stateText) ? "" : o.stateText, age: o.age_h,
+        say: o.say || sentence(o.desc), facts: o.facts || [],
+        acts: `<div class="acts">${actions([o.gate ? `<button class="brass" data-act="gotogate">Open Review</button>` : "",
+          o.goto ? `<button data-goto-view="${o.goto === "backups" ? "backups" : "archive"}" data-goto-sec="${esc(o.goto)}">${o.goto === "backups" ? "Copies" : "Library"}</button>` : "",
+          scope ? scope.button : ""])}</div>${scope ? scope.status : ""}`,
+        details: [sect("Where it stands", kv(o.detail.map(([k, v]) => [k, v == null ? "–" : String(v)]))), o.note ? sect("What it means", `<div class="prose">${esc(o.note)}</div>`) : "",
+          scope ? sect("Backup scope", `<p class="prose">${esc(scope.help)}</p>`) : ""] });
       return;
     }
     if (it.kind === "lane") {
-      const local = (D.harnesses || []).find(h => h.lane === o.lane);
-      box.innerHTML = head(esc(o.lane), esc(o.producer || "")) + `
-        <div class="sect"><h2>Contract</h2>${kv([["host", o.host], ["read", o.read], ["write", o.write], ["status", o.status]])}</div>
-        <div class="sect"><h2>Freshness · newest file</h2>${kv([
-          ["staging", o.staging_age_h != null ? age(o.staging_age_h) + " ago" : "not staged here"],
-          ["this copy", age(o.vault_age_h) + " ago"],
-          ["hub", o.hub_age_h != null ? age(o.hub_age_h) + " ago" : "not seen"],
-          ["preparations 7d", String((o.reads_7d || {}).real || 0)]])}</div>
-        ${producerActions(local)}
-        ${!local?`<div class="sect"><p class="prose">This lane belongs to ${esc(o.host||"another producer")}. Manage its collector on that device. Saved history can be browsed here.</p></div>`:""}
-        ${contribSect([o])}
-        ${o.last_run ? `<div class="sect"><h2>Last mirror run</h2><div class="prose mono">${esc(o.last_run)}</div></div>` : ""}
-        <div class="acts">
-          ${local && local.lane_dir ? `<button data-act="reveal" data-path="${esc(local.lane_dir)}">Show lane</button>` : ""}
-          ${obsBtn((o.relative_path || "raw/tools/" + o.lane) + "/LANE")}
-          ${runNowBtn(local)}</div>`;
+      const local = (D.harnesses || []).find(h => h.lane === o.lane), s = it.s || sourceState(it), reads = (o.reads_7d || {}).real || 0;
+      const say = o.retired ? "Removed. Its history is preserved."
+        : s.word === "awaiting hub" ? "Delivered to the keep; the hub has not accepted it yet."
+        : ["silent", "late", "quiet"].includes(s.word) ? `Nothing new for ${age(s.age)}${local ? "" : "; its collector runs on " + (o.host || "another device")}.`
+        : `${o.producer ? "Written by " + o.producer : "A source"}${o.host ? " on " + o.host : ""}${local ? "" : "; its collector is managed there"}.`;
+      box.innerHTML = panel({ dot: s.dot, dotText: s.word || "delivering", name: o.lane, where: o.host || "", state: s.word, age: s.age, say,
+        facts: [["Newest file", agoText(o.vault_age_h) || "none here"], ["Files offered", o.hub_files != null ? num(o.hub_files) : null],
+          ["Cards from it", o.cards ? num(o.cards) : "none yet"], ["Prepared this week", reads ? String(reads) : null]],
+        acts: `<div class="acts">${actions([addAgainBtn(local), runNowBtn(local, "Run now"),
+          local && local.lane_dir ? `<button data-act="reveal" data-path="${esc(local.lane_dir)}">Show folder</button>` : "",
+          obsBtn((o.relative_path || "raw/tools/" + o.lane) + "/LANE")], [removeBtn(local) + removeHelp(local)])}</div>`,
+        details: [sect("Contract", kv([["producer", o.producer], ["host", o.host], ["read", o.read], ["write", o.write], ["status", o.status]])),
+          sect("Freshness · newest file", kv([
+            ["staging", o.staging_age_h != null ? age(o.staging_age_h) + " ago" : "not staged here"],
+            ["this copy", age(o.vault_age_h) + " ago"],
+            ["hub", o.hub_age_h != null ? age(o.hub_age_h) + " ago" : "not seen"],
+            ["preparations 7d", String(reads)]])),
+          contribSect([o]),
+          o.last_run ? sect("Last mirror run", `<div class="prose mono">${esc(o.last_run)}</div>`) : ""] });
       return;
     }
     if (it.kind === "tool") {
-      const h = o.connector ? localTool(o.connector) : null;
-      const t = h ? hz(h) : null;
-      box.innerHTML = head(esc(o.name), esc(o.note || (h ? "lane " + h.lane : "no connector for this tool yet"))) + `
-        ${producerActions(h)}
-        ${t ? `<div class="sect"><h2>Wires</h2>${toolBlock(t, h, "both wires")}</div>` : ""}
-        ${h && h.runs_on ? `<div class="sect"><h2>Runs on the hub</h2><div class="prose">${esc(h.name)} pulls from the cloud, so it lives on the hub (${esc(h.runs_on)}), not on this machine. ${h.hub_installed ? "Installed there" : "Not installed there yet"}${h.job_loaded ? ", job loaded." : ", job not loaded yet (the owner's gate)."}${h.last_status ? ` Last status: ${esc(h.last_status)}` : ""}</div></div>` : ""}
-        ${h ? `<div class="sect"><h2>Read wire</h2>${kv([
+      const h = o.connector ? localTool(o.connector) : null, t = h ? hz(h) : null, s = it.s || sourceState(it);
+      const connected = h && h.state === "connected", cadence = h ? age(intervalOf(h) / 3600) : null;
+      const say = !h ? (o.detected ? "Found on this machine, but no connector exists for it yet." : o.detected === null ? "A cloud service; connecting it installs a scheduled pull." : "Not installed on this machine.")
+        : h.state === "removed" ? "Removed. Its history is preserved."
+        : s.word === "failed" ? "Its last run failed" + (h.last_status ? ": " + h.last_status : "") + "."
+        : !connected ? `Setup is ${h.state || "unknown"}; add the producer again to finish it.`
+        : s.word === "silent" || s.word === "late" ? `Nothing new for ${age(s.age)}; it runs every ${cadence}.`
+        : h.runs_on ? (!h.hub_installed ? `Not installed on ${h.runs_on} yet; it pulls from the cloud there.` : !h.job_loaded ? `Installed on ${h.runs_on}; its job waits for you to load it.` : `Pulls from the cloud on ${h.runs_on} and writes into the archive.`)
+        : h.read === "none" ? "Copies its files into the archive."
+        : h.read === "instruction" ? (h.hook_registered === false ? "Writes its memory back, but its instructions are not set." : "Reads your archive through its instructions and writes its memory back.")
+        : h.trusted === false ? "Writes its memory back, but the tool does not trust its hook yet."
+        : h.hook_registered === false ? "Writes its memory back, but the hook that prepares your archive is missing."
+        : "Prepares your archive when a session starts and writes its memory back.";
+      const secret = h && h.secret && h.secret.env ? `<label class="pnl-secret">${esc(h.secret.label || h.secret.env)}
+          <input type="password" class="secret" id="secret-${esc(o.connector)}" data-env="${esc(h.secret.env)}" autocomplete="off" spellcheck="false" placeholder="${connected ? "kept on this machine; paste again only to replace it" : "paste it here, then Add"}"></label>
+          ${h.secret.help ? help(h.secret.help) : ""}` : "";
+      const canAdd = o.connector && o.detected !== false && h?.state !== "removed";
+      box.innerHTML = panel({ dot: s.dot, dotText: s.word || "delivering", name: o.name, where: h?.runs_on || me || "", state: s.word, age: s.age, say,
+        note: h && h.manual_step ? `<div class="note">${esc(h.manual_step)}</div>` : "",
+        facts: t ? [["Prepared this week", h.read === "none" ? null : String(t.reads)], [h.runs_on ? "Last pull" : "Last write", t.run != null ? age(t.run) + " ago" : h.last_run ? h.last_run.replace(/^Last run: /, "") : "never"],
+          ["Runs every", cadence], ["Lane", h.lane]] : [],
+        body: canAdd && !connected ? secret : "",
+        acts: `<div class="acts">${actions([canAdd && !connected ? `<button class="brass" data-act="connect" data-harness="${esc(o.connector)}">Add producer…</button>` : "", addAgainBtn(h),
+          runNowBtn(h, "Run now"), h && h.lane_dir ? `<button data-act="reveal" data-path="${esc(h.lane_dir)}">Show folder</button>` : ""],
+          [canAdd && connected ? secret + `<button data-act="connect" data-harness="${esc(o.connector)}">Reinstall</button>` : "",
+           removeBtn(h) + removeHelp(h), h ? obsBtn("raw/tools/" + h.lane + "/LANE") : ""])}</div>`,
+        details: h ? [
+          sect("Producer", kv([["state", h.state], ["runs on", h.runs_on || "this Mac"], ["installed there", h.runs_on ? (h.hub_installed ? "yes" : "no") : null], ["detected", h.detected == null ? "cloud service" : h.detected ? "yes" : "no"]])),
+          sect("Read wire", kv([
             ["kind", h.read],
             ["declared in", h.hook_file ? `<span class="mono">${esc(shortPath(h.hook_file))}</span>` : "n/a", "raw"],
             ["registered", h.hook_registered == null ? "n/a" : (h.hook_registered ? "yes" : "no")],
             ["trusted", h.trusted == null ? "n/a" : (h.trusted ? "yes" : "no")],
-            ["preparations 7d", String(t.reads)]])}</div>
-          <div class="sect"><h2>Write wire</h2>${kv([
+            ["preparations 7d", String(t.reads)]])),
+          sect("Write wire", kv([
             ["job", `<span class="mono">${esc(h.label)}</span>`, "raw"],
             ["runs in", h.runs_in ? `<span class="mono">${esc(h.runs_in)}</span>` : null, "raw"],
             ["loaded", h.job_loaded ? "yes" : "no"],
             ["schedule", (h.plist || {}).schedule],
             ["last run", t.run != null ? age(t.run) + " ago" : (h.last_run ? h.last_run.replace(/^Last run: /, "") : "never")],
             ...(h.last_status ? [["status", h.last_status]] : []),
-            ["pulls", t.pulls]])}</div>`
-          : `<div class="sect"><h2>State</h2><div class="prose">${o.detected
-              ? "Found on this machine. No connector exists for it yet, so it neither reads the archive nor writes a lane."
-              : o.detected === null ? "A cloud service: there is nothing to find on this machine. Connect installs the scheduled pull."
-              : "Not installed on this machine."}</div></div>`}
-        ${h && h.secret && h.secret.env ? `<div class="sect"><h2>${esc(h.secret.label || h.secret.env)}</h2>
-          <input type="password" class="secret" id="secret-${esc(o.connector)}" data-env="${esc(h.secret.env)}" autocomplete="off" spellcheck="false" placeholder="${h.state === "connected" ? "kept on this machine; paste again only to replace it" : "paste it here, then Connect"}">
-          ${h.secret.help ? `<div class="secret-help">${esc(h.secret.help)}</div>` : ""}</div>` : ""}
-        <div class="acts">
-          ${o.connector && o.detected !== false && h?.state !== 'removed' ? `<button class="${h && h.state === "connected" ? "" : "brass"}" data-act="connect" data-harness="${esc(o.connector)}">${h && h.state === "connected" ? "Reinstall" : "Add producer…"}</button>` : ""}
-          ${runNowBtn(h)}
-          ${h && h.lane_dir ? `<button data-act="reveal" data-path="${esc(h.lane_dir)}">Show lane</button>` : ""}
-          ${h ? obsBtn("raw/tools/" + h.lane + "/LANE") : ""}</div>`;
+            ["pulls", t.pulls]]))] : [] });
       return;
     }
     const j = o;
-    box.innerHTML = head(esc(j.label), esc(j.schedule || "")) + `
-      <div class="sect"><h2>Run state</h2>${kv([
-        ["last exit", `${dot(j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down", "")} ${j.last_exit == null ? "unknown" : j.last_exit}`, "raw"],
+    const failed = j.last_exit != null && j.last_exit !== 0;
+    box.innerHTML = panel({ dot: j.last_exit === 0 ? "live" : j.last_exit == null ? "" : "down", dotText: j.last_exit === 0 ? "last run ok" : j.last_exit == null ? "no run yet" : "last run failed",
+      name: SovStatus.shortLabel(j.label), where: me || "", state: failed ? "failed" : j.pid ? "running" : j.stderr_lines ? "errors logged" : "",
+      say: failed ? `Its last run failed with exit ${j.last_exit}.` : j.pid ? "Running now." : j.last_exit == null ? "No run is recorded yet." : j.stderr_lines && j.stderr_age_h > 24 ? "Its last run succeeded; the error log is older than a day, so it is history." : j.stderr_lines ? "Its last run succeeded, but it wrote to its error log." : "Its last run succeeded.",
+      facts: [["Runs", every(j.schedule)], ["Inside", j.kick ? SovStatus.shortLabel(j.kick) : null], ["Last exit", j.last_exit == null ? "none yet" : String(j.last_exit)],
+        ["Error log", j.stderr_lines == null ? "no log file" : j.stderr_lines ? `${j.stderr_lines} lines${j.stderr_age_h != null ? ", " + age(j.stderr_age_h) + " ago" : ""}` : "empty"]],
+      acts: `<div class="acts">${actions([`<button data-act="kickstart" data-label="${esc(j.kick || j.label)}"${j.harness && j.kick && j.kick !== j.label ? ` data-lane="${esc(j.harness)}"` : ""}>Run now</button>`,
+        j.stderr ? `<button data-act="open" data-path="${esc(j.stderr)}">Open log</button>` : ""],
+        [j.last_output ? `<button data-act="open" data-path="${esc(j.last_output)}">Open output</button>` : "",
+         j.stderr_lines && /\.log$/.test(j.stderr || "") ? `<button class="danger" data-act="clearlog" data-path="${esc(j.stderr)}">Clear log</button>` : ""])}</div>`,
+      details: [sect("Run state", kv([
+        ["label", `<span class="mono">${esc(j.label)}</span>`, "raw"],
+        ["schedule", j.schedule],
+        ["last exit", j.last_exit == null ? "unknown" : String(j.last_exit)],
         ["running", j.pid ? "pid " + j.pid : "idle between runs"],
         ["runs in", j.kick ? `<span class="mono">${esc(j.kick)}</span>` : null, "raw"],
-        ["program", (j.program_full || j.program) ? `<span class="mono">${esc(j.program_full || j.program)}</span>` : null, "raw"]])}</div>
-      <div class="sect"><h2>Error log</h2>${kv([
+        ["program", (j.program_full || j.program) ? `<span class="mono">${esc(j.program_full || j.program)}</span>` : null, "raw"]])),
+        sect("Error log", kv([
         ["lines", j.stderr_lines == null ? "no log file" : String(j.stderr_lines)],
         ["last write", j.stderr_age_h != null ? age(j.stderr_age_h) + " ago" : null],
-        ["path", j.stderr ? `<span class="mono">${esc(shortPath(j.stderr))}</span>` : null, "raw"]])}
-        ${j.stderr_lines && j.stderr_age_h > 24 ? `<div class="prose" style="color:var(--muted);margin-top:6px">Older than a day, so it is history rather than a task.</div>` : ""}</div>
-      <div class="acts">
-        <button data-act="kickstart" data-label="${esc(j.kick || j.label)}"${j.harness && j.kick && j.kick !== j.label ? ` data-lane="${esc(j.harness)}"` : ""}>Run now</button>
-        ${j.last_output ? `<button data-act="open" data-path="${esc(j.last_output)}">Open output</button>` : ""}
-        ${j.stderr ? `<button data-act="open" data-path="${esc(j.stderr)}">Open log</button>` : ""}
-        ${j.stderr_lines && /\.log$/.test(j.stderr || "") ? `<button class="danger" data-act="clearlog" data-path="${esc(j.stderr)}">Clear log</button>` : ""}</div>`;
+        ["path", j.stderr ? `<span class="mono">${esc(shortPath(j.stderr))}</span>` : null, "raw"]]))] });
   }
   function compositionSect() {
     const a = arch(), bt = a.by_type || {}, total = a.total || 1;
@@ -1419,18 +1564,13 @@ window.onerror = function (msg, src, line, col) {
   let pendingHost = null;
   let pendingDevice=null;
   let vmFailed = null;   // the last Start VM that failed, said under its VM until the next try
+  // The VM's backup alert scope: the button stays in view, its explanation lives in Details.
   function backupScopeActions(o){
     const h=o.backupHost,config=D.backup_scope;
-    if(!h||!config?.available||config.scope!==selectedRoot)return '';
+    if(!h||!config?.available||config.scope!==selectedRoot)return null;
     const excluded=h.backup_required===false;
-    return `<div class="sect"><h2>Backup scope</h2><p class="prose">Saved for this archive on this Mac. Changes backup alerts only. Proxmox jobs and existing backups stay unchanged.</p><button data-act="backup-scope" data-host="${esc(h.host)}" data-node="${esc(h.node)}" data-vmid="${esc(h.vmid)}" data-required="${excluded?'true':'false'}">${excluded?'Require backup':'Backup not required'}</button><p id="backup-scope-message" role="status"></p></div>`;
-  }
-  function deviceAssociationSect(host){
-    const settings=D.device_associations||{},protectedHost=(settings.protected_hosts||[]).some(n=>n.toLowerCase()===host.host.toLowerCase());
-    if(!settings.available||selectedRoot!==D.machine?.vault)return '';
-    if(protectedHost)return '<div class="sect"><h2>Association</h2><div class="prose">The current device and Hub stay associated.</div></div>';
-    const inactive=host.associated===false;
-    return `<div class="sect"><h2>Association</h2><div class="prose">${inactive?'Excluded from the active map and app warnings. Past notes remain available.':'Retired this device? Remove it from the active map and app warnings.'}</div><div class="acts"><button data-act="${inactive?'device-restore':'device-disassociate'}" data-host="${esc(host.host)}">${inactive?'Associate again':'Disassociate device…'}</button></div><div class="secret-help">Saved for this archive on this Mac.</div><p id="device-inline-message" role="status"></p></div>`;
+    return {button:`<button data-act="backup-scope" data-host="${esc(h.host)}" data-node="${esc(h.node)}" data-vmid="${esc(h.vmid)}" data-required="${excluded?'true':'false'}">${excluded?'Require backup':'Backup not required'}</button>`,
+      help:'Saved for this archive on this Mac. Changes backup alerts only. Proxmox jobs and existing backups stay unchanged.',status:'<p id="backup-scope-message" role="status"></p>'};
   }
   function deviceAssociation(host,associated){
     if(pendingDevice?.saving)return;
@@ -1457,13 +1597,13 @@ window.onerror = function (msg, src, line, col) {
       <div class="prose" style="margin-top:8px">Inside the VM, once:</div>
       <div class="code-line"><code>${esc(bs.line || "bash /media/psf/Home/.sovereign/vm-bootstrap.sh")}</code><button data-act="copy" data-text="${esc(bs.line || "bash /media/psf/Home/.sovereign/vm-bootstrap.sh")}">Copy</button></div>
       <div class="secret-help">${bs.hub_key ? "It opens ssh, authorizes the hub's key, joins the tailnet, and prints the address to use below." : "The hub's key is not on this machine yet (it is fetched from the hub on refresh); the line will work once it is."}</div>` : "";
-    return `<div class="sect"><h2>Connect this machine</h2>${vmPart}
+    return `${vmPart}
       <div class="ha"><label>user<input id="ha-user" placeholder="login name in the machine" value=""></label>
         <label>address<input id="ha-addr" placeholder="tailnet or LAN IP, comma-separated for more" value="${esc(addr)}"></label>
         <label>identity<input id="ha-identity" placeholder="optional, e.g. the desk's identity" value="${esc((o.meta || {}).identity || "")}"></label>
         <label>workstreams<input id="ha-ws" placeholder="desks this machine works for, comma-separated"></label></div>
       <div class="acts"><button class="brass" data-act="hostadd" data-host="${esc(o.host)}">Dry run</button></div>
-      <div class="secret-help">Dry run probes and prints the plan; Install then does it: fenced key on the keep, lane branch, LANE.md on the hub, scoped clone, both wires. Nothing is written before Install.</div></div>`;
+      <div class="secret-help">Dry run probes and prints the plan; Install then does it: fenced key on the keep, lane branch, LANE.md on the hub, scoped clone, both wires. Nothing is written before Install.</div>`;
   }
   function hostAdd(host, apply) {
     const f = (id) => ($("#" + id) || {}).value || "";
@@ -1501,6 +1641,15 @@ window.onerror = function (msg, src, line, col) {
   // Same reason as sovDeliver: a throw inside a handler the app or the QA harness
   // dispatched is sanitised to "Script error." with no line, so name it here.
   document.addEventListener("click", (e) => { try { onClick(e); } catch (err) { reportUI("click", err); } });
+  // A More menu opens toward whichever side of the panel has room for it.
+  document.addEventListener("toggle", (e) => {
+    const d = e.target; if (!d.classList || !d.classList.contains("pnl-more") || !d.open) return;
+    const menu = d.querySelector(".pnl-menu"), edge = $("#inspector").getBoundingClientRect(), at = d.querySelector("summary").getBoundingClientRect();
+    menu.classList.remove("end"); menu.style.maxWidth = menu.style.minWidth = "";
+    if (menu.getBoundingClientRect().right <= edge.right - 8) return;
+    const after = edge.right - 8 - at.left, before = at.right - edge.left - 8;
+    menu.classList.toggle("end", before > after); menu.style.minWidth = "0"; menu.style.maxWidth = Math.max(before, after) + "px";
+  }, true);
   function reportUI(where, err) {
     const msg = String((err && (err.stack || err.message)) || err);
     const log = document.getElementById("drawer-log");
@@ -1511,6 +1660,11 @@ window.onerror = function (msg, src, line, col) {
     bridge({ cmd: "clientError", where: where, msg: msg });   // reaches the app's log, where a QA run can read it
   }
   function onClick(e) {
+    // A More menu closes on any click outside it, and after its action is chosen. Clear log
+    // stays open: it arms on the first click and fires on the second.
+    document.querySelectorAll(".pnl-more[open]").forEach(d => { if (!d.contains(e.target)) d.open = false; });
+    const chosen = e.target.closest(".pnl-menu button");
+    if (chosen && chosen.dataset.act !== "clearlog") chosen.closest(".pnl-more").open = false;
     const backupScope=e.target.closest('[data-act="backup-scope"]');
     if(backupScope){backupScope.disabled=true;bridge({cmd:'backupScope',root:selectedRoot,host:backupScope.dataset.host,node:backupScope.dataset.node,vmid:backupScope.dataset.vmid,required:backupScope.dataset.required==='true'});return;}
 
@@ -1648,6 +1802,9 @@ window.onerror = function (msg, src, line, col) {
     // Approving puts a card into trusted knowledge, so its key takes a modifier, and it
     // acts only on the proposal open on screen.
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && view === "review" && !settingsOpen) { e.preventDefault(); const b = $('#insp [data-act="gate"]:not(.danger), #insp [data-act="gate-resolve"]'); if (b && sel?.kind === "prop" && b.dataset.slug === sel.id.slice(2)) b.click(); }
+    // Escape closes an open More menu first, and leaves focus on it.
+    const menu = e.key === "Escape" && document.querySelector("#insp .pnl-more[open]");
+    if (menu) { e.preventDefault(); menu.open = false; menu.querySelector("summary").focus(); return; }
     if (e.key === "Escape") { $("#drawer").classList.remove("open"); if ($("#inspector").classList.contains("open") && !docked()) { closeInspector(); commit(); } }
     if (typing || e.metaKey || e.ctrlKey) return;
     if (GLANCE) return;   // the menu-bar panel has its own rows, and no rail to walk
