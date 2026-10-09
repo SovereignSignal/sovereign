@@ -1215,7 +1215,7 @@ window.onerror = function (msg, src, line, col) {
       const where = [isHub ? "the hub" : "", isMe ? "this Mac" : ""].filter(Boolean).join(", ");
       box.innerHTML = panel({ dot: inactive || net.online == null ? "" : net.online ? "live" : "down", dotText: inactive ? "disassociated" : net.online == null ? "network unknown" : net.online ? "online" : "offline",
         name: o.host, where: where || m.kind || "", state: inactive ? "disassociated" : net.online === false ? "unreachable" : hubSilent(o.host) ? "not answering" : "", say,
-        facts: [["Kind", where ? m.kind : null], ["Role", m.where], ["Identity", m.identity]],
+        facts: [["Kind", where ? m.kind : null], ["Where", m.where], ["Identity", m.identity]],
         body: here.length ? `<div class="pnl-cap">Sources here</div><div class="pnl-srcs">${here.join("")}</div>` : "",
         acts: `<div class="acts">${actions([manage && inactive ? `<button class="brass" data-act="device-restore" data-host="${esc(o.host)}">Associate again</button>` : ""],
           [manage && !inactive ? `<button data-act="device-disassociate" data-host="${esc(o.host)}">Disassociate device…</button>` + help("Removes it from the active map and app warnings. Saved for this archive on this Mac.") : ""])}</div>${manage ? `<p id="device-inline-message" role="status"></p>` : ""}`,
