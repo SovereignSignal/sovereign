@@ -56,6 +56,15 @@ enum Settings {
         d.set(all, forKey: "sov.deviceAssociations")
     }
 
+    // The first-launch connect step shows once per archive on this Mac.
+    static func connectSeen(_ root: String) -> Bool {
+        (d.stringArray(forKey: "sov.connectSeen") ?? []).contains(archiveKey(root))
+    }
+    static func markConnectSeen(_ root: String) {
+        var seen = Set(d.stringArray(forKey: "sov.connectSeen") ?? [])
+        if seen.insert(archiveKey(root)).inserted { d.set(seen.sorted(), forKey: "sov.connectSeen") }
+    }
+
     static func backupExclusions(_ root: String) -> [String] {
         (d.dictionary(forKey: "sov.backupExclusions") as? [String: [String]])?[archiveKey(root)] ?? []
     }
@@ -126,6 +135,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             deliver("localState", Settings.archive.map { ["root": $0] } ?? [:])
         case "chooseArchive":
             DispatchQueue.main.async { App.shared.chooseArchive(create: (d["create"] as? Bool) == true) }
+        case "connectSeen":
+            // Only for the archive that is open; a late reply from another archive changes nothing.
+            guard let root = Settings.archive, let requested = d["root"] as? String,
+                  Settings.archiveKey(root) == Settings.archiveKey(requested) else { return }
+            Settings.markConnectSeen(root)
         case "local":
             guard let action = d["action"] as? String, ["read", "context"].contains(action),
                   let root = Settings.archive else { return }
@@ -1191,8 +1205,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
                 }
                 guard let root = result["root"] as? String else { return }
                 Settings.archive = root
+                // A fresh choice may lead to the connect step, unless this archive has had it.
+                self.bridge.deliver("localState", ["root": root, "chosen": true, "connectSeen": Settings.connectSeen(root)])
                 // The Glance is a second document on its own bridge; it asked once, at load.
-                self.bridge.deliver("localState", ["root": root])
                 self.glanceBridge?.deliver("localState", ["root": root])
             }
         }

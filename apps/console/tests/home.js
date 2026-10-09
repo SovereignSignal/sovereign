@@ -29,6 +29,28 @@
    assert('archive mismatch is visible',text().includes('Opening an archive does not connect it'));
    Home.archive(root);
    assert('no page-level horizontal overflow',document.documentElement.scrollWidth<=document.documentElement.clientWidth);
+   // First launch: with no archive, a page of its own without the rail; after a fresh create or open, the connect step.
+   const shown=e=>!!e&&getComputedStyle(e).display!=='none'&&!e.closest('[hidden]');
+   const qaRoot=root;
+   window.sovDeliver('localState',{});
+   assert('first launch is a page of its own',shown($('welcome'))&&!shown(document.querySelector('.shell-rail'))&&!shown(document.querySelector('header.top'))&&!shown(home()));
+   assert('first launch offers create and open',$('create').textContent==='Create archive…'&&$('choose').textContent==='Open existing…');
+   assert('first launch says only what is true',$('welcome').textContent.includes('Nothing leaves this Mac.'));
+   document.dispatchEvent(new KeyboardEvent('keydown',{key:'3'}));
+   assert('destination keys do nothing without an archive',location.pathname.endsWith('/local.html')&&shown($('welcome')));
+   window.sovDeliver('localState',{root:qaRoot,chosen:true,connectSeen:false});
+   assert('a fresh archive opens the connect step',shown($('connect'))&&!shown($('welcome'))&&!shown(document.querySelector('.shell-rail'))&&$('connect-title').textContent===qaRoot.split('/').pop()+' is ready');
+   window.sovDeliver('discovery',{request:connect.request,tools:[{id:'claude-code',name:'Claude Code',connector:'claude-code',installed:true,detected:true,evidence:[]},{id:'cursor',name:'Cursor',connector:'cursor',installed:false,detected:true,evidence:[]},{id:'notion',name:'Notion',connector:'notion',cloud:true,detected:false,evidence:[]},{id:'gemini-cli',name:'Gemini CLI',connector:null,installed:true,detected:true,evidence:[]},{id:'<img src=x onerror=alert(1)>',name:'<img src=x>',connector:'x',installed:true,detected:true,evidence:[]}]});
+   const found=[...document.querySelectorAll('#connect-rows .connect-row')];
+   assert('the connect step lists local tools that have a connector',found.length===3&&found[0].textContent.includes('Claude Code')&&found[1].textContent.includes('config only')&&!$('connect').textContent.includes('Notion')&&!$('connect').textContent.includes('Gemini'));
+   assert('discovered names cannot inject HTML',!$('connect').querySelector('img'));
+   assert('one primary action',$('connect').querySelectorAll('button.primary').length===1);
+   $('connect-done').click();
+   assert('done lands on Today with the rail',!shown($('connect'))&&shown(home())&&shown(document.querySelector('.shell-rail'))&&$('today-tab').getAttribute('aria-pressed')==='true');
+   window.sovDeliver('localState',{root:qaRoot,chosen:true,connectSeen:true});
+   assert('the connect step shows once per archive',!shown($('connect'))&&shown(home()));
+   window.sovDeliver('localState',{root:qaRoot});
+   assert('a launch with an archive goes straight to Today',!shown($('connect'))&&!shown($('welcome'))&&shown(home()));
    finish();
  } catch(e){failures.push(String(e.stack||e));finish()}
  function finish(){window.webkit.messageHandlers.sov.postMessage({cmd:'clientError',where:'native-qa',msg:JSON.stringify({checks,failures})})}

@@ -2,9 +2,8 @@
 body{display:grid;grid-template-columns:170px minmax(0,1fr);grid-template-rows:52px auto minmax(0,1fr);height:100vh;overflow:hidden;background:var(--ground)}
 body>.top{grid-column:2;grid-row:1}
 #notice{grid-column:2;grid-row:2;padding:8px 24px;font:12px/1.5 var(--sans)}
-#system-home,#welcome{grid-column:2;grid-row:3;min-height:0}
+#system-home{grid-column:2;grid-row:3;min-height:0}
 #system-home{overflow:auto;padding:20px 24px 24px;background:radial-gradient(ellipse at 95% 0%,var(--atmosphere),transparent 50%),linear-gradient(160deg,var(--ground),var(--depth) 65%,var(--ground))}
-body #welcome{overflow:auto;margin:18px auto;max-width:560px}body:has(#welcome:not([hidden])) #system-home{display:none}
 body button:focus-visible,body input:focus-visible,body textarea:focus-visible{outline-color:var(--cyan)}
 
 .health-dot{height:7px;width:7px;border-radius:50%;background:var(--idle);flex:none}.health-dot.live{background:var(--live)}.health-dot.warn{background:var(--warn)}.health-dot.down{background:var(--down)}

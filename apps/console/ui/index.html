@@ -492,7 +492,7 @@ window.onerror = function (msg, src, line, col) {
     const list = recent.length ? `<section data-dash="recent"><span class="cap">Recent</span><div class="plain-list">${recent.map(card).join("")}</div></section>` : "";
     return `<div class="dash lib"><div class="lib-two">${byType}${added}</div>${judge}<div class="lib-two">${from}${loose}</div>${list}</div>`;
   }
-  let discovery=null, discoveryRequest=null, discoveryQuery='', discoveryFilter='all';
+  let discovery=null, discoveryRequest=null, discoveryQuery='', discoveryFilter='all', discoverySel=null;
   function scanTools(){
     if(discoveryRequest)return;
     const request=String(Date.now())+Math.random();discoveryRequest=request;
@@ -1640,6 +1640,7 @@ window.onerror = function (msg, src, line, col) {
       if(payload.request!==discoveryRequest)return;
       discoveryRequest=null;discovery=payload;
       if(view==='discover'){renderList();renderInspector();}
+      if(discoverySel){const it=view==='discover'&&findRow(discoverySel);discoverySel=null;if(it)select(it.kind,it.id,true);}
       return;
     }
     if(kind==='backupScope'){
@@ -1784,7 +1785,8 @@ window.onerror = function (msg, src, line, col) {
       if (payload.snapshot) return window.sovView(payload.snapshot);
       if (payload.view === "review" && !payload.sel) return gotoGate();
       if (payload.view) setView(payload.view, { section: payload.section, silent: !!payload.sel });
-      if (payload.sel && PAGE[view]) { const it = findRow(payload.sel.id); if (it) select(it.kind, it.id, true); else commit(); }
+      // A jump to one discovered tool waits for the scan it started (first launch's connect step).
+      if (payload.sel && PAGE[view]) { const it = findRow(payload.sel.id); if (it) select(it.kind, it.id, true); else { if (view === "discover" && !discovery) discoverySel = payload.sel.id; commit(); } }
     }
   };
   function resetTimer() { clearInterval(timer); timer = setInterval(()=>{if(!gatePending)refresh();}, Math.max(15, S.refresh || 60) * 1000); }
