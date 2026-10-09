@@ -47,6 +47,19 @@
   const box=scroller.getBoundingClientRect();
   assert('a layout that fits its pane shows every device at Fit',W*.82>pane||[...map.querySelectorAll('[data-node^="device:"]')].every(g=>{const r=g.getBoundingClientRect();return r.left>=box.left-1&&r.right<=box.right+1;}));
   assert('no page-level horizontal overflow',document.documentElement.scrollWidth<=document.documentElement.clientWidth);
+  // The Map's chrome is the page header plus one slim row; the drawing takes the rest.
+  assert('the page header carries the Map counts, once',/^\d+ devices? · \d+ tools?$/.test($('summary').textContent)&&!/\d+ devices? · \d+ tools?/.test(view().textContent));
+  assert('observed time is not a line of the page',!view().textContent.includes('Observ')&&/Observed/.test($('seen').title));
+  assert('no hero title above the drawing',!view().querySelector('h2'));
+  assert('three faces in one segment, the guide behind ?',[...view().querySelectorAll('.sv-seg .sv-tab')].map(b=>b.textContent).join()==='Environment,Flow,Inspect'&&view().querySelector('.sv-help').getAttribute('aria-label')==='How the map works');
+  const zoomBox=view().querySelector('.sv-zoom').getBoundingClientRect(),drawing=view().querySelector('.sv-map-scroll').getBoundingClientRect();
+  assert('zoom floats over the drawing\'s bottom-right corner',zoomBox.right<=drawing.right&&zoomBox.bottom<=drawing.bottom&&zoomBox.right>drawing.right-40&&zoomBox.bottom>drawing.bottom-40);
+  tab('flow').click();view().querySelector('.sv-help').click();
+  assert('? opens the guide',view().dataset.pane==='learn'&&!!view().querySelector('.sv-lesson')&&view().querySelector('.sv-help').getAttribute('aria-pressed')==='true');
+  view().querySelector('.sv-help').click();
+  assert('? again returns to the face it was opened from',view().dataset.pane==='flow'&&document.activeElement===view().querySelector('.sv-help'));
+  window.sovView('home');
+  assert('Today carries no Map summary',$('summary').textContent==='');
  }catch(e){failures.push(String(e.stack||e))}
  window.webkit.messageHandlers.sov.postMessage({cmd:'clientError',where:'system-qa',msg:JSON.stringify({checks,failures})});
 })();

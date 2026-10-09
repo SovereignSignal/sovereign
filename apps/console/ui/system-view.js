@@ -1,7 +1,7 @@
 'use strict';
 // Four lenses over one archive-scoped model. No discovery, writes or fabricated activity.
 window.SystemView=(()=>{
-  let pane='world',selected='archive',routeId=null,archiveRoot=null,query='',zoom=1,lesson=0,worldScroll={top:0,left:0};
+  let pane='world',back='world',selected='archive',routeId=null,archiveRoot=null,query='',zoom=1,lesson=0,worldScroll={top:0,left:0};
   const E=(tag,text,cls)=>{const n=document.createElement(tag);if(text!=null)n.textContent=text;if(cls)n.className=cls;return n;};
   const B=(label,fn,cls)=>{const n=E('button',label,cls);n.type='button';n.onclick=fn;return n;};
   const S=(tag,attrs={},text)=>{const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,String(v));if(text!=null)n.textContent=text;return n;};
@@ -15,17 +15,19 @@ window.SystemView=(()=>{
   function health(n){if(n.failed)return ['Collection failed','bad'];if(n.late)return ['Collection overdue','warn'];if(n.online===false||n.reachable===false)return ['Unreachable','bad'];if(n.kind==='device')return [n.local?'This device':n.online===true?'Reachable':'Not checked',n.online===true?'good':'neutral'];if(n.kind==='hub')return[n.local?'This device':n.reachable===true?'Reachable':'Not checked',n.reachable===true?'good':'neutral'];if(n.kind==='tool')return[n.canRead&&n.collects?'Read + contribute':n.canRead?'Context configured':n.collects?'Collection configured':'Setup incomplete',n.canRead||n.collects?'good':'warn'];return[kind(n),'neutral'];}
   function render(host,input,api){
     const m=SovEnvironment.build(input),byId=new Map(m.nodes.map(n=>[n.id,n]));
-    if(archiveRoot!==m.root){archiveRoot=m.root;selected='archive';routeId=null;query='';zoom=1;lesson=0;worldScroll={top:0,left:0};}
+    if(archiveRoot!==m.root){archiveRoot=m.root;back='world';selected='archive';routeId=null;query='';zoom=1;lesson=0;worldScroll={top:0,left:0};}
     if(!byId.has(selected)){selected=m.archive?'archive':'app';routeId=null;}
     const n=byId.get(selected),rerender=()=>render(host,input,api);
     const choose=(id,next=pane)=>{selected=id;routeId=null;pane=next;rerender();};
-    const change=next=>{pane=next;rerender();host.querySelector('[data-pane="'+next+'"]')?.focus({preventScroll:true});};
+    const change=next=>{if(next==='learn'&&pane!=='learn')back=pane;pane=next;rerender();host.querySelector('[data-pane="'+next+'"]')?.focus({preventScroll:true});};
     host.replaceChildren();host.className='sv';host.dataset.pane=pane;
-    const nav=E('div',null,'sv-nav');nav.setAttribute('aria-label','System panes');
-    for(const [id,num,label]of[['world','01','Environment'],['flow','02','Flow'],['inspect','03','Inspect'],['learn','04','How it works']]){const b=B('',()=>change(id),'sv-tab');b.dataset.pane=id;b.setAttribute('aria-pressed',String(pane===id));b.append(E('span',num),E('strong',label));nav.append(b);}host.append(nav);
-    const head=E('div',null,'sv-heading'),titles={world:['Your environment','Explore the places and tools that make up your environment.'],flow:['Follow the connection','See the route, the mechanism and the evidence behind it.'],inspect:['Inside the system','Examine a component without losing your place.'],learn:['From work to working knowledge','A short guide, using your connected environment.']};
-    const heading=E('div');heading.append(E('h2',titles[pane][0]),E('p',titles[pane][1]));head.append(heading);
-    const scope=E('div',null,'sv-scope');scope.append(E('span',m.archive?.name||'No archive selected'),E('small',m.observedAt?'Observed '+ago(m.observedAt):'Local view'));head.append(scope);host.append(head);
+    // One slim row: the three faces, and the guide behind "?". The page header carries the counts and the observed time.
+    const bar=E('div',null,'sv-bar'),faces=E('div',null,'sv-seg');faces.setAttribute('role','group');faces.setAttribute('aria-label','Map views');
+    for(const [id,label]of[['world','Environment'],['flow','Flow'],['inspect','Inspect']]){const b=B(label,()=>change(id),'sv-tab');b.dataset.pane=id;b.setAttribute('aria-pressed',String(pane===id));faces.append(b);}
+    // The guide is the fourth face; "?" opens it and, pressed again, returns to the face it was opened from.
+    const help=B('?',()=>{const next=pane==='learn'?back:'learn';if(next==='learn')back=pane;pane=next;rerender();host.querySelector('.sv-help')?.focus({preventScroll:true});},'sv-tab sv-help');
+    help.dataset.pane='learn';help.title='How the map works';help.setAttribute('aria-label','How the map works');help.setAttribute('aria-pressed',String(pane==='learn'));
+    bar.append(faces,help);host.append(bar);
     if(m.warning)host.append(E('p',m.warning,'sv-warning'));
     if(!m.archive){host.append(E('div','Open or create an archive to begin. Its tools and devices will appear as you connect them.','sv-empty'));return;}
     const connected=id=>m.edges.filter(e=>e.from===id||e.to===id);
@@ -42,12 +44,12 @@ window.SystemView=(()=>{
     const nodeButton=(target,next=pane)=>{const b=B('',()=>choose(target.id,next),'sv-component');b.dataset.node=target.id;b.setAttribute('aria-pressed',String(target.id===selected));const [label,tone]=health(target);b.append(E('i',null,'sv-dot '+tone),E('span',target.name),E('small',kind(target)));return b;};
     if(pane==='world'){
       const layout=E('div',null,'sv-world-layout'),stage=E('section',null,'sv-stage');
-      const toolbar=E('div',null,'sv-map-toolbar');toolbar.append(E('span',[[m.devices.length,'device'],[m.tools.length,'tool']].map(([k,w])=>k+' '+w+(k===1?'':'s')).join(' · '),'sv-map-count'));
-      const controls=E('div');for(const[label,fn]of[['−',()=>{zoom=Math.max(.7,zoom-.2);rerender();}],['Fit',()=>{zoom=1;worldScroll={top:0,left:0};rerender();}],['+',()=>{zoom=Math.min(2.4,zoom+.2);rerender();}]]){const b=B(label,fn);b.setAttribute('aria-label',label==='−'?'Zoom out':label==='+'?'Zoom in':'Fit environment');controls.append(b);}toolbar.append(controls);stage.append(toolbar);
-      const scroll=E('div',null,'sv-map-scroll');scroll.setAttribute('aria-label','Scrollable environment map');scroll.tabIndex=0;
+      // The zoom floats over the drawing's corner, outside the scroller, so it stays put while the drawing scrolls.
+      const canvas=E('div',null,'sv-canvas'),scroll=E('div',null,'sv-map-scroll');scroll.setAttribute('aria-label','Scrollable environment map');scroll.tabIndex=0;
+      const controls=E('div',null,'sv-zoom');controls.setAttribute('role','group');controls.setAttribute('aria-label','Zoom');for(const[label,fn]of[['−',()=>{zoom=Math.max(.7,zoom-.2);rerender();}],['Fit',()=>{zoom=1;worldScroll={top:0,left:0};rerender();}],['+',()=>{zoom=Math.min(2.4,zoom+.2);rerender();}]]){const b=B(label,fn);b.setAttribute('aria-label',label==='−'?'Zoom out':label==='+'?'Zoom in':'Fit environment');controls.append(b);}
       // Laid out for its pane: it is measured before the drawing, and the columns are the fewest rows that fit at the legible
       // scale (one or two of tools, two or three of devices), so a narrow window scrolls down to a device, not sideways.
-      stage.append(scroll);layout.append(stage,overview(n));host.append(layout);
+      canvas.append(scroll,controls);stage.append(canvas);layout.append(stage,overview(n));host.append(layout);
       const peripheral=[...m.tools,...m.clients,...m.nodes.filter(x=>x.kind==='relay')],devices=m.devices,room=scroll.clientWidth/legible;
       const plan=(tc,dc)=>{const tw=tc===2?340:190,ax=25+tw+(tc===2?50:30),dx=ax+220+(tc===2?60:40);return {tc,dc,tw,ax,dx,width:dx+110*dc+25,height:Math.max(610,180+Math.max(Math.ceil(peripheral.length/tc),Math.ceil(devices.length/dc))*110)};};
       const plans=[plan(2,3),plan(2,2),plan(1,3),plan(1,2)],fits=plans.filter(p=>p.width<=room);
@@ -105,7 +107,9 @@ window.SystemView=(()=>{
       const explanation=lesson===0?m.tools.length+' configured tools and '+m.devices.length+' reported devices in this environment.':lesson===1?'Your capture layer is raw/. Trusted knowledge is kept separately in knowledge/.':lesson===2?m.hub?'Your configured review hub is '+m.hub.name+'.':'No shared hub is reported. Local capture remains available.':'Prepared context is observable. Received and used remain unknown without acknowledgements.';scene.append(E('p',explanation,'sv-lesson-local'));
       const actions=E('div',null,'sv-actions');if(lesson>0)actions.append(B('← Previous',()=>{lesson--;rerender();}));if(lesson<3)actions.append(B('Next chapter →',()=>{lesson++;rerender();},'sv-primary'));else actions.append(B('Explore your environment →',()=>change('world'),'sv-primary'));scene.append(actions);layout.append(steps,scene);host.append(layout);
     }
-    const foot=E('footer',null,'sv-footer');foot.append(E('span','SOVEREIGN / '+(pane==='world'?'ENVIRONMENT':pane.toUpperCase())),E('span',m.observedAt?'Observation '+ago(m.observedAt)+' · refresh for latest status':'No matching environment observation'));host.append(foot);
   }
-  return {render};
+  // The page header's one line of summary on the Map: what the drawing holds, blank until status describes this archive.
+  const count=(k,w)=>k+' '+w+(k===1?'':'s');
+  function summary(input){const m=SovEnvironment.build(input);return m.archive&&m.bound?count(m.devices.length,'device')+' · '+count(m.tools.length,'tool'):'';}
+  return {render,summary};
 })();

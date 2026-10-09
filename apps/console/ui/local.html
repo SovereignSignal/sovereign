@@ -6,7 +6,7 @@
 *{box-sizing:border-box}body{margin:0;background:var(--ground);color:var(--ink);font:13px/18px var(--sans);-webkit-font-smoothing:antialiased}button,input,textarea{font:inherit}button{cursor:pointer;border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--ink);padding:7px 12px}button.primary{background:var(--brass);border-color:var(--brass);color:#15181C;font-weight:600}button:hover{filter:brightness(.95)}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--brass);outline-offset:2px}button:disabled{opacity:.5;cursor:default}#notice{padding:9px 24px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--rule)}#notice.error{color:var(--down)}.welcome{max-width:560px;margin:70px auto;padding:0 24px}.eyebrow{color:var(--brass-ink);font-size:12px;letter-spacing:.06em;text-transform:uppercase}.welcome h1{font-size:34px;line-height:1.15;font-weight:550;margin:16px 0}.welcome p{color:var(--muted);line-height:1.6}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}.fine{font-size:12px}[hidden]{display:none!important}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
 </style><link rel="stylesheet" href="home.css"><link rel="stylesheet" href="shell.css"><link rel="stylesheet" href="system-view.css"><link rel="stylesheet" href="app.css"></head><body>
 <nav class="shell-rail" aria-label="Primary navigation"></nav>
-<header class="top"><h1 id="page-label">Today</h1><span class="grow"></span><span class="controls" id="controls"></span><span class="seen" id="seen"></span><button class="quiet" id="refresh" title="Refresh" aria-label="Refresh">↻</button></header>
+<header class="top"><h1 id="page-label">Today</h1><span class="sub" id="summary"></span><span class="grow"></span><span class="controls" id="controls"></span><span class="seen" id="seen"></span><button class="quiet" id="refresh" title="Refresh" aria-label="Refresh">↻</button></header>
 <div id="notice" role="status" aria-live="polite" hidden></div>
 <section id="system-home" aria-label="Today"></section>
 <section class="welcome" id="welcome"><div class="eyebrow">A place for what you learn</div><h1>Keep the work.<br>Carry the knowledge.</h1><p>An archive of plain Markdown files you own.</p><div class="actions"><button class="primary" id="create">Create archive…</button><button id="choose">Open existing archive…</button></div><p class="fine">Nothing is uploaded. No background jobs are installed.</p></section>
@@ -33,10 +33,11 @@ SovShell.mount('today',to=>{
  if(to==='review')return setView('review');
  elsewhere(to==='settings'?{settings:true}:{view:{sources:'sources',library:'archive',backups:'recovery'}[to]});
 });
-// The page header: where you are, the three faces of Sources when on its map, and when status was read.
+// The page header: where you are, what the Map holds, the three faces of Sources when on its map, and when status was read.
 function chrome(state){
  const system=state.view==='system';
  $('page-label').textContent=system?'Sources':'Today';
+ $('summary').textContent=system?SystemView.summary({root,status:state.status}):'';
  $('controls').innerHTML=system?'<span class="seg" role="group" aria-label="Sources"><button data-view="sources" aria-pressed="false">Tools</button><button data-view="hosts" aria-pressed="false">Devices</button><button data-view="system" aria-pressed="true">Map</button></span>':'';
  $('seen').textContent=SovStatus.seen(state.status);$('seen').title=SovStatus.caption(state.status);
  $('refresh').disabled=state.pending;
