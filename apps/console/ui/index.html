@@ -177,39 +177,45 @@
   .row.head .tri { font-style: normal; display: inline-block; width: 12px; color: var(--faint); }
   .row.head:hover { background: var(--sunk); cursor: pointer; }
 
-  /* Glance: the small box. The same page, loaded with #glance, in a menu-bar popover. */
+  /* Glance: the small box. The same page, loaded with #glance, in a menu-bar popover.
+     The crown and the archive, one headline, the rows that need the owner, four figures
+     and the way into the app. When status was observed lives in the headline's tooltip. */
   #glance { display: none; }
   body.glance header, body.glance main, body.glance #drawer, body.glance #verdict { display: none; }
   body.glance #glance { display: flex; flex-direction: column; height: 100%; }
   body.glance.qa #glance { padding-top: 22px; }
-  .g-head { display: flex; align-items: center; gap: var(--s2); height: 40px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--rule-soft); }
-  .g-head .crown { color: var(--ink); }
-  .g-head b { font: 600 var(--t-title)/var(--lh-title) var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .g-row.verdict { height: auto; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--rule-soft); align-items: flex-start; }
-  .g-row.verdict .vdot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex: none; background: var(--idle);
-    box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--idle) 30%, transparent); }
-  .g-row.verdict.live .vdot { background: var(--live); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--live) 30%, transparent); }
-  .g-row.verdict.warn .vdot { background: var(--warn); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--warn) 30%, transparent); }
-  .g-row.verdict.down .vdot { background: var(--down); box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px color-mix(in srgb, var(--down) 30%, transparent); }
-  .g-row.verdict .vt { font: 500 var(--t-body)/var(--lh-body) var(--sans); color: var(--ink); white-space: normal; text-align: left; }
-  .g-row.verdict.down { box-shadow: inset 3px 0 0 var(--down); }
-  .g-head .sp, .g-foot .sp { flex: 1; }
-  .g-rows { flex: 1; overflow: auto; }
-  .g-row { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 14px; border: 0;
-    border-bottom: 1px solid var(--rule-soft); border-radius: 0; background: transparent; text-align: left;
-    font-family: var(--mono); color: var(--ink-2); }
-  .g-row:hover { background: var(--sunk); }
-  .g-row .l { font: var(--t-caption)/var(--lh-caption) var(--mono); color: var(--faint); width: 84px; flex: none; }
-  .g-row b { font: 600 var(--t-title)/var(--lh-title) var(--mono); letter-spacing: -0.01em; color: var(--ink); white-space: nowrap; }
-  .g-row .s { font-size: 10.5px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; }
-  .g-row .s.wrap { white-space: normal; line-height: 1.3; font-family: var(--sans); font-size: 11.5px; color: var(--brass-ink); }
-  .g-row.hot b { color: var(--brass-text); }
-  .g-row.need { background: var(--brass-wash); height: auto; padding: 8px 14px; }
-  .g-foot { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px 0 14px; border-top: 1px solid var(--rule-soft); }
-  .g-foot button.brass { background: transparent; border-color: transparent; color: var(--brass-text); font-weight: 600; padding: 2px 6px; flex: none; white-space: nowrap; }
-  .g-foot button.brass:hover { background: var(--brass-wash); }
-  .g-foot .meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .g-head { display: flex; align-items: center; gap: var(--s2); flex: none; padding: 12px 10px 2px var(--s3); }
+  .g-head .crown { color: var(--brass); }
+  .g-head b { font: 500 13px/18px var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .g-head .sp { flex: 1; }
+  .g-head button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0;
+    border: 0; background: transparent; color: var(--muted); flex: none; }
+  .g-head button:hover { background: var(--sunk); color: var(--ink); }
+  .g-verdict { display: flex; align-items: center; gap: 10px; flex: none; width: 100%; padding: 6px var(--s3) 14px;
+    border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; background: transparent; color: var(--ink); text-align: left; }
+  .g-verdict:hover { background: var(--sunk); color: var(--ink); }
+  .g-verdict .dot { width: 9px; height: 9px; }
+  .g-verdict h2 { margin: 0; font: 600 var(--t-verdict)/var(--lh-verdict) var(--sans); letter-spacing: -.01em; }
+  .g-banner { flex: none; margin: 10px var(--s3) 0; padding: 7px 10px; border-left: 2px solid var(--down); background: var(--panel);
+    font: 12px/1.5 var(--sans); color: var(--ink-2); overflow-wrap: anywhere; }
+  .g-rows { flex: 0 1 auto; min-height: 0; overflow: auto; }
+  .g-rows.more { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
+  /* A row: a dot, a name, where it is, a short state, an age. Fixed columns keep rows aligned. */
+  .g-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) 72px 96px 32px 8px; align-items: center; gap: 8px;
+    width: 100%; height: 40px; padding: 0 var(--s3); border: 0; border-bottom: 1px solid var(--rule-soft); border-radius: 0;
+    background: transparent; text-align: left; font: var(--t-body)/var(--lh-body) var(--sans); color: var(--ink); }
+  .g-row:hover { background: var(--sunk); color: var(--ink); }
+  .g-row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .g-row .g-where { font: var(--t-name)/var(--lh-name) var(--mono); color: var(--muted); }
+  .g-row .g-state { font-size: 12px; color: var(--warn); }
+  .g-row.down .g-state { color: var(--down); }
+  .g-row .g-age { font: var(--t-caption)/var(--lh-caption) var(--mono); color: var(--faint); text-align: right; font-variant-numeric: tabular-nums; }
+  .g-row .chev { color: var(--faint); }
+  .g-tiles { flex: none; padding: var(--s3); }
+  .g-tiles .fig-tile .fig { margin-bottom: 0; }
+  .g-foot { flex: none; margin-top: auto; padding: 12px var(--s3); border-top: 1px solid var(--rule); }
+  .g-foot button.brass { width: 100%; min-height: 34px; font: 600 13px/18px var(--sans); }
+  .g-foot button.brass:hover { border-color: var(--brass); color: #17140A; filter: brightness(1.06); }
 
   select { font: 12px var(--sans); color: var(--ink); background: var(--sunk); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; }
   label.radio, label.check { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 12px; color: var(--ink-2); cursor: pointer; }
@@ -1238,33 +1244,77 @@ window.onerror = function (msg, src, line, col) {
   window.sovBack = back;
 
   // ---------- glance: the small box ----------
+  // Today in a menu-bar popover: the same headline, the same attention items and the
+  // same figures, from the same assessment, so the Glance and Today never disagree.
+  // A row is a dot, a name, where it is, a short state and an age; its sentence opens
+  // in the app. When status was observed, and how long it took, is the headline's tooltip.
+  const GLANCE_ICON = {
+    refresh: '<path d="M 13.3 8 A 5.3 5.3 0 1 1 11.8 4.2 M 13.3 2.7 V 6 H 10"/>',
+    settings: '<circle cx="8" cy="8" r="2"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.8 3.8l1.4 1.4M10.8 10.8l1.4 1.4M12.2 3.8l-1.4 1.4M5.2 10.8l-1.4 1.4"/>',
+  };
+  let glanceRows = null;   // watches the rows' height, to fade the last one while more are below
+  const glanceIcon = k => `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${GLANCE_ICON[k]}</svg>`;
   function renderGlance() {
-    const m = D.machine || {}, h = hub(), st = h.status || {}, cov = st.coverage || {}, a = arch();
-    const fleet = ((D.fleet || {}).hosts) || [];
-    const weeks = ((h.judge || {}).weeks) || [], rates = weeks.map(w => w.judged ? 100 * w.kept / w.judged : 0), last = thisWeek(h);
-    const online = fleet.filter(x => (x.net || {}).online).length, offline = fleet.filter(x => (x.net || {}).online === false).length;
-    const unknown = fleet.length - online - offline;
-    const pending = reviewQueue().count, assessment = assess(), needs = assessment.need;
-    const hubTxt = h.reachable ? `${dot("live", "hub online")}hub ${esc(((h.via || "").startsWith("ssh ") ? h.via.slice(4) : (h.hub_host || "here")).toLowerCase())}`
-      : h.reachable === false ? `${dot("down", "hub offline")}hub silent` : `${dot("", "hub unchecked")}hub unchecked`;
-    const row = (pl, label, value, sub, cls) => `<button class="g-row ${cls || ""}" data-place="${esc(JSON.stringify(pl))}"><span class="l">${esc(label)}</span><b>${value}</b><span class="s">${sub || ""}</span><span class="chev">›</span></button>`;
+    const m = D.machine || {}, h = hub(), A = assess(), needs = A.need;
+    // The crown in the menu bar keeps its one-sentence verdict.
+    bridge({ cmd: "verdict", ...verdictSentence() });
+    const place = pl => esc(JSON.stringify(pl));
+    const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+    // Today's headline: attention items, never individual proposals.
+    const down = needs.some(n => n.state === "down"), count = needs.length;
+    const [state, headline] = !m.connected ? ["", "Not connected"]
+      : [down ? "down" : count ? "warn" : "live", count ? `${plural(count, "thing")} need${count === 1 ? "s" : ""} you` : "All clear"];
+    // Where a thing is: the hub by that word, any other device by its name.
+    const hubName = (m.hub_pointer || "").split(":")[0] || h.hub_host || "";
+    const device = x => !x ? "" : x === hubName ? "hub" : x;
+    const rowOf = n => {
+      const source = n.need != null ? (D.needs_you || [])[n.need] : null;
+      // The gate is one attention item, as on Today; its count is the Review figure's too.
+      if (source && source.kind === "gate") return { state: n.state, name: plural(h.pending || 0, "proposal"), where: "", word: "waiting", age: "", pl: { view: "review" } };
+      const on = /^(.+) on (\S+)$/.exec(n.name || "");
+      const where = on ? device(on[2]) : String((n.jump || {}).id || "").startsWith("hub:") ? "hub"
+        : source ? device(source.host || (source.kind === "hub" ? hubName : source.kind === "job" ? m.host : ""))
+        : ["jobs", "tools"].includes((n.jump || {}).view) ? device(m.host) : "";
+      // The age has its own column, so a lateness reads as one word beside it.
+      const word = SovStatus.brief(n).replace(/^silent .*/, "silent");
+      const name = on ? on[1] : n.name;
+      return { state: n.state, name, where: where === name ? "" : where, word, age: n.age_h != null ? age(n.age_h) : "",
+               pl: n.jump ? { view: n.jump.view, sel: { id: n.jump.id } } : { view: "glance" } };
+    };
+    const rows = m.connected ? needs.map(rowOf) : [];
+    // The four figures, as Today and the Review badge count them.
+    const c = A.completeness, bk = D.backups || {}, pending = reviewQueue().count;
+    const snap = (bk.snapshots || {}).newest_age_h;
+    const [bn, bu] = snap == null ? ["–", ""] : snap < 1 ? [String(Math.max(1, Math.round(snap * 60))), "m"] : snap < 48 ? [String(Math.round(snap)), "h"] : [String(Math.round(snap / 24)), "d"];
+    const tile = (pl, label, fig, unit) => `<button class="fig-tile" data-place="${place(pl)}"><span class="cap">${label}</span><span class="fig">${esc(fig)}${unit ? `<small>${esc(unit)}</small>` : ""}</span></button>`;
+    const failed = D._status && D._status.error;
     const g = $("#glance"); g.hidden = false;
     g.innerHTML = `
       <div class="g-head"><svg class="crown" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 5.2 5.1 8.9 8 3.4l2.9 5.5L14 5.2l-.9 7.3H2.9L2 5.2zM3.1 13.2h9.8v1.2H3.1z"/></svg>
-        <b>${esc(m.vault_name || "Sovereign")}</b><span class="hubpill">${hubTxt}</span><span class="sp"></span>
-        <button class="quiet" id="g-refresh" title="Refresh" aria-label="Refresh">↻</button><button class="quiet" id="g-gear" title="Settings" aria-label="Settings">⚙</button></div>
-      <div class="g-rows">
-        ${(() => { const vd = verdictSentence(); bridge({ cmd: "verdict", state: vd.state, text: vd.text }); return `<button class="g-row verdict ${vd.state}" data-place="${esc(JSON.stringify({ view: "glance" }))}"><span class="vdot"></span><span class="vt">${esc(vd.text)}</span></button>`; })()}
-        ${row({ view: "review" }, "Review proposals", pending == null ? "Unverified" : num(pending), "Open your review queue")}
-        ${row({ view: "archive", section: "judge" }, "judge kept", st.judged != null ? `${num(st.new_proposals)} of ${num(st.judged)}` : "?", (last ? "wk " + pct(last.kept, last.judged) : "") + sparkline(rates))}
-        ${row({ view: "archive", section: "judge" }, "unjudged", num(cov.unjudged_in_window), cov.stranded_pre_watermark ? num(cov.stranded_pre_watermark) + " stranded" + ((h.burndown || {}).stopped ? " · burn-down stopped" : "") : "")}
-        ${row({ view: "archive", section: "composition" }, "cards", num(a.total), a.by_type ? Object.entries(a.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => v + " " + ({ concept: "con", entity: "ent", synthesis: "syn", plan: "plan", review: "rev" }[k] || k)).join(" · ") : "")}
-        ${row({ view: "hosts" }, "fleet", fleet.length ? `${online} of ${fleet.length} up` : "?", offline ? offline + " offline" : unknown ? unknown + " not probed" : fleet.length ? "all reachable" : "not reported", offline ? "hot" : "")}
-        ${needs.filter(n => n.cause !== "need:gate").map(n => `<button class="g-row need" data-place="${esc(JSON.stringify(n.jump ? {view:n.jump.view,sel:{id:n.jump.id}} : {view:'glance'}))}"><span class="l">${esc(n.name)}</span><span class="s wrap">${esc(n.detail)}</span><span class="chev">›</span></button>`).join("")}
-        ${assessment.waiting.map(n => row({view:'jobs',sel:{id:n.jump.id}},n.name,n.cause==='job-paused'?'Paused':'Awaiting verification','')).join('')}
-      </div>
-      <div class="g-foot"><span class="meta">${esc(m.host || "")} · ${esc(SovStatus.caption(D))}</span><span class="sp"></span><button class="brass" id="g-console">Open Sovereign</button></div>`;
-    requestAnimationFrame(() => bridge({ cmd: "glanceSize", h: Math.ceil(g.scrollHeight) }));
+        <b>${esc(m.vault_name || "Sovereign")}</b><span class="sp"></span>
+        <button id="g-refresh" title="Refresh" aria-label="Refresh">${glanceIcon("refresh")}</button><button id="g-gear" title="Settings" aria-label="Settings">${glanceIcon("settings")}</button></div>
+      <button class="g-verdict ${state}" data-place="${place({ view: "glance" })}" title="${esc([m.host, SovStatus.caption(D)].filter(Boolean).join(" · "))}"><i class="dot ${state}"></i><h2>${esc(headline)}</h2></button>
+      ${failed ? `<div class="g-banner" role="alert">${esc(failed)}</div>` : ""}
+      <div class="g-rows">${rows.map(r => `<button class="g-row need ${r.state || ""}" data-place="${place(r.pl)}"><i class="dot ${r.state || ""}"></i><span class="g-name">${esc(r.name)}</span><span class="g-where">${esc(r.where)}</span><span class="g-state">${esc(r.word)}</span><span class="g-age">${esc(r.age)}</span><span class="chev" aria-hidden="true">›</span></button>`).join("")}</div>
+      ${m.connected ? `<div class="g-tiles tiles4">
+        ${tile({ view: "review" }, "Review", pending == null ? "–" : num(pending), "")}
+        ${tile({ view: "archive", section: "judge" }, "Read", c.read.pct != null ? String(c.read.pct) : "–", c.read.pct != null ? "%" : "")}
+        ${tile({ view: "sources" }, "Sources", c.producers.total ? String(c.producers.delivering) : "–", c.producers.total ? " of " + c.producers.total : "")}
+        ${tile({ view: "backups" }, "Backup", bn, bu)}</div>` : ""}
+      <div class="g-foot"><button class="brass" id="g-console">Open Sovereign</button></div>`;
+    const list = g.querySelector(".g-rows"), more = () => list.classList.toggle("more", list.scrollTop + list.clientHeight < list.scrollHeight - 1);
+    list.addEventListener("scroll", more, { passive: true });
+    if (glanceRows) glanceRows.disconnect();
+    glanceRows = new ResizeObserver(more); glanceRows.observe(list);
+    // The popover hugs what it shows: everything but the rows at its own height, the rows at
+    // their full height, so a long list scrolls inside the popover's cap. Measured at once,
+    // not on an animation frame, which a popover that is not on screen never gets.
+    const cs = getComputedStyle(g);
+    const natural = [...g.children].reduce((sum, k) => { const ks = getComputedStyle(k);
+      return sum + (k === list ? k.scrollHeight : k.offsetHeight)
+        + (k.classList.contains("g-foot") ? 0 : parseFloat(ks.marginTop) + parseFloat(ks.marginBottom)); }, parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom));
+    bridge({ cmd: "glanceSize", h: Math.ceil(natural) });
+    more();
   }
 
   // A control the owner changed: it no longer shows what was drawn.
@@ -1471,7 +1521,7 @@ window.onerror = function (msg, src, line, col) {
     const chip = e.target.closest("[data-goto]");
     // a lane chip lands on its Sources row; one with no row is not rendered as a button
     if (chip) { const it = findRow(chip.dataset.goto, sourceItems()); if (it) { setView("sources", { silent: true }); if (view === "sources") select(it.kind, it.id, true); } return; }
-    const grow = e.target.closest(".g-row[data-place]");
+    const grow = e.target.closest("#glance [data-place]");
     if (grow) { let pl = null; try { pl = JSON.parse(grow.dataset.place); } catch (x) {} return bridge({ cmd: "showConsole", place: pl }); }
     const opn = e.target.closest("[data-open]");
     if (opn) { const it = findRow(opn.dataset.open); if (it) select(it.kind, it.id, true); return; }

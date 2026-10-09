@@ -62,6 +62,14 @@ if(SCENE==='job-output'){
  check('Compact menu is active',document.body.classList.contains('glance'));
  check('Menu keeps status rows without troubleshooting paragraphs',document.querySelector('.g-row.need')&&!document.querySelector('.issue-details'));
  check('Full console remains available',!!document.getElementById('g-console'));
+ const glance=document.getElementById('glance'),said=glance.innerText,head=document.querySelector('.g-verdict');
+ check('One headline counts attention items',/^(\d+ things? needs? you|All clear)$/.test(head?.querySelector('h2')?.textContent||''));
+ check('Headline count matches its rows',+((head?.textContent||'').match(/^\d+/)||[0])[0]===document.querySelectorAll('.g-row.need').length);
+ check('Observed time and duration live in the tooltip',!!head?.title.includes('Observed')&&head.title.includes('Status took')&&!said.includes('Observed')&&!said.includes('Status took'));
+ check('No attention banner repeats the rows',!said.includes('Attention:'));
+ check('A row is a dot, a name, where, a short state and an age',[...document.querySelectorAll('.g-row.need')].every(r=>r.tagName==='BUTTON'&&r.querySelector('.dot')&&r.querySelector('.g-where')&&r.querySelector('.g-age')&&r.querySelector('.g-state')?.textContent.trim().split(/\s+/).length<=3));
+ check('Four figures, each a way in',[...document.querySelectorAll('.g-tiles .fig-tile')].filter(t=>t.tagName==='BUTTON'&&t.dataset.place).length===4);
+ check('The footer is only the way into the app',document.querySelector('.g-foot')?.innerText.trim()==='Open Sovereign');
 }else if(SCENE==='concise-mixed'){
  const group=[...document.querySelectorAll('.today-item')].find(r=>r.textContent.includes('2 sources'));
  check('Mixed tools and hosts stay one row on Today',location.pathname.endsWith('/local.html')&&!!group&&document.querySelectorAll('.today-needs .today-item').length===1);
