@@ -1473,7 +1473,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         guard let resources = Bundle.main.resourceURL else { return }
         let executable = resources.appendingPathComponent("runtime/bin/python3").path
         let script = resources.appendingPathComponent("backend/bin/sov-about").path
-        bridge.run([executable, script], timeLimit: 5) { out, _, code in
+        bridge.run([executable, "-B", script], timeLimit: 5) { out, _, code in
             DispatchQueue.main.async {
                 let alert = NSAlert()
                 alert.messageText = "Sovereign"

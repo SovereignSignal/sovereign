@@ -2,8 +2,11 @@
 
 Use an isolated test environment based on the Python version selected for the app build, with the existing archive-evidence dependency PyYAML available. The app runtime alone does not supply PyYAML; do not mistake that missing test dependency for a source regression. Record its version, the source commit, test output and exact bundle identity in the review packet. Run the full template suite and console backend/model suites before every packet. Re-run affected native fixture suites against the packaged candidate. All mutation tests use disposable archives and stubbed service controls.
 
+Set `SOV_PYTHON_RUNTIME` to a throwaway copy of the bundled runtime (`ditto <app>/Contents/Resources/runtime /tmp/<copy>`), never to an installed app. Tests, venvs and anything else that runs a runtime can write into it, and a write inside a signed bundle breaks its seal.
+
 ```sh
 export PATH="$SOV_TEST_PYTHON/bin:$PATH"
+export SOV_PYTHON_RUNTIME="$SOV_RUNTIME_COPY"
 export PYTHONPATH="$PWD/lib"
 python3 --version
 python3 -c 'import yaml; print(yaml.__version__)'

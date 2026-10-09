@@ -78,7 +78,29 @@ for name in ('bin','lib','connectors','templates'):
 BUNDLE
 cp "$BUILD/hub-crypto" "$BACKEND/bin/hub-crypto"
 
-cp -R "$RUNTIME" "$APP/Contents/Resources/runtime"
+# Keep the runtime's timestamps: its .pyc files are checked against their sources' mtimes,
+# and a copy that resets them makes every one stale, so any run without -B rewrites them
+# inside the signed bundle and breaks its seal.
+cp -Rp "$RUNTIME" "$APP/Contents/Resources/runtime"
+"$RUNTIME/bin/python3" -I -B - "$APP/Contents/Resources/runtime" <<'PYC' || { echo "    the bundled runtime's .pyc files do not match their sources" >&2; exit 1; }
+from pathlib import Path
+import compileall,py_compile,struct,sys
+# Refresh any .pyc that no longer matches its source (a runtime copied without its
+# timestamps) and compile every module that has none, then prove none is stale, before
+# the bundle is signed: Python never has a reason to write inside it.
+def stale(pyc):
+    src=pyc.parent.parent/(pyc.name.split('.')[0]+'.py'); head=pyc.read_bytes()[:16]
+    if not src.is_file() or len(head)<16 or struct.unpack('<I',head[4:8])[0]: return None
+    st=src.stat()
+    return src if struct.unpack('<II',head[8:16])!=(int(st.st_mtime)&0xFFFFFFFF,st.st_size&0xFFFFFFFF) else None
+pycs=list(Path(sys.argv[1]).rglob('__pycache__/*.pyc'))
+for pyc in pycs:
+    src=stale(pyc)
+    if src: py_compile.compile(str(src),cfile=str(pyc),doraise=True,optimize={'opt-1':1,'opt-2':2}.get(pyc.name.split('.')[-2],0))
+compileall.compile_dir(sys.argv[1]+'/lib',quiet=2)   # a module that cannot compile is never imported
+left=[str(p) for p in Path(sys.argv[1]).rglob('__pycache__/*.pyc') if stale(p)]
+if left: print('\n'.join(left[:5]),file=sys.stderr); sys.exit(1)
+PYC
 cp -R "$HERE/licenses" "$APP/Contents/Resources/licenses"
 cp "$HERE/runtime.lock.json" "$APP/Contents/Resources/runtime.lock.json"
 # Signing decides whether macOS remembers its answer to "may Sovereign read your

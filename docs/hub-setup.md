@@ -100,7 +100,7 @@ Activation refuses existing job definitions on a retry. Inspect any failed activ
 The tests use temporary archives and a fake scheduler. They cover preview/apply boundaries, native archive scoping, the curator-to-owner-to-context roundtrip, encrypted recovery, tampering/wrong keys, linked paths, inference redirects, activation success/rollback and Git history. Native fixtures exercise wide/light and narrow/dark layouts.
 
 ```bash
-SOV_PYTHON_RUNTIME=/path/to/bundled/runtime python3 -m unittest discover -s tests -p test_hub.py -v
+SOV_PYTHON_RUNTIME=/path/to/a/copy/of/the/bundled/runtime python3 -m unittest discover -s tests -p test_hub.py -v
 python3 apps/console/test-hub.py --evidence /path/to/private/evidence
 ```
 

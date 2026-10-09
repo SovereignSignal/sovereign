@@ -11,6 +11,7 @@ var env = ProcessInfo.processInfo.environment
 env["PATH"] = (env["PATH"] ?? "") + ":/usr/bin:/bin:/usr/sbin:/sbin"
 env["SOV_PYTHON"] = resources.appendingPathComponent("runtime/bin/python3").path
 env["SOV_PYTHON_RUNTIME"] = resources.appendingPathComponent("runtime").path
+env["PYTHONDONTWRITEBYTECODE"] = "1"   // never write caches into the signed bundle
 task.environment = env
 do { try task.run(); task.waitUntilExit(); exit(task.terminationStatus) }
 catch { fputs("The Sovereign command could not start.\n", stderr); exit(1) }
