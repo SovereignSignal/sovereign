@@ -930,6 +930,14 @@ final class Bridge: NSObject, WKScriptMessageHandler {
 
 func log(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
 
+/// AppKit pulls a titled window back until part of it shows on a display; a background
+/// snapshot must stay wholly off screen, so QA alone skips that.
+final class ConsoleWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        App.shared.qaBackground ? frameRect : super.constrainFrameRect(frameRect, to: screen)
+    }
+}
+
 /// SOV_WINDOW=WxH sizes the window for a snapshot; QA only.
 func qaFrame(_ f: NSRect) -> NSRect {
     guard let s = ProcessInfo.processInfo.environment["SOV_WINDOW"], let x = s.firstIndex(of: "x"),
@@ -982,6 +990,14 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     var appearanceObservation: NSKeyValueObservation?
     var appearanceMenu: NSMenu?
     var qaGlance: Bool { ProcessInfo.processInfo.environment["SOV_GLANCE"] == "1" }
+    // Snapshot QA runs behind the owner's work: its window sits past the edge of every
+    // screen and the app never takes focus. SOV_QA_FOREGROUND=1 shows it on screen again.
+    var qaBackground: Bool { snapshotting && ProcessInfo.processInfo.environment["SOV_QA_FOREGROUND"] != "1" }
+    func present() {
+        guard qaBackground else { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
+        let edge = NSScreen.screens.map(\.frame.maxX).max() ?? 0
+        window.setFrameOrigin(NSPoint(x: edge + 400, y: 0)); window.orderFrontRegardless()
+    }
 
     static func main() {
         let app = NSApplication.shared
@@ -1043,7 +1059,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
         let frame = qaGlance ? NSRect(x: 120, y: 120, width: glanceSize.width, height: glanceSize.height)
                              : NSRect(x: 120, y: 120, width: 900, height: 600)
-        window = NSWindow(contentRect: qaFrame(frame), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = ConsoleWindow(contentRect: qaFrame(frame), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Sovereign"
         window.appearance = nil; window.backgroundColor = pageGround
         window.minSize = qaGlance ? glanceSize : NSSize(width: 720, height: 460)
@@ -1060,8 +1076,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         // Menu-bar-only installs start quiet: the panel appears when the crown is clicked.
         let snapshotting = !(ProcessInfo.processInfo.environment["SOV_SNAPSHOT"] ?? "").isEmpty
         if Settings.location != "menubar" || snapshotting {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            present()
         }
         // Load after the window is on screen: a web view that loads while hidden may
         // stay suspended, and takeSnapshot on it never returns.
@@ -1368,8 +1383,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     func showConsole(place: [String: Any]?) {
         popover?.performClose(nil)
         if qaGlance { return }
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        present()
         // Today lives in the other document; every other place is a view of this one.
         // The Glance's verdict and jump-less rows name Today as "glance", as setView does.
         if let place = place {
