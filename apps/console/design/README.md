@@ -15,6 +15,11 @@ Settings sits at the foot of the rail with the open archive. Jobs, Hub setup and
 Permissions are reached from Settings; they are the engine room, not destinations.
 The compact menu-bar Glance is the only separate frame.
 
+First launch is a page of its own, without the rail: with no archive open, Today offers
+Create archive… and Open existing…. A fresh create or open shows one connect step, once
+per archive and only while no tool feeds it, listing tools found on this Mac; each row
+hands over to Sources › Add, where connecting keeps its preview and confirm.
+
 ## Words
 
 The interface was measured at about 4,500 words across twelve screens on 2026-09-30.
