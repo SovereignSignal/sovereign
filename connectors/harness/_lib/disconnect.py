@@ -16,6 +16,20 @@ import sys
 import tempfile
 
 CATALOG = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(CATALOG.parent.parent / 'lib'))
+import lane_contract  # noqa: E402
+
+
+def lane_retirement(lane, vault):
+    """The lane-contract edits that mark this producer's lane retired, or [] when it has none."""
+    if not lane:
+        return []
+    stage = os.environ.get('BRAIN_STAGE') or os.environ.get('SOVEREIGN_STAGE') or (
+        os.path.expanduser('~/.vault-staging') if os.path.isdir(os.path.expanduser('~/.vault-staging')) else None)
+    try:
+        return lane_contract.plan(lane, vault, stage, reason='producer removed; collection stopped, history kept')
+    except ValueError:
+        return []
 
 
 def atomic(path, data, mode=0o600):
@@ -168,6 +182,8 @@ def main():
     print('History: ' + str(record.get('lane_dir') or 'existing lane directories stay in place'))
     for path, _, _, _ in edits:
         print('Update managed configuration: ' + str(path))
+    for path, _, _ in lane_retirement(record.get('lane'), args.vault):
+        print('Mark the source retired: ' + str(path))
     print('Restart the tool to clear context already loaded in an open session.', flush=True)
     if not args.apply:
         print('dry run. No changes made. Apply to remove this producer.')
@@ -198,6 +214,14 @@ def main():
         retired = data.setdefault('retired_harnesses', {}).setdefault(args.harness, {})
         retired.update(cleanup_pending=False, removed_at=stamp)
         atomic(manifest, (json.dumps(data, indent=1, sort_keys=True) + '\n').encode())
+        # The lane's contract says retired too, so every machine that reads it, the hub
+        # included, stops expecting deliveries. Collection is already stopped: a contract
+        # that cannot be marked is reported with its one-line fix, never a failed removal.
+        lane = retired.get('lane') or record.get('lane')
+        try:
+            lane_contract.write(lane_retirement(lane, args.vault))
+        except (OSError, ValueError) as error:
+            print('Could not mark the source retired (%s). Run: sov lane retire %s --apply' % (error, lane))
         print('Producer removed. History preserved. Add it again to reconnect.')
     finally:
         lock.rmdir()

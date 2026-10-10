@@ -254,7 +254,10 @@ window.SovStatus = (() => {
     hosts.filter(x => x.host !== m.host).forEach(x => (x.harnesses || []).forEach(t => {
       if (retiredLanes.has(t.lane)) return;
       const ah = mirrorAge(D, t);
-      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = REMOTE_MIRROR_H, { view: "hosts", id: x.host }, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: { view: "hosts", id: x.host }, cause: "pull:" + x.host, host: x.host }); }));
+      // Its record is the lane it writes, where it can be inspected and retired; the
+      // device is only the fallback for a mirror that names no lane.
+      const rec = t.lane ? { view: "sources", id: "lane:" + t.lane } : { view: "hosts", id: x.host };
+      if (late(`${t.harness} on ${x.host}`, "mirror last ran", ah, cad = REMOTE_MIRROR_H, rec, "mirror-late") === true) fresh.push({ state: "live", name: `${t.harness} on ${x.host}`, detail: `pulled ${age(ah)} ago`, age_h: ah, jump: rec, cause: "pull:" + x.host, host: x.host }); }));
     // Is THIS copy behind the hub? Compare the same lane's newest content in both places.
     // It used to subtract a hub lane's age from a REMOTE HOST'S harness run age, which are
     // not two views of one thing: a mirror that had not run in sixteen days on another

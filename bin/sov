@@ -10,6 +10,8 @@
 #   sov disconnect <harness>|all  undeclare a lane, retire its error log, and drop the
 #                                 shared job when it was the last (dry run without
 #                                 --apply; the lane stays, because raw/ is provenance)
+#   sov lane retire|restore <lane> mark a source retired in its LANE.md so no machine
+#                                 alerts on it; history stays (dry run without --apply)
 #   sov relay add|remove|list     the directory pipes this machine's one mover carries
 #                                 (add <path> [--name NAME] [--force]; remove <name>; list)
 #   sov hook <harness>            run a harness's session-start hook here, for testing
@@ -170,6 +172,7 @@ case "$cmd" in
     [ -n "$hook" ] || { echo "no session-start hook for $h"; exit 66; }
     printf '{"cwd":"%s","session_id":"manual","source":"startup"}' "$PWD" | "$PYTHON" "$hook";;
   status)   exec "$PYTHON" "$BIN/sov-status" "$@";;
+  lane)     exec "$PYTHON" "$BIN/sov-lane" "$@";;
   host)     # sov host add NAME ... : runs on the hub; from any other machine it is routed there
     sub="${1:-}"; shift || true
     [ "$sub" = "add" ] || { echo "sov host add NAME --user U --addr IP[,IP] [--identity I] [--workstreams a,b] [--apply]"; exit 64; }

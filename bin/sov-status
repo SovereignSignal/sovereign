@@ -1633,7 +1633,11 @@ def main():
     declared = manifest.get("harnesses") or {}
     retired = manifest.get("retired_harnesses") or {}
     for lane in lanes:
-        lane["retired"] = any(r.get("lane") == lane["lane"] and not r.get("cleanup_pending") for r in retired.values())
+        # Retired by its contract (LANE.md, read on every machine) or by this machine's
+        # own removal record. The contract is what lets one machine see that a source
+        # collected on another was retired there.
+        lane["retired"] = str(lane.get("status") or "").split("#")[0].strip() == "retired" or any(
+            r.get("lane") == lane["lane"] and not r.get("cleanup_pending") for r in retired.values())
         # Findings are computed here, not where the row is built, because a lane's retired
         # state is only known once the manifest has been read: retiring a lane is the
         # owner's answer to it, and an answered row must not keep asking.

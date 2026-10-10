@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""sov lane retire|restore <lane> [--reason TEXT] [--apply]
+
+Retire a source the owner no longer uses, or bring one back. Retiring sets
+`status: retired` in the lane's LANE.md (and its staging copy, where this machine
+stages), so status and the hub stop expecting deliveries from it. Its files stay as
+history. It does not stop a collector still installed on another machine: remove the
+producer there to stop collection.
+
+Without --apply it prints what would change and changes nothing.
+"""
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import lane_contract  # noqa: E402
+from sovereign_config import pointer  # noqa: E402
+
+
+def main(argv):
+    args = list(argv)
+    apply = "--apply" in args
+    args = [a for a in args if a != "--apply"]
+    reason = None
+    if "--reason" in args:
+        i = args.index("--reason")
+        if i + 1 >= len(args):
+            raise ValueError("--reason needs text")
+        reason = args[i + 1]
+        del args[i:i + 2]
+    if len(args) != 2 or args[0] not in ("retire", "restore"):
+        print(__doc__.strip(), file=sys.stderr)
+        return 64
+    action, lane = args
+    root = os.environ.get("BRAIN_ROOT") or pointer("~/.brain-root")
+    if not root:
+        raise ValueError("No archive is configured on this machine")
+    root = os.path.realpath(os.path.expanduser(root))
+    stage = os.environ.get("BRAIN_STAGE") or os.environ.get("SOVEREIGN_STAGE") or (
+        os.path.expanduser("~/.vault-staging") if os.path.isdir(os.path.expanduser("~/.vault-staging")) else None)
+    edits = lane_contract.plan(lane, root, stage, restore=action == "restore", reason=reason)
+    verb = "Retire" if action == "retire" else "Restore"
+    print("%s source: %s" % (verb, lane), flush=True)
+    if action == "retire":
+        print("Keep its files as history. Status and the hub stop expecting deliveries from it.")
+        print("A collector still installed on another machine keeps running until you remove the producer there.")
+    else:
+        print("Status and the hub expect deliveries from it again.")
+    if not edits:
+        print("Already %s. Nothing to change." % ("retired" if action == "retire" else "active"))
+        return 0
+    for path, _, _ in edits:
+        print("Update lane contract: " + str(path))
+    if not apply:
+        print("dry run. No changes made. Apply to %s this source." % action)
+        return 0
+    lane_contract.write(edits)
+    print("Source %s. History preserved." % ("retired" if action == "retire" else "restored"))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (OSError, ValueError) as error:
+        print("Cannot change this source: " + str(error), file=sys.stderr)
+        sys.exit(65)

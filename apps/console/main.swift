@@ -736,13 +736,15 @@ final class Bridge: NSObject, WKScriptMessageHandler {
               Settings.archiveKey(root) == Settings.archiveKey(vault),
               let h = request["harness"] as? String,
               h.range(of: "^[a-z][a-z0-9-]*$", options: .regularExpression) != nil,
-              let action = request["action"] as? String, ["add", "remove"].contains(action) else {
+              let action = request["action"] as? String, ["add", "remove", "retire", "restore"].contains(action) else {
             fail("Refresh the configured archive before changing a producer."); return
         }
+        // Retire and restore name a lane, not a producer: `sov lane` changes its contract
+        // and needs no connector metadata, but goes through the same review-then-apply gate.
+        let laneChange = action == "retire" || action == "restore"
         let template = URL(fileURLWithPath: sov).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
         let metadata = template.appendingPathComponent("connectors/harness/\(h)/harness.json")
-        guard let data = try? Data(contentsOf: metadata),
-              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let meta = laneChange ? [:] : (try? Data(contentsOf: metadata)).flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else {
             fail("This producer is not supported by the installed connector service."); return
         }
         let env = ProcessInfo.processInfo.environment
@@ -763,7 +765,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         guard !apply || producerReview == key else { fail("Review this producer change before applying it."); return }
         producerReview = nil
         producerBusy = true
-        var args = [qa ?? sov, action == "add" ? "connect" : "disconnect", h]
+        var args = laneChange ? [qa ?? sov, "lane", action, h] : [qa ?? sov, action == "add" ? "connect" : "disconnect", h]
         if !(meta["detect"] as? [String] ?? []).isEmpty { args += ["--vault", root] }
         if apply { args.append("--apply") }
         stream(args, id: "producer", request: request["request"], generation: generation, env: secret) { code in

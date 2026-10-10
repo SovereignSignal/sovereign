@@ -393,3 +393,16 @@ console.log('Verdict: a paused job is named as paused and never hides a stale it
   assert.deepEqual({...H({machine:{connected:true}},{need:[{state:'warn'}]})},{state:'warn',text:'1 thing needs you'});
   assert.deepEqual({...H({machine:{connected:true}},{need:[{state:'warn'},{state:'down'}]})},{state:'down',text:'2 things need you'});
   console.log('Headline: one function words Today and the Glance.'); }
+
+// A late mirror on another device opens the lane it writes, where it can be inspected and
+// retired; a lane retired by its contract raises nothing at all.
+{
+  const remote = (retired) => assess({machine:{host:'here'},fleet:{hosts:[{host:'here'},{host:'desk',harnesses:[{harness:'windsurf',lane:'windsurf-desk',run_age_h:400}]}]},
+    lanes:[{lane:'windsurf-desk',retired}]});
+  const all = (a) => [...a.need, ...a.stale, ...a.fresh, ...(a.need.flatMap(n => n.members || []))];
+  const late = all(remote(false)).find(x => x.cause === 'mirror-late');
+  assert.ok(late, 'a silent remote mirror is reported');
+  assert.equal(JSON.stringify(late.jump), JSON.stringify({view:'sources',id:'lane:windsurf-desk'}));
+  assert.equal(all(remote(true)).filter(x => x.cause === 'mirror-late').length, 0);
+  console.log('Remote mirror: opens its lane record; a retired lane stays quiet.');
+}

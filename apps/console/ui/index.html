@@ -954,6 +954,12 @@ window.onerror = function (msg, src, line, col) {
   const removable = (h) => !!h && (h.declared || h.job_loaded || h.hook_registered || h.state === "partial" || h.state === "removal incomplete");
   const removeBtn = (h) => removable(h) ? `<button data-act="remove-producer" data-harness="${esc(h.id)}">Remove producer…</button>` : "";
   const addAgainBtn = (h) => h && !removable(h) && h.state === "removed" && h.detected !== false ? `<button class="brass" data-act="connect" data-harness="${esc(h.id)}">Add again…</button>` : "";
+  // A source collected elsewhere (or whose producer is already gone) is retired by its
+  // contract: no machine alerts on it again, and its files stay as history. A producer
+  // still installed here is removed instead, which retires its lane as well.
+  const laneRetireBtn = (l, h) => !l.lane || removable(h) || (h && h.state === "removed" && !l.retired) ? ""
+    : l.retired ? (h ? "" : `<button data-act="restore-source" data-lane="${esc(l.lane)}">Restore source…</button>`)
+    : `<button data-act="retire-source" data-lane="${esc(l.lane)}">Retire source…</button>` + help("Stops alerts about it on every device. Its files stay as history." + (l.host && l.host !== (D.machine || {}).host ? " Remove the producer on " + l.host + " to stop collection there." : ""));
   const removeHelp = (h) => removable(h) ? help("Removal stops collection and removes Sovereign’s context setup. Saved captures stay." + (h.read !== "none" ? " Restart the tool to clear context already loaded." : "")) : "";
   function cardLink(rel, name) {
     const o = D.obsidian || {};
@@ -1265,7 +1271,7 @@ window.onerror = function (msg, src, line, col) {
           ["Cards from it", o.cards ? num(o.cards) : "none yet"], ["Prepared this week", reads ? String(reads) : null]],
         acts: `<div class="acts">${actions([addAgainBtn(local), runNowBtn(local, "Run now"),
           local && local.lane_dir ? `<button data-act="reveal" data-path="${esc(local.lane_dir)}">Show folder</button>` : "",
-          obsBtn((o.relative_path || "raw/tools/" + o.lane) + "/LANE")], [removeBtn(local) + removeHelp(local)])}</div>`,
+          obsBtn((o.relative_path || "raw/tools/" + o.lane) + "/LANE")], [removeBtn(local) + removeHelp(local), laneRetireBtn(o, local)])}</div>`,
         details: [sect("Contract", kv([["producer", o.producer], ["host", o.host], ["read", o.read], ["write", o.write], ["status", o.status]])),
           sect("Freshness · newest file", kv([
             ["staging", o.staging_age_h != null ? age(o.staging_age_h) + " ago" : "not staged here"],
@@ -1614,10 +1620,11 @@ window.onerror = function (msg, src, line, col) {
   let pendingProducer=null;
   function producer(harness,action,apply,extra={}){
     if(apply){if(!pendingProducer?.reviewed)return;extra=pendingProducer.extra;}
-    const request=openDrawer((apply?(action==='remove'?'Removing ':'Adding '):'Review '+action+': ')+harness,!apply);if(!request)return;
+    const doing={remove:'Removing ',add:'Adding ',retire:'Retiring ',restore:'Restoring '}[action];
+    const request=openDrawer((apply?doing:'Review '+action+': ')+harness,!apply);if(!request)return;
     pendingConnect=null;pendingHost=null;
     pendingProducer={harness,action,apply,extra,reviewed:false,running:true};
-    $('#drawer-apply').textContent=action==='remove'?'Remove producer':'Add producer';
+    $('#drawer-apply').textContent={remove:'Remove producer',add:'Add producer',retire:'Retire source',restore:'Restore source'}[action];
     bridge({cmd:'producer',harness,action,apply:!!apply,root:selectedRoot,...extra,request});
   }
   function connect(harness, apply, extra) {
@@ -1710,6 +1717,7 @@ window.onerror = function (msg, src, line, col) {
         return producer(b.dataset.harness,'add',false,f?.value?{secret:f.value}:{});
       }
       if(act === "remove-producer")return producer(b.dataset.harness,"remove",false);
+      if(act === "retire-source"||act === "restore-source")return producer(b.dataset.lane,act === "retire-source"?"retire":"restore",false);
       if (act === "hostadd") return hostAdd(b.dataset.host, false);
       if (act === "choose-archive") return bridge({ cmd: "navigate", page: "home", place: { chooseArchive: true } });
       if (b.id === 'review-retry') return ['no_archive','different_archive'].includes(reviewQueue().state)?bridge({cmd:'navigate',page:'home',place:{chooseArchive:true}}):refresh();
