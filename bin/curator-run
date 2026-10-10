@@ -434,10 +434,11 @@ def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promote
         # Same shape as the screen veto: the drafted body carries money, PII,
         # a wallet, or a key. Demoted to ask-first, never dropped, never edited.
         return False, "taste veto flagged the drafted body — owner's gate"
-    if typ == "entity":
+    if typ == "entity" and not _entity_override(rules):
         # HARD LAW (CLAUDE.md never-graduate list): "New entity cards always
-        # stay at ask-first." Entities never auto-promote regardless of what
-        # gears.json says — a config typo must not override the standard.
+        # stay at ask-first." Entities never auto-promote on a gears.json grant
+        # alone — a config typo must not override the standard. Only an owner
+        # override recorded on the entity rule (see _entity_override) opens it.
         return False, "entity: never graduates past ask-first (law)"
     if not update_of:
         return False, "not an update — new cards stay at the owner's gate"
@@ -461,6 +462,17 @@ def _decide_auto_promote(typ, confidence, update_of, target_type, rules, promote
     return True, ""
 
 
+def _entity_override(rules):
+    """Whether this instance's owner has overridden the standard's never-graduate
+    rule for entities. The standard keeps every entity at the owner's gate; an owner
+    who changes that in their own law (CLAUDE.md Part 2) records the decision on the
+    entity rule as owner_override, a dated sentence. Without it, no entity grant in
+    gears.json counts, so a stray list can never widen the gate by itself."""
+    rule = (rules or {}).get("entity") or {}
+    note = rule.get("owner_override")
+    return isinstance(note, str) and len(note.strip()) >= 20
+
+
 def _decide_auto_promote_new(typ, confidence, update_of, collides, rules, promoted_so_far, cap,
                              *, screen_flagged, taste_flagged):
     """Pure decision: may this proposal auto-promote as an act-and-report NEW card?
@@ -479,12 +491,13 @@ def _decide_auto_promote_new(typ, confidence, update_of, collides, rules, promot
         return False, "injection screen flagged the source — owner's gate"
     if taste_flagged:
         return False, "taste veto flagged the drafted body — owner's gate"
-    if typ == "entity":
+    if typ == "entity" and not _entity_override(rules):
         # HARD LAW (CLAUDE.md never-graduate list): "New entity cards always
-        # stay at ask-first." Entities never auto-promote regardless of what
-        # gears.json says — a config typo must not override the standard.
+        # stay at ask-first." Entities never auto-promote on a gears.json grant
+        # alone — a config typo must not override the standard. Only an owner
+        # override recorded on the entity rule (see _entity_override) opens it.
         return False, "entity: never graduates past ask-first (law)"
-    if typ not in ("concept", "synthesis", "plan", "review"):
+    if typ not in ("concept", "synthesis", "plan", "review", "entity"):
         # Only the standard's gradable knowledge types (plan and review since 2026-09-04) can hold a new-card
         # gear at all; entity is refused above by law, and an unknown type is a
         # bug, not a grant. Syntheses became eligible with the 2026-08-10 owner
@@ -772,6 +785,9 @@ def _self_test():
     G = {"concept": {"auto_approve_update_confidence": ["high", "med"]},
          "synthesis": {"auto_approve_update_confidence": ["high", "med"]},
          "entity": {"auto_approve_update_confidence": ["high", "med"]}}  # illegal grant — must still refuse
+    OV = "2026-10-10 owner decision: entities graduate in this vault (Part 2)."
+    GO = {"entity": {"auto_approve_update_confidence": ["high", "med"], "auto_approve_confidence": ["high", "med"], "owner_override": OV}}
+    GS = {"entity": {"auto_approve_update_confidence": ["high", "med"], "auto_approve_confidence": ["high", "med"], "owner_override": "yes"}}
     cases = [
         ("granted concept + high + resolving update fires", True,  ("concept", "high", "card-a", "concept", G, 0, 5)),
         ("granted concept + MED fires (2026-08-10 grant)",  True,  ("concept", "med", "card-a", "concept", G, 0, 5)),
@@ -788,6 +804,9 @@ def _self_test():
         ("per-run cap reached = never",                     False, ("concept", "high", "card-a", "concept", G, 5, 5)),
         ("cap zero disables entirely",                      False, ("concept", "high", "card-a", "concept", G, 0, 0)),
         ("empty rules = never",                             False, ("concept", "high", "card-a", "concept", {}, 0, 5)),
+        ("entity update fires under a recorded owner override", True, ("entity", "high", "card-b", "entity", GO, 0, 5)),
+        ("entity LOW update still asks under the override",  False, ("entity", "low", "card-b", "entity", GO, 0, 5)),
+        ("a short override note does not count",            False, ("entity", "high", "card-b", "entity", GS, 0, 5)),
     ]
     GN = {"concept": {"auto_approve_confidence": ["high", "med"]},
           "synthesis": {"auto_approve_confidence": ["high", "med"]},
@@ -813,6 +832,11 @@ def _self_test():
         ("shared per-run cap reached = never",              False, ("concept", "high", None, False, GN, 5, 5)),
         ("cap zero disables entirely",                      False, ("concept", "high", None, False, GN, 0, 0)),
         ("empty rules = never",                             False, ("concept", "high", None, False, {}, 0, 5)),
+        ("new entity fires under a recorded owner override", True, ("entity", "high", None, False, GO, 0, 5)),
+        ("new entity MED fires under the override",          True, ("entity", "med", None, False, GO, 0, 5)),
+        ("new entity LOW still asks under the override",     False, ("entity", "low", None, False, GO, 0, 5)),
+        ("new entity collision still queues",                False, ("entity", "high", None, True, GO, 0, 5)),
+        ("a short override note does not count",             False, ("entity", "high", None, False, GS, 0, 5)),
     ]
     C = ["news-no-engagement", "others-grant-rounds"]  # stand-in declared classes
     reject_cases = [
