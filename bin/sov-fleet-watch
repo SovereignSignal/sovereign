@@ -13,6 +13,16 @@ reminding while they are still away, and says so again when they come back. It r
 Tailscale rather than the LAN on purpose, because the hub roams between networks and
 its own subnet says nothing about whether the fleet is up.
 
+How loud it stays depends on what kind of event it is (2026-10-13). A red event
+(many hosts at once, or a critical host) reminds every SOV_FLEET_REALERT minutes, which
+is the whole point of this watcher. A yellow event (a host or two, nothing critical) is
+usually a deliberate shutdown, so it reminds once a day instead of every hour. A
+non-critical host that stays down for SOV_FLEET_MUTE_DAYS is treated as retired: one
+last message, then silence until it either comes back (announced as a recovery) or is
+removed from the tailnet (dropped without a word). Hosts that leave the fleet, by
+tailnet removal or by being added to the ignore list, are never announced as
+"recovered", because they did not recover.
+
 Contract: prints nothing when nothing has changed. The cron wrapper treats empty
 stdout as healthy and stays silent, so a normal day is quiet. Always exits 0 so the
 wrapper never reports this watcher itself as a failed job.
@@ -24,10 +34,16 @@ one-line machine-readable summary and alerts on nothing.
 
   SOV_FLEET_STATE     state file (default ~/.local/state/sovs-cron/fleet-watch.json)
   SOV_FLEET_IGNORE    comma-separated hostnames never counted (phones, laptops)
-  SOV_FLEET_REALERT   minutes between reminders while still down (default 60)
+  SOV_FLEET_REALERT   minutes between reminders while a RED event lasts (default 60)
+  SOV_FLEET_YELLOW_REALERT
+                      minutes between reminders while a yellow event lasts
+                      (default 1440, once a day)
+  SOV_FLEET_MUTE_DAYS days a non-critical host may stay down before it is treated
+                      as retired and muted (default 7; 0 disables muting)
   SOV_FLEET_RED       hosts down at once that make it an infrastructure event
                       (default: 3, or a third of the fleet, whichever is larger)
-  SOV_FLEET_CRITICAL  comma-separated hosts whose absence is red on its own
+  SOV_FLEET_CRITICAL  comma-separated hosts whose absence is red on its own, and
+                      which are never muted
   SOV_FLEET_NOTIFY    comma-separated executable paths fed EVERY message on stdin.
                       Use on a host with nothing else delivering stdout, so its
                       recoveries and yellows are not lost to a log file.
@@ -87,6 +103,8 @@ STATE = os.path.expanduser(
     setting("SOV_FLEET_STATE", "~/.local/state/sovs-cron/fleet-watch.json"))
 IGNORE = {h.strip() for h in setting("SOV_FLEET_IGNORE").split(",") if h.strip()}
 REALERT = int(setting("SOV_FLEET_REALERT", "60") or 60)
+YELLOW_REALERT = int(setting("SOV_FLEET_YELLOW_REALERT", "1440") or 1440)
+MUTE_DAYS = float(setting("SOV_FLEET_MUTE_DAYS", "7") or 0)
 ESCALATE = [x.strip() for x in setting("SOV_FLEET_ESCALATE").split(",") if x.strip()]
 # Notifiers that get EVERY message, not just red. A host with no cron wrapper
 # to deliver stdout would otherwise lose its yellows and its recoveries to a
@@ -249,12 +267,16 @@ def save_state(st):
 
 def summary_json():
     """One machine-readable line for other reporters. Never alarms by itself:
-    an unreadable tailnet is reported as unknown, never as an outage."""
+    an unreadable tailnet is reported as unknown, never as an outage. Muted
+    (presumed retired) hosts are listed separately, not as offline."""
     fleet = read_fleet()
+    muted = set(load_state().get("muted") or {})
     print(json.dumps({
         "unknown": fleet is None,
-        "total": 0 if fleet is None else len(fleet),
-        "offline": sorted(h for h, up in (fleet or {}).items() if not up),
+        "total": 0 if fleet is None else len([h for h in fleet if h not in muted]),
+        "offline": sorted(h for h, up in (fleet or {}).items()
+                          if not up and h not in muted),
+        "muted": sorted(h for h in muted if fleet and h in fleet),
     }))
     return 0
 
@@ -275,26 +297,47 @@ def main():
 
     st = load_state()
     st.pop("blind", None)
+    now_iso = iso(now())
     was = st.get("offline") or {}          # host -> iso first seen offline
-    offline = sorted(h for h, up in fleet.items() if not up)
-    online = sorted(h for h, up in fleet.items() if up)
+    muted = st.get("muted") or {}          # host -> iso muted as presumed retired
 
+    # A muted host that left the fleet (tailnet removal, ignore list) is forgotten;
+    # one that came back online is unmuted and announced below as a recovery.
+    for h in list(muted):
+        if fleet.get(h) is not False:
+            muted.pop(h)
+
+    down = sorted(h for h, up in fleet.items() if not up)
+    st["offline"] = {h: (was.get(h) or now_iso) for h in down}
+
+    # Down long enough, and not critical: presumed retired. Say so once, then mute.
+    newly_muted = []
+    if MUTE_DAYS > 0:
+        for h in down:
+            since = parse(st["offline"][h])
+            if (h not in muted and base_name(h) not in CRITICAL and since
+                    and (now() - since).total_seconds() >= MUTE_DAYS * 86400):
+                muted[h] = now_iso
+                newly_muted.append(h)
+
+    total = len(fleet) - len(muted)
+    offline = [h for h in down if h not in muted]
     red_at = int(setting("SOV_FLEET_RED", "0") or 0) or max(3, len(fleet) // 3)
 
-    def is_red(down):
-        return len(down) >= red_at or any(base_name(h) in CRITICAL for h in down)
-    new = [h for h in offline if h not in was]
-    back = sorted(h for h in was if h not in offline)
-    still = [h for h in offline if h in was]
+    def is_red(hosts):
+        return len(hosts) >= red_at or any(base_name(h) in CRITICAL for h in hosts)
 
-    now_iso = iso(now())
-    st["offline"] = {h: (was.get(h) or now_iso) for h in offline}
+    new = [h for h in offline if h not in was]
+    still = [h for h in offline if h in was]
+    # Only hosts still in the fleet and actually up count as recovered. A host that
+    # vanished from the tailnet or was just added to the ignore list did not recover.
+    back = sorted(h for h in was if fleet.get(h) is True)
 
     lines, red = [], False
 
     if new:
         red = is_red(offline)
-        head = ("Fleet DOWN: %d of %d hosts unreachable" % (len(offline), len(fleet))
+        head = ("Fleet DOWN: %d of %d hosts unreachable" % (len(offline), total)
                 if red else "Fleet: %d host(s) went offline" % len(new))
         lines.append(head)
         lines.append("  just now: " + ", ".join(new))
@@ -309,21 +352,33 @@ def main():
         st["last_alert"] = now_iso
 
     elif still:
+        red = is_red(offline)
+        every = REALERT if red else YELLOW_REALERT
         last = parse(st.get("last_alert") or "")
-        if not last or (now() - last).total_seconds() >= REALERT * 60:
+        if not last or (now() - last).total_seconds() >= every * 60:
             oldest = min(parse(st["offline"][h]) or now() for h in still)
-            red = is_red(offline)
             lines.append("Fleet STILL DOWN: %d of %d hosts unreachable for %s"
-                         % (len(offline), len(fleet), ago(oldest)))
+                         % (len(offline), total, ago(oldest)))
             lines.append("  " + ", ".join(still))
             st["last_alert"] = now_iso
 
+    if newly_muted:
+        lines.append("Fleet: %s down %s, treating as retired and going quiet. "
+                     "Remove from the tailnet to clear it; if it comes back it will "
+                     "be announced." % (", ".join(newly_muted),
+                                        ago(min(parse(st["offline"][h]) or now()
+                                                for h in newly_muted))))
+
     if back:
         lines.append("Fleet recovered: %s back online (%d of %d up)"
-                     % (", ".join(back), len(online), len(fleet)))
-        if not offline:
-            st.pop("last_alert", None)
+                     % (", ".join(back), total - len(offline), total))
+    if not offline:
+        st.pop("last_alert", None)
 
+    if muted:
+        st["muted"] = muted
+    else:
+        st.pop("muted", None)
     save_state(st)
     if not lines:
         return 0
