@@ -68,6 +68,10 @@ own on a wall clock. Instance data (vault path, core cards, host name, aliases) 
 pointer files under `~`, never in this repo. Tests:
 `python3 -m unittest tests.test_connector_claude_code`.
 
+## Curator without a hub
+
+A single Mac with no hub and no local model can still be curated. Save your Anthropic API key in Settings → Curator and turn it on: Claude reads what your connected tools saved, every two hours, and drafts cards into Review. Nothing lands without you; the curator's automatic approvals are pinned off. The key stays in your login Keychain, and each pass sends new material to Anthropic under your account. This is the standard's rule 5 hosted option; an archive whose owner keeps it local-only (`CURATOR_LOCAL_ONLY=1`) refuses it. From the command line: `sov curator key`, `sov curator enable --apply`, `sov curator run`, `sov curator status`.
+
 ## Local Hub package
 
 The macOS app includes Hub preparation, guarded job activation and encrypted recovery.
