@@ -28,7 +28,7 @@ def main():
         return
     lane = "codex-memory-%s" % brainhook.host_name()
     brainhook.receipt(pack["root"], lane, pack["label"], pack["scope"], pack["cards"],
-                      inp.get("session_id"), inp.get("source"))
+                      inp.get("session_id"), inp.get("source"), pack.get("slugs"))
     print(json.dumps({
         "hookSpecificOutput": {"hookEventName": "SessionStart",
                                "additionalContext": pack["context"]},

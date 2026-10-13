@@ -20,6 +20,9 @@
 #   sov hub init|env|tick|jobs|kit|law
 #                                the template-run hub: instance file, runner, jobs from the
 #                                manifest, the rebuild kit, Part 1 drift (sov-hub)
+#   sov curator enable|run|status|disable
+#                                curate an archive with no hub on this Mac, on Claude under
+#                                the owner's own key; every proposal waits for the owner (sov-curator)
 #   sov ingest folder <path>    bring a folder of material into its own raw lane:
 #                                 convert, redact, content-dedup, hand each file to
 #                                 sov-capture. Dry plan unless --apply; an undeclared
@@ -51,6 +54,7 @@ TEMPLATE="$(dirname "$BIN")"
 . "$BIN/_sov-config.sh"
 PYTHON="$(sov_python "$TEMPLATE")"
 export SOV_PYTHON="$PYTHON"
+sov_python_is_bundled "$PYTHON" && export PYTHONDONTWRITEBYTECODE=1
 HARNESS_DIR="$TEMPLATE/connectors/harness"
 
 # The harnesses a person can actually name. The catalog folder holds its own README.md and
@@ -82,6 +86,7 @@ case "$cmd" in
   contribute) exec "$PYTHON" "$BIN/sov-contribute" "$@";;
   load)     "$PYTHON" "$BIN/sov-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/sov-load" "$@";;
   capture)  exec "$PYTHON" "$BIN/sov-capture" "$@";;
+  curator)  exec "$PYTHON" "$BIN/sov-curator" "$@";;
   ingest)   exec "$PYTHON" "$BIN/sov-ingest" "$@";;
   app-update) exec "$PYTHON" "$BIN/sov-app-update" "$@";;
   signing-identity) exec "$PYTHON" "$BIN/sov-signing-identity" "$@";;

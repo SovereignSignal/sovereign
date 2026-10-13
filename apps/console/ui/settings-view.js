@@ -52,6 +52,24 @@ window.SovSettings = (() => {
       `<button id="set-change">${root ? "Change…" : "Open an archive…"}</button>${root ? `<button id="set-reveal">Show in Finder</button>` : ""}`);
   }
 
+  /* The curator for an archive with no hub: Claude under the owner's own key, every two
+     hours, nothing landing without the owner. A Mac that runs a hub curates from its own
+     jobs, so the section says that instead of offering a second curator. */
+  function curatorSection(C) {
+    if (!C) return sect("Curator", say("Checking…"));
+    if (C.hub) return sect("Curator", say("Your hub curates this archive."));
+    if (C.error) return sect("Curator", say(esc(C.error)));
+    const on = C.installed && C.loaded, pending = C.pending || 0;
+    const lead = !C.key_saved ? "Add your Anthropic API key to turn on the curator."
+      : on ? `Claude curates this archive every two hours. ${pending ? pending + " waiting in Review." : "Nothing waiting."}`
+      : "The curator is off.";
+    const key = `<div class="set-inline"><input type="password" id="set-cur-key" autocomplete="off" spellcheck="false" placeholder="${C.key_saved ? "Replace key…" : "sk-ant-…"}" aria-label="Anthropic API key"><button id="set-cur-save">Save key</button></div>`;
+    const acts = C.key_saved ? (on ? `<button class="brass" id="set-cur-run">Curate now</button><button id="set-cur-off">Turn off</button>`
+                                   : `<button class="brass" id="set-cur-on">Turn on</button>`) : "";
+    return sect("Curator", say(lead) + key + `<span class="pulls" id="set-cur-state" aria-live="polite"></span>`,
+      "Your key stays in this Mac's Keychain. Each pass sends new material to Anthropic under your account. Every card waits for you in Review.", acts);
+  }
+
   /* A job is what an operating system schedules; a lane runs inside one. The Jobs
      header counts with this too, so the two places never disagree. */
   function jobCount(D) {
@@ -136,10 +154,11 @@ window.SovSettings = (() => {
 
   function render() {
     if (!host || !host.isConnected) return;
-    const { S = {}, D = null, root = null, pinned = false } = ctx;
+    const { S = {}, D = null, root = null, pinned = false, curator = null } = ctx;
     host.className = "";
     host.innerHTML = `<div class="set-pane">
       ${archiveSection(root)}
+      ${root ? curatorSection(curator) : ""}
       ${appSection(D)}
       ${prefsSection(S, pinned)}
       ${S.error ? `<div class="note">${esc(S.error)}</div>` : ""}

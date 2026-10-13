@@ -57,6 +57,23 @@ def core_slugs():
     return os.environ.get("BRAIN_CORE") or pointer("~/.brain-core") or ""
 
 
+def newest_cards(root, n=6):
+    """A fresh archive has no always-on core yet. Its newest knowledge cards stand in, so the
+    first card a newcomer approves reaches their next session without any configuration."""
+    cards = []
+    for sub in ("entities", "concepts", "syntheses"):
+        d = os.path.join(root, "knowledge", sub)
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for name in names:
+            p = os.path.join(d, name)
+            if name.endswith(".md") and not name.startswith(".") and os.path.isfile(p):
+                cards.append((os.path.getmtime(p), name[:-3]))
+    return ",".join(slug for _, slug in sorted(cards, reverse=True)[:n])
+
+
 def find_brain_load():
     for cand in (os.path.join(TEMPLATE_ROOT, "bin", "sov-load"),
                  os.path.expanduser("~/brain-bin/sov-load"),
@@ -122,7 +139,7 @@ def build_pack(cwd, harness):
         return None  # An unconfigured hook must leave the session alone.
     discovery = brain_discovery.bootstrap()
     discovery_only = {"label": "installation", "scope": "discovery", "cards": "0", "root": None, "identity": None, "context": discovery, "harness": harness}
-    core = core_slugs()
+    core = core_slugs() or newest_cards(root)
     topic, scope = topic_for(cwd, root)
     bl = find_brain_load()
     if not bl:
@@ -138,7 +155,11 @@ def build_pack(cwd, harness):
         args += ["--core", core]
     if not topic:
         args += ["--depth", "0"]
-    res = subprocess.run(args, capture_output=True, text=True, timeout=25)
+    import tempfile
+    with tempfile.NamedTemporaryFile("r", suffix=".cards", encoding="utf-8") as listing:
+        env = dict(os.environ, SOV_LOAD_CARDS_FILE=listing.name)
+        res = subprocess.run(args, capture_output=True, text=True, timeout=25, env=env)
+        slugs = [line.strip() for line in listing.read().splitlines() if line.strip()]
     pack = res.stdout.strip()
     if not pack:
         return discovery_only
@@ -157,10 +178,10 @@ def build_pack(cwd, harness):
               "Do not copy it into memory files: it reloads every session. For more: `sov load <topic>`."
               % (label, root, ident_line))
     return {"label": label, "scope": scope, "cards": cards, "root": root, "identity": ident,
-            "context": discovery + "\n\n" + header + "\n\n" + pack, "harness": harness}
+            "context": discovery + "\n\n" + header + "\n\n" + pack, "harness": harness, "slugs": slugs}
 
 
-def receipt(root, lane, label, scope, cards, session_id=None, source=None):
+def receipt(root, lane, label, scope, cards, session_id=None, source=None, slugs=None):
     """Append one line to <lane>/brain-load-usage.md. Best effort; never raises to the caller."""
     if not root or scope == "discovery":
         return
@@ -175,8 +196,11 @@ def receipt(root, lane, label, scope, cards, session_id=None, source=None):
                         "One line per session start: time, topic, scope, cards loaded.\n\n"
                         % (lane, datetime.date.today().isoformat()))
         with open(p, "a", encoding="utf-8") as f:
-            f.write("- %s %s scope=%s cards=%s source=%s session=%s\n" % (
+            # slugs= names the cards the session got (newer receipts only; readers treat it as optional)
+            named = ",".join(s for s in (slugs or []) if re.fullmatch(r"[A-Za-z0-9._-]+", s))
+            f.write("- %s %s scope=%s cards=%s source=%s session=%s%s\n" % (
                 datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
-                label, scope, cards, source or "?", (session_id or "")[:8]))
+                label, scope, cards, source or "?", (session_id or "")[:8],
+                (" slugs=" + named) if named else ""))
     except Exception as e:
         sys.stderr.write("sovereign hook: receipt skipped: %s\n" % e)

@@ -29,7 +29,7 @@ def main():
         return
     lane = "cursor-%s" % brainhook.host_name()
     brainhook.receipt(pack["root"], lane, pack["label"], pack["scope"], pack["cards"],
-                      inp.get("session_id"), inp.get("composer_mode"))
+                      inp.get("session_id"), inp.get("composer_mode"), pack.get("slugs"))
     print(json.dumps({"additional_context": pack["context"]}))
 
 

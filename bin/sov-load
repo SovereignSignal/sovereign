@@ -186,8 +186,18 @@ if missing_entry:
 else:
     print(f"_{len(order)} cards from the knowledge layer. Read this before working: "
           f"it is the relevant slice of the archive, pre-loaded, so you start with full context._\n")
+loaded = []
 for slug in order:
     p = card_path(slug)
     if p:
         print(open(p, encoding="utf-8", errors="ignore").read().rstrip())
         print("\n----\n")
+        loaded.append(slug)
+# The session hook's receipt names the cards a session actually got, so the app can show
+# a card the owner approved reaching a session. Off-band: the pack itself is unchanged.
+if os.environ.get("SOV_LOAD_CARDS_FILE"):
+    try:
+        with open(os.environ["SOV_LOAD_CARDS_FILE"], "w", encoding="utf-8") as f:
+            f.write("\n".join(loaded) + "\n")
+    except OSError as e:
+        sys.stderr.write(f"sov-load: card list not written: {e}\n")

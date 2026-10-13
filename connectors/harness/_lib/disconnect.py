@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,19 @@ CATALOG = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CATALOG.parent.parent / 'lib'))
 import lane_contract  # noqa: E402
 
+
+
+def _ours(command, hook):
+    """The hook's command: the bare path, or the bundled-app form that names its interpreter
+    (`PYTHONDONTWRITEBYTECODE=1 <python> <hook>`, see sov_merge_hook_claude_style)."""
+    if command == hook:
+        return True
+    if not isinstance(command, str) or not command.startswith('PYTHONDONTWRITEBYTECODE=1 '):
+        return False
+    try:
+        return shlex.split(command)[-1] == hook
+    except ValueError:
+        return False
 
 def lane_retirement(lane, vault):
     """The lane-contract edits that mark this producer's lane retired, or [] when it has none."""
@@ -84,7 +98,7 @@ def cleanup_plan(harness, vault):
                     handlers = []
                     for hi, handler in enumerate(group.get('hooks', [])):
                         key = '%s:session_start:%d:%d' % (hook_path, gi, hi)
-                        if handler.get('command') == hook:
+                        if _ours(handler.get('command'), hook):
                             moves[key] = None
                         else:
                             moves[key] = '%s:session_start:%d:%d' % (hook_path, len(kept), len(handlers))

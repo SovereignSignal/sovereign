@@ -206,6 +206,24 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             discoverTools(d, generation: generation)
         case "producer":
             manageProducer(d, generation: generation)
+        case "curator":
+            // The hubless curator on this Mac (bin/sov-curator). A key rides in the child's
+            // environment only, never on argv and never in a log line.
+            let action = d["action"] as? String ?? "status"
+            guard let sov = sov, ["status", "enable", "disable", "run", "key"].contains(action) else {
+                deliver("curatorResult", ["action": action, "exit": 64, "err": sov == nil ? "sov is not installed on this machine." : "Unknown curator action."], generation: generation); return
+            }
+            var args = [sov, "curator", action]
+            if action == "status" { args.append("--json") }
+            if action == "enable" || action == "disable" { args.append("--apply") }
+            var env: [String: String] = [:]
+            if let root = Settings.archive { env["SOVS_VAULT"] = root }
+            if action == "key" { env["SOV_CURATOR_KEY"] = (d["key"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+            run(args, environment: env, timeLimit: action == "run" ? 1800 : 60) { out, err, code in
+                DispatchQueue.main.async {
+                    self.deliver("curatorResult", ["action": action, "exit": code, "out": out, "err": err], generation: generation)
+                }
+            }
         case "connect":
             guard let sov = sov else { refuse(d, "connect", "sov is not installed on this machine.", generation: generation); return }
             guard let h = d["harness"] as? String else { refuse(d, "connect", "No tool was named.", generation: generation); return }
@@ -1071,7 +1089,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async { self?.syncAppearance() }
         }
-        sovPath = ["\(NSHomeDirectory())/brain-bin/sov", "/usr/local/bin/sov", "/opt/homebrew/bin/sov"].first { FileManager.default.isExecutableFile(atPath: $0) }
+        // A clean Mac has none of the installed front doors yet; the app's own bundled one
+        // (Contents/MacOS/sov, bundled Python) is the fallback, so Connect works on day one.
+        sovPath = ["\(NSHomeDirectory())/brain-bin/sov", "/usr/local/bin/sov", "/opt/homebrew/bin/sov",
+                   Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/sov").path].first { FileManager.default.isExecutableFile(atPath: $0) }
         if snapshotting, let command = ProcessInfo.processInfo.environment["SOV_QA_STATUS_COMMAND"] { sovPath = command }
         localMode = true
         buildMenu()

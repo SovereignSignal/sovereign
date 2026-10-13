@@ -1,0 +1,197 @@
+"""Build 45: the first loop on a clean Mac (connect, curate on Claude, see a card reach a session)."""
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'lib'))
+sys.path.insert(0, str(ROOT / 'connectors' / 'harness' / '_lib'))
+import brain_local as local
+import brainhook
+
+
+class PythonResolver(unittest.TestCase):
+    """bin/_sov-python.sh: the app's own runtime is used when the template is its backend."""
+
+    def resolve(self, template, env=None):
+        script = '. "%s/bin/_sov-python.sh"; p="$(sov_python "$1")"; echo "$p"; sov_python_is_bundled "$p" && echo bundled || echo plain'
+        e = {'PATH': '/usr/bin:/bin', 'SOV_CLT_PYTHON': '/nonexistent/python3', **(env or {})}
+        out = subprocess.run(['/bin/bash', '-c', script % ROOT, '_', str(template)], env=e,
+                             capture_output=True, text=True, check=True).stdout.split()
+        return out
+
+    def test_app_backend_uses_bundled_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = Path(tmp) / 'Sovereign.app/Contents/Resources'
+            py = res / 'runtime/bin/python3'; py.parent.mkdir(parents=True); py.write_text('#!/bin/sh\n'); py.chmod(0o755)
+            (res / 'backend').mkdir()
+            path, kind = self.resolve(res / 'backend')
+            self.assertEqual(path, str(py.resolve()))
+            self.assertEqual(kind, 'bundled')
+
+    def test_explicit_choice_still_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = Path(tmp) / 'Sovereign.app/Contents/Resources'
+            py = res / 'runtime/bin/python3'; py.parent.mkdir(parents=True); py.write_text(''); py.chmod(0o755)
+            self.assertEqual(self.resolve(res / 'backend', {'SOV_PYTHON': '/opt/py/bin/python3'}), ['/opt/py/bin/python3', 'plain'])
+
+    def test_operator_checkout_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.resolve(Path(tmp) / 'sovs-brain-template'), ['/usr/bin/python3', 'plain'])
+
+
+class NewestCards(unittest.TestCase):
+    def test_fresh_archive_core_is_its_newest_cards(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i, sub in enumerate(('concepts', 'entities', 'syntheses', 'concepts')):
+                p = root / 'knowledge' / sub / f'card-{i}.md'; p.parent.mkdir(parents=True, exist_ok=True); p.write_text('x')
+                os.utime(p, (1_000_000 + i, 1_000_000 + i))
+            (root / 'knowledge/concepts/.hidden.md').write_text('x')
+            self.assertEqual(brainhook.newest_cards(str(root), 3), 'card-3,card-2,card-1')
+
+    def test_empty_archive_has_no_core(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(brainhook.newest_cards(tmp), '')
+
+
+class ReceiptNamesCards(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / 'archive'
+        local.create(self.root, ROOT)
+        self.root = local.archive_root(self.root)
+
+    def test_receipt_written_with_slugs_is_read_back(self):
+        # BRAIN_STAGE pins the receipt into this fixture; without it a Mac with a real
+        # ~/.vault-staging would receive it (and its relay would carry it into a vault).
+        from unittest import mock
+        with mock.patch.dict(os.environ, {'BRAIN_STAGE': str(self.root), 'BRAIN_LANE': '', 'HOME': self.tmp.name}):
+            self._receipt_round_trip()
+
+    def _receipt_round_trip(self):
+        brainhook.receipt(str(self.root), 'claude-code-test', 'core', 'core', '2', 'abcd1234ef', 'startup',
+                          ['owner-prefers-terse', 'garden-planner', 'bad slug!'])
+        line = (self.root / 'raw/tools/claude-code-test/brain-load-usage.md').read_text().splitlines()[-1]
+        self.assertTrue(line.endswith(' session=abcd1234 slugs=owner-prefers-terse,garden-planner'), line)
+        got = local.context_state(self.root)['receipts'][0]
+        self.assertEqual(got['slugs'], ['owner-prefers-terse', 'garden-planner'])
+        self.assertFalse(got['test'])
+
+    def test_older_receipts_still_parse(self):
+        stamp = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime('%Y-%m-%dT%H:%MZ')
+        p = self.root / 'raw/tools/example/brain-load-usage.md'; p.parent.mkdir(parents=True)
+        p.write_text(f'- {stamp} core scope=core cards=3 source=startup session=abcd1234\n')
+        got = local.context_state(self.root)['receipts'][0]
+        self.assertEqual(got['slugs'], [])
+        self.assertEqual(got['cards'], '3')
+
+
+class CuratorCommand(unittest.TestCase):
+    """bin/sov-curator: refuses on a hub, never takes a malformed key, pins every gear shut."""
+
+    def run_curator(self, *args, env=None, home=None):
+        e = {'PATH': '/usr/bin:/bin', 'HOME': home, 'SOV_STATE_DIR': str(Path(home) / 'state'), **(env or {})}
+        return subprocess.run([sys.executable, str(ROOT / 'bin/sov-curator'), *args], env=e, capture_output=True, text=True)
+
+    def test_refuses_on_a_hub(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            (Path(home) / '.sovereign-hub').write_text('')
+            r = self.run_curator('run', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn('runs a hub', r.stderr)
+
+    def test_rejects_a_key_that_is_not_anthropic(self):
+        with tempfile.TemporaryDirectory() as home:
+            r = self.run_curator('key', env={'SOV_CURATOR_KEY': 'not-a-key'}, home=home)
+            self.assertEqual(r.returncode, 65)
+
+    def test_job_pins_both_caps_to_zero_and_names_claude(self):
+        import importlib.machinery, importlib.util
+        loader = importlib.machinery.SourceFileLoader('sov_curator', str(ROOT / 'bin/sov-curator'))
+        spec = importlib.util.spec_from_loader('sov_curator', loader)
+        mod = importlib.util.module_from_spec(spec); loader.exec_module(mod)
+        env = mod.curator_env(Path('/tmp/archive'))
+        self.assertEqual(env['CURATOR_BACKEND'], 'anthropic')
+        self.assertEqual(env['ARCHIVIST_AUTO_PROMOTE_MAX'], '0')
+        self.assertEqual(env['ARCHIVIST_AUTO_REJECT_MAX'], '0')
+        self.assertEqual(env['CURATOR_SCREEN'], 'on')
+        self.assertNotIn('CURATOR_KEY', env)
+
+    def test_dry_enable_installs_nothing(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            r = self.run_curator('enable', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('dry run', r.stdout)
+            self.assertFalse((Path(home) / 'Library/LaunchAgents/com.sovereign.curator.plist').exists())
+
+
+class AnthropicBackendOffline(unittest.TestCase):
+    """curator-run on the anthropic backend, with the network replaced by a stub."""
+
+    STUB = '''
+import io, json, os, urllib.request
+def _fake(req, *a, **k):
+    body = json.loads(req.data); hdr = {k.lower(): v for k, v in req.header_items()}
+    with open(os.environ["STUB_LOG"], "a") as f:
+        f.write(json.dumps({"url": req.full_url, "key": hdr.get("x-api-key"), "version": hdr.get("anthropic-version"),
+                            "auth": "authorization" in hdr, "system": bool(body.get("system")),
+                            "roles": [m["role"] for m in body["messages"]], "json_mode": "response_format" in body}) + "\\n")
+    if "security boundary classifier" in body.get("system", ""):
+        text = '{"decision":"clean"}'
+    else:
+        text = json.dumps({"promote": True, "reason": "a working preference", "type": "concept", "slug": "prefers-terse",
+                           "title": "Prefers terse answers", "body": "The owner prefers short answers.",
+                           "why": "Shapes every reply.", "confidence": "high", "update_of": None})
+    return io.BytesIO(json.dumps({"content": [{"type": "text", "text": text}]}).encode())
+urllib.request.urlopen = _fake
+urllib.request.OpenerDirector.open = lambda self, req, *a, **k: _fake(req)
+'''
+
+    def test_capture_becomes_a_proposal_that_waits_for_the_owner(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            src = root / 'raw/tools/notes/pref.md'; src.parent.mkdir(parents=True)
+            src.write_text('---\ntype: capture\nsource: test\ncreated: 2026-10-13\n---\n\nI prefer terse answers.\n')
+            stub = Path(home) / 'stub'; stub.mkdir(); (stub / 'sitecustomize.py').write_text(self.STUB)
+            log = Path(home) / 'calls.jsonl'
+            env = {'PATH': '/usr/bin:/bin', 'HOME': home, 'PYTHONPATH': f'{stub}:{ROOT / "lib"}', 'STUB_LOG': str(log),
+                   'SOVS_VAULT': str(root), 'CURATOR_LANE': 'curator', 'CURATOR_BACKEND': 'anthropic',
+                   'CURATOR_KEY': 'sk-ant-test', 'CURATOR_SCREEN': 'on', 'ARCHIVIST_AUTO_PROMOTE_MAX': '0'}
+            r = subprocess.run([sys.executable, str(ROOT / 'bin/curator-run'), '--max', '5'], env=env,
+                               capture_output=True, text=True, timeout=120)
+            self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+            calls = [json.loads(l) for l in log.read_text().splitlines()]
+            self.assertEqual(len(calls), 2)  # the injection screen, then the judge
+            for c in calls:
+                self.assertEqual(c['url'], 'https://api.anthropic.com/v1/messages')
+                self.assertEqual(c['key'], 'sk-ant-test')
+                self.assertEqual(c['version'], '2023-06-01')
+                self.assertFalse(c['auth'])
+                self.assertFalse(c['json_mode'])
+                self.assertTrue(c['system'])
+                self.assertEqual(c['roles'], ['user'])
+            self.assertTrue((root / 'raw/workspaces/curator/proposals/prefers-terse.md').exists())
+            self.assertFalse(list((root / 'knowledge').rglob('prefers-terse.md')))
+
+    def test_local_only_archive_refuses_the_hosted_backend(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            env = {'PATH': '/usr/bin:/bin', 'HOME': home, 'PYTHONPATH': str(ROOT / 'lib'), 'SOVS_VAULT': str(root),
+                   'CURATOR_BACKEND': 'anthropic', 'CURATOR_KEY': 'sk-ant-test', 'CURATOR_LOCAL_ONLY': '1'}
+            r = subprocess.run([sys.executable, str(ROOT / 'bin/curator-run'), '--max', '1'], env=env,
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 4)
+            self.assertIn('local-only', r.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main()

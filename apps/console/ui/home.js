@@ -55,6 +55,23 @@ window.Home = (() => {
     const f=element('span',figure,'fig');if(unit)f.append(element('small',unit));
     t.append(f,element('span',note,'fig-note'));t.onclick=()=>go(view,null,section);return t;
   }
+  // A young archive's first loop, ticked from evidence only: the tool is connected to this
+  // archive, a card has passed the owner's gate, and a real session received cards (its hook
+  // receipt says so). Gone once all three hold, so an established archive never sees it.
+  function firstSteps(host){
+    const machine=status?.machine||{},cards=(status?.archive||{}).total||0,waiting=GateModel.queue(status,root).count||0;
+    const connected=!!machine.connected&&(!root||!machine.vault||machine.vault===root);
+    const used=(context?.receipts||[]).some(r=>!r.test&&((r.slugs||[]).length||Number(r.cards)>0));
+    if(!root||(connected&&cards>0&&used))return false;
+    host.append(element('div','First steps','cap today-cap'));
+    const list=element('div',null,'plain-list today-first');
+    const step=(key,done,title,reason,label,run)=>list.append(item('first:'+key,done?'live':'',title,done?'done':reason,label,run,null));
+    step('connect',connected,'Connect Claude Code','so its sessions can read this archive','Sources',()=>go('sources'));
+    step('card',cards>0,'Approve your first card',waiting?plural(waiting,'card')+' waiting':'turn on the curator, then save something',
+      waiting?'Review':'Settings',()=>waiting?api.review():api.elsewhere({settings:true}));
+    step('used',used,'Open a new Claude Code session','it loads your cards, and this ticks','Sources',()=>go('sources'));
+    host.append(list);return true;
+  }
   function today(host){
     const machine=status?.machine||{},hub=status?.hub||{};
     if(!status||(!status.machine&&!status.error)){headline(host,'','Checking…');host.append(element('p',SovStatus.caption(status),'home-message'));return}
@@ -63,10 +80,12 @@ window.Home = (() => {
     if(root&&machine.vault&&root!==machine.vault)host.append(element('div',`You opened ${root.split('/').pop()}. What is shown here belongs to ${machine.vault_name||'another archive'} (${machine.vault}). Opening an archive does not connect it.`,'home-banner'));
     if(!machine.connected){
       headline(host,'','Not connected');
+      if(firstSteps(host))return;
       const connect=element('button','Connect tools');connect.onclick=()=>go('sources');host.append(connect);return;
     }
     const assessment=SovStatus.assess(status,localStorage),needs=assessment.need,count=needs.length,top=SovStatus.headline(status,assessment);
     headline(host,top.state,top.text);
+    firstSteps(host);
     if(count){
       const list=element('div',null,'plain-list today-needs');
       for(const need of needs){

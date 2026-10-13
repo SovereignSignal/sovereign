@@ -46,6 +46,12 @@ CALENDAR_CADENCE_S=86400               # a wall-clock job runs once a day, whate
 RUNNER_JOB_LOADED=0                    # set only where the shared job was really loaded
 STAGING_MADE_HERE=0                    # a staging tree THIS run made, nothing carrying it yet
 . "$(dirname "${BASH_SOURCE[0]}")/../../../bin/_sov-config.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../../../bin/_sov-python.sh"
+# The interpreter for this installer's own helpers. /usr/bin/python3 is an Xcode shim that
+# a clean Mac cannot run without installing the developer tools; the shared resolver picks
+# the app's bundled runtime there, and the Command Line Tools one on an operator's Mac.
+SOV_PY="$(sov_python "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)")"
+sov_python_is_bundled "$SOV_PY" && export PYTHONDONTWRITEBYTECODE=1
 _pointer() { _sov_pointer "$1"; }
 say() { printf '%s\n' "$*"; }
 
@@ -122,7 +128,7 @@ _sov_vault_is_protected() {
 }
 
 sov_resolve() {
-  /usr/bin/python3 "$TEMPLATE/bin/sov-about" --read-enabled || { echo "Use the selected contribution installer for a contribute-only client; read-wire connector setup is disabled." >&2; exit 65; }
+  "$SOV_PY" "$TEMPLATE/bin/sov-about" --read-enabled || { echo "Use the selected contribution installer for a contribute-only client; read-wire connector setup is disabled." >&2; exit 65; }
   case "${HARNESS:-}" in
     runner|relay) echo "harness id '$HARNESS' is reserved for the shared connector job" >&2; exit 64;;
   esac
@@ -210,16 +216,21 @@ sov_merge_hook_claude_style() {
   [ -f "$json" ] || echo '{}' > "$json"
   cp "$json" "$json.bak-$(date +%Y%m%d-%H%M%S)"
   chmod +x "$hook" 2>/dev/null || true
-  /usr/bin/python3 - "$json" "$hook" "$matcher" <<'EOF'
-import json, sys
-path, hook, matcher = sys.argv[1:4]
+  local bundled=0; sov_python_is_bundled "$SOV_PY" && bundled=1
+  "$SOV_PY" - "$json" "$hook" "$matcher" "$SOV_PY" "$bundled" <<'EOF'
+import json, shlex, sys
+path, hook, matcher, py, bundled = sys.argv[1:6]
+# The hook's own shebang finds python3 on PATH, which on a clean Mac is the Xcode shim.
+# Run from the app's bundle, the command names the bundled interpreter and keeps its caches
+# out of the signed bundle. An operator's install keeps the bare path it always had.
+command = ("PYTHONDONTWRITEBYTECODE=1 %s %s" % (shlex.quote(py), shlex.quote(hook))) if bundled == "1" else hook
 d = json.load(open(path))
 groups = d.setdefault("hooks", {}).setdefault("SessionStart", [])
-if any(h.get("command") == hook for g in groups for h in g.get("hooks", [])):
+if any(h.get("command") in (hook, command) for g in groups for h in g.get("hooks", [])):
     print("[hook] already present in", path)
 else:
     groups.append({"matcher": matcher,
-                   "hooks": [{"type": "command", "command": hook, "timeout": 30,
+                   "hooks": [{"type": "command", "command": command, "timeout": 30,
                               "statusMessage": "Sovereign: loading archive context"}]})
     json.dump(d, open(path, "w"), indent=2)
     print("[hook] SessionStart added to", path)
@@ -233,7 +244,7 @@ sov_merge_hook_cursor() {
   [ -f "$json" ] || echo '{"version": 1, "hooks": {}}' > "$json"
   cp "$json" "$json.bak-$(date +%Y%m%d-%H%M%S)"
   chmod +x "$hook" 2>/dev/null || true
-  /usr/bin/python3 - "$json" "$hook" <<'EOF'
+  "$SOV_PY" - "$json" "$hook" <<'EOF'
 import json, sys
 path, hook = sys.argv[1:3]
 d = json.load(open(path))
@@ -255,7 +266,7 @@ EOF
 # ---------------------------------------------------------------------------
 _sov_manifest_py() {
   SOV_MF="$MANIFEST_JSON" SOV_RUNNER_LABEL="$RUNNER_LABEL" SOV_RELAY_LABEL="${RELAY_LABEL:-}" \
-  SOV_STATE="$STATE_DIR" SOV_LANES="$LANES_DIR" /usr/bin/python3 - "$@" <<'PYEOF'
+  SOV_STATE="$STATE_DIR" SOV_LANES="$LANES_DIR" "$SOV_PY" - "$@" <<'PYEOF'
 import json, os, sys
 
 path = os.environ["SOV_MF"]
@@ -601,6 +612,10 @@ sov_ensure_runner_job() {
   if [ "$PLATFORM" = "Darwin" ]; then
     mkdir -p "$HOME/Library/LaunchAgents"
     [ -n "${SOV_STATE_DIR:-}" ] && env_extra=$'\t\t<key>SOV_STATE_DIR</key>\n\t\t<string>'"$STATE_DIR"$'</string>'
+    # the app's bundled interpreter must never write caches into its signed bundle
+    if sov_python_is_bundled "$py"; then
+      env_extra="${env_extra:+$env_extra$'\n'}"$'\t\t<key>PYTHONDONTWRITEBYTECODE</key>\n\t\t<string>1</string>'
+    fi
     tmp="$(mktemp)"
     cat > "$tmp" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -912,7 +927,7 @@ _sov_shared_job_loaded() {
 _sov_runner_has_run() {
   local h="${1:-}"
   [ -f "$RUNS_JSON" ] || return 1
-  SOV_RUNS="$RUNS_JSON" SOV_H="$h" SOV_MARK="$INSTALL_TICK_MARK" /usr/bin/python3 - <<'PYEOF'
+  SOV_RUNS="$RUNS_JSON" SOV_H="$h" SOV_MARK="$INSTALL_TICK_MARK" "$SOV_PY" - <<'PYEOF'
 import json, os, sys
 try:
     d = json.load(open(os.environ["SOV_RUNS"], encoding="utf-8"))
@@ -983,7 +998,7 @@ _sov_mark_install_tick() {
   local h="${1:-}"
   [ -f "$RUNS_JSON" ] || return 0
   mkdir -p "$STATE_DIR"
-  SOV_RUNS="$RUNS_JSON" SOV_H="$h" SOV_MARK="$INSTALL_TICK_MARK" /usr/bin/python3 - <<'PYEOF'
+  SOV_RUNS="$RUNS_JSON" SOV_H="$h" SOV_MARK="$INSTALL_TICK_MARK" "$SOV_PY" - <<'PYEOF'
 import json, os
 try:
     d = json.load(open(os.environ["SOV_RUNS"], encoding="utf-8"))
@@ -1079,7 +1094,7 @@ sov_retire_legacy_jobs() {
 sov_unregister_connector() {
   local h="${1:-$HARNESS}" left declared own own_label lane_dir
   if [ "${SOV_DISCONNECT_LOCKED:-}" != "$h" ]; then
-    local options=(/usr/bin/python3 "$TEMPLATE/connectors/harness/_lib/disconnect.py" "$h" --vault "$VAULT" --host "$HOST")
+    local options=("$SOV_PY" "$TEMPLATE/connectors/harness/_lib/disconnect.py" "$h" --vault "$VAULT" --host "$HOST")
     [ "$APPLY" -ne 1 ] || options+=(--apply)
     exec "${options[@]}"
   fi
@@ -1355,7 +1370,7 @@ sov_lane_contract() {
   fi
   if [ -f "$LANE_DIR/LANE.md" ]; then
     cp "$LANE_DIR/LANE.md" "$LANE_DIR/.LANE.md.bak-$(date +%Y%m%d-%H%M%S)"
-    /usr/bin/python3 - "$LANE_DIR/LANE.md" "$readline" "$HARNESS" "$TODAY" "$LABEL" "$INTERVAL" "$RUNNER_LABEL" "$SCHEDULER" <<'EOF'
+    "$SOV_PY" - "$LANE_DIR/LANE.md" "$readline" "$HARNESS" "$TODAY" "$LABEL" "$INTERVAL" "$RUNNER_LABEL" "$SCHEDULER" <<'EOF'
 import re, sys
 p, readline, harness, today, label, interval, runner, scheduler = sys.argv[1:9]
 s = open(p, encoding="utf-8").read()
@@ -1412,17 +1427,17 @@ sov_smoke_mirror() {
 # it is evidence this installer produced itself. It is stamped so a later run knows that.
 sov_smoke_runner() {
   local h="$1"
-  /usr/bin/python3 "$RUNNER_BIN" --only "$h" || say "[smoke] runner: tick reported a problem; see $LANES_DIR/$h.error.log"
+  "$SOV_PY" "$RUNNER_BIN" --only "$h" || say "[smoke] runner: tick reported a problem; see $LANES_DIR/$h.error.log"
   say "[smoke] runner: $(grep -m1 'Last run' "$LANE_DIR/MANIFEST.md" 2>/dev/null || echo 'no manifest?')"
   _sov_mark_install_tick "$h"
 }
 
 sov_smoke_hook() {
   local hook="$1" style="$2" out
-  out="$(cd "$VAULT" && CURSOR_PROJECT_DIR="$VAULT" printf '{"cwd":"%s","session_id":"install-smoke","source":"startup"}' "$VAULT" | /usr/bin/python3 "$hook")"
+  out="$(cd "$VAULT" && CURSOR_PROJECT_DIR="$VAULT" printf '{"cwd":"%s","session_id":"install-smoke","source":"startup"}' "$VAULT" | "$SOV_PY" "$hook")"
   if [ "$style" = "cursor" ]; then
-    printf '%s' "$out" | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); c=d.get("additional_context",""); print("[smoke] hook ok: %d chars of context" % len(c) if c else "[smoke] hook produced no context")'
+    printf '%s' "$out" | "$SOV_PY" -c 'import json,sys; d=json.load(sys.stdin); c=d.get("additional_context",""); print("[smoke] hook ok: %d chars of context" % len(c) if c else "[smoke] hook produced no context")'
   else
-    printf '%s' "$out" | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); print("[smoke] hook ok:", d.get("systemMessage"))' || say "[smoke] hook produced no context (check ~/.brain-core and sov-load)"
+    printf '%s' "$out" | "$SOV_PY" -c 'import json,sys; d=json.load(sys.stdin); print("[smoke] hook ok:", d.get("systemMessage"))' || say "[smoke] hook produced no context (check ~/.brain-core and sov-load)"
   fi
 }

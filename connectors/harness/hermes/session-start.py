@@ -64,7 +64,7 @@ def main():
             except Exception:
                 pass
     lane = "hermes-%s" % brainhook.host_name()
-    brainhook.receipt(pack["root"], lane, pack["label"], pack["scope"], pack["cards"], inp.get("session_id"), "pre_llm_call")
+    brainhook.receipt(pack["root"], lane, pack["label"], pack["scope"], pack["cards"], inp.get("session_id"), "pre_llm_call", pack.get("slugs"))
     print(json.dumps({"context": pack["context"]}))
 
 

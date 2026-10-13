@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""sov-curator — the curator on a single Mac, for an archive with no hub.
+
+An operator's archive is curated by its hub (`sov hub`). A newcomer's archive has none,
+so this runs curator-run on this Mac, on the hosted model its owner chose (Claude, under
+the owner's own Anthropic key, read from the login Keychain), every two hours. Nothing
+it drafts lands by itself: the auto-promote and auto-reject caps are pinned to zero, so
+every proposal waits in Review for the owner.
+
+  sov curator enable [--every SECONDS] [--apply]   the two-hourly job (dry run without --apply)
+  sov curator run                                  one pass now (the app's "Curate now")
+  sov curator status [--json]
+  sov curator disable [--apply]
+  sov curator key                                  save the owner's Anthropic key in the login
+                                                   Keychain, from $SOV_CURATOR_KEY or stdin
+
+The key is never an argument and never written to disk. It goes to /usr/bin/security on
+stdin, which creates the Keychain item, so the scheduled job (which reads it with the same
+tool) does not raise a Keychain prompt every two hours.
+"""
+import argparse, json, os, plistlib, subprocess, sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+from sovereign_config import pointer
+
+LABEL = "com.sovereign.curator"
+KEYCHAIN_SERVICE = "sovereign-curator-anthropic"
+LANE = "curator"
+STATE = Path(os.environ.get("SOV_STATE_DIR") or "~/.local/state/sovereign").expanduser()
+UNIT = Path("~/Library/LaunchAgents").expanduser() / (LABEL + ".plist")
+
+
+def vault():
+    v = os.environ.get("SOVS_VAULT") or pointer("~/.brain-root")
+    root = Path(v).expanduser() if v else None
+    if not root or not (root / "knowledge").is_dir():
+        sys.exit("no archive: connect a tool to it first, or set SOVS_VAULT")
+    return root
+
+
+def refuse_on_hub():
+    # A hub curates on owned inference from its own jobs; a second, hosted curator on
+    # the same Mac would judge the same raw twice under a different law.
+    if Path("~/.sovereign-hub").expanduser().exists() or (STATE / "hub.json").exists():
+        sys.exit("this Mac runs a hub; its curator runs from `sov hub`, not here")
+
+
+def python():
+    return os.environ.get("SOV_PYTHON") or sys.executable
+
+
+def curator_env(root):
+    env = {"SOVS_VAULT": str(root), "CURATOR_LANE": LANE, "CURATOR_BACKEND": "anthropic",
+           "CURATOR_SCREEN": "on", "ARCHIVIST_AUTO_PROMOTE_MAX": "0", "ARCHIVIST_AUTO_REJECT_MAX": "0",
+           "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+    if "/Contents/Resources/runtime/bin/" in python():
+        env["PYTHONDONTWRITEBYTECODE"] = "1"  # never write caches into the signed app bundle
+    return env
+
+
+def key_saved():
+    try:
+        return subprocess.run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE],
+                              capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def save_key(a):
+    key = (os.environ.get("SOV_CURATOR_KEY") or sys.stdin.readline()).strip()
+    if not key.startswith("sk-ant-") or len(key) < 40 or any(c.isspace() for c in key):
+        print("That does not look like an Anthropic API key (they start with sk-ant-).", file=sys.stderr); return 65
+    user = os.environ.get("USER") or "sovereign"
+    r = subprocess.run(["/usr/bin/security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", user,
+                        "-l", "Sovereign curator (Anthropic)", "-w"],
+                       input=f"{key}\n{key}\n", capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        print("The key could not be saved in the Keychain.", file=sys.stderr); return 1
+    print("saved in the login Keychain"); return 0
+
+
+def launchctl(*args):
+    return subprocess.run([os.environ.get("SOV_LAUNCHCTL", "launchctl"), *args], capture_output=True, text=True)
+
+
+def unit(root, every):
+    return {"Label": LABEL,
+            "ProgramArguments": [python(), str(HERE / "curator-run"), "--max", "20"],
+            "EnvironmentVariables": curator_env(root),
+            "StartInterval": every, "RunAtLoad": True,
+            "StandardOutPath": str(STATE / "curator.log"), "StandardErrorPath": str(STATE / "curator.error.log")}
+
+
+def enable(a):
+    refuse_on_hub(); root = vault()
+    body = plistlib.dumps(unit(root, a.every))
+    print(f"curator: {root} every {a.every}s on Claude (key in Keychain: {'yes' if key_saved() else 'NOT YET'})")
+    print(f"  job  {UNIT}")
+    if not a.apply:
+        print("dry run. add --apply to install."); return 0
+    STATE.mkdir(parents=True, exist_ok=True); UNIT.parent.mkdir(parents=True, exist_ok=True)
+    if UNIT.exists() and UNIT.read_bytes() == body and launchctl("print", f"gui/{os.getuid()}/{LABEL}").returncode == 0:
+        print("already installed and loaded"); return 0
+    UNIT.write_bytes(body)
+    launchctl("bootout", f"gui/{os.getuid()}/{LABEL}")
+    r = launchctl("bootstrap", f"gui/{os.getuid()}", str(UNIT))
+    if r.returncode != 0:
+        print(f"[launchd] bootstrap failed: {r.stderr.strip()}", file=sys.stderr); return 1
+    print("installed; the first pass starts now"); return 0
+
+
+def disable(a):
+    print(f"curator: remove {UNIT}")
+    if not a.apply:
+        print("dry run. add --apply to remove."); return 0
+    launchctl("bootout", f"gui/{os.getuid()}/{LABEL}")
+    UNIT.unlink(missing_ok=True); print("removed"); return 0
+
+
+def run(a):
+    refuse_on_hub(); root = vault()
+    env = dict(os.environ, **curator_env(root))
+    # "Curate now" means now: pull what the connected tools saved since their last tick
+    # (the runner's cadence is 15 minutes) before judging, so a note made a minute ago counts.
+    if (STATE / "connectors.json").exists():
+        subprocess.run([python(), str(HERE / "sov-connectors-run"), "--force"], env=env,
+                       stdout=subprocess.DEVNULL, timeout=600)
+    return subprocess.run([python(), str(HERE / "curator-run"), "--max", "20"], env=env).returncode
+
+
+def status(a):
+    root = None
+    try:
+        root = vault()
+    except SystemExit:
+        pass
+    lane = root / "raw" / "workspaces" / LANE if root else None
+    last = None
+    if lane and (lane / "status.json").exists():
+        try:
+            last = json.loads((lane / "status.json").read_text())
+        except ValueError:
+            last = None
+    hub = Path("~/.sovereign-hub").expanduser().exists() or (STATE / "hub.json").exists()
+    out = {"archive": str(root) if root else None, "hub": hub, "installed": UNIT.exists(),
+           "loaded": launchctl("print", f"gui/{os.getuid()}/{LABEL}").returncode == 0,
+           "key_saved": key_saved(), "model": "claude", "last_run": last,
+           "pending": len(list((lane / "proposals").glob("*.md"))) if lane and (lane / "proposals").is_dir() else 0}
+    if a.json:
+        print(json.dumps(out))
+    else:
+        for k, v in out.items():
+            if k != "last_run":
+                print(f"{k:10} {v}")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="sov curator", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    e = sub.add_parser("enable"); e.add_argument("--every", type=int, default=7200); e.add_argument("--apply", action="store_true")
+    d = sub.add_parser("disable"); d.add_argument("--apply", action="store_true")
+    sub.add_parser("run")
+    sub.add_parser("key")
+    s = sub.add_parser("status"); s.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    if getattr(a, "every", 7200) < 600:
+        sys.exit("--every must be at least 600 seconds")
+    return {"enable": enable, "disable": disable, "run": run, "status": status, "key": save_key}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

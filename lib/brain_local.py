@@ -146,7 +146,8 @@ def context_state(root):
             dirs[:] = [d for d in dirs if not d.startswith('.') and not (parent / d).is_symlink()] if depth < max_depth else []
             if depth > 0 and 'brain-load-usage.md' in files:
                 candidates.append(parent / 'brain-load-usage.md')
-    pattern = re.compile(r'^- (\S+) (\S+) scope=(\S+) cards=(\S+) source=(\S+) session=(\S*)\s*$')
+    # slugs= (the cards the session got) is on receipts written since build 45; older lines lack it.
+    pattern = re.compile(r'^- (\S+) (\S+) scope=(\S+) cards=(\S+) source=(\S+) session=(\S*?)(?: slugs=(\S+))?\s*$')
     now = datetime.now(timezone.utc)
     for candidate in sorted(set(candidates)):
         relative = str(candidate.relative_to(root))
@@ -157,7 +158,7 @@ def context_state(root):
                 match = pattern.fullmatch(line)
                 if not match:
                     continue
-                stamp, topic, scope, cards, source, session = match.groups()
+                stamp, topic, scope, cards, source, session, slugs = match.groups()
                 try:
                     when = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
                     if when.tzinfo is None or when > now:
@@ -166,7 +167,7 @@ def context_state(root):
                     continue
                 if latest is None or when > latest[0]:
                     latest = (when, {'path': relative, 'producer': str(Path(relative).parent.relative_to('raw')),
-                        'topic': topic, 'scope': scope, 'cards': cards, 'prepared_at': stamp,
+                        'topic': topic, 'scope': scope, 'cards': cards, 'slugs': slugs.split(',') if slugs else [], 'prepared_at': stamp,
                         'source': source, 'test': session.startswith(('manual', 'install-', 'pilot')),
                         'prepared': True, 'delivered': None, 'loaded': None})
             if latest:

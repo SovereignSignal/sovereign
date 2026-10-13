@@ -875,7 +875,8 @@ window.onerror = function (msg, src, line, col) {
     if(settingsOpen){region('Settings');
       // A redraw keeps the disclosures the owner opened and the last update result.
       const open=[...rows.querySelectorAll('.set-pane details')].map(x=>x.open),note=$('#set-update-state')?.textContent;
-      SovSettings.mount(rows,{S,D,root:selectedRoot,pinned});
+      if(selectedRoot&&!curatorAsked){curatorAsked=true;bridge({cmd:'curator',action:'status'});}
+      SovSettings.mount(rows,{S,D,root:selectedRoot,pinned,curator:curatorState});
       const now=rows.querySelectorAll('.set-pane details');if(now.length===open.length)now.forEach((x,i)=>{x.open=open[i];});
       if(note)SovSettings.note('set-update-state',note);footerMeta(0);return;}
     if(view==='recovery'){region('Archive backups');SovBackups.mount(rows,selectedRoot);footerMeta(0);return;}
@@ -1119,6 +1120,8 @@ window.onerror = function (msg, src, line, col) {
   const splitReview=()=>view==="review";   // the queue and the proposal are always side by side
   let backupPending=false,backupResult=null;
   let appUpdatePending=false,appUpdateResult=null;
+  // The hubless curator (sov curator): its status, and one action in flight at a time.
+  let curatorState=null,curatorAsked=false,curatorBusy=false;
   // A hub job the owner can retry from here: the button, why it may be held, and the honest outcome.
   function retryActions(o){
     const health=o.health||{},fresh=!D?._status?.stale&&!D?._status?.error&&hub().reachable===true&&selectedRoot===D?.machine?.vault;
@@ -1633,7 +1636,8 @@ window.onerror = function (msg, src, line, col) {
     const request = openDrawer((apply ? "Installing " : "Dry run: ") + (harness === "all" ? "every tool found" : harness), !apply); if (!request) return;
     pendingProducer=null;pendingHost=null;
     pendingConnect = { harness, apply, extra };
-    bridge(Object.assign({ cmd: "connect", harness, apply: !!apply, host: extra.host || (D.machine || {}).host || "" }, extra, { request }));
+    // A first connect on a fresh archive has no ~/.brain-root yet: name the open archive.
+    bridge(Object.assign({ cmd: "connect", harness, apply: !!apply, host: extra.host || (D.machine || {}).host || "", vault: selectedRoot || "" }, extra, { request }));
   }
   // destructive actions arm on the first click and fire on the second, within four seconds
   function armOrFire(b, label, fire) {
@@ -1696,6 +1700,16 @@ window.onerror = function (msg, src, line, col) {
       if (act === "review-unfold") { reviewUnfolded.add(sel.id.slice(2)); renderInspector(); return; }
       if (b.id === "set-change") return window.sovCanQuit() && bridge({ cmd: "chooseArchive" });
       if (b.id === "set-reveal") return bridge({ cmd: "reveal", path: selectedRoot });
+      if (b.id === "set-cur-save" || b.id === "set-cur-on" || b.id === "set-cur-off" || b.id === "set-cur-run") {
+        if (curatorBusy) return;
+        const action = { "set-cur-save": "key", "set-cur-on": "enable", "set-cur-off": "disable", "set-cur-run": "run" }[b.id];
+        const field = document.getElementById("set-cur-key"), key = action === "key" ? (field && field.value || "").trim() : "";
+        if (action === "key" && !key) { SovSettings.note("set-cur-state", "Paste your key first."); return; }
+        if (field) field.value = "";   // the key leaves the page as soon as it is sent
+        curatorBusy = true;
+        SovSettings.note("set-cur-state", { key: "Saving\u2026", enable: "Turning on\u2026", disable: "Turning off\u2026", run: "Curating\u2026 this can take a few minutes." }[action]);
+        return bridge(action === "key" ? { cmd: "curator", action, key } : { cmd: "curator", action });
+      }
       if (b.id === "set-update") {
         const template = D && D.machine && D.machine.template;
         if (!template) { SovSettings.note("set-update-state", "This device\u2019s source location is not known, so there is nothing to build from."); return; }
@@ -1941,6 +1955,20 @@ window.onerror = function (msg, src, line, col) {
       render(payload);
       if(resumeReview&&view==='review'&&!settingsOpen&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
+    } else if (kind === "curatorResult") {
+      if (payload.action === "status") {
+        let parsed = null; try { parsed = JSON.parse(payload.out || ""); } catch (e) {}
+        curatorState = parsed || { error: String(payload.err || "").trim().split("\n").pop() || "The curator's status could not be read." };
+        // a redraw keeps the last action's result line
+        if (settingsOpen) { const note = $('#set-cur-state')?.textContent; SovSettings.refresh({ curator: curatorState }); if (note) SovSettings.note('set-cur-state', note); }
+        return;
+      }
+      curatorBusy = false;
+      const said = String((payload.exit === 0 ? payload.out : payload.err) || "").trim().split("\n").filter(Boolean).pop() || "";
+      const done = { key: "Key saved.", enable: "On. The first pass is running.", disable: "Off.", run: "Done. Anything new is in Review." }[payload.action];
+      if (settingsOpen) SovSettings.note("set-cur-state", payload.exit === 0 ? done : (said || "That did not work."));
+      bridge({ cmd: "curator", action: "status" });
+      if (payload.action === "run" && payload.exit === 0) setTimeout(refresh, 500);
     } else if (kind === "appUpdateResult") {
       appUpdatePending = payload.state === 'started';
       appUpdateResult = payload.error || (payload.state === 'cancelled' ? 'Cancelled. Nothing was changed.'
