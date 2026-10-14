@@ -22,7 +22,9 @@ class MirrorFailures(unittest.TestCase):
         token='gh'+'p_'+'A'*35
         (self.mem/'note.md').write_text(token)
         stub=self.base/'stub';stub.mkdir();red=stub/'python3'
-        self.env['PATH']=str(stub)+os.pathsep+self.env['PATH']
+        # The mirror runs the sanitizer on the interpreter sov resolved (SOV_PYTHON), never
+        # on whatever python3 is first on PATH, so the failure is injected there.
+        self.env['SOV_PYTHON']=str(red)
         red.write_text('#!/bin/sh\necho "private diagnostic" >&2\nexit 1\n');red.chmod(0o755)
         result=self.mirror()
         self.assertNotEqual(result.returncode,0)
