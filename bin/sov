@@ -54,7 +54,11 @@ TEMPLATE="$(dirname "$BIN")"
 . "$BIN/_sov-config.sh"
 PYTHON="$(sov_python "$TEMPLATE")"
 export SOV_PYTHON="$PYTHON"
-sov_python_is_bundled "$PYTHON" && export PYTHONDONTWRITEBYTECODE=1
+if sov_python_is_bundled "$PYTHON"; then
+  # The app's own bundle: keep caches out of the signed bundle, and keep a clean Mac's
+  # git shim (the developer-tools installer) out of reach (bin/git-guard/git).
+  export PYTHONDONTWRITEBYTECODE=1 PATH="$BIN/git-guard:$PATH"
+fi
 HARNESS_DIR="$TEMPLATE/connectors/harness"
 
 # The harnesses a person can actually name. The catalog folder holds its own README.md and

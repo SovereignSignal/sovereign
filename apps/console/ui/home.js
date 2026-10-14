@@ -85,7 +85,6 @@ window.Home = (() => {
     }
     const assessment=SovStatus.assess(status,localStorage),needs=assessment.need,count=needs.length,top=SovStatus.headline(status,assessment);
     headline(host,top.state,top.text);
-    firstSteps(host);
     if(count){
       const list=element('div',null,'plain-list today-needs');
       for(const need of needs){
@@ -99,6 +98,8 @@ window.Home = (() => {
       }
       host.append(list);
     }
+    // The first loop sits under anything that needs attention, which always comes first.
+    firstSteps(host);
     // What the system is working on by itself. The reading queue has its own figure below.
     const watching=assessment.waiting;
     if(watching.length){

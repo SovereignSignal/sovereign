@@ -613,8 +613,10 @@ sov_ensure_runner_job() {
     mkdir -p "$HOME/Library/LaunchAgents"
     [ -n "${SOV_STATE_DIR:-}" ] && env_extra=$'\t\t<key>SOV_STATE_DIR</key>\n\t\t<string>'"$STATE_DIR"$'</string>'
     # the app's bundled interpreter must never write caches into its signed bundle
+    local job_path=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin
     if sov_python_is_bundled "$py"; then
       env_extra="${env_extra:+$env_extra$'\n'}"$'\t\t<key>PYTHONDONTWRITEBYTECODE</key>\n\t\t<string>1</string>'
+      job_path="$TEMPLATE/bin/git-guard:$job_path"   # no developer-tools installer prompt
     fi
     tmp="$(mktemp)"
     cat > "$tmp" <<EOF
@@ -636,7 +638,7 @@ sov_ensure_runner_job() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin</string>
+		<string>$job_path</string>
 ${env_extra}
 	</dict>
 	<key>StandardOutPath</key>

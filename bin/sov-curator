@@ -57,6 +57,7 @@ def curator_env(root):
            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
     if "/Contents/Resources/runtime/bin/" in python():
         env["PYTHONDONTWRITEBYTECODE"] = "1"  # never write caches into the signed app bundle
+        env["PATH"] = str(HERE / "git-guard") + ":" + env["PATH"]  # no developer-tools installer prompt
     return env
 
 
