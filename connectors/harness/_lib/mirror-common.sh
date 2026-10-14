@@ -102,9 +102,14 @@ sov_git_lock() {
 # lib/brain_redact.py; the vault's commit-time scan is the check behind it.
 sov_redact() {
   local dest="$1" bin out n
-  bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/bin/sov-redact"
+  local template py
+  template="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+  bin="$template/bin/sov-redact"
   [ -x "$bin" ] || { echo "mirror: sov-redact not found; publish refused" >&2; return 1; }
-  out="$("$bin" --strict "$dest" 2>&1)" || { echo "mirror: sov-redact failed; publish refused" >&2; return 1; }
+  # Name the interpreter: the script's own `env python3` is the Xcode shim on a Mac
+  # without developer tools, which fails every publish (and opens an installer).
+  . "$template/bin/_sov-python.sh"; py="$(sov_python "$template")"
+  out="$(PYTHONDONTWRITEBYTECODE=1 "$py" "$bin" --strict "$dest" 2>&1)" || { echo "mirror: sov-redact failed; publish refused" >&2; return 1; }
   n="$(printf '%s\n' "$out" | sed -n 's/^redacted: \([0-9]*\) value(s) in \([0-9]*\) file(s)$/\1 in \2/p')"
   case "$n" in ""|"0 in 0") return 0;; esac
   # Routine reporting goes to stdout: the fence working is not a job failure, and a

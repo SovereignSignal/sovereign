@@ -10,6 +10,9 @@
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; . "$HERE/_curator-lib.sh"
+# The interpreter `sov` chose (the app's own on a clean Mac, where a bare python3 is the
+# Xcode shim and opens the developer-tools installer); plain python3 when run directly.
+PY="${SOV_PYTHON:-python3}"
 
 # Did the curator declare THIS proposal a replacement for the card of the same name?
 #
@@ -26,8 +29,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; . "$HERE/_curator-lib.sh"
 # all mean "not declared" — and the overwrite guard then behaves exactly as it always has.
 declared_same_slug_update(){ # meta-file slug
   [ -f "$1" ] || return 1
-  command -v python3 >/dev/null 2>&1 || return 1
-  python3 -c 'import json, sys
+  command -v "$PY" >/dev/null 2>&1 || return 1
+  "$PY" -c 'import json, sys
 try:
     meta = json.load(open(sys.argv[1], encoding="utf-8"))
 except Exception:
@@ -52,7 +55,7 @@ dest="$KNOWLEDGE/$sub/$(basename "$prop")"
 slug="$(basename "$prop" .md)"
 # A legacy alias must not land as a second card under its proposal filename.
 if [ -f "$PROPOSALS/.meta.json" ]; then
-  declared_target="$(python3 - "$PROPOSALS/.meta.json" "$slug" <<'PY'
+  declared_target="$("$PY" - "$PROPOSALS/.meta.json" "$slug" <<'PY'
 import json, sys
 meta = json.load(open(sys.argv[1], encoding='utf-8'))
 entry = meta.get(sys.argv[2], {})

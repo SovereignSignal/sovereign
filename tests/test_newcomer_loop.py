@@ -195,3 +195,55 @@ urllib.request.OpenerDirector.open = lambda self, req, *a, **k: _fake(req)
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CleanMacFlow(unittest.TestCase):
+    """The whole first loop as the app's bundle runs it, on a Mac where python3 and git are
+    Apple's developer-tools shims. Traps stand in for both: any call that would reach the
+    shim (and open the installer on a real clean Mac) is recorded and fails the test."""
+
+    def test_first_loop_never_reaches_the_developer_tools_shims(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp); home = tmp / 'home'; home.mkdir()
+            res = tmp / 'Sovereign.app/Contents/Resources'
+            backend = res / 'backend'; backend.mkdir(parents=True)
+            for name in ('bin', 'lib', 'connectors', 'templates'):
+                shutil.copytree(ROOT / name, backend / name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+            shutil.copy(ROOT / 'CLAUDE.md', backend / 'CLAUDE.md')
+            (res / 'runtime/bin').mkdir(parents=True)
+            (res / 'runtime/bin/python3').symlink_to(sys.executable)
+            trap, log = tmp / 'trap', tmp / 'shim-calls.log'; trap.mkdir()
+            for tool in ('python3', 'git', 'xcrun'):
+                t = trap / tool
+                t.write_text(f'#!/bin/sh\necho "{tool} $*" >> "{log}"\nexit 1\n'); t.chmod(0o755)
+            ok = trap / 'launchctl-ok'; ok.write_text('#!/bin/sh\nexit 0\n'); ok.chmod(0o755)
+            stub = tmp / 'stub'; stub.mkdir()
+            (stub / 'sitecustomize.py').write_text(AnthropicBackendOffline.STUB.replace('prefers-terse', 'garden-planner'))
+            env = {'HOME': str(home), 'PATH': f'{trap}:/usr/bin:/bin:/usr/sbin:/sbin', 'USER': 'newcomer',
+                   'SOV_STATE_DIR': str(home / '.local/state/sovereign'), 'SOV_LAUNCHCTL': str(ok),
+                   'PYTHONPATH': str(stub), 'STUB_LOG': str(tmp / 'api-calls.jsonl'), 'CURATOR_KEY': 'sk-ant-test'}
+            sov = [str(backend / 'bin/sov')]
+            def run(args, **kw):
+                r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=300, **kw)
+                return r
+            archive = home / 'Archive'
+            r = run([str(res / 'runtime/bin/python3'), str(backend / 'bin/sov-local')],
+                    input=json.dumps({'action': 'create', 'root': str(archive)}))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            r = run(sov + ['connect', 'claude-code', '--vault', str(archive), '--host', 'newmac', '--apply'])
+            self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-3000:])
+            memory = home / '.claude/projects/-Users-newcomer-garden/memory'; memory.mkdir(parents=True)
+            (memory / 'garden.md').write_text('---\nname: garden\n---\n\nI am building a garden planner app.\n')
+            r = run(sov + ['curator', 'run'], cwd=str(home))
+            proposals = list((archive / 'raw/workspaces/curator/proposals').glob('*.md'))
+            self.assertTrue(proposals, r.stdout[-3000:] + r.stderr[-3000:])
+            r = run(sov + ['gate', 'approve', str(proposals[0]), 'first card'])
+            self.assertTrue(list((archive / 'knowledge').rglob(proposals[0].name)), r.stdout + r.stderr)
+            settings = json.loads((home / '.claude/settings.json').read_text())
+            hook = [h['command'] for g in settings['hooks']['SessionStart'] for h in g['hooks']][0]
+            self.assertIn('runtime/bin/python3', hook)
+            r = run(['/bin/bash', '-c', hook], input=json.dumps({'cwd': str(archive), 'session_id': 'firstrun1', 'source': 'startup'}))
+            self.assertIn('garden-planner', r.stdout, r.stderr[-2000:])  # the approved card reached the session
+            self.assertFalse(log.exists() and log.read_text().strip(),
+                             'reached a developer-tools shim: ' + (log.read_text() if log.exists() else ''))
