@@ -10,7 +10,7 @@ set -euo pipefail
 APP="${1:?usage: notarize.sh <path/to/Sovereign.app> [keychain-profile]}"
 PROFILE="${2:-sovereign-notary}"
 [ -d "$APP" ] || { echo "no app at $APP" >&2; exit 64; }
-codesign -dv "$APP" 2>&1 | grep -q 'Authority=Developer ID Application:' || {
+codesign -dv --verbose=2 "$APP" 2>&1 | grep 'Authority=Developer ID Application:' >/dev/null || {
   echo "$APP is not signed with a Developer ID; build it on a Mac that has one" >&2; exit 65; }
 codesign --verify --deep --strict "$APP"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
