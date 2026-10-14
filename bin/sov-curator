@@ -87,11 +87,15 @@ def launchctl(*args):
 
 
 def unit(root, every):
-    return {"Label": LABEL,
+    u = {"Label": LABEL,
             "ProgramArguments": [python(), str(HERE / "curator-run"), "--max", "20"],
             "EnvironmentVariables": curator_env(root),
             "StartInterval": every, "RunAtLoad": True,
             "StandardOutPath": str(STATE / "curator.log"), "StandardErrorPath": str(STATE / "curator.error.log")}
+    if "/Contents/Resources/runtime/bin/" in python():
+        # listed as "Sovereign" in Login Items, not under the signing developer's name
+        u["AssociatedBundleIdentifiers"] = ["com.sovereign.console"]
+    return u
 
 
 def enable(a):

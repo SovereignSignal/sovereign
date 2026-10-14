@@ -233,6 +233,10 @@ class CleanMacFlow(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             r = run(sov + ['connect', 'claude-code', '--vault', str(archive), '--host', 'newmac', '--apply'])
             self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-3000:])
+            import plistlib
+            job = plistlib.loads((home / 'Library/LaunchAgents/com.sovereign.connector.runner.plist').read_bytes())
+            self.assertEqual(job.get('AssociatedBundleIdentifiers'), ['com.sovereign.console'])  # shown as Sovereign
+            self.assertTrue(job['EnvironmentVariables']['PATH'].split(':')[0].endswith('/Contents/Resources/backend/bin/git-guard'), job['EnvironmentVariables']['PATH'])
             memory = home / '.claude/projects/-Users-newcomer-garden/memory'; memory.mkdir(parents=True)
             (memory / 'garden.md').write_text('---\nname: garden\n---\n\nI am building a garden planner app.\n')
             r = run(sov + ['curator', 'run'], cwd=str(home))
