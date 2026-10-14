@@ -106,18 +106,29 @@ cp "$HERE/runtime.lock.json" "$APP/Contents/Resources/runtime.lock.json"
 # Signing decides whether macOS remembers its answer to "may Sovereign read your
 # Documents?". An ad-hoc signature pins the app's identity to the hash of the binary, so
 # every rebuild is a new app to the privacy database and the prompt comes back. Sign with
-# a stable identity when the machine has one (SOV_SIGN_ID, or a certificate whose name
-# starts with "Sovereign Local Signing") and the grant survives rebuilds.
+# a stable identity when the machine has one (SOV_SIGN_ID, an Apple "Developer ID
+# Application" certificate, or one named "Sovereign Local Signing") and the grant survives
+# rebuilds. Only a Developer ID build can be notarized and opened on someone else's Mac
+# (apps/console/notarize.sh); the local identity is for the owner's own machines.
 SIGN_ID="${SOV_SIGN_ID:-}"
+IDENTITIES="$(security find-identity -v -p codesigning)" || exit 1
 if [ -z "$SIGN_ID" ]; then
   # A name can match expired/duplicate certificates even when only one identity is
   # valid. Use the fingerprint from the valid-identity list, never the display name.
-  IDENTITIES="$(security find-identity -v -p codesigning)" || exit 1
-  SIGN_ID="$(printf '%s\n' "$IDENTITIES" | awk '/"Sovereign Local Signing"/ {print $2}' | sort -u)"
+  for name in '"Developer ID Application:' '"Sovereign Local Signing"'; do
+    SIGN_ID="$(printf '%s\n' "$IDENTITIES" | awk -v n="$name" 'index($0, n) {print $2}' | sort -u)"
+    [ -n "$SIGN_ID" ] && break
+  done
   if [ "$(printf '%s\n' "$SIGN_ID" | awk 'NF {n++} END {print n+0}')" -gt 1 ]; then
     echo "Multiple valid Sovereign signing identities. Set SOV_SIGN_ID to the intended fingerprint." >&2
     exit 1
   fi
+fi
+# Notarization requires a secure timestamp on every signature; only Developer ID needs one.
+TIMESTAMP=()
+if [ -n "$SIGN_ID" ] && [ "$SIGN_ID" != "-" ] && printf '%s\n' "$IDENTITIES" | grep "$SIGN_ID" | grep -q '"Developer ID Application:'; then
+  TIMESTAMP=(--timestamp)
+  echo "    signing with Developer ID (notarizable)"
 fi
 if [ -z "$SIGN_ID" ]; then
   # Ad-hoc is a real fallback, not a failure: it builds and runs. But it has no stable
@@ -130,12 +141,12 @@ SIGN_ID="${SIGN_ID:--}"
 # Sign embedded Mach-O code inside out; never silently downgrade a requested identity.
 while IFS= read -r -d '' nested; do
   if file -b "$nested" | grep -q 'Mach-O'; then
-    codesign --force --sign "$SIGN_ID" --options runtime "$nested" >/dev/null
+    codesign --force --sign "$SIGN_ID" --options runtime ${TIMESTAMP[@]+"${TIMESTAMP[@]}"} "$nested" >/dev/null
   fi
 done < <(find "$APP/Contents/Resources/runtime" -type f -print0)
-codesign --force --sign "$SIGN_ID" --options runtime "$BACKEND/bin/hub-crypto"
-codesign --force --sign "$SIGN_ID" --options runtime "$APP/Contents/MacOS/sov"
-codesign --force --sign "$SIGN_ID" --options runtime "$APP" >/dev/null
+codesign --force --sign "$SIGN_ID" --options runtime ${TIMESTAMP[@]+"${TIMESTAMP[@]}"} "$BACKEND/bin/hub-crypto"
+codesign --force --sign "$SIGN_ID" --options runtime ${TIMESTAMP[@]+"${TIMESTAMP[@]}"} "$APP/Contents/MacOS/sov"
+codesign --force --sign "$SIGN_ID" --options runtime ${TIMESTAMP[@]+"${TIMESTAMP[@]}"} "$APP" >/dev/null
 codesign --verify --deep --strict "$APP"
 echo "    signed and verified (distribution notarization is separate)"
 echo "    $APP"
