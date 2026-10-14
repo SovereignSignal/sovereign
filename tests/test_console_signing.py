@@ -30,6 +30,15 @@ class SigningSelection(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, fingerprint)
 
+    def test_developer_id_is_preferred_over_the_local_identity(self):
+        local, devid = 'A' * 40, 'C' * 40
+        result = self.select('  1) ' + local + ' "Sovereign Local Signing"\n'
+                             '  2) ' + devid + ' "Developer ID Application: Example Owner (TEAMID1234)"\n'
+                             '     2 valid identities found\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], devid)
+        self.assertIn('signing with Developer ID (notarizable)', result.stdout)  # and it is timestamped
+
     def test_multiple_valid_identities_require_explicit_selection(self):
         result = self.select('1) ' + 'A' * 40 + ' "Sovereign Local Signing"\n2) ' + 'B' * 40 + ' "Sovereign Local Signing"\n')
         self.assertNotEqual(result.returncode, 0)

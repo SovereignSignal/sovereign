@@ -111,8 +111,11 @@ cp "$HERE/runtime.lock.json" "$APP/Contents/Resources/runtime.lock.json"
 # rebuilds. Only a Developer ID build can be notarized and opened on someone else's Mac
 # (apps/console/notarize.sh); the local identity is for the owner's own machines.
 SIGN_ID="${SOV_SIGN_ID:-}"
-IDENTITIES="$(security find-identity -v -p codesigning)" || exit 1
-if [ -z "$SIGN_ID" ]; then
+if [ -n "$SIGN_ID" ]; then
+  # An explicit choice is never second-guessed; the list only decides the timestamp below.
+  IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+else
+  IDENTITIES="$(security find-identity -v -p codesigning)" || exit 1
   # A name can match expired/duplicate certificates even when only one identity is
   # valid. Use the fingerprint from the valid-identity list, never the display name.
   for name in '"Developer ID Application:' '"Sovereign Local Signing"'; do
