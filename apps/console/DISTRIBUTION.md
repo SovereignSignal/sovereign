@@ -25,7 +25,7 @@ SOV_PYTHON_RUNTIME="$PWD/apps/console/build/runtime/python" \
   SOV_SIGN_ID=- bash apps/console/build.sh --preview
 ```
 
-The result is `apps/console/build/Sovereign Preview.app`. The runtime fetch requires Python 3.12 or newer for safe archive extraction. End users receive the built app and do not run these commands.
+The result is `apps/console/build/Sovereign Preview.app`. The runtime fetch runs on any Python 3 (a Mac's own developer tools are enough): it checks the pinned hash, and extraction is fenced inside the target on every version.
 
 Set `SOV_SIGN_ID` to the intended signing identity for a signed build. A signing failure stops the build; it never silently downgrades to an ad-hoc signature. The build signs embedded native code and verifies the completed bundle.
 

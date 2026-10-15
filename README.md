@@ -88,11 +88,11 @@ bin/sov-judge-bakeoff <model-a> <model-b> --runs 3 --json bakeoff.json
 
 ## Build the app from source
 
-You need an Apple Silicon Mac with Apple's command-line developer tools (`xcode-select --install`) and Python 3.12 or newer to unpack the bundled runtime safely.
+You need an Apple Silicon Mac with Apple's command-line developer tools (`xcode-select --install`). Nothing else: the build downloads its own Python and checks it against a pinned hash.
 
 ```bash
 git clone https://github.com/SovereignSignal/sovereign.git && cd sovereign
-python3.12 apps/console/fetch-runtime.py         # downloads the pinned runtime and checks its hash
+python3 apps/console/fetch-runtime.py            # downloads the pinned runtime and checks its hash
 SOV_PYTHON_RUNTIME="$PWD/apps/console/build/runtime/python" bash apps/console/build.sh
 mkdir -p ~/Applications && mv apps/console/build/Sovereign.app ~/Applications/
 open ~/Applications/Sovereign.app
