@@ -76,6 +76,8 @@ Claude Code is the first fully supported tool. The repo also ships connectors fo
 
 The app's **Settings › Curator** is the whole setup. From the command line, with the app installed: `sov curator key` (reads the key from stdin), `sov curator enable --apply`, `sov curator run`, `sov curator status`. The curator never approves anything by itself on this path: every card waits for you in Review.
 
+The curator's default answer is no: most of what tools save never becomes a card. In a new archive it starts with a short owner profile (`raw/workspaces/curator/profile.md`) telling it that your own notes about your projects, goals, decisions and preferences are worth keeping. Rewrite it to say who you are and what matters to you; the curator reads it with every judgment.
+
 ### Curating with a local model
 
 For a fully local setup, the app can prepare a **Hub** that curates on a model you run yourself (for example through Ollama). Open **Settings › Jobs › Hub setup…**; every step shows a preview first. See the [Hub setup and recovery guide](docs/hub-setup.md). Every card it drafts waits in Review for you; a prepared Hub keeps automatic approval off.

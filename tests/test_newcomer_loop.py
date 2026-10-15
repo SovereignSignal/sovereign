@@ -125,6 +125,19 @@ class CuratorCommand(unittest.TestCase):
         self.assertEqual(env['CURATOR_SCREEN'], 'on')
         self.assertNotIn('CURATOR_KEY', env)
 
+    def test_an_owner_profile_is_never_overwritten(self):
+        import importlib.machinery, importlib.util
+        loader = importlib.machinery.SourceFileLoader('sov_curator2', str(ROOT / 'bin/sov-curator'))
+        spec = importlib.util.spec_from_loader('sov_curator2', loader)
+        mod = importlib.util.module_from_spec(spec); loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); lane = root / 'raw/workspaces/curator'; lane.mkdir(parents=True)
+            (lane / 'profile.md').write_text('I am a grant writer.')
+            mod.seed_profile(root)
+            self.assertEqual((lane / 'profile.md').read_text(), 'I am a grant writer.')
+            (lane / 'profile.md').unlink(); mod.seed_profile(root)
+            self.assertIn('This archive is new', (lane / 'profile.md').read_text())
+
     def test_dry_enable_installs_nothing(self):
         with tempfile.TemporaryDirectory() as home:
             root = Path(home) / 'a'; local.create(root, ROOT)
@@ -254,6 +267,8 @@ class CleanMacFlow(unittest.TestCase):
             memory = home / '.claude/projects/-Users-newcomer-garden/memory'; memory.mkdir(parents=True)
             (memory / 'garden.md').write_text('---\nname: garden\n---\n\nI am building a garden planner app.\n')
             r = run(sov + ['curator', 'run'], cwd=str(home))
+            profile = archive / 'raw/workspaces/curator/profile.md'
+            self.assertIn('This archive is new', profile.read_text())   # the starter owner profile
             proposals = list((archive / 'raw/workspaces/curator/proposals').glob('*.md'))
             self.assertTrue(proposals, r.stdout[-3000:] + r.stderr[-3000:])
             r = run(sov + ['gate', 'approve', str(proposals[0]), 'first card'])

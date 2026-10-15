@@ -61,6 +61,23 @@ def curator_env(root):
     return env
 
 
+# The curator's default answer is no, and its bar is set for an established archive. In a
+# new one, the owner's first notes about themselves are exactly what should become cards,
+# so a fresh lane gets this owner profile (the standard's own lever, read with every
+# judgment). The owner edits or replaces it; it is never overwritten.
+STARTER_PROFILE = """This archive is new, and its owner is setting it up. What the owner says about themselves comes straight from the owner and is durable: a project they are building, a goal, a decision they made, a constraint, a preference about how they work. Each of these is card-worthy even when it is said in one or two sentences, because it is exactly what their future sessions need to know. Machine output such as run logs, manifests and folder listings is not.
+"""
+
+
+def seed_profile(root):
+    lane = root / "raw" / "workspaces" / LANE
+    profile = lane / "profile.md"
+    if not profile.exists():
+        lane.mkdir(parents=True, exist_ok=True)
+        profile.write_text(STARTER_PROFILE)
+        print(f"curator: wrote a starter owner profile to {profile.relative_to(root)}; edit it to say who you are")
+
+
 def key_saved():
     try:
         return subprocess.run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE],
@@ -108,6 +125,7 @@ def enable(a):
     STATE.mkdir(parents=True, exist_ok=True); UNIT.parent.mkdir(parents=True, exist_ok=True)
     if UNIT.exists() and UNIT.read_bytes() == body and launchctl("print", f"gui/{os.getuid()}/{LABEL}").returncode == 0:
         print("already installed and loaded"); return 0
+    seed_profile(root)
     UNIT.write_bytes(body)
     launchctl("bootout", f"gui/{os.getuid()}/{LABEL}")
     r = launchctl("bootstrap", f"gui/{os.getuid()}", str(UNIT))
@@ -125,7 +143,7 @@ def disable(a):
 
 
 def run(a):
-    refuse_on_hub(); root = vault()
+    refuse_on_hub(); root = vault(); seed_profile(root)
     env = dict(os.environ, **curator_env(root))
     # "Curate now" means now: pull what the connected tools saved since their last tick
     # (the runner's cadence is 15 minutes) before judging, so a note made a minute ago counts.
