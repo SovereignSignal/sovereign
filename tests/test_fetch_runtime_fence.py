@@ -43,8 +43,7 @@ class Fence(unittest.TestCase):
     def test_ordinary_runtime_layout_extracts_without_set_id_bits(self):
         tf = archive([('python', tarfile.DIRTYPE, None, 0o755), ('python/bin', tarfile.DIRTYPE, None, 0o755),
                       ('python/bin/python3.12', tarfile.REGTYPE, b'#!', 0o4755),
-                      ('python/bin/python3', tarfile.SYMTYPE, 'python3.12', 0o777),
-                      ('python/bin/hard', tarfile.LNKTYPE, 'python/bin/python3.12', 0o755)])
+                      ('python/bin/python3', tarfile.SYMTYPE, 'python3.12', 0o777)])
         self.extract(tf, self.target)
         exe = self.target / 'python/bin/python3.12'
         self.assertEqual(exe.stat().st_mode & 0o7777, 0o755)
@@ -56,7 +55,11 @@ class Fence(unittest.TestCase):
             'absolute path': [('/tmp/sovereign-fence-evil', tarfile.REGTYPE, b'x', 0o644)],
             'escaping symlink': [('python/x', tarfile.SYMTYPE, '../../evil', 0o777)],
             'absolute symlink': [('python/y', tarfile.SYMTYPE, '/etc/passwd', 0o777)],
-            'escaping hard link': [('python/z', tarfile.LNKTYPE, '../outside', 0o644)],
+            'any hard link': [('python/f', tarfile.REGTYPE, b'x', 0o644), ('python/z', tarfile.LNKTYPE, 'python/f', 0o644)],
+            'link with a parent step that stays inside': [('python/sub/l', tarfile.SYMTYPE, '../f', 0o777)],
+            'link re-pointed by a later member': [('l', tarfile.SYMTYPE, 'inner', 0o777), ('l', tarfile.SYMTYPE, 'x', 0o777)],
+            'file written through a downward link': [('real', tarfile.DIRTYPE, None, 0o755), ('l', tarfile.SYMTYPE, 'real', 0o777),
+                                                     ('l/payload', tarfile.REGTYPE, b'x', 0o644)],
             'special file': [('python/dev', tarfile.CHRTYPE, None, 0o644)],
             # each link reads as inside; together they land outside
             'chained links': [('a', tarfile.SYMTYPE, '.', 0o777), ('a/b', tarfile.SYMTYPE, '../evil', 0o777),

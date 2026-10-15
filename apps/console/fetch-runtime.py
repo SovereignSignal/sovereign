@@ -22,28 +22,33 @@ if hashlib.sha256(archive.read_bytes()).hexdigest() != lock['sha256']:
 
 
 def extract_fenced(tf, target):
-    """Extract one member at a time, each checked against the real filesystem first.
+    """Extract one member at a time under rules that leave nothing to re-point.
 
-    Spelling alone cannot fence a tar: a link `a -> .` followed by `a/b -> ../x` reads as
-    inside and lands outside. So every destination, and every link's target, is resolved
-    with the links already extracted, and must stay under the target. Only regular files,
-    directories and links; no special files; set-id bits dropped. Stops at the first
-    violation, leaving whatever was extracted so far inside the target."""
+    Checking resolved paths is not enough on its own: an archive can re-point a link
+    between one member's check and a later write. So the rules make links inert. A
+    member's path is relative with no `..`; nothing is written through an existing link
+    or over anything already extracted; a symlink points only downward (relative, no
+    `..`); no hard links or special files; set-id bits are dropped. The pinned runtime
+    (only same-folder symlinks) fits, and any violation stops the extraction."""
     root = os.path.realpath(target)
-    def inside(path):
-        return os.path.commonpath([os.path.realpath(path), root]) == root
+    def plain(rel):
+        return rel and not os.path.isabs(rel) and '..' not in rel.split('/')
     for m in tf.getmembers():
-        dest = os.path.join(root, m.name)
-        if os.path.isabs(m.name) or not inside(dest):
+        if not plain(m.name):
             raise SystemExit('Runtime archive entry escapes the target: %s; nothing trusted.' % m.name)
+        dest = os.path.join(root, os.path.normpath(m.name))
+        parent = os.path.dirname(dest)
+        while parent != root:
+            if os.path.islink(parent):
+                raise SystemExit('Runtime archive writes through a link: %s; nothing trusted.' % m.name)
+            parent = os.path.dirname(parent)
+        if os.path.lexists(dest) and not (m.isdir() and os.path.isdir(dest) and not os.path.islink(dest)):
+            raise SystemExit('Runtime archive replaces an entry: %s; nothing trusted.' % m.name)
         if m.issym():
-            if os.path.isabs(m.linkname) or not inside(os.path.join(os.path.dirname(dest), m.linkname)):
-                raise SystemExit('Runtime archive link escapes the target: %s; nothing trusted.' % m.name)
-        elif m.islnk():
-            if os.path.isabs(m.linkname) or not inside(os.path.join(root, m.linkname)):
-                raise SystemExit('Runtime archive hard link escapes the target: %s; nothing trusted.' % m.name)
+            if not plain(m.linkname):
+                raise SystemExit('Runtime archive link leaves its folder: %s; nothing trusted.' % m.name)
         elif not (m.isfile() or m.isdir()):
-            raise SystemExit('Runtime archive holds a special file: %s; nothing trusted.' % m.name)
+            raise SystemExit('Runtime archive holds a hard link or special file: %s; nothing trusted.' % m.name)
         m.mode &= 0o755
         tf.extract(m, root)
 
