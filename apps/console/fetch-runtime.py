@@ -19,25 +19,33 @@ if not archive.exists():
     archive.write_bytes(data)
 if hashlib.sha256(archive.read_bytes()).hexdigest() != lock['sha256']:
     raise SystemExit('Cached runtime checksum mismatch; nothing extracted.')
-def fenced(members):
-    """Only regular files, directories and links that stay inside the target; no
-    absolute or parent paths, devices or set-id bits. Raises on the first violation."""
-    def inside(rel):
-        rel = os.path.normpath(rel)
-        return not os.path.isabs(rel) and rel != '..' and not rel.startswith('..' + os.sep)
-    for m in members:
-        if not inside(m.name):
+
+
+def extract_fenced(tf, target):
+    """Extract one member at a time, each checked against the real filesystem first.
+
+    Spelling alone cannot fence a tar: a link `a -> .` followed by `a/b -> ../x` reads as
+    inside and lands outside. So every destination, and every link's target, is resolved
+    with the links already extracted, and must stay under the target. Only regular files,
+    directories and links; no special files; set-id bits dropped. Stops at the first
+    violation, leaving whatever was extracted so far inside the target."""
+    root = os.path.realpath(target)
+    def inside(path):
+        return os.path.commonpath([os.path.realpath(path), root]) == root
+    for m in tf.getmembers():
+        dest = os.path.join(root, m.name)
+        if os.path.isabs(m.name) or not inside(dest):
             raise SystemExit('Runtime archive entry escapes the target: %s; nothing trusted.' % m.name)
         if m.issym():
-            if os.path.isabs(m.linkname) or not inside(os.path.join(os.path.dirname(m.name), m.linkname)):
+            if os.path.isabs(m.linkname) or not inside(os.path.join(os.path.dirname(dest), m.linkname)):
                 raise SystemExit('Runtime archive link escapes the target: %s; nothing trusted.' % m.name)
         elif m.islnk():
-            if not inside(m.linkname):
+            if os.path.isabs(m.linkname) or not inside(os.path.join(root, m.linkname)):
                 raise SystemExit('Runtime archive hard link escapes the target: %s; nothing trusted.' % m.name)
         elif not (m.isfile() or m.isdir()):
             raise SystemExit('Runtime archive holds a special file: %s; nothing trusted.' % m.name)
         m.mode &= 0o755
-        yield m
+        tf.extract(m, root)
 
 
 target = here / 'build/runtime'
@@ -51,5 +59,6 @@ with tarfile.open(archive) as tf:
     if hasattr(tarfile, 'data_filter'):
         tf.extractall(target, filter='data')
     else:
-        tf.extractall(target, members=fenced(tf.getmembers()))
+        target.mkdir(parents=True)
+        extract_fenced(tf, target)
 print('Verified runtime:', target / 'python')
