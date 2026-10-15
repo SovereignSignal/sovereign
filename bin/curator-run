@@ -15,7 +15,8 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
                     The default is local on purpose: the standard's law says machine
                     writers to knowledge/ run on owner-controlled compute. Pointing
                     this at a cloud endpoint is an explicit owner decision, never a default.
-  CURATOR_MODEL     model id (default: qwen3.8:27b; claude-sonnet-5-5 on the anthropic backend)
+  CURATOR_MODEL     model id (default: qwen3.8:27b; claude-opus-5-5 on the anthropic backend)
+  CURATOR_EFFORT    the anthropic backend's effort (default: medium)
   CURATOR_BACKEND   "openai" (default: the OpenAI-compatible chat API, i.e. local Ollama) or
                     "anthropic" (the Claude Messages API at api.anthropic.com). The hosted
                     backend is for an archive whose owner chose a hosted model under their own
@@ -76,7 +77,7 @@ ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_KEYCHAIN_SERVICE = "sovereign-curator-anthropic"
 ENDPOINT = os.environ.get("CURATOR_ENDPOINT") or (
     ANTHROPIC_ENDPOINT if BACKEND == "anthropic" else "http://localhost:11434/v1/chat/completions")
-MODEL = os.environ.get("CURATOR_MODEL") or ("claude-sonnet-5-5" if BACKEND == "anthropic" else "qwen3.8:27b")
+MODEL = os.environ.get("CURATOR_MODEL") or ("claude-opus-5-5" if BACKEND == "anthropic" else "qwen3.8:27b")
 LOCAL_ONLY = os.environ.get("CURATOR_LOCAL_ONLY") == "1"
 # The judge thinks: empty sends no reasoning_effort, so the model's default applies.
 # 2026-09-23: "none" ran 3x faster and tied on the bake-off corpus, but live it lost
@@ -1099,16 +1100,16 @@ def _self_test():
         ("explicit owner opt-out disables the guard", 0,
          len(_inference_violations("https://api.vendor.com/v1/chat/completions", "qwen3.5:cloud", "kimi-k3:cloud", True))),
         ("anthropic backend at its own API host = clean", 0,
-         len(_inference_violations("https://api.anthropic.com/v1/messages", "claude-sonnet-5-5", "claude-sonnet-5-5", False,
+         len(_inference_violations("https://api.anthropic.com/v1/messages", "claude-opus-5-5", "claude-opus-5-5", False,
                                    backend="anthropic"))),
         ("anthropic backend refused on a local-only archive", 1,
-         len(_inference_violations("https://api.anthropic.com/v1/messages", "claude-sonnet-5-5", "claude-sonnet-5-5", True,
+         len(_inference_violations("https://api.anthropic.com/v1/messages", "claude-opus-5-5", "claude-opus-5-5", True,
                                    backend="anthropic", local_only=True))),
         ("anthropic backend refused at any other host", 1,
-         len(_inference_violations("https://api.vendor.com/v1/messages", "claude-sonnet-5-5", "claude-sonnet-5-5", False,
+         len(_inference_violations("https://api.vendor.com/v1/messages", "claude-opus-5-5", "claude-opus-5-5", False,
                                    backend="anthropic"))),
         ("anthropic backend refused over plain http", 1,
-         len(_inference_violations("http://api.anthropic.com/v1/messages", "claude-sonnet-5-5", "claude-sonnet-5-5", False,
+         len(_inference_violations("http://api.anthropic.com/v1/messages", "claude-opus-5-5", "claude-opus-5-5", False,
                                    backend="anthropic"))),
         ("unknown backend refused", 1,
          len(_inference_violations("http://localhost:11434/v1/chat/completions", "qwen3.8:27b", "qwen3.8:27b", False,
@@ -2030,6 +2031,15 @@ def _post_json(req, timeout):
         open_request = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open
     try:
         return json.load(open_request(req, timeout=timeout))
+    except urllib.error.HTTPError as exc:
+        # Keep the server's own explanation ("`temperature` is deprecated for this
+        # model"): a bare "400 Bad Request" in the judgments log says nothing. The body
+        # is the provider's error object; the request's key is never in it.
+        try:
+            detail = exc.read(400).decode("utf-8", "replace").strip()
+        except Exception:
+            detail = ""
+        raise RuntimeError(f"HTTP {exc.code}: {detail or exc.reason}") from None
     except Exception as exc:
         if "timed out" not in str(exc).lower():
             raise
@@ -2047,12 +2057,20 @@ def _chat_body(model, temperature, messages):
     return json.dumps(body).encode()
 
 
-def _anthropic_body(model, temperature, messages):
-    """The same request on the Messages API: system text apart, no JSON mode (every prompt
-    already asks for one JSON object, and the callers extract it)."""
+ANTHROPIC_EFFORT = os.environ.get("CURATOR_EFFORT") or "medium"
+
+
+def _anthropic_body(model, messages):
+    """The same request on the Messages API. Current Claude models refuse sampling
+    parameters (temperature is a 400) and always think, so there is no temperature
+    and no thinking switch: effort sets the depth. max_tokens leaves room for the
+    thinking as well as the card. No JSON mode: every prompt already asks for one JSON
+    object and the callers extract it. A refused request is retried on Anthropic's
+    fallback model rather than failing (server-side fallback, routed by category)."""
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
     rest = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"]
-    body = {"model": model, "max_tokens": 4096, "temperature": temperature, "messages": rest}
+    body = {"model": model, "max_tokens": 16000, "output_config": {"effort": ANTHROPIC_EFFORT},
+            "fallbacks": "default", "messages": rest}
     if system:
         body["system"] = system
     return json.dumps(body).encode()
@@ -2062,10 +2080,17 @@ def _chat(model, temperature, messages, timeout):
     """Every model call goes through here, so the backends cannot drift apart. Returns
     the reply text."""
     if BACKEND == "anthropic":
-        req = urllib.request.Request(ENDPOINT, _anthropic_body(model, temperature, messages),
+        req = urllib.request.Request(ENDPOINT, _anthropic_body(model, messages),
                                      {"x-api-key": KEY, "anthropic-version": "2023-06-01",
+                                      "anthropic-beta": "server-side-fallback-2026-07-01",
                                       "Content-Type": "application/json"})
         out = _post_json(req, timeout)
+        # Read the stop reason before the content: a refusal or a cut-off reply is an
+        # error for this item (recorded, retried next run), never an empty verdict.
+        stop = out.get("stop_reason")
+        if stop in ("refusal", "max_tokens"):
+            raise ValueError(f"Claude stopped with {stop}" + (
+                f" ({(out.get('stop_details') or {}).get('category')})" if stop == "refusal" else ""))
         return "".join(b.get("text", "") for b in out.get("content", []) if b.get("type") == "text")
     req = urllib.request.Request(ENDPOINT, _chat_body(model, temperature, messages),
                                  {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})

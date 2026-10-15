@@ -144,7 +144,15 @@ def _fake(req, *a, **k):
     with open(os.environ["STUB_LOG"], "a") as f:
         f.write(json.dumps({"url": req.full_url, "key": hdr.get("x-api-key"), "version": hdr.get("anthropic-version"),
                             "auth": "authorization" in hdr, "system": bool(body.get("system")),
-                            "roles": [m["role"] for m in body["messages"]], "json_mode": "response_format" in body}) + "\\n")
+                            "roles": [m["role"] for m in body["messages"]], "json_mode": "response_format" in body,
+                            "sampling": sorted(k for k in ("temperature", "top_p", "top_k") if k in body),
+                            "thinking": body.get("thinking"), "max_tokens": body.get("max_tokens"),
+                            "effort": (body.get("output_config") or {}).get("effort"),
+                            "fallbacks": body.get("fallbacks"), "beta": hdr.get("anthropic-beta")}) + "\\n")
+    # Shapes the real API refuses with a 400 fail here too, so this stand-in cannot pass a
+    # request Claude would reject (2026-10-15: temperature reached the real API that way).
+    if any(k in body for k in ("temperature", "top_p", "top_k")):
+        raise ValueError("HTTP 400: sampling parameters are deprecated for this model")
     if "security boundary classifier" in body.get("system", ""):
         text = '{"decision":"clean"}'
     else:
@@ -172,6 +180,12 @@ urllib.request.OpenerDirector.open = lambda self, req, *a, **k: _fake(req)
             calls = [json.loads(l) for l in log.read_text().splitlines()]
             self.assertEqual(len(calls), 2)  # the injection screen, then the judge
             for c in calls:
+                self.assertEqual(c['sampling'], [])              # current Claude models 400 on these
+                self.assertIsNone(c['thinking'])                 # always on; effort sets the depth
+                self.assertIn(c['effort'], ('low', 'medium', 'high', 'xhigh', 'max'))
+                self.assertGreaterEqual(c['max_tokens'], 16000)  # room for thinking and the card
+                self.assertEqual(c['fallbacks'], 'default')
+                self.assertEqual(c['beta'], 'server-side-fallback-2026-07-01')
                 self.assertEqual(c['url'], 'https://api.anthropic.com/v1/messages')
                 self.assertEqual(c['key'], 'sk-ant-test')
                 self.assertEqual(c['version'], '2023-06-01')
