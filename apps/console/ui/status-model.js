@@ -266,14 +266,19 @@ window.SovStatus = (() => {
     // not carry, which on 2026-09-20 had stranded 49 documents on a single machine.
     // The curator's own lane is exempt: the law makes its operational state hub-authoritative,
     // so this copy is meant to lag it.
-    let lag = 0, lagLane = null;
+    // The other direction is the hub behind this copy: on 2026-10-14 a client's sync stalled
+    // for a day while reporting "syncing", and every lane was 0.3 h old here and 23 h old on
+    // the hub. Two hours clears the relay's 15-minute hop and a sync catching up.
+    let lag = 0, lagLane = null, ahead = 0, aheadLane = null;
     const curatorLane = h.lane || "archivist";
     (D.lanes || []).forEach(l => {
       if (l.retired || l.lane === curatorLane) return;
       const here = l.vault_age_h, there = l.hub_age_h;
       if (here != null && there != null && here - there > lag) { lag = here - there; lagLane = l.lane; }
+      if (here != null && there != null && there - here > ahead) { ahead = there - here; aheadLane = l.lane; }
     });
     if (lag > 1) stale.push({ state: "warn", name: "this copy", detail: `${age(lag)} behind the hub on ${lagLane} (${(D.obsidian || {}).sync || "sync"} has not carried everything)`, age_h: lag, jump: { view: "backups", id: "bk:obsidian" } });
+    if (ahead > 2) stale.push({ state: "warn", name: "the hub", detail: `${age(ahead)} behind this copy on ${aheadLane} (${(D.obsidian || {}).sync || "sync"} is not uploading from here)`, age_h: ahead, jump: { view: "backups", id: "bk:obsidian" } });
     // A producer pushing into a retired lane is not expected to push either.
     (bk.lanes || []).forEach(l => { if (retiredLanes.has(l.lane)) return;
       const ah = ago(l.pushed), jump = { view: "backups", id: "bk:lane:" + l.lane };

@@ -136,6 +136,22 @@ assert.equal(copyRow({machine:{host:'here'},hub:{lanes:{}},
   lanes:[{lane:'old',vault_age_h:900,hub_age_h:1,retired:true}]}), undefined);
 console.log('Copy lag: compares one lane in two places, names it, exempts the curator lane and retired lanes.');
 
+// The reverse: this copy's lanes are fresh and the hub's are not. 2026-10-14, a client's
+// sync said "syncing" for 23 hours while uploading nothing.
+const hubRow = d => assess(d).stale.find(x => x.name === 'the hub');
+const hubBehind = hubRow({machine:{host:'here'},hub:{lanes:{}},obsidian:{sync:'syncing'},
+  lanes:[{lane:'tool-here',vault_age_h:0.31,hub_age_h:22.96},{lane:'alpha',vault_age_h:0.1,hub_age_h:0.1}]});
+assert.ok(hubBehind, 'a hub that stopped receiving this copy must be reported');
+assert.match(hubBehind.detail, /tool-here/);
+assert.match(hubBehind.detail, /not uploading from here/);
+assert.ok(hubBehind.age_h > 22 && hubBehind.age_h < 23);
+// A sync catching up after the relay's 15-minute hop is not a fault.
+assert.equal(hubRow({machine:{host:'here'},hub:{lanes:{}},
+  lanes:[{lane:'alpha',vault_age_h:0.1,hub_age_h:1.5}]}), undefined);
+assert.equal(hubRow({machine:{host:'here'},hub:{lanes:{}},
+  lanes:[{lane:'old',vault_age_h:0.1,hub_age_h:900,retired:true}]}), undefined);
+console.log('Hub lag: a hub behind this copy is named by lane; a short catch-up and retired lanes are not.');
+
 // The app must say whether it was built from the source on this machine. Nothing did,
 // which is how one machine ran a 0.1 prototype for months while the other moved through
 // twenty-two builds and every release note truthfully called the first "unchanged".

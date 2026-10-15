@@ -15,7 +15,8 @@ _pointer() { _sov_pointer "$1"; }
 BRAIN_ROOT_RESOLVED="${BRAIN_ROOT:-$(_pointer "$HOME/.brain-root")}"
 BRAIN_HOST_RESOLVED="${BRAIN_HOST:-$(_pointer "$HOME/.brain-host")}"
 BRAIN_HOST_RESOLVED="${BRAIN_HOST_RESOLVED:-$(hostname -s | tr '[:upper:]' '[:lower:]')}"
-SOV_EXCL=(--exclude=.DS_Store --exclude=.env --exclude=.secrets --exclude='.*.tmp' --exclude='*.tmp' --exclude='*.jsonl' --exclude='.git/')
+SOV_EXCL=(--exclude=.DS_Store --exclude=.env --exclude=.secrets --exclude='.*.tmp' --exclude='*.tmp' --exclude='*.jsonl' --exclude='.git/' \
+  --exclude=node_modules/ --exclude=.next/ --exclude=.venv/ --exclude=__pycache__/)
 
 BRAIN_LANE_RESOLVED="${BRAIN_LANE:-$(_pointer "$HOME/.brain-lane")}"
 

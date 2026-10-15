@@ -22,7 +22,8 @@ H = ROOT / "connectors" / "harness"
 LIB = H / "_lib" / "install-common.sh"
 # The mover's fence must equal SOV_EXCL in mirror-common.sh, exactly and in order.
 EXCLUDES = ["--exclude=.DS_Store", "--exclude=.env", "--exclude=.secrets",
-            "--exclude=.*.tmp", "--exclude=*.tmp", "--exclude=*.jsonl", "--exclude=.git/"]
+            "--exclude=.*.tmp", "--exclude=*.tmp", "--exclude=*.jsonl", "--exclude=.git/",
+            "--exclude=node_modules/", "--exclude=.next/", "--exclude=.venv/", "--exclude=__pycache__/"]
 
 STUB = '#!/bin/bash\nprintf "%s %s\\n" "$(basename "$0")" "$*" >> "$SOV_STUB_LOG"\nexit "${SOV_STUB_RC:-0}"\n'
 
@@ -201,6 +202,38 @@ class Mover(unittest.TestCase):
             src = args[2 + len(EXCLUDES)]
             self.assertEqual(src, str(b.home / ".vault-staging" / "raw" / "tools") + "/")
             self.assertEqual(b.manifest()["relay"]["dest"], str(b.vault / "raw" / "tools") + "/")
+
+    def test_build_output_under_a_pipe_never_reaches_the_vault(self):
+        # 2026-10-14: a Codex task folder carried a 431 MB node_modules into the vault and
+        # Obsidian Sync spent a day uploading it instead of that machine's notes.
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp, staging=True)
+            self.assertEqual(b.connect("windsurf").returncode, 0)
+            watched = b.tmp / "Codex"
+            for d in ("node_modules/react", ".next/cache", ".venv/bin", "pkg/__pycache__"):
+                (watched / "task" / d).mkdir(parents=True)
+                (watched / "task" / d / "f.js").write_text("x")
+            (watched / "task" / "notes.md").write_text("# kept\n")
+            self.assertEqual(b.relay("add", [str(watched)]).returncode, 0)
+            r = subprocess.run(b.relay_plist()["ProgramArguments"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            landed = b.vault / "raw" / "tools" / "Codex" / "task"
+            self.assertTrue((landed / "notes.md").is_file())
+            self.assertEqual(sorted(p.name for p in landed.iterdir()), ["notes.md", "pkg"])
+            self.assertEqual(list((landed / "pkg").iterdir()), [])
+
+    def test_an_older_recorded_fence_cannot_drop_the_build_excludes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp, staging=True)
+            self.assertEqual(b.connect("windsurf").returncode, 0)
+            m = b.manifest()
+            m["relay"]["excludes"] = [".DS_Store", ".env", ".secrets", ".*.tmp", "*.tmp", "*.jsonl", ".git/"]
+            (b.state / "connectors.json").write_text(json.dumps(m))
+            r = subprocess.run(
+                ["/bin/bash", "-c", 'source "$1"; sov_resolve_state; _sov_manifest_py get relay-argv',
+                 "_", str(LIB)], capture_output=True, text=True, env=b.env(TEMPLATE=str(ROOT)))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.split("\n")[2:2 + len(EXCLUDES)], EXCLUDES)
 
     def test_a_directory_source_never_carries_a_trailing_slash(self):
         with tempfile.TemporaryDirectory() as tmp:

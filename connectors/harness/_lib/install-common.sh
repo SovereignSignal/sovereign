@@ -279,7 +279,10 @@ for a in sys.argv[2:]:
     else:
         pos.append(a)
 
-EXCL = [".DS_Store", ".env", ".secrets", ".*.tmp", "*.tmp", "*.jsonl", ".git/"]
+# Build output is not memory: a Codex task folder carried a 431 MB node_modules into the
+# vault on 2026-10-14 and stalled Obsidian Sync for a day.
+EXCL = [".DS_Store", ".env", ".secrets", ".*.tmp", "*.tmp", "*.jsonl", ".git/",
+        "node_modules/", ".next/", ".venv/", "__pycache__/"]
 
 
 def ticks(e):
@@ -323,7 +326,8 @@ def relay_argv(d):
     if not srcs or not r.get("dest"):
         return None
     args = ["/usr/bin/rsync", "-a"]
-    for e in r.get("excludes") or EXCL:
+    # EXCL is a floor: a list recorded by an older install adds to it, never replaces it
+    for e in dict.fromkeys(EXCL + list(r.get("excludes") or [])):
         args.append("--exclude=" + e)
     # staging first, then the directory pipes in declaration order
     srcs = sorted(srcs, key=lambda s: 0 if s.get("kind") == "staging" else 1)
