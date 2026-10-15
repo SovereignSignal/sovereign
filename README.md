@@ -1,127 +1,120 @@
 # Sovereign
 
-A dead-simple, owned, plain-text **archive** any person or organization can run, and any AI tool can read and write — under a handful of rules that fit on one page.
+**Your context, in plain text you own, read by every AI tool you use.**
 
-The bet: as models commoditize, the edge is **context** — what you know, who you know, what worked last time. This is the durable place to keep it. Not an app, not a SaaS you rent: Markdown files in folders, versioned in git, that outlive any tool or model. Fork it and it is yours.
+Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Sovereign keeps that context in one place you own: a folder of Markdown files on your Mac, versioned with git, that your tools read before they work and add to as they go. You approve what becomes trusted. Switch models or tools and your context comes with you.
 
-## What's here
+It's deliberately simple. The whole standard fits on one page ([`CLAUDE.md`](CLAUDE.md)), the archive is ordinary files you can open in any editor, and nothing about it depends on this app, this repo, or any one AI company staying around.
+
+## How it works
 
 ```
-CLAUDE.md          the law — the whole standard, ~2 minutes to read
-templates/note.md  the new-note template (labels fill themselves in)
-bin/sov-init   scaffold a fresh instance into a target folder
-bin/sov-check the label-checker — keeps the archive from drifting
-skeleton/          the empty five-folder archive that ships into a new instance
+  your tools ──save──▶  raw/          loading dock: what tools and agents drop off
+                          │
+                       curator        drafts short cards from what arrived
+                          │
+                        you           approve, edit or reject each card
+                          ▼
+  your tools ◀──read──  knowledge/    the trusted layer, loaded into each new session
 ```
 
-## The shape, in one breath
+- **The archive** is five folders with one job each: `raw/` (the loading dock), `knowledge/` (the trusted cards), `workstreams/` (your active work), `archive/` (cold storage) and an optional `repos/` for code.
+- **Connectors** tie a tool to the archive both ways. Claude Code reads the relevant cards when a session starts and saves its memory into its own lane in `raw/`.
+- **The curator** reads what arrived, drafts one-screen briefing cards, and asks you before any of it becomes trusted. Its default answer is no: most raw material never becomes a card, and that's the system working.
 
-Five folders, each with one job: **raw/** (loading dock, where tools drop things), **workstreams/** (the desk), **knowledge/** (the trusted, curated layer), **archive/** (cold storage), and an optional **repos/** (code). Every note opens with two labels — `type` and `source` — plus an auto-filled `created`. One rule for who writes where. That's it. Read `CLAUDE.md` for the full law.
+## Get started on a Mac (about five minutes)
 
-## Quick start (under five minutes)
+You need an Apple Silicon Mac on macOS 13 or later, [Claude Code](https://claude.com/claude-code), and an [Anthropic API key](https://console.anthropic.com/) for the curator.
+
+1. **Install Sovereign.** A signed, notarized download is on its way. Until it's published, [build the app from source](#build-the-app-from-source), which takes a few minutes more.
+2. **Create an archive.** Open Sovereign and choose **Create archive…**. Pick where it lives; `~/Sovereign` is a good default.
+3. **Connect Claude Code.** On the screen that follows, choose **Connect…** next to Claude Code, check the preview, then install. Claude Code will now read your archive at the start of every session.
+4. **Turn on the curator.** In **Settings › Curator**, paste your Anthropic API key and choose **Turn on**. The key is stored in your login Keychain, never in a plain file. Every two hours the curator sends newly saved material to Anthropic, under your account, and drafts cards. Nothing it drafts becomes trusted until you approve it.
+5. **Save something worth remembering.** In Claude Code, tell it something durable, such as *"Remember: I'm building a garden planner for small urban plots, and it has to work offline."* Then choose **Curate now** in Settings › Curator.
+6. **Approve your first card.** Open **Review**, read the drafted card, and approve it.
+7. **See it used.** Start a new Claude Code session. It opens already knowing what you approved, and **Today** ticks off its **First steps**.
+
+## What leaves your Mac
+
+Out of the box, nothing. Sovereign has no account, no telemetry and no server. The only outbound traffic is what you turn on:
+
+- **The hosted curator** sends newly saved material to Anthropic under your own key. Each pass costs cents, and the key can carry a spend limit you set in the Anthropic console.
+- **Optional connectors**, such as a Notion mirror, talk to the service they mirror.
+
+If you want nothing to leave at all, run the curator on a local model instead (see [Curating with a local model](#curating-with-a-local-model)). An archive can declare itself local-only, and the curator then refuses any hosted model.
+
+## Use it without the app
+
+The archive is just folders, so you can start with the command line and an editor like [Obsidian](https://obsidian.md):
 
 ```bash
-# 1. stand up a fresh instance
-bin/sov-init ~/my-archive "My Archive"
-
-# 2. open ~/my-archive in Obsidian; point the Templates plugin at .obsidian/templates
-# 3. write your first note from the template (labels are pre-filled)
-# 4. confirm it's clean
-bin/sov-check ~/my-archive
+git clone https://github.com/SovereignSignal/sovereign.git && cd sovereign
+bin/sov-init ~/my-archive "My Archive"     # scaffold a fresh archive
+# open ~/my-archive in Obsidian and point its Templates plugin at .obsidian/templates
+bin/sov-check ~/my-archive                 # confirm every note carries its labels
 ```
 
-## Principles (why it stays simple)
+Every note starts with two labels, `type` and `source`, plus an auto-filled `created` date. [`CLAUDE.md`](CLAUDE.md) is the whole rulebook, about two minutes to read.
 
-- **Dead simple.** If it needs a manual, it waits. A new person or agent is productive in minutes.
-- **Owned by default.** You hold the storage, keys, and history. No vendor sits inside your memory.
-- **Plays well with others.** The archive never replaces the systems around it (Notion, Salesforce, whatever). A small connector carries data in; each tool stays authoritative for its own records.
-- **Context follows its owner.** A person's archive follows the person; an org's archive stays with the org. Same shape for both, owned separately, connected through explicit doors — never merged.
+## Connect a tool
 
-## The next layer (not required to start)
-
-A **curator** — an agent (a local model works well) that reads the raw loading dock and proposes promotions into the trusted `knowledge/` layer. It starts as a proposer: it drafts, you approve, and it earns more autonomy as its track record proves out. The archive works as plain files long before any agent touches it; the curator just makes it tend itself.
-
-## Connect a tool (both wires, one command)
-
-A tool is *in the loop* when it reads the archive before it works and writes its distilled
-output to its own lane. `connectors/harness/<name>/` packages both wires per tool, and
-`bin/sov` is the front door:
-
-```
-sov connect claude-code --host laptop --vault ~/my-archive --core me,how-to-work-with-me   # dry run
-sov connect claude-code ... --apply                                                      # install
-sov relay add ~/Documents/MyTool   # a plain watch folder: one more source on the mover
-sov disconnect claude-code --apply # undeclare the lane; the folder in raw/ stays
-sov load <topic>        # the context pack, same thing the session-start hook injects
-sov status              # pointers, every lane on this machine, freshness per wire
-```
-
-Claude Code is the first harness: a SessionStart hook maps the working directory to a
-workstream and injects the pack; its mirror copies every project's memory (never
-transcripts) into the lane every 15 minutes. Connecting a tool declares a lane, not a
-background item: one job per machine runs every connected tool's mirror on a tick, each
-lane bounded and logged on its own. A second job, one rsync mover, appears only where
-something has to be carried the last step into the vault: a staging hop on a Mac whose
-vault sits behind a protected folder, or a folder piped in with `sov relay add`, on either
-platform. A lane whose run is measured in hours, like the Notion pull, keeps a job of its
-own on a wall clock. Instance data (vault path, core cards, host name, aliases) lives in
-pointer files under `~`, never in this repo. Tests:
-`python3 -m unittest tests.test_connector_claude_code`.
-
-## Curator without a hub
-
-A single Mac with no hub and no local model can still be curated. Save your Anthropic API key in Settings → Curator and turn it on: Claude reads what your connected tools saved, every two hours, and drafts cards into Review. Nothing lands without you; the curator's automatic approvals are pinned off. The key stays in your login Keychain, and each pass sends new material to Anthropic under your account. This is the standard's rule 5 hosted option; an archive whose owner keeps it local-only (`CURATOR_LOCAL_ONLY=1`) refuses it. From the command line: `sov curator key`, `sov curator enable --apply`, `sov curator run`, `sov curator status`.
-
-## Local Hub package
-
-The macOS app includes Hub preparation, guarded job activation and encrypted recovery.
-Open Settings → Jobs → Hub setup…, or use `sov hub` from the bundled command.
-Preparation leaves jobs inactive; every mutation has a preview. See the [setup and recovery guide](docs/hub-setup.md)
-for requirements, the recovery drill and the limits of this clean-install pilot.
-
-## Archive evidence (optional)
-
-`bin/sov-evidence` is a separate, opt-in helper for exact trusted-card evidence and report-only freshness checks. It does not change `sov-load` or write to the archive.
-
-The helper requires an opaque sidecar and a private output directory outside the archive:
+`bin/sov` is the front door. Connecting a tool installs both wires: the read at session start and the write into its own lane.
 
 ```bash
-sov-evidence \
-  --root "$BRAIN_ROOT" \
-  --project-root "$BRAIN_EVIDENCE_STATE" \
-  --overlay "$BRAIN_EVIDENCE_STATE/enrollment.json" \
-  --ref opaque-reference \
-  --output "$BRAIN_EVIDENCE_STATE/runs/new-evidence.json"
+bin/sov connect claude-code --vault ~/my-archive          # preview what it will change
+bin/sov connect claude-code --vault ~/my-archive --apply  # install
+bin/sov load <topic>      # the context pack a session receives
+bin/sov status            # what's connected, and how fresh each lane is
+bin/sov disconnect claude-code --apply   # undo; the lane's files in raw/ stay as history
 ```
 
-Use `--audit-overlay` in place of `--ref` for a report-only aggregate freshness receipt. Detailed output can contain trusted text and identifiers, so keep the state directory private. Standard output contains only a sanitized receipt. Missing temporal fields remain findings; the helper never invents or backfills dates.
+Claude Code is the first fully supported tool. The repo also ships connectors for Codex, Cursor, Claude Desktop, Windsurf, Hermes and a Notion mirror, plus a plain watch folder (`sov relay add <path>`) for anything else. One background job per Mac runs every connected tool's save on a schedule; when the app installs it, macOS lists it under Login Items as Sovereign.
 
-## Picking a judge (optional)
+## Curating
 
-`bin/sov-judge-bakeoff` scores candidate judge models against the **real** `curator-run` judging path, so a judge is chosen on calibration rather than on benchmarks. Benchmark strength does not predict judge calibration: a strong model can promote everything (useless, since the curator's whole value is default-NO) or promote nothing (equally useless). Both failure modes have been observed on models that benchmark well.
+### With Claude (no extra setup)
+
+The app's **Settings › Curator** is the whole setup. From the command line, with the app installed: `sov curator key` (reads the key from stdin), `sov curator enable --apply`, `sov curator run`, `sov curator status`. The curator never approves anything by itself on this path: every card waits for you in Review.
+
+### Curating with a local model
+
+For a fully local setup, the app can prepare a **Hub** that curates on a model you run yourself (for example through Ollama). Open **Settings › Jobs › Hub setup…**; every step shows a preview first. See the [Hub setup and recovery guide](docs/hub-setup.md). Every card it drafts waits in Review for you; a prepared Hub keeps automatic approval off.
+
+`bin/sov-judge-bakeoff` helps you pick a local model on calibration rather than benchmarks. It runs the real curator against a bundled, entirely fictional corpus and scores false promotions, missed knowledge and resistance to adversarial documents:
 
 ```bash
-bin/sov-judge-bakeoff qwen3.8:27b qwen3.6:35b --runs 3 --json bakeoff.json
+bin/sov-judge-bakeoff <model-a> <model-b> --runs 3 --json bakeoff.json
 ```
 
-It builds a throwaway vault in a temp dir, seeds it with the bundled synthetic corpus in `connectors/bakeoff-corpus/` (entirely fictional, so the harness is publishable), runs the real curator against it, and prints a scorecard: accuracy, false-promote rate (the dangerous one), false-skip rate, update detection, containment of adversarial documents, and median and p90 latency. Model calls are timed through a loopback proxy, so nothing in `curator-run` is patched to measure it.
+## Build the app from source
 
-It refuses to run if the vault it resolved is inside a real one, caps the act-and-report gears at zero, and writes nothing outside the temp dir and an explicit `--json` path. `--endpoint`, `--keyfile`, and `--key-env` point it at a remote OpenAI-compatible endpoint; the default is local. Add cases by dropping a document and a matching `expected.json` into the corpus, and run `--self-test` to check the scoring logic with no network.
+You need an Apple Silicon Mac with Apple's command-line developer tools (`xcode-select --install`) and Python 3.12 or newer to unpack the bundled runtime safely.
+
+```bash
+git clone https://github.com/SovereignSignal/sovereign.git && cd sovereign
+python3.12 apps/console/fetch-runtime.py         # downloads the pinned runtime and checks its hash
+SOV_PYTHON_RUNTIME="$PWD/apps/console/build/runtime/python" bash apps/console/build.sh
+mkdir -p ~/Applications && mv apps/console/build/Sovereign.app ~/Applications/
+open ~/Applications/Sovereign.app
+```
+
+The build signs the app with a local signature, so it runs on the Mac that built it. More detail is in [`apps/console/DISTRIBUTION.md`](apps/console/DISTRIBUTION.md).
+
+## Principles
+
+- **Simple enough to explain in a minute.** If something needs a manual, it waits.
+- **Yours by default.** You hold the files, the history and the keys. No vendor sits inside your memory.
+- **Works alongside what you already use.** Notion, your CRM and your docs stay authoritative for their own records; a small connector carries what matters in.
+- **Context follows its owner.** A person's archive goes with the person, an organization's stays with the organization, and the two connect only through doors you open.
+
+## For maintainers
+
+- **Tests:** `export PYTHONPATH=$PWD/lib; python3 -m unittest discover -s tests`, plus the app's suites (see [`docs/release-checks.md`](docs/release-checks.md)).
+- **Distribution:** `apps/console/build.sh` signs with a Developer ID when one is present; `apps/console/notarize.sh` submits to Apple, staples the ticket and checks it with Gatekeeper.
+- **Archive evidence:** `bin/sov-evidence` is an opt-in helper for exact trusted-card evidence and report-only freshness checks. It never writes to the archive.
+- **Compatibility:** every former `brain-*` command is a symlink to its `sov-*` replacement, and configuration resolves `BRAIN_*` variables and `~/.brain-*` pointer files before the newer `SOVEREIGN_*` names. Existing settings win when both are present.
+- **Publishing:** a hub can publish this repo's `main` and `docs/lane-source-map` branches through `kit.template_publications` in its `hub.json`. Never add an archive repository or its data to a publication destination.
 
 ## License
 
-MIT (intended). Fork freely.
-
-## Command and configuration compatibility
-
-The product is Sovereign. Your copy is an instance, its plain-text folder is the archive, and the machine that curates is the hub.
-
-Use `sov` for the front door or `sov-*` for individual commands. Every former `brain-*` command remains a symlink to its `sov-*` replacement. The two exceptions in spelling are `brain-check.sh` → `sov-check` and `brain-hub` → `sov-managed-hub`; `sov-hub` continues to carry the template runner. `new-brain.sh` points to `sov-init`, also available as `sov init`.
-
-Configuration resolves in this order: existing `BRAIN_*` variables (`SOVS_VAULT` also sets the root), existing `~/.brain-*` pointer files, then `SOVEREIGN_ROOT`, `SOVEREIGN_LANE`, `SOVEREIGN_CORE`, and `SOVEREIGN_HOST`. `SOVEREIGN_VAULT` is also accepted for the root. Existing settings win when both generations are present. `SOVEREIGN_STAGE` and `SOVEREIGN_HOOK_MAX_CARDS` / `SOVEREIGN_HOOK_MAX_CHARS` have equivalent legacy-first fallbacks.
-
-The curator's model-facing prompt wording is preserved from the evaluated pipeline. Its remaining legacy terminology will be renamed only after a separate curator evaluation; this release does not change the model or its granted permissions.
-
-For an approved source publication destination, the hub owner can set `kit.template_publications` in `hub.json` to a list of template remote names or URLs. The nightly kit publishes only `main`, `docs/lane-source-map`, and tags, atomically without force or deletion, and records each destination's result. Both branches must exist in the hub's template checkout. `sov hub kit` previews the exact destination and ref set; `--apply` executes it. This list is empty by default. Keep complete recovery mirrors in `offsite.template`; never add the archive repository or its data to a source publication destination.
-
-This release keeps the checkout folders, `~/brain-bin`, existing remote paths, Python module imports, and stored receipt filenames compatible. It does not migrate producer configuration. Folder and remote-path moves belong to the separate recovery drill.
+[MIT](LICENSE). Fork it and make it yours.
