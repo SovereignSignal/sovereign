@@ -1127,6 +1127,9 @@ def fleet_needs(fleet):
         if net.get("online") is not False:
             continue
         via = net.get("via")
+        # A guest the owner suspended or stopped is put away on purpose, not unreachable.
+        if via == "parallels" and (host.get("vm") or {}).get("status") in ("suspended", "stopped"):
+            continue
         cause = ("Tailscale reports this device offline." if via == "tailscale" else
                  "The SSH port probe did not answer within its 1 second connection budget." if via in ("port 22 probe", "parallels") else
                  "The reported network check failed; the underlying cause is unconfirmed.")

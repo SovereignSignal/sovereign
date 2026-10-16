@@ -60,5 +60,30 @@ class LocalVmRows(unittest.TestCase):
         self.assertEqual(hosts["gamma-vm"]["net"], {"online": True, "ip": "10.0.0.9", "via": "parallels"})
 
 
+    def vm(self, name, status):
+        return {"tool": "parallels", "name": name, "status": status, "ip": None, "uuid": "u-" + status, "os": "ubuntu"}
+
+    def test_a_guest_put_away_on_purpose_is_not_a_reachability_failure(self):
+        for status in ("suspended", "stopped"):
+            with self.subTest(status=status):
+                hosts = self.rows([self.vm("Delta VM", status)])
+                self.assertEqual(hosts["delta-vm"]["net"]["online"], False)
+                self.assertEqual(self.m.fleet_needs({"hosts": list(hosts.values())}), [])
+
+    def test_a_guest_in_any_other_state_still_cannot_be_reached(self):
+        for status in ("paused", "unrecognized"):
+            with self.subTest(status=status):
+                hosts = self.rows([self.vm("Delta VM", status)])
+                rows = self.m.fleet_needs({"hosts": list(hosts.values())})
+                self.assertEqual([r["host"] for r in rows], ["delta-vm"])
+                self.assertIn("cannot currently reach delta-vm", rows[0]["text"])
+
+    def test_an_unreachable_host_that_is_not_a_guest_still_raises_its_row(self):
+        host = {"host": "host-a", "net": {"online": False, "ip": None, "via": "tailscale"}}
+        self.assertEqual([r["host"] for r in self.m.fleet_needs({"hosts": [host]})], ["host-a"])
+        # A stopped hypervisor record does not excuse a host whose network check was not the hypervisor's.
+        host["vm"] = self.vm("Host A", "stopped")
+        self.assertEqual([r["host"] for r in self.m.fleet_needs({"hosts": [host]})], ["host-a"])
+
 if __name__ == "__main__":
     unittest.main()

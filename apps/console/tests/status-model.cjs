@@ -58,6 +58,12 @@ assert.match(model.caption({_status:{pending:true,budget_s:45}}),/up to 45 secon
 const need=assess({needs_you:[{kind:'hypervisor',text:'unknown',why:'why',action:'action',url:'https://example.com/',verify:'verify'}]}).need[0];
 assert.equal(need.why,'why');assert.equal(need.action,'action');assert.equal(need.url,'https://example.com/');assert.equal(need.verify,'verify');
 assert.equal(assess({needs_you:[{kind:'host',host:'worker',text:'worker offline'}],fleet:{hosts:[{host:'worker',net:{online:false}}]}}).need.length,1);
+// A guest the owner suspended or stopped is put away, not unreachable: the app agrees with the
+// service's fleet_needs and raises no row of its own. Any other state still raises one.
+const guest=status=>({host:'vm-a',net:{online:false,via:'parallels'},vm:{tool:'parallels',status}});
+for(const status of ['suspended','stopped'])assert.equal(assess({fleet:{hosts:[guest(status)]}}).need.length,0,status+' guest is not unreachable');
+for(const status of ['paused','unrecognized'])assert.equal(assess({fleet:{hosts:[guest(status)]}}).need[0].detail,'This device cannot currently reach vm-a.',status+' guest still raises its row');
+assert.equal(assess({fleet:{hosts:[{host:'host-a',net:{online:false,via:'tailscale'},vm:{status:'stopped'}}]}}).need.length,1,'only the hypervisor\'s own check is excused');
 for(const delivery of [undefined,'unknown']){const issue=model.contributionIssue({lane:'qa',delivery});for(const key of ['why','action','verify'])assert.ok(issue[key]);}
 console.log('Status transparency: safe URLs, retained failures, observation age/budget, issue fields, dedupe and older-service fallbacks passed.');
 

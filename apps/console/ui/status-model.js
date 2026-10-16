@@ -233,7 +233,9 @@ window.SovStatus = (() => {
         cause:paused?'job-paused':pending?'job-verifying':'job-failed'});
     });
     if (h.jobs_error) need.push({ state: "warn", name: "Hub jobs", detail: h.jobs_error, jump: { view: "jobs" }, order: 0, cause: "hub-jobs-unknown" });
-    hosts.filter(x => x.net && x.net.online === false && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Sources → Devices.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
+    // A guest the owner suspended or stopped is put away, not unreachable (as the service's fleet_needs).
+    const putAway = x => x.net.via === "parallels" && ["suspended", "stopped"].includes((x.vm || {}).status);
+    hosts.filter(x => x.net && x.net.online === false && !putAway(x) && !(D.needs_you||[]).some(n=>n.kind==="host"&&n.host===x.host)).forEach(x => need.push({ state: "down", name: x.host, detail: "This device cannot currently reach " + x.host + ".", why:"The reported network check failed; the cause is not confirmed.", action:"Check the device’s power and network connection, then inspect it in Sources → Devices.", verify:"Refresh; the device reports reachable.", age_h: null, jump: { view: "hosts", id: x.host }, order: 0, cause: "unreachable" }));
     if (h.reachable === false && !(D.needs_you||[]).some(n=>n.kind==='hub') && !hosts.some(x => x.host === hubName && x.net?.online === false))
       need.push({state:'down',name:'Hub',detail:'unreachable; review and acceptance could not be checked',jump:{view:'hosts',id:hubName},order:0});
     (bk.hosts || []).forEach(x => {
