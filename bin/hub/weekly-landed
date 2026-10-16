@@ -14,6 +14,9 @@ every verdict by who made it:
 
 plus anything the screen or the taste flagged that QUEUED instead of acting.
 
+It also reports, per card type over the trailing 30 days, how many cards the
+gear landed and how many of those were later reverted (a `retired` verdict).
+
 Output is two things:
   1. a Notion page under the hub Archivist parent page, with a table of what
      landed on its own (slug, type, why-this-matters, promotion commit, source)
@@ -77,6 +80,8 @@ DEFAULT_PARENT_ID = "361000c0-d590-80e6-b6a2-e877fe87be23"  # Notion page: Archi
 
 AUTO_PROMOTE_ACTOR = "auto-gear"
 AUTO_REJECT_ACTOR = "auto-taste"
+REVERT_VERDICT = "retired"  # what curator-retire.sh logs; the review's revert runs it
+RATE_DAYS = 30              # trailing window for the revert rate per card type
 
 MAX_TG_CARDS = 15           # landed names listed in the Telegram message
 MAX_TABLE_ROWS = 60         # rows per Notion table block (request size guard)
@@ -237,6 +242,46 @@ def type_from_detail(detail):
         return ""
     return {"entities": "entity", "concepts": "concept", "syntheses": "synthesis"}[
         m.group(1)
+    ]
+
+
+def card_type(slug, detail):
+    """A landed card's type label, read where the card is now: knowledge/ while it
+    stands, the lane's rejected/ once reverted. Falls back to its folder."""
+    for p in (card_path(slug), os.path.join(LANE_DIR, "rejected", slug + ".md")):
+        if p and os.path.isfile(p):
+            try:
+                fm, _ = parse_frontmatter(open(p, encoding="utf-8", errors="replace").read())
+            except OSError:
+                continue
+            if fm.get("type"):
+                return fm["type"]
+    return type_from_detail(detail) or "unknown"
+
+
+def revert_rates(rows):
+    """[(type, landed, reverted)] for the cards the gear landed in `rows`, where
+    reverted means a later `retired` verdict on the same card. Owner approvals
+    are not auto-landings and are not counted. Types with none are absent."""
+    landed, retired = {}, {}
+    for r in rows:
+        if r["actor"] == AUTO_PROMOTE_ACTOR and r["verdict"] == "approved":
+            landed.setdefault(r["slug"], r)
+        elif r["verdict"] == REVERT_VERDICT:
+            retired.setdefault(r["slug"], []).append(r["ts"])
+    counts = {}
+    for slug, r in landed.items():
+        c = counts.setdefault(card_type(slug, r["detail"]), [0, 0])
+        c[0] += 1
+        if any(t > r["ts"] for t in retired.get(slug, ())):
+            c[1] += 1
+    return [(k, n, rev) for k, (n, rev) in sorted(counts.items())]
+
+
+def revert_rate_lines(rates):
+    return [
+        "%s: %d landed, %d reverted (%d%%)" % (k, n, rev, round(100.0 * rev / n))
+        for k, n, rev in rates
     ]
 
 
@@ -553,6 +598,14 @@ def notion_blocks(rep):
         blocks.append(para("Nothing landed on its own this week."))
 
     blocks.append(divider())
+    blocks.append(heading(1, "Revert rate, last %d days" % RATE_DAYS))
+    rate_lines = revert_rate_lines(rep.get("revert_rates") or [])
+    if rate_lines:
+        blocks.extend(bullet(line) for line in rate_lines)
+    else:
+        blocks.append(para("Nothing landed on its own in the last %d days." % RATE_DAYS))
+
+    blocks.append(divider())
     blocks.append(heading(1, "What was auto rejected"))
     if rejected:
         blocks.append(
@@ -657,6 +710,11 @@ def telegram_message(rep, url):
     else:
         lines.append("")
         lines.append("Quiet week, nothing promoted itself.")
+    rate_lines = revert_rate_lines(rep.get("revert_rates") or [])
+    if rate_lines:
+        lines.append("")
+        lines.append("<b>Revert rate, last %d days:</b>" % RATE_DAYS)
+        lines.extend(html_escape(line) for line in rate_lines)
     lines.append("")
     if url:
         lines.append('<a href="%s">Notion review page</a>' % html_escape(url))
@@ -706,13 +764,18 @@ def main(argv):
         hour=0, minute=0, second=0, microsecond=0
     )
 
+    rate_since = (now - timedelta(days=RATE_DAYS)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
     try:
-        rows = read_decisions(since)
+        rows = read_decisions(min(since, rate_since))
     except OSError as exc:
         print("cannot read decisions.log: %s" % exc, file=sys.stderr)
         return 1
 
-    rep = build_report(rows, since, now)
+    rep = build_report([r for r in rows if r["ts"] >= since], since, now)
+    rep["revert_rates"] = revert_rates([r for r in rows if r["ts"] >= rate_since])
     title = "Archivist Weekly Landed Review, %s" % now.strftime("%Y-%m-%d")
     blocks = notion_blocks(rep)
 
@@ -724,6 +787,9 @@ def main(argv):
     print("PENDING_NOW: %d" % rep["pending"])
     for c in rep["landed"]:
         print("  landed %s (%s) commit=%s src=%s" % (c["slug"], c["type"], c["commit"], c["source"]))
+    print("Revert rate, last %d days:" % RATE_DAYS)
+    for line in revert_rate_lines(rep["revert_rates"]):
+        print("  " + line)
 
     if dry_run:
         print("DRY RUN: %d notion blocks, page NOT created" % len(blocks))
