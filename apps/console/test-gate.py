@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Native approval UX against disposable archives and real local curator scripts."""
-import argparse,hashlib,importlib.util,json,os,subprocess
+import argparse,hashlib,importlib.util,json,os,subprocess,sys
 from pathlib import Path
+# The status fixture runs under this test's own interpreter; /usr/bin/python3 is only an
+# install prompt on a Mac without the Command Line Tools.
+assert not any(c.isspace() for c in sys.executable), 'a shebang cannot hold a path with spaces: '+sys.executable
+PYTHON='#!'+sys.executable+'\n'
 HERE=Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('gate_fixture',HERE/'tests/test_gate_check.py');fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
 
@@ -115,7 +119,7 @@ def main():
    if scene=='missing':(t.proposals/(t.slug+'.md')).unlink()
    prop={'slug':t.slug,'title':'Example card','type':'entity','body':'Reviewed content','source':'owner','confidence':'high','flags':['needs-source-review'],'words':2,'age_h':1}
    data={'machine':{'connected':True,'host':'test','vault':str(t.root),'vault_name':'Approval QA'},'hub':{'reachable':True,'via':'local','pending':1,'proposals':[prop]},'archive':{'cards':[]},'needs_you':[{'kind':'gate','text':'One proposal to review'}]}
-   status=home/'status';status.write_text('#!/usr/bin/python3\nimport json\nfrom pathlib import Path\nd='+repr(data)+'\n'+('' if scene=='missing' else 'if not Path('+repr(str(t.proposals/(t.slug+'.md')))+').exists(): d["hub"].update(proposals=[],pending=0); d["needs_you"]=[]\n')+'print(json.dumps(d))\n');status.chmod(0o700)
+   status=home/'status';status.write_text(PYTHON+'import json\nfrom pathlib import Path\nd='+repr(data)+'\n'+('' if scene=='missing' else 'if not Path('+repr(str(t.proposals/(t.slug+'.md')))+').exists(): d["hub"].update(proposals=[],pending=0); d["needs_you"]=[]\n')+'print(json.dumps(d))\n');status.chmod(0o700)
    name=scene+'-'+theme+'-'+size;env=dict(os.environ,SOV_QA_GATE_HOME=str(home),SOV_QA_STATUS_COMMAND=str(status),SOV_APPEARANCE=theme,SOV_WINDOW=size,SOV_SNAPSHOT=str(a.evidence/(name+'.png')),SOV_SNAPSHOT_DELAY='5',SOV_SNAPSHOT_ANCHOR='operations:view:review+open:p:'+t.slug,SOV_QA_JS_AFTER_ANCHOR=QA.replace('SCENARIO',json.dumps(scene)).replace('STATUS',json.dumps(data)))
    result=subprocess.run([str(HERE/'build/Sovereign.app/Contents/MacOS/Sovereign'),'-sov.archive',str(t.root)],env=env,capture_output=True,text=True,timeout=40)
    (a.evidence/(name+'.log')).write_text(result.stderr);marker='client error in gate-qa: ';rows=[json.loads(x.split(marker)[1]) for x in result.stderr.splitlines() if marker in x]

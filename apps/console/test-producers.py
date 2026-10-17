@@ -34,8 +34,11 @@ if(PHASE==='flow'){
 check('No page overflow',document.documentElement.scrollWidth<=innerWidth);
 post({cmd:'clientError',where:'producer-qa',msg:JSON.stringify({checks,failures:Object.keys(checks).filter(k=>!checks[k])})});
 '''
-COMMAND=r'''#!/usr/bin/python3
-import json,sys,time
+# Fixtures run under this test's own interpreter. /usr/bin/python3 is only an install
+# prompt on a Mac without the Command Line Tools, which made the fixture fail there.
+assert not any(c.isspace() for c in sys.executable), 'a shebang cannot hold a path with spaces: '+sys.executable
+PYTHON='#!'+sys.executable+'\n'
+COMMAND=PYTHON+r'''import json,sys,time
 from pathlib import Path
 base=Path(__file__).parent;args=sys.argv[1:]
 with (base/'calls.jsonl').open('a') as out:out.write(json.dumps(args)+'\n')

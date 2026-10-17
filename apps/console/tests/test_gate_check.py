@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -125,7 +126,9 @@ class GateCheckTests(unittest.TestCase):
   with (self.base/'gate.lock').open('a') as held, patch.object(gate.subprocess,'Popen',side_effect=short_timeout):
    with self.assertRaises(subprocess.TimeoutExpired):gate.run_gate(['/bin/sh','-c','sleep 5'],dict(os.environ),held.fileno())
  def setup_real_gate(self):
-  repo=HERE.parents[1];command=self.base/'real-gate';command.write_text('#!/bin/sh\ncase "$2" in\napprove) exec /bin/bash "'+str(repo/'bin/curator-approve.sh')+'" "$3" "$4";;\nreject) exec /bin/bash "'+str(repo/'bin/curator-reject.sh')+'" "$3" "$4";;\nesac\n');command.chmod(0o700)
+  # Stands in for sov, so it exports SOV_PYTHON as sov does; curator-approve.sh otherwise runs a
+  # bare python3, which is only an install prompt on a Mac without the Command Line Tools.
+  repo=HERE.parents[1];command=self.base/'real-gate';command.write_text('#!/bin/sh\nexport SOV_PYTHON="'+sys.executable+'"\ncase "$2" in\napprove) exec /bin/bash "'+str(repo/'bin/curator-approve.sh')+'" "$3" "$4";;\nreject) exec /bin/bash "'+str(repo/'bin/curator-reject.sh')+'" "$3" "$4";;\nesac\n');command.chmod(0o700)
   def git(*args):subprocess.run(['git','-C',str(self.root),*args],check=True,capture_output=True)
   git('init','-q');git('config','user.name','Gate QA');git('config','user.email','gate-qa@example.invalid');git('add','.');git('commit','-qm','Initial test archive')
   bare=self.base/'origin.git';subprocess.run(['git','init','--bare','-q',str(bare)],check=True);git('remote','add','origin',str(bare));git('push','-qu','origin','HEAD');return command
