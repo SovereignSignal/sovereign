@@ -210,12 +210,20 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             // The hubless curator on this Mac (bin/sov-curator). A key rides in the child's
             // environment only, never on argv and never in a log line.
             let action = d["action"] as? String ?? "status"
-            guard let sov = sov, ["status", "enable", "disable", "run", "key"].contains(action) else {
+            guard let sov = sov, ["status", "enable", "disable", "run", "key", "trust", "untrust", "retire"].contains(action) else {
                 deliver("curatorResult", ["action": action, "exit": 64, "err": sov == nil ? "sov is not installed on this machine." : "Unknown curator action."], generation: generation); return
             }
-            var args = [sov, "curator", action]
+            var args = [sov, "curator", action == "untrust" ? "trust" : action]
             if action == "status" { args.append("--json") }
-            if action == "enable" || action == "disable" { args.append("--apply") }
+            if action == "retire" {
+                guard let slug = d["slug"] as? String,
+                      slug.range(of: "^[a-z0-9][a-z0-9-]{0,120}$", options: .regularExpression) != nil else {
+                    deliver("curatorResult", ["action": action, "exit": 64, "err": "No landed card was named."], generation: generation); return
+                }
+                args.append(slug)
+            }
+            if action == "untrust" { args.append("--off") }
+            if action == "enable" || action == "disable" || action == "trust" || action == "untrust" || action == "retire" { args.append("--apply") }
             var env: [String: String] = [:]
             if let root = Settings.archive { env["SOVS_VAULT"] = root }
             if action == "key" { env["SOV_CURATOR_KEY"] = (d["key"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }

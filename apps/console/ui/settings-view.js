@@ -53,21 +53,46 @@ window.SovSettings = (() => {
   }
 
   /* The curator for an archive with no hub: Claude under the owner's own key, every two
-     hours, nothing landing without the owner. A Mac that runs a hub curates from its own
-     jobs, so the section says that instead of offering a second curator. */
+     hours, in ask-first until the owner grants background landing. A Mac that runs a hub
+     curates from its own jobs, so the section says that instead of a second curator. */
   function curatorSection(C) {
     if (!C) return sect("Curator", say("Checking…"));
     if (C.hub) return sect("Curator", say("Your hub curates this archive."));
     if (C.error) return sect("Curator", say(esc(C.error)));
-    const on = C.installed && C.loaded, pending = C.pending || 0;
+    const on = C.installed && C.loaded, pending = C.pending || 0, T = C.trust_record || {};
+    const trustState = T.state || C.trust || "ask-first", trusted = trustState === "act-and-report";
+    const incomplete = trustState === "incomplete" || T.repair_needed === true;
     const lead = !C.key_saved ? "Add your Anthropic API key to turn on the curator."
       : on ? `Claude curates this archive every two hours. ${pending ? pending + " waiting in Review." : "Nothing waiting."}`
       : "The curator is off.";
+    const clean = Number.isFinite(T.clean_streak) ? T.clean_streak : 0,
+          threshold = Number.isFinite(T.threshold) && T.threshold > 0 ? T.threshold : 10;
+    let trustSay = "";
+    if (C.key_saved && trusted) {
+      const landed = T.auto_landed_30d || 0, reverted = T.auto_reverted_30d || 0;
+      trustSay = `<p class="set-note"><strong>Background landing is on.</strong> Routine concepts and syntheses at high and medium confidence can land without waiting, at most 12 per pass. ${landed} landed on their own in the last 30 days${reverted ? `; ${reverted} later reverted` : ""}. Flagged items, entities, collisions, and destructive changes still ask first.</p>`;
+    } else if (C.key_saved && incomplete) {
+      trustSay = `<p class="set-note"><strong>Trust needs repair.</strong> The background-landing switch and its grants disagree, so Sovereign is treating routine cards as ask-first until they are reconciled.</p>`;
+    } else if (C.key_saved && T.eligible) {
+      trustSay = `<p class="set-note"><strong>The curator has earned more room.</strong> Your last ${clean} routine concept and synthesis decisions were approvals, with no routine rejection or retirement in between. You can let that class of card land in the background and report back.</p>`;
+    } else if (C.key_saved) {
+      trustSay = `<p class="set-note">Background landing is off. ${clean} of ${threshold} clean routine decisions toward Sovereign offering it. Routine here means high- or medium-confidence concepts and syntheses.</p>`;
+    }
+    const recent = Array.isArray(T.recent_auto_landed) ? T.recent_auto_landed.slice(0, 5) : [];
+    const landedList = recent.length ? more("Recently landed on their own",
+      recent.map(r => `<p class="set-note set-landed"><span><span class="mono">${esc(r.slug || "")}</span> · ${esc(r.type || "card")} · ${esc(r.confidence || "")}${r.ts ? ` · ${esc(String(r.ts).slice(0, 10))}` : ""}${r.reverted ? " · reverted" : ""}</span>${r.reverted ? "" : `<button data-cur-retire="${esc(r.slug || "")}">Retire…</button>`}</p>`).join("")
+      + `<p class="set-note">Retiring moves the card out of trusted knowledge into the curator's rejected archive. It is never deleted.</p>`) : "";
     const key = `<div class="set-inline"><input type="password" id="set-cur-key" autocomplete="off" spellcheck="false" placeholder="${C.key_saved ? "Replace key…" : "sk-ant-…"}" aria-label="Anthropic API key"><button id="set-cur-save">Save key</button></div>`;
-    const acts = C.key_saved ? (on ? `<button class="brass" id="set-cur-run">Curate now</button><button id="set-cur-off">Turn off</button>`
-                                   : `<button class="brass" id="set-cur-on">Turn on</button>`) : "";
-    return sect("Curator", say(lead) + key + `<span class="pulls" id="set-cur-state" aria-live="polite"></span>`,
-      "Your key stays in this Mac's Keychain. Each pass sends new material to Anthropic under your account. Every card waits for you in Review.", acts);
+    const trustAct = !C.key_saved ? ""
+      : trusted ? `<button id="set-cur-untrust">Ask first again</button>`
+      : incomplete ? `<button class="brass" id="set-cur-trust">Repair trust</button>`
+      : T.eligible ? `<button class="brass" id="set-cur-trust">Let routine cards land</button>` : "";
+    const acts = C.key_saved ? (on ? `<button class="brass" id="set-cur-run">Curate now</button>${trustAct}<button id="set-cur-off">Turn off</button>`
+                                   : `<button class="brass" id="set-cur-on">Turn on</button>${trustAct}`) : "";
+    const note = trusted
+      ? "Your key stays in this Mac's Keychain. Each pass sends new material to Anthropic under your account. Auto-rejection stays off."
+      : "Your key stays in this Mac's Keychain. Each pass sends new material to Anthropic under your account. Cards wait for you in Review until you grant background landing.";
+    return sect("Curator", say(lead) + key + trustSay + landedList + `<span class="pulls" id="set-cur-state" aria-live="polite"></span>`, note, acts);
   }
 
   /* A job is what an operating system schedules; a lane runs inside one. The Jobs

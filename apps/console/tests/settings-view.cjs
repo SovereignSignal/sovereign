@@ -182,6 +182,39 @@ test('the pane never posts on its own', () => {
   assert.equal(sent.length, 0);
 });
 
+test('trust calibration shows progress before background landing is offered', () => {
+  const html = paint({ root: '/Owner/Research', curator: { hub: false, key_saved: true, installed: true, loaded: true, pending: 2,
+    trust: 'ask-first', trust_record: { state: 'ask-first', clean_streak: 4, threshold: 10, eligible: false } } });
+  assert(html.includes('Background landing is off'));
+  assert(html.includes('4 of 10 clean routine decisions'));
+  assert(!html.includes('id="set-cur-trust"'));
+});
+
+test('an earned trust grant is one explicit action', () => {
+  const html = paint({ root: '/Owner/Research', curator: { hub: false, key_saved: true, installed: true, loaded: true, pending: 0,
+    trust: 'ask-first', trust_record: { state: 'ask-first', clean_streak: 10, threshold: 10, eligible: true } } });
+  assert(html.includes('The curator has earned more room'));
+  assert(html.includes('id="set-cur-trust">Let routine cards land'));
+});
+
+test('background landing names its landed cards and can be revoked', () => {
+  const html = paint({ root: '/Owner/Research', curator: { hub: false, key_saved: true, installed: true, loaded: true, pending: 1,
+    trust: 'act-and-report', trust_record: { state: 'act-and-report', auto_landed_30d: 3, auto_reverted_30d: 1,
+      recent_auto_landed: [{ slug: 'garden-plan', type: 'concept', confidence: 'high', ts: '2026-10-18T12:00:00+00:00', reverted: false }] } } });
+  assert(html.includes('Background landing is on'));
+  assert(html.includes('3 landed on their own in the last 30 days'));
+  assert(html.includes('garden-plan'));
+  assert(html.includes('data-cur-retire="garden-plan">Retire…'));
+  assert(html.includes('id="set-cur-untrust">Ask first again'));
+});
+
+test('a disagreeing trust switch offers repair and reads as ask-first', () => {
+  const html = paint({ root: '/Owner/Research', curator: { hub: false, key_saved: true, installed: true, loaded: true, pending: 0,
+    trust: 'incomplete', trust_record: { state: 'incomplete', repair_needed: true } } });
+  assert(html.includes('Trust needs repair'));
+  assert(html.includes('id="set-cur-trust">Repair trust'));
+});
+
 test('the scheduled work has a door here and a count', () => {
   const html = paint({ D: { hub: { jobs: { nightly: {}, curate: {} } }, jobs: [{ label: 'a' }, { label: 'b', kick: 'a' }] } });
   assert(html.includes('3 scheduled'));

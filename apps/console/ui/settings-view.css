@@ -7,6 +7,7 @@
 .set-body{min-width:0}
 .set-lead{font-size:12.5px;line-height:18px;margin:0;color:var(--ink-2);overflow-wrap:anywhere}
 .set-note{font-size:11px;line-height:1.6;color:var(--muted);margin:4px 0 0;max-width:66ch}
+.set-landed{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
 .set-sect select{font-size:12px;border:1px solid var(--rule);background:var(--panel);color:var(--ink);padding:5px 8px;border-radius:5px;min-width:150px}
 .set-sect .radio,.set-sect .check{display:flex;font-size:12.5px;margin:0;padding:0;cursor:pointer}
 .set-inline{display:flex;gap:16px;flex-wrap:wrap}

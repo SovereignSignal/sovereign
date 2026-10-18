@@ -1700,14 +1700,26 @@ window.onerror = function (msg, src, line, col) {
       if (act === "review-unfold") { reviewUnfolded.add(sel.id.slice(2)); renderInspector(); return; }
       if (b.id === "set-change") return window.sovCanQuit() && bridge({ cmd: "chooseArchive" });
       if (b.id === "set-reveal") return bridge({ cmd: "reveal", path: selectedRoot });
-      if (b.id === "set-cur-save" || b.id === "set-cur-on" || b.id === "set-cur-off" || b.id === "set-cur-run") {
+      if (b.dataset.curRetire) {
         if (curatorBusy) return;
-        const action = { "set-cur-save": "key", "set-cur-on": "enable", "set-cur-off": "disable", "set-cur-run": "run" }[b.id];
+        const slug = b.dataset.curRetire;
+        if (b.dataset.armed !== "1") {
+          b.dataset.armed = "1"; b.textContent = "Confirm retire";
+          SovSettings.note("set-cur-state", `Retire ${slug}? It leaves trusted knowledge and is kept in the rejected archive. Choose Confirm retire to continue.`);
+          return;
+        }
+        curatorBusy = true;
+        SovSettings.note("set-cur-state", `Retiring ${slug}\u2026`);
+        return bridge({ cmd: "curator", action: "retire", slug });
+      }
+      if (b.id === "set-cur-save" || b.id === "set-cur-on" || b.id === "set-cur-off" || b.id === "set-cur-run" || b.id === "set-cur-trust" || b.id === "set-cur-untrust") {
+        if (curatorBusy) return;
+        const action = { "set-cur-save": "key", "set-cur-on": "enable", "set-cur-off": "disable", "set-cur-run": "run", "set-cur-trust": "trust", "set-cur-untrust": "untrust" }[b.id];
         const field = document.getElementById("set-cur-key"), key = action === "key" ? (field && field.value || "").trim() : "";
         if (action === "key" && !key) { SovSettings.note("set-cur-state", "Paste your key first."); return; }
         if (field) field.value = "";   // the key leaves the page as soon as it is sent
         curatorBusy = true;
-        SovSettings.note("set-cur-state", { key: "Saving\u2026", enable: "Turning on\u2026", disable: "Turning off\u2026", run: "Curating\u2026 this can take a few minutes." }[action]);
+        SovSettings.note("set-cur-state", { key: "Saving\u2026", enable: "Turning on\u2026", disable: "Turning off\u2026", run: "Curating\u2026 this can take a few minutes.", trust: "Granting background landing\u2026", untrust: "Returning to ask-first\u2026" }[action]);
         return bridge(action === "key" ? { cmd: "curator", action, key } : { cmd: "curator", action });
       }
       if (b.id === "set-update") {
@@ -1965,10 +1977,10 @@ window.onerror = function (msg, src, line, col) {
       }
       curatorBusy = false;
       const said = String((payload.exit === 0 ? payload.out : payload.err) || "").trim().split("\n").filter(Boolean).pop() || "";
-      const done = { key: "Key saved.", enable: "On. The first pass is running.", disable: "Off.", run: "Done. Anything new is in Review." }[payload.action];
+      const done = { key: "Key saved.", enable: "On. The first pass is running.", disable: "Off.", run: "Done. Anything new is in Review.", trust: "Background landing is on for routine cards.", untrust: "Ask-first restored.", retire: "Retired. The card is preserved in the rejected archive." }[payload.action];
       if (settingsOpen) SovSettings.note("set-cur-state", payload.exit === 0 ? done : (said || "That did not work."));
       bridge({ cmd: "curator", action: "status" });
-      if (payload.action === "run" && payload.exit === 0) setTimeout(refresh, 500);
+      if ((payload.action === "run" || payload.action === "retire") && payload.exit === 0) setTimeout(refresh, 500);
     } else if (kind === "appUpdateResult") {
       appUpdatePending = payload.state === 'started';
       appUpdateResult = payload.error || (payload.state === 'cancelled' ? 'Cancelled. Nothing was changed.'
