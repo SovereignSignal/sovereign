@@ -134,6 +134,129 @@ def receipts_7d(lane_dir):
     return {"total": n, "real": real}
 
 
+def _same_path(a, b):
+    return os.path.realpath(os.path.expanduser(str(a))) == os.path.realpath(os.path.expanduser(str(b)))
+
+
+def _executable_ok(program):
+    if not program:
+        return False
+    path = os.path.expanduser(str(program))
+    if "/" not in path:
+        return shutil.which(path) is not None
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def claude_hook_probe(hook_file, hook_path):
+    """Validate the actual Claude SessionStart registration. Merely finding the hook path
+    as a substring is not enough: settings can be malformed, the matcher can stop covering
+    startup, or the named interpreter can disappear while the mirror keeps reporting green."""
+    if not hook_file or not hook_path:
+        return None, None
+    if not os.path.isfile(hook_path):
+        return False, "The Sovereign hook file is missing, so Claude sessions cannot load the archive."
+    try:
+        data = json.load(open(hook_file, encoding="utf-8"))
+    except OSError:
+        return False, "Muse settings are missing or unreadable, so the read hook cannot be verified."
+    except (ValueError, UnicodeError):
+        return False, "Muse settings are not valid JSON, so its SessionStart hooks cannot run."
+    if not isinstance(data, dict) or not isinstance(data.get("hooks"), dict):
+        return False, "Muse settings do not declare hooks in the expected shape."
+    groups = data["hooks"].get("SessionStart")
+    if not isinstance(groups, list):
+        return False, "Muse settings do not contain a SessionStart hook list."
+    issues = []
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            continue
+        for item in group["hooks"]:
+            if not isinstance(item, dict) or not isinstance(item.get("command"), str):
+                continue
+            command = item["command"]
+            try:
+                tokens = shlex.split(command)
+            except ValueError:
+                if hook_path in command:
+                    issues.append("The Sovereign hook command cannot be parsed.")
+                continue
+            indexes = [i for i, token in enumerate(tokens) if _same_path(token, hook_path)]
+            if not indexes:
+                if command.endswith(os.path.basename(hook_path)):
+                    issues.append("The hook points to a different copy of Sovereign.")
+                continue
+            if item.get("type") not in (None, "command"):
+                issues.append("The Sovereign SessionStart entry is not a command hook.")
+                continue
+            matcher = group.get("matcher", item.get("matcher", ""))
+            if isinstance(matcher, list):
+                matcher = "|".join(str(x) for x in matcher)
+            matcher = str(matcher or "")
+            if matcher:
+                try:
+                    if not re.search(matcher, "startup"):
+                        issues.append("The Sovereign hook no longer runs at session startup.")
+                        continue
+                except re.error:
+                    issues.append("The Sovereign hook matcher is not a valid pattern.")
+                    continue
+            hook_index = indexes[0]
+            program_index = next((i for i, token in enumerate(tokens)
+                                  if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token)), hook_index)
+            if hook_index == program_index:
+                if not _executable_ok(hook_path):
+                    issues.append("The Sovereign hook file is not executable.")
+                    continue
+            elif not _executable_ok(tokens[program_index]):
+                issues.append("The Python named by the Sovereign hook is missing or not executable.")
+                continue
+            return True, None
+    return False, issues[0] if issues else "The Sovereign SessionStart hook is not registered."
+
+
+def claude_memory_probe():
+    base = os.path.expanduser("~/.claude/projects")
+    files = [p for p in glob.glob(os.path.join(base, "*", "memory", "*.md"))
+             if not os.path.basename(p).startswith(".")]
+    return {"projects": len({os.path.dirname(os.path.dirname(p)) for p in files}),
+            "files": len(files), "exists": bool(files) or os.path.isdir(base)}
+
+
+def claude_diagnostics(hook_registered, hook_issue, declared, loaded, lane_rec):
+    memory = claude_memory_probe()
+    if hook_registered:
+        read = ("ok", "SessionStart is registered and its command is present.")
+    else:
+        read = ("bad", hook_issue or "The Sovereign SessionStart hook is not registered.")
+    if not memory["exists"]:
+        source = ("attention", "No Muse projects folder yet. Open Muse once, then save a durable fact.")
+    elif not memory["files"]:
+        source = ("attention", "Muse has no project memory yet. Ask it to remember one durable fact.")
+    else:
+        source = ("ok", "%d project memor%s found (%d file%s)." % (
+            memory["projects"], "y" if memory["projects"] == 1 else "ies",
+            memory["files"], "" if memory["files"] == 1 else "s"))
+    if not declared:
+        saver = ("attention", "The background saver is not declared on this Mac.")
+    elif (lane_rec or {}).get("refused"):
+        saver = ("bad", "The background saver refuses this lane: %s." % lane_rec["refused"])
+    elif loaded:
+        saver = ("ok", "The background saver is loaded.")
+    else:
+        saver = ("bad", "The background saver is declared but not loaded.")
+    last_exit = (lane_rec or {}).get("last_exit")
+    if last_exit == 0:
+        mirror = ("ok", "The last scheduled mirror succeeded.")
+    elif last_exit is None:
+        mirror = ("unknown", "No scheduled mirror result is recorded yet.")
+    else:
+        mirror = ("bad", "The last scheduled mirror exited %s." % last_exit)
+    return [{"label": "Read hook", "state": read[0], "detail": read[1]},
+            {"label": "Memory source", "state": source[0], "detail": source[1]},
+            {"label": "Background saver", "state": saver[0], "detail": saver[1]},
+            {"label": "Last mirror", "state": mirror[0], "detail": mirror[1]}]
+
+
 def systemd_rows():
     """Linux: sovereign-connector-* user timers."""
     rows = {}
@@ -1681,7 +1804,10 @@ def main():
         hook_path = next((p for p in glob.glob(os.path.join(hd, "session-start.*"))), None)
         hook_file = os.path.expanduser(meta.get("hook_file", "")) if meta.get("hook_file") else None
         hook_registered = None
-        if hook_path and hook_file:
+        hook_issue = None
+        if h == "claude-code" and hook_path and hook_file:
+            hook_registered, hook_issue = claude_hook_probe(hook_file, hook_path)
+        elif hook_path and hook_file:
             try:
                 hook_registered = hook_path in open(hook_file, encoding="utf-8").read()
             except OSError:
@@ -1741,8 +1867,11 @@ def main():
         if h in retired:
             state = "removal incomplete" if retired[h].get("cleanup_pending") or loaded or hook_registered else "removed"
         detected = any(os.path.exists(os.path.expanduser(x)) for x in meta.get("detect", [])) if meta.get("detect") else None
+        diagnostics = (claude_diagnostics(hook_registered, hook_issue, h in declared, loaded, lane_rec)
+                       if h == "claude-code" else [])
         harnesses.append({"id": h, "name": meta.get("name", h), "lane": lane, "lane_dir": lane_dir, "label": label, "detected": detected,
-                          "read": read_kind, "hook_file": hook_file, "hook_registered": hook_registered, "trusted": trusted,
+                          "read": read_kind, "hook_file": hook_file, "hook_registered": hook_registered,
+                          "hook_issue": hook_issue, "diagnostics": diagnostics, "trusted": trusted,
                           "job_loaded": loaded, "declared": h in declared, "retired": h in retired,
                           "job": rows.get(label) or ({"pid": None, "last_exit": lane_rec.get("last_exit")} if lane_rec else None),
                           "plist": (plist_info(label) if (legacy_loaded or legacy_plist)
@@ -1879,6 +2008,12 @@ def main():
     for h in harnesses:
         if h.get("trusted") is False:
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: the hook is installed but not trusted. Run: sov connect %s --apply" % (h["name"], h["id"])})
+        elif h.get("declared") and h.get("hook_issue"):
+            needs.append({"kind": "harness", "harness": h["id"],
+                          "text": "%s: %s Open Sources and use Reinstall, then start a fresh session." % (h["name"], h["hook_issue"]),
+                          "why": "The mirror can keep succeeding while the read hook is structurally broken, which makes the producer look green even though new sessions receive no archive context.",
+                          "action": "Open Sources, select Muse, review the Checks section, then use Reinstall. Do not hand-edit the settings first; the installer writes the exact hook shape.",
+                          "verify": "Refresh Sources; Muse reports connected and its Read hook check passes. Then start a fresh Muse session and confirm a new preparation receipt appears."})
         elif h["state"] == "connected" and h["read"] == "hook" and h["reads_7d"]["real"] == 0 and h["manual_step"]:
             needs.append({"kind": "harness", "harness": h["id"], "text": "%s: %s" % (h["name"], h["manual_step"])})
         elif h["state"] == "connected" and h["read"] == "instruction" and h["manual_step"]:

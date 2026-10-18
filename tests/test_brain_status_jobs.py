@@ -176,6 +176,52 @@ class Connected(unittest.TestCase):
                 self.assertEqual(by_id[h]["label"], "com.sovereign.connector.%s" % h,
                                  "the logical lane id keeps its exact old value")
 
+    def test_claude_hook_is_validated_as_a_command_not_a_substring(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self.box(tmp)
+            memory = b.home / ".Muse" / "projects" / "-tmp-demo" / "memory"
+            memory.mkdir(parents=True)
+            (memory / "preference.md").write_text("---\ntype: preference\nsource: owner\n---\nRemember this.\n")
+            hook = str(H / "claude-code" / "session-start.py")
+            (b.home / ".Muse" / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [
+                {"matcher": "startup|resume", "hooks": [{
+                    "type": "command",
+                    "command": "PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 %s" % hook,
+                }]}]}}))
+            got = next(h for h in b.status()["harnesses"] if h["id"] == "claude-code")
+            self.assertEqual(got["state"], "connected")
+            self.assertIsNone(got["hook_issue"])
+            checks = {x["label"]: x for x in got["diagnostics"]}
+            self.assertEqual(checks["Read hook"]["state"], "ok")
+            self.assertEqual(checks["Memory source"]["state"], "ok")
+            self.assertIn("1 project memory", checks["Memory source"]["detail"])
+
+    def test_claude_settings_can_look_registered_and_still_never_run(self):
+        cases = (
+            ("malformed JSON", "{not json " + str(H / "claude-code" / "session-start.py"), "not valid JSON"),
+            ("matcher drift", json.dumps({"hooks": {"SessionStart": [
+                {"matcher": "resume", "hooks": [{"type": "command", "command": str(H / "claude-code" / "session-start.py")}]}]}}),
+             "no longer runs at session startup"),
+            ("missing interpreter", json.dumps({"hooks": {"SessionStart": [
+                {"matcher": "startup", "hooks": [{"type": "command",
+                    "command": "/missing/python %s" % (H / "claude-code" / "session-start.py")}]}]}}),
+             "Python named by the Sovereign hook is missing"),
+        )
+        for name, settings, issue in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                b = self.box(tmp)
+                (b.home / ".Muse" / "settings.json").write_text(settings)
+                d = b.status()
+                got = next(h for h in d["harnesses"] if h["id"] == "claude-code")
+                self.assertEqual(got["state"], "partial")
+                self.assertFalse(got["hook_registered"])
+                self.assertIn(issue, got["hook_issue"])
+                checks = {x["label"]: x for x in got["diagnostics"]}
+                self.assertEqual(checks["Read hook"]["state"], "bad")
+                need = next(n for n in d["needs_you"] if n.get("harness") == "claude-code")
+                self.assertIn("Reinstall", need["action"])
+                self.assertIn("fresh Muse session", need["verify"])
+
     def test_every_harness_names_the_job_that_actually_runs_it_and_its_own_cadence(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = self.box(tmp).status()
