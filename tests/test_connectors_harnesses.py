@@ -126,6 +126,37 @@ class Mirrors(unittest.TestCase):
                 self.assertFalse((lane / ".git").exists())
                 self.assertIn("Items mirrored: 1. Failed: 0.", (lane / "MANIFEST.md").read_text())
 
+    def test_muse_mirrors_memory_tree_only_and_applies_instruction_once(self):
+        for via in ("direct", "runner"):
+            with self.subTest(via=via), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp) / "home"
+                mem = home / ".local" / "share" / "muse" / "memory" / "personal"; mem.mkdir(parents=True)
+                (mem / "MEMORY.md").write_text("# Memory index\n")
+                (mem / "note.md").write_text("a distilled note\n")
+                (mem / "transcript.jsonl").write_text("{}\n")  # excluded by the shared rules
+                (mem / ".muse-memory.lock").write_text("")  # Muse's own lock, never crosses
+                (mem / "MEMORY.md.bak-2026-01-01").write_text("# Memory index\n")  # nor instruction backups
+                sessions = home / ".local" / "share" / "muse" / "sessions"; sessions.mkdir(parents=True)
+                (sessions / "session.jsonl").write_text("{}\n")  # outside the memory tree, never read
+                env = dict(os.environ); env.update({"HOME": str(home), "BRAIN_HOST": "testbox",
+                                                    "BRAIN_STAGE": str(Path(tmp) / "stage"),
+                                                    "BRAIN_ROOT": str(Path(tmp) / "vault")})
+                env.pop("XDG_DATA_HOME", None); env.pop("MUSE_MEMORY", None)
+                res = self.run_mirror("muse", env, via)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                lane = Path(tmp) / "stage/raw/tools/muse-testbox"
+                self.assertTrue((lane / "memory" / "personal" / "note.md").exists())
+                self.assertFalse((lane / "memory" / "personal" / "transcript.jsonl").exists())
+                self.assertFalse((lane / "memory" / "personal" / ".muse-memory.lock").exists())
+                self.assertFalse((lane / "memory" / "personal" / "MEMORY.md.bak-2026-01-01").exists())
+                self.assertFalse((lane / "sessions").exists())
+                self.assertIn("Items mirrored: 1. Failed: 0.", (lane / "MANIFEST.md").read_text())
+                # the read wire landed in the source index; a second run adds no second copy
+                self.assertEqual((mem / "MEMORY.md").read_text().count("[Sovereign]"), 1)
+                res = self.run_mirror("muse", env, via)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                self.assertEqual((mem / "MEMORY.md").read_text().count("[Sovereign]"), 1)
+
     def test_cowork_mirrors_each_nonempty_memory_dir(self):
         for via in ("direct", "runner"):
             with self.subTest(via=via), tempfile.TemporaryDirectory() as tmp:

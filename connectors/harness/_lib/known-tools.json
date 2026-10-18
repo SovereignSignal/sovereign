@@ -78,6 +78,17 @@
    ]
   },
   {
+   "id": "muse",
+   "name": "Muse Code",
+   "connector": "muse",
+   "detect": [
+    "~/.local/share/muse"
+   ],
+   "commands": [
+    "muse"
+   ]
+  },
+  {
    "id": "gemini-cli",
    "name": "Gemini CLI",
    "connector": null,

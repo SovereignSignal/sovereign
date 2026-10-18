@@ -1,0 +1,4 @@
+{"name": "Muse Code", "lane_prefix": "muse", "read": "instruction", "hook_file": null, "write": "mirror", "manual_step": null,
+ "detect": ["~/.local/share/muse"],
+ "instruction_text_file": "~/.local/share/muse/memory/personal/MEMORY.md", "instruction_sentinel": "[Sovereign]",
+ "description": "Muse has no hook that injects context, so the read instruction is written into its personal memory index, which every session loads at open; the memory tree is mirrored, never session transcripts."}

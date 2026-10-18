@@ -1,0 +1,23 @@
+---
+lane: muse-{{HOST}}
+producer: Muse Code memory on {{HOST}}
+host: {{HOST}}
+mission: >
+  Muse's distilled memory from this machine, one folder per memory scope.
+  Read wire by instruction in the personal memory index (Muse has no hook
+  that injects context); write wire by mirror. Session transcripts never cross.
+write: rsync{{WRITE_VIA}}
+read: {{READ}}
+gear: ask-first
+status: onboarded
+onboarded: {{DATE}}
+---
+
+Installed by `sov connect muse` on {{DATE}}.
+
+Write wire: `connectors/harness/muse/mirror.sh` every {{INTERVAL}}s via {{SCHEDULER}}
+(`{{RUNNER}}`, lane id `{{LABEL}}`), mirroring the Muse memory tree
+(`${XDG_DATA_HOME:-~/.local/share}/muse/memory/`). `MANIFEST.md` is the heartbeat.
+
+Read wire: the Sovereign block in the personal memory index (`MEMORY.md`),
+re-applied by every mirror run.
