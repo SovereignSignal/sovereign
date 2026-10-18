@@ -68,7 +68,7 @@ bin/sov status            # what's connected, and how fresh each lane is
 bin/sov disconnect claude-code --apply   # undo; the lane's files in raw/ stay as history
 ```
 
-Claude Code is the one fully supported tool. The repo also ships best-effort connectors for Codex, Cursor, Claude Desktop, Windsurf, Hermes and a Notion mirror, plus a plain watch folder (`sov relay add <path>`) for anything else. Best-effort connectors can break when their tools change. A broken one only stops new captures: everything already in the archive stays, and `sov status` shows how fresh each lane is. One background job per Mac runs every connected tool's save on a schedule; when the app installs it, macOS lists it under Login Items as Sovereign.
+Claude Code is the one fully supported tool. The repo also ships best-effort connectors for Codex, Cursor, Claude Desktop, Windsurf, Hermes, Muse Code and a Notion mirror, plus a plain watch folder (`sov relay add <path>`) for anything else. Best-effort connectors can break when their tools change. A broken one only stops new captures: everything already in the archive stays, and `sov status` shows how fresh each lane is. One background job per Mac runs every connected tool's save on a schedule; when the app installs it, macOS lists it under Login Items as Sovereign.
 
 ## Curating
 
