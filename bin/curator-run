@@ -812,7 +812,7 @@ def _self_test():
     G = {"concept": {"auto_approve_update_confidence": ["high", "med"]},
          "synthesis": {"auto_approve_update_confidence": ["high", "med"]},
          "entity": {"auto_approve_update_confidence": ["high", "med"]}}  # illegal grant — must still refuse
-    OV = "2026-10-10 owner decision: entities graduate in this vault (Part 2)."
+    OV = "Owner decision recorded in this instance's law: entities graduate here."
     GO = {"entity": {"auto_approve_update_confidence": ["high", "med"], "auto_approve_confidence": ["high", "med"], "owner_override": OV}}
     GS = {"entity": {"auto_approve_update_confidence": ["high", "med"], "auto_approve_confidence": ["high", "med"], "owner_override": "yes"}}
     cases = [
