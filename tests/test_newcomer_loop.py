@@ -147,6 +147,39 @@ class CuratorCommand(unittest.TestCase):
             self.assertFalse((Path(home) / 'Library/LaunchAgents/com.sovereign.curator.plist').exists())
 
 
+    def test_trust_grants_act_and_report_and_off_restores_the_zero_cap(self):
+        import importlib.machinery, importlib.util
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            gears_path = root / 'raw/workspaces/curator/gears.json'
+            state_file = Path(home) / 'state/curator-trust.json'
+            r = self.run_curator('trust', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('dry run', r.stdout)
+            self.assertFalse(gears_path.exists()); self.assertFalse(state_file.exists())
+            r = self.run_curator('trust', '--apply', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('granted', r.stdout)
+            gears = json.loads(gears_path.read_text())
+            for typ in ('concept', 'synthesis'):
+                self.assertEqual(gears[typ]['auto_approve_confidence'], ['high', 'med'])
+                self.assertEqual(gears[typ]['auto_approve_update_confidence'], ['high', 'med'])
+            self.assertNotIn('entity', gears)
+            self.assertTrue(json.loads(state_file.read_text())['act_and_report'])
+            with mock.patch.dict(os.environ, {'SOV_STATE_DIR': str(Path(home) / 'state')}):
+                loader = importlib.machinery.SourceFileLoader('sov_curator3', str(ROOT / 'bin/sov-curator'))
+                spec = importlib.util.spec_from_loader('sov_curator3', loader)
+                mod = importlib.util.module_from_spec(spec); loader.exec_module(mod)
+                env = mod.curator_env(root)
+            self.assertEqual(env['ARCHIVIST_AUTO_PROMOTE_MAX'], '12')
+            self.assertEqual(env['ARCHIVIST_AUTO_REJECT_MAX'], '0')
+            r = self.run_curator('trust', '--off', '--apply', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse(json.loads(state_file.read_text())['act_and_report'])
+            self.assertTrue(gears_path.exists())  # the zero cap disables it; the grant stays on record
+
+
 class AnthropicBackendOffline(unittest.TestCase):
     """curator-run on the anthropic backend, with the network replaced by a stub."""
 

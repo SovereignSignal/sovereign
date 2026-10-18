@@ -3,12 +3,16 @@
 
 An operator's archive is curated by its hub (`sov hub`). A newcomer's archive has none,
 so this runs curator-run on this Mac, on the hosted model its owner chose (Claude, under
-the owner's own Anthropic key, read from the login Keychain), every two hours. Nothing
-it drafts lands by itself: the auto-promote and auto-reject caps are pinned to zero, so
-every proposal waits in Review for the owner.
+the owner's own Anthropic key, read from the login Keychain), every two hours. It starts
+in ask-first: nothing lands by itself and every proposal waits in Review. Once its
+judgments have earned it, the owner can run `sov curator trust --apply` to let routine
+concept and synthesis cards (high and medium confidence) land on their own and report
+back, at most 12 per pass. Flagged items, entities, and anything destructive still ask,
+auto-rejection stays off, and `sov curator trust --off --apply` returns to ask-first.
 
   sov curator enable [--every SECONDS] [--apply]   the two-hourly job (dry run without --apply)
   sov curator run                                  one pass now (the app's "Curate now")
+  sov curator trust [--off] [--apply]              let routine cards land on their own (dry run without --apply)
   sov curator status [--json]
   sov curator disable [--apply]
   sov curator key                                  save the owner's Anthropic key in the login
@@ -30,6 +34,10 @@ KEYCHAIN_SERVICE = "sovereign-curator-anthropic"
 LANE = "curator"
 STATE = Path(os.environ.get("SOV_STATE_DIR") or "~/.local/state/sovereign").expanduser()
 UNIT = Path("~/Library/LaunchAgents").expanduser() / (LABEL + ".plist")
+TRUST_STATE = STATE / "curator-trust.json"
+TRUST_CAP = "12"
+TRUST_TYPES = ("concept", "synthesis")
+TRUST_CONFIDENCE = ["high", "med"]
 
 
 def vault():
@@ -51,9 +59,17 @@ def python():
     return os.environ.get("SOV_PYTHON") or sys.executable
 
 
+def trust_on():
+    try:
+        return bool(json.loads(TRUST_STATE.read_text()).get("act_and_report"))
+    except Exception:
+        return False
+
+
 def curator_env(root):
     env = {"SOVS_VAULT": str(root), "CURATOR_LANE": LANE, "CURATOR_BACKEND": "anthropic",
-           "CURATOR_SCREEN": "on", "ARCHIVIST_AUTO_PROMOTE_MAX": "0", "ARCHIVIST_AUTO_REJECT_MAX": "0",
+           "CURATOR_SCREEN": "on", "ARCHIVIST_AUTO_PROMOTE_MAX": TRUST_CAP if trust_on() else "0",
+           "ARCHIVIST_AUTO_REJECT_MAX": "0",
            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
     if "/Contents/Resources/runtime/bin/" in python():
         env["PYTHONDONTWRITEBYTECODE"] = "1"  # never write caches into the signed app bundle
@@ -142,6 +158,81 @@ def disable(a):
     UNIT.unlink(missing_ok=True); print("removed"); return 0
 
 
+def planned_gears(path):
+    gears = {}
+    if path.exists():
+        gears = json.loads(path.read_text())
+        if not isinstance(gears, dict):
+            raise ValueError("gears.json is not a JSON object")
+    for typ in TRUST_TYPES:
+        rule = dict(gears.get(typ) or {})
+        rule["auto_approve_confidence"] = list(TRUST_CONFIDENCE)
+        rule["auto_approve_update_confidence"] = list(TRUST_CONFIDENCE)
+        gears[typ] = rule
+    return gears
+
+
+def atomic_json(path, data):
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=1) + "\n")
+    os.replace(tmp, path)
+
+
+def refresh_unit(root):
+    if not UNIT.exists():
+        print("  job  not installed yet; takes effect when the curator is enabled"); return
+    try:
+        every = int(plistlib.loads(UNIT.read_bytes()).get("StartInterval") or 7200)
+    except Exception:
+        every = 7200
+    body = plistlib.dumps(unit(root, every))
+    if UNIT.read_bytes() == body:
+        return
+    UNIT.write_bytes(body)
+    if launchctl("print", f"gui/{os.getuid()}/{LABEL}").returncode == 0:
+        launchctl("bootout", f"gui/{os.getuid()}/{LABEL}")
+        launchctl("bootstrap", f"gui/{os.getuid()}", str(UNIT))
+    print("  job  refreshed")
+
+
+def trust(a):
+    refuse_on_hub(); root = vault()
+    lane = root / "raw" / "workspaces" / LANE
+    gears_path = lane / "gears.json"
+    if a.off:
+        print("curator: back to ask-first; nothing lands without your approval")
+        if not a.apply:
+            print("dry run. add --apply to change."); return 0
+        STATE.mkdir(parents=True, exist_ok=True)
+        atomic_json(TRUST_STATE, {"act_and_report": False})
+        refresh_unit(root)
+        print("ask-first. gears.json is left in place; the zero cap disables it."); return 0
+    try:
+        gears = planned_gears(gears_path)
+    except (OSError, ValueError) as e:
+        print(f"curator: cannot read {gears_path}: {e}", file=sys.stderr); return 1
+    current = None
+    if gears_path.exists():
+        try:
+            current = json.loads(gears_path.read_text())
+        except ValueError:
+            current = None
+    if trust_on() and current == gears:
+        print("already trusted: routine concept and synthesis cards land on their own"); return 0
+    print("curator: concept and synthesis cards at high and medium confidence, new and updates,")
+    print(f"  land without waiting, at most {TRUST_CAP} per pass, each listed with its revert path")
+    print("  still asking first: flagged items, entities, collisions, anything destructive")
+    print("  auto-rejection stays off")
+    print(f"  gears  {gears_path}")
+    if not a.apply:
+        print("dry run. add --apply to grant."); return 0
+    lane.mkdir(parents=True, exist_ok=True); STATE.mkdir(parents=True, exist_ok=True)
+    atomic_json(gears_path, gears)
+    atomic_json(TRUST_STATE, {"act_and_report": True})
+    refresh_unit(root)
+    print("granted. undo any time with `sov curator trust --off --apply`."); return 0
+
+
 def run(a):
     refuse_on_hub(); root = vault(); seed_profile(root)
     env = dict(os.environ, **curator_env(root))
@@ -169,7 +260,8 @@ def status(a):
     hub = Path("~/.sovereign-hub").expanduser().exists() or (STATE / "hub.json").exists()
     out = {"archive": str(root) if root else None, "hub": hub, "installed": UNIT.exists(),
            "loaded": launchctl("print", f"gui/{os.getuid()}/{LABEL}").returncode == 0,
-           "key_saved": key_saved(), "model": "claude", "last_run": last,
+           "key_saved": key_saved(), "model": "claude",
+           "trust": "act-and-report" if trust_on() else "ask-first", "last_run": last,
            "pending": len(list((lane / "proposals").glob("*.md"))) if lane and (lane / "proposals").is_dir() else 0}
     if a.json:
         print(json.dumps(out))
@@ -186,12 +278,13 @@ def main():
     e = sub.add_parser("enable"); e.add_argument("--every", type=int, default=7200); e.add_argument("--apply", action="store_true")
     d = sub.add_parser("disable"); d.add_argument("--apply", action="store_true")
     sub.add_parser("run")
+    t = sub.add_parser("trust"); t.add_argument("--off", action="store_true"); t.add_argument("--apply", action="store_true")
     sub.add_parser("key")
     s = sub.add_parser("status"); s.add_argument("--json", action="store_true")
     a = ap.parse_args()
     if getattr(a, "every", 7200) < 600:
         sys.exit("--every must be at least 600 seconds")
-    return {"enable": enable, "disable": disable, "run": run, "status": status, "key": save_key}[a.cmd](a)
+    return {"enable": enable, "disable": disable, "run": run, "trust": trust, "status": status, "key": save_key}[a.cmd](a)
 
 
 if __name__ == "__main__":

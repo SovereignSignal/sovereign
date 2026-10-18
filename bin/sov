@@ -20,9 +20,10 @@
 #   sov hub init|env|tick|jobs|kit|law
 #                                the template-run hub: instance file, runner, jobs from the
 #                                manifest, the rebuild kit, Part 1 drift (sov-hub)
-#   sov curator enable|run|status|disable
+#   sov curator enable|run|trust|status|disable
 #                                curate an archive with no hub on this Mac, on Claude under
-#                                the owner's own key; every proposal waits for the owner (sov-curator)
+#                                the owner's own key; starts in ask-first, and `trust` lets
+#                                routine cards land on their own once earned (sov-curator)
 #   sov ingest folder <path>    bring a folder of material into its own raw lane:
 #                                 convert, redact, content-dedup, hand each file to
 #                                 sov-capture. Dry plan unless --apply; an undeclared
