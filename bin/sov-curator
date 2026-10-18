@@ -13,6 +13,7 @@ auto-rejection stays off, and `sov curator trust --off --apply` returns to ask-f
   sov curator enable [--every SECONDS] [--apply]   the two-hourly job (dry run without --apply)
   sov curator run                                  one pass now (the app's "Curate now")
   sov curator trust [--off] [--apply]              let routine cards land on their own (dry run without --apply)
+  sov curator retire <slug> [--apply]              retire a recent background landing (dry run without --apply)
   sov curator status [--json]
   sov curator disable [--apply]
   sov curator key                                  save the owner's Anthropic key in the login
@@ -22,12 +23,13 @@ The key is never an argument and never written to disk. It goes to /usr/bin/secu
 stdin, which creates the Keychain item, so the scheduled job (which reads it with the same
 tool) does not raise a Keychain prompt every two hours.
 """
-import argparse, json, os, plistlib, subprocess, sys
+import argparse, bisect, json, os, plistlib, re, subprocess, sys, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 from sovereign_config import pointer
+from sovereign_hub.digest_counts import parse_epoch
 
 LABEL = "com.sovereign.curator"
 KEYCHAIN_SERVICE = "sovereign-curator-anthropic"
@@ -38,6 +40,9 @@ TRUST_STATE = STATE / "curator-trust.json"
 TRUST_CAP = "12"
 TRUST_TYPES = ("concept", "synthesis")
 TRUST_CONFIDENCE = ["high", "med"]
+TRUST_SUGGESTION_THRESHOLD = 10
+TRUST_LANDED_WINDOW_S = 30 * 86400
+AUTO_ACTORS = {"auto-gear", "auto-taste"}
 
 
 def vault():
@@ -178,6 +183,169 @@ def atomic_json(path, data):
     os.replace(tmp, path)
 
 
+def trust_granted(path):
+    try:
+        gears = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    if not isinstance(gears, dict):
+        return False
+    for typ in TRUST_TYPES:
+        rule = gears.get(typ)
+        if not isinstance(rule, dict):
+            return False
+        for key in ("auto_approve_confidence", "auto_approve_update_confidence"):
+            if set(rule.get(key) or ()) != set(TRUST_CONFIDENCE):
+                return False
+    return True
+
+
+def _normal_confidence(value):
+    value = str(value or "").strip().lower()
+    return "med" if value == "medium" else value
+
+
+def _type_from_detail(detail):
+    m = re.search(r"knowledge/(entities|concepts|syntheses)/", detail or "")
+    return {"entities": "entity", "concepts": "concept", "syntheses": "synthesis"}.get(
+        m.group(1), "") if m else ""
+
+
+def _type_from_card(path):
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:4096]
+    except OSError:
+        return ""
+    m = re.search(r"(?m)^type:\s*['\"]?([A-Za-z0-9_-]+)", head)
+    return m.group(1).lower() if m else ""
+
+
+def _card_type(root, lane, slug, detail):
+    for sub in ("entities", "concepts", "syntheses"):
+        path = root / "knowledge" / sub / (slug + ".md")
+        if path.is_file():
+            return _type_from_card(path) or {"entities": "entity", "concepts": "concept",
+                                             "syntheses": "synthesis"}[sub]
+    rejected = lane / "rejected"
+    try:
+        candidates = sorted(rejected.glob(slug + "*.md"), key=lambda p: p.stat().st_mtime)
+    except OSError:
+        candidates = []
+    for path in reversed(candidates):
+        if path.stem == slug or path.stem.startswith(slug + "--rejected-"):
+            return _type_from_card(path)
+    return _type_from_detail(detail)
+
+
+def trust_record(root, lane, now=None):
+    """Read-only evidence for the app: whether trust is on, whether it is ready
+    to offer, and what the gear landed recently. It grants nothing."""
+    now = time.time() if now is None else now
+    on = trust_on()
+    granted = trust_granted(lane / "gears.json") if lane else False
+    state = ("act-and-report" if on and granted else
+             "incomplete" if on or granted else "ask-first")
+    record = {"state": state, "eligible": False, "repair_needed": state == "incomplete",
+              "clean_streak": 0, "threshold": TRUST_SUGGESTION_THRESHOLD,
+              "routine_approved": 0, "routine_rejected": 0, "routine_retired": 0,
+              "auto_landed_30d": 0, "auto_reverted_30d": 0, "recent_auto_landed": []}
+    if not root or not lane:
+        return record
+
+    judgments = {}
+    try:
+        lines = (lane / "judgments.jsonl").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for seq, line in enumerate(lines):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or row.get("promote") is not True:
+            continue
+        slug, at = row.get("slug"), parse_epoch(row.get("timestamp"))
+        if not isinstance(slug, str) or at is None:
+            continue
+        judgments.setdefault(slug, []).append({
+            "at": at, "seq": seq, "type": str(row.get("type") or "").strip().lower(),
+            "confidence": _normal_confidence(row.get("confidence"))})
+    judgment_times = {}
+    for slug, rows in judgments.items():
+        rows.sort(key=lambda r: (r["at"], r["seq"]))
+        judgment_times[slug] = [r["at"] for r in rows]
+
+    def judgment_for(slug, at):
+        rows = judgments.get(slug) or []
+        if not rows:
+            return None
+        if at is None:
+            return rows[-1]
+        pos = bisect.bisect_right(judgment_times[slug], at) - 1
+        return rows[pos] if pos >= 0 else None
+
+    try:
+        decision_lines = (lane / "decisions.log").read_text(
+            encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        decision_lines = []
+    decisions = []
+    for seq, line in enumerate(decision_lines):
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) < 3:
+            continue
+        actor = parts[3].strip() if len(parts) >= 5 else "owner-cli"
+        detail = parts[4] if len(parts) >= 5 else (parts[3] if len(parts) == 4 else "")
+        decisions.append({"seq": seq, "ts": parts[0], "at": parse_epoch(parts[0]),
+                          "verdict": parts[1].strip(), "slug": Path(parts[2]).stem,
+                          "actor": actor, "detail": detail})
+    decisions.sort(key=lambda r: (r["at"] is None, r["at"] or 0, r["seq"]))
+
+    streak, landed, auto = set(), {}, {}
+    for row in decisions:
+        slug = row["slug"]
+        judgment = judgment_for(slug, row["at"])
+        typ = (judgment or {}).get("type") or _card_type(root, lane, slug, row["detail"])
+        confidence = (judgment or {}).get("confidence", "")
+        relevant = typ in TRUST_TYPES and confidence in TRUST_CONFIDENCE
+        owner = row["actor"] not in AUTO_ACTORS
+        if row["verdict"] == "approved":
+            landed[slug] = {"relevant": relevant, "type": typ, "confidence": confidence}
+            if row["actor"] == "auto-gear":
+                auto[slug] = {**row, "type": typ, "confidence": confidence, "relevant": relevant}
+            elif owner and relevant:
+                record["routine_approved"] += 1
+                streak.add(slug)
+        elif owner and row["verdict"] == "rejected" and relevant:
+            record["routine_rejected"] += 1
+            streak.clear()
+        elif owner and row["verdict"] == "retired":
+            was = landed.pop(slug, None)
+            if relevant or (was and was["relevant"]):
+                record["routine_retired"] += 1
+                streak.clear()
+
+    since = now - TRUST_LANDED_WINDOW_S
+    recent = []
+    for slug, row in auto.items():
+        if row["at"] is None or not since <= row["at"] <= now or not row["relevant"]:
+            continue
+        reverted = any(d["slug"] == slug and d["verdict"] == "retired" and
+                       d["actor"] not in AUTO_ACTORS and d["seq"] > row["seq"]
+                       for d in decisions)
+        recent.append({"ts": row["ts"], "slug": slug, "type": row["type"],
+                       "confidence": row["confidence"], "reverted": reverted,
+                       "_seq": row["seq"]})
+    recent.sort(key=lambda r: r["_seq"], reverse=True)
+    record["auto_landed_30d"] = len(recent)
+    record["auto_reverted_30d"] = sum(1 for r in recent if r["reverted"])
+    record["recent_auto_landed"] = [{k: v for k, v in r.items() if k != "_seq"}
+                                     for r in recent[:5]]
+    record["clean_streak"] = len(streak)
+    record["eligible"] = state == "ask-first" and len(streak) >= TRUST_SUGGESTION_THRESHOLD
+    return record
+
+
 def refresh_unit(root):
     if not UNIT.exists():
         print("  job  not installed yet; takes effect when the curator is enabled"); return
@@ -233,6 +401,39 @@ def trust(a):
     print("granted. undo any time with `sov curator trust --off --apply`."); return 0
 
 
+def retire(a):
+    refuse_on_hub(); root = vault()
+    lane = root / "raw" / "workspaces" / LANE
+    slug = a.slug.removesuffix(".md")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,120}", slug):
+        print("curator: that is not a card name Sovereign can retire", file=sys.stderr); return 65
+    record = trust_record(root, lane)
+    item = next((r for r in record["recent_auto_landed"] if r["slug"] == slug), None)
+    if record["state"] != "act-and-report" or not item or item["reverted"]:
+        print("curator: refused: only an unreverted recent background landing can be retired here",
+              file=sys.stderr); return 1
+    folder = {"concept": "concepts", "synthesis": "syntheses"}.get(item["type"])
+    card = root / "knowledge" / folder / (slug + ".md") if folder else None
+    if not card or not card.is_file():
+        print(f"curator: refused: trusted card not found for {slug}", file=sys.stderr); return 1
+    print(f"curator: retire {card.relative_to(root)}; it moves to the curator's rejected archive")
+    if not a.apply:
+        print("dry run. add --apply to retire."); return 0
+    env = dict(os.environ, SOVS_VAULT=str(root), CURATOR_LANE=LANE,
+               CURATOR_ACTOR="console-owner")
+    try:
+        r = subprocess.run(["/bin/bash", str(HERE / "curator-retire.sh"), slug,
+                            "Owner reverted background landing in Sovereign"],
+                           env=env, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"curator: retirement could not run: {e}", file=sys.stderr); return 1
+    if r.stdout.strip():
+        print(r.stdout.strip())
+    if r.returncode != 0:
+        print((r.stderr or r.stdout).strip() or "curator: retirement failed", file=sys.stderr)
+    return r.returncode
+
+
 def run(a):
     refuse_on_hub(); root = vault(); seed_profile(root)
     env = dict(os.environ, **curator_env(root))
@@ -258,17 +459,20 @@ def status(a):
         except ValueError:
             last = None
     hub = Path("~/.sovereign-hub").expanduser().exists() or (STATE / "hub.json").exists()
+    record = trust_record(root, lane)
     out = {"archive": str(root) if root else None, "hub": hub, "installed": UNIT.exists(),
            "loaded": launchctl("print", f"gui/{os.getuid()}/{LABEL}").returncode == 0,
            "key_saved": key_saved(), "model": "claude",
-           "trust": "act-and-report" if trust_on() else "ask-first", "last_run": last,
+           "trust": record["state"], "trust_record": record, "last_run": last,
            "pending": len(list((lane / "proposals").glob("*.md"))) if lane and (lane / "proposals").is_dir() else 0}
     if a.json:
         print(json.dumps(out))
     else:
         for k, v in out.items():
-            if k != "last_run":
+            if k not in ("last_run", "trust_record"):
                 print(f"{k:10} {v}")
+        print(f"{'ready':10} {record['clean_streak']} of {record['threshold']} clean routine decisions"
+              + ("; act-and-report can be offered" if record["eligible"] else ""))
     return 0
 
 
@@ -279,12 +483,14 @@ def main():
     d = sub.add_parser("disable"); d.add_argument("--apply", action="store_true")
     sub.add_parser("run")
     t = sub.add_parser("trust"); t.add_argument("--off", action="store_true"); t.add_argument("--apply", action="store_true")
+    r = sub.add_parser("retire"); r.add_argument("slug"); r.add_argument("--apply", action="store_true")
     sub.add_parser("key")
     s = sub.add_parser("status"); s.add_argument("--json", action="store_true")
     a = ap.parse_args()
     if getattr(a, "every", 7200) < 600:
         sys.exit("--every must be at least 600 seconds")
-    return {"enable": enable, "disable": disable, "run": run, "trust": trust, "status": status, "key": save_key}[a.cmd](a)
+    return {"enable": enable, "disable": disable, "run": run, "trust": trust,
+            "retire": retire, "status": status, "key": save_key}[a.cmd](a)
 
 
 if __name__ == "__main__":

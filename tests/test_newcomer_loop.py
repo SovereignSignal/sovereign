@@ -180,6 +180,101 @@ class CuratorCommand(unittest.TestCase):
             self.assertTrue(gears_path.exists())  # the zero cap disables it; the grant stays on record
 
 
+    def test_status_reports_when_background_landing_has_been_earned(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            lane = root / 'raw/workspaces/curator'; lane.mkdir(parents=True, exist_ok=True)
+            folders = {'concept': 'concepts', 'synthesis': 'syntheses', 'entity': 'entities'}
+            tick = [0]
+
+            def event(slug, typ, confidence, verdict, actor, when):
+                tick[0] += 10
+                judged = when + timedelta(seconds=tick[0])
+                decided = judged + timedelta(seconds=1)
+                with open(lane / 'judgments.jsonl', 'a') as f:
+                    f.write(json.dumps({'timestamp': judged.isoformat(), 'promote': True,
+                                        'slug': slug, 'type': typ, 'confidence': confidence}) + '\n')
+                detail = f'knowledge/{folders[typ]}/{slug}.md: owner' if verdict == 'approved' else 'owner verdict'
+                with open(lane / 'decisions.log', 'a') as f:
+                    f.write('\t'.join([decided.strftime('%Y-%m-%dT%H:%M:%S%z'), verdict,
+                                       slug + '.md', actor, detail]) + '\n')
+                return decided
+
+            def record():
+                r = self.run_curator('status', '--json', env={'SOVS_VAULT': str(root)}, home=home)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                return json.loads(r.stdout)['trust_record']
+
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+            for i in range(9):
+                event(f'routine-{i}', 'concept' if i % 2 else 'synthesis',
+                      'high' if i % 2 else 'med', 'approved', 'console-owner', now - timedelta(days=3))
+            got = record()
+            self.assertEqual((got['clean_streak'], got['eligible']), (9, False))
+            event('a-person', 'entity', 'high', 'approved', 'console-owner', now - timedelta(days=3))
+            event('routine-9', 'concept', 'high', 'approved', 'console-owner', now - timedelta(days=3))
+            got = record()
+            self.assertEqual((got['clean_streak'], got['eligible'], got['routine_approved']), (10, True, 10))
+            event('routine-no', 'synthesis', 'med', 'rejected', 'console-owner', now - timedelta(days=3))
+            got = record()
+            self.assertEqual((got['clean_streak'], got['eligible'], got['routine_rejected']), (0, False, 1))
+
+    def test_status_reports_recent_background_landings_and_reverts(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            lane = root / 'raw/workspaces/curator'; lane.mkdir(parents=True, exist_ok=True)
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+
+            def land(slug, when):
+                with open(lane / 'judgments.jsonl', 'a') as f:
+                    f.write(json.dumps({'timestamp': when.isoformat(), 'promote': True, 'slug': slug,
+                                        'type': 'concept', 'confidence': 'high'}) + '\n')
+                with open(lane / 'decisions.log', 'a') as f:
+                    f.write('\t'.join([(when + timedelta(seconds=1)).strftime('%Y-%m-%dT%H:%M:%S%z'),
+                                       'approved', slug + '.md', 'auto-gear',
+                                       f'knowledge/concepts/{slug}.md: act-and-report']) + '\n')
+
+            land('too-old', now - timedelta(days=40))
+            land('kept-card', now - timedelta(days=2))
+            land('wrong-card', now - timedelta(days=1))
+            with open(lane / 'decisions.log', 'a') as f:
+                f.write('\t'.join([now.strftime('%Y-%m-%dT%H:%M:%S%z'), 'retired',
+                                   'wrong-card.md', 'console-owner', 'not durable']) + '\n')
+            r = self.run_curator('status', '--json', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            got = json.loads(r.stdout)['trust_record']
+            self.assertEqual((got['auto_landed_30d'], got['auto_reverted_30d']), (2, 1))
+            self.assertEqual([x['slug'] for x in got['recent_auto_landed']], ['wrong-card', 'kept-card'])
+            self.assertTrue(got['recent_auto_landed'][0]['reverted'])
+
+
+    def test_retire_only_moves_a_recent_background_landing(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            lane = root / 'raw/workspaces/curator'; lane.mkdir(parents=True, exist_ok=True)
+            card = root / 'knowledge/concepts/background-card.md'; card.parent.mkdir(parents=True, exist_ok=True)
+            card.write_text('---\ntype: concept\nsource: test\ncreated: 2026-10-18\n---\n\n**Why this matters:** Test.\n')
+            r = self.run_curator('trust', '--apply', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+            (lane / 'judgments.jsonl').write_text(json.dumps({
+                'timestamp': (now - timedelta(seconds=2)).isoformat(), 'promote': True,
+                'slug': 'background-card', 'type': 'concept', 'confidence': 'high'}) + '\n')
+            (lane / 'decisions.log').write_text('\t'.join([
+                (now - timedelta(seconds=1)).strftime('%Y-%m-%dT%H:%M:%S%z'), 'approved',
+                'background-card.md', 'auto-gear', 'knowledge/concepts/background-card.md: act-and-report']) + '\n')
+            r = self.run_curator('retire', 'background-card', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('dry run', r.stdout); self.assertTrue(card.exists())
+            r = self.run_curator('retire', 'background-card', '--apply', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+            self.assertFalse(card.exists())
+            self.assertTrue((lane / 'rejected/background-card.md').exists())
+            self.assertIn('\tretired\tbackground-card.md\tconsole-owner\t', (lane / 'decisions.log').read_text())
+            r = self.run_curator('retire', 'background-card', '--apply', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertNotEqual(r.returncode, 0)
+
+
 class AnthropicBackendOffline(unittest.TestCase):
     """curator-run on the anthropic backend, with the network replaced by a stub."""
 
