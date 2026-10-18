@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest a capability Sovereign should add or make easier.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the workflow, not only the proposed interface.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: tools
+    attributes:
+      label: Which tool or surface is involved?
+      options:
+        - Sovereign app
+        - Claude Code
+        - Another existing connector
+        - A new connector
+        - Hub or multiple Macs
+        - Documentation
+        - Other
+  - type: textarea
+    id: trust
+    attributes:
+      label: Trust and privacy considerations
+      description: Note anything that could write automatically, leave this Mac, or expose archive content.

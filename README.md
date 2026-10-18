@@ -135,6 +135,13 @@ The build signs the app with a local signature, so it runs on the Mac that built
 - **Compatibility:** every former `brain-*` command is a symlink to its `sov-*` replacement, and configuration resolves `BRAIN_*` variables and `~/.brain-*` pointer files before the newer `SOVEREIGN_*` names. Existing settings win when both are present.
 - **Publishing:** a hub can publish this repo's `main` and `docs/lane-source-map` branches through `kit.template_publications` in its `hub.json`. Never add an archive repository or its data to a publication destination.
 
+## Support and security
+
+Start with [SUPPORT.md](SUPPORT.md), which explains the in-app Checks to read
+before filing a report. Release notes live in [CHANGELOG.md](CHANGELOG.md).
+Report vulnerabilities privately under [SECURITY.md](SECURITY.md), never in a
+public issue and never with archive contents or credentials attached.
+
 ## License
 
 [MIT](LICENSE). Fork it and make it yours.

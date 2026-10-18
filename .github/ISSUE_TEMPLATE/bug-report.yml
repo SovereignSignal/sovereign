@@ -1,0 +1,82 @@
+name: Bug report
+description: Report something Sovereign does incorrectly, fails to do, or explains badly.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not attach archive cards, raw captures, memory files, API keys,
+        tokens, private paths, or unredacted logs. Sovereign diagnostics are local;
+        review anything before sharing it.
+  - type: input
+    id: version
+    attributes:
+      label: Sovereign version and build
+      description: Find this in Sovereign Settings or the app update panel.
+      placeholder: "0.7.0 (build 49)"
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Source commit, if shown
+      placeholder: "9e4146d"
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: "macOS 26.4.1, MacBook Pro (Apple silicon)"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Install or update
+        - Archive creation or opening
+        - Claude Code connector
+        - Curation or Review
+        - Trust and background landing
+        - Sources or diagnostics
+        - Hub or another Mac
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use a disposable archive when possible.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Relevant status or Checks output
+      description: Paste only redacted status text. Do not paste secrets or archive content.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed archive contents, credentials, tokens, and private file paths.
+          required: true
