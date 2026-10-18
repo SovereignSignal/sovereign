@@ -1297,6 +1297,7 @@ window.onerror = function (msg, src, line, col) {
         : h.read === "none" ? "Copies its files into the archive."
         : h.read === "instruction" ? (h.hook_registered === false ? "Writes its memory back, but its instructions are not set." : "Reads your archive through its instructions and writes its memory back.")
         : h.trusted === false ? "Writes its memory back, but the tool does not trust its hook yet."
+        : h.hook_issue ? "Writes its memory back, but the archive may not load at session start: " + h.hook_issue
         : h.hook_registered === false ? "Writes its memory back, but the hook that prepares your archive is missing."
         : "Prepares your archive when a session starts and writes its memory back.";
       const secret = h && h.secret && h.secret.env ? `<label class="pnl-secret">${esc(h.secret.label || h.secret.env)}
@@ -1314,6 +1315,8 @@ window.onerror = function (msg, src, line, col) {
            removeBtn(h) + removeHelp(h), h ? obsBtn("raw/tools/" + h.lane + "/LANE") : ""])}</div>`,
         details: h ? [
           sect("Producer", kv([["state", h.state], ["runs on", h.runs_on || "this Mac"], ["installed there", h.runs_on ? (h.hub_installed ? "yes" : "no") : null], ["detected", h.detected == null ? "cloud service" : h.detected ? "yes" : "no"]])),
+          ...(h.diagnostics && h.diagnostics.length ? [sect("Checks", kv(h.diagnostics.map(x => [x.label,
+            (x.state === "ok" ? "Pass: " : x.state === "bad" ? "Failed: " : x.state === "attention" ? "Needs attention: " : "Unknown: ") + x.detail])))] : []),
           sect("Read wire", kv([
             ["kind", h.read],
             ["declared in", h.hook_file ? `<span class="mono">${esc(shortPath(h.hook_file))}</span>` : "n/a", "raw"],
