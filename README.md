@@ -4,7 +4,7 @@
 
 **Your context, in plain text you own, read by every AI tool you use.**
 
-**Status: source preview.** The current app is Sovereign 0.6.9 (build 48), built from this repo and in daily use by its maintainer. A signed, notarized download is not published yet, so today you build it from source (below). Apple Silicon Mac, macOS 13 or later.
+**Status: source preview.** The current app is Sovereign 0.7.0 (build 49), built from this repo and in daily use by its maintainer. A signed, notarized download is not published yet, so today you build it from source (below). Apple Silicon Mac, macOS 13 or later.
 
 Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Sovereign keeps that context in one place you own: a folder of Markdown files on your Mac, versioned with git, that your tools read before they work and add to as they go. You approve what becomes trusted. Switch models or tools and your context comes with you.
 
