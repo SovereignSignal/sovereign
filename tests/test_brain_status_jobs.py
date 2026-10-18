@@ -179,11 +179,11 @@ class Connected(unittest.TestCase):
     def test_claude_hook_is_validated_as_a_command_not_a_substring(self):
         with tempfile.TemporaryDirectory() as tmp:
             b = self.box(tmp)
-            memory = b.home / ".Muse" / "projects" / "-tmp-demo" / "memory"
+            memory = b.home / ".claude" / "projects" / "-tmp-demo" / "memory"
             memory.mkdir(parents=True)
             (memory / "preference.md").write_text("---\ntype: preference\nsource: owner\n---\nRemember this.\n")
             hook = str(H / "claude-code" / "session-start.py")
-            (b.home / ".Muse" / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [
+            (b.home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [
                 {"matcher": "startup|resume", "hooks": [{
                     "type": "command",
                     "command": "PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 %s" % hook,
@@ -210,7 +210,7 @@ class Connected(unittest.TestCase):
         for name, settings, issue in cases:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
                 b = self.box(tmp)
-                (b.home / ".Muse" / "settings.json").write_text(settings)
+                (b.home / ".claude" / "settings.json").write_text(settings)
                 d = b.status()
                 got = next(h for h in d["harnesses"] if h["id"] == "claude-code")
                 self.assertEqual(got["state"], "partial")
