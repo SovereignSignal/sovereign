@@ -125,6 +125,44 @@ class CuratorCommand(unittest.TestCase):
         self.assertEqual(env['CURATOR_SCREEN'], 'on')
         self.assertNotIn('CURATOR_KEY', env)
 
+    def test_provider_switch_persists_and_status_reports_it(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            r = self.run_curator('provider', 'openai', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('dry run', r.stdout)
+            self.assertFalse((Path(home) / 'state/curator-provider.json').exists())
+            r = self.run_curator('provider', 'openai', '--apply', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            r = self.run_curator('status', '--json', env={'SOVS_VAULT': str(root)}, home=home)
+            got = json.loads(r.stdout)
+            self.assertEqual(got['provider'], 'openai')
+            self.assertEqual([p['id'] for p in got['providers']],
+                             ['anthropic', 'openai', 'gemini', 'grok', 'muse'])
+
+    def test_provider_switch_returns_trust_to_ask_first(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / 'a'; local.create(root, ROOT)
+            state = Path(home) / 'state'; state.mkdir(parents=True)
+            (state / 'curator-trust.json').write_text(json.dumps({'act_and_report': True}))
+            r = self.run_curator('provider', 'grok', '--apply', env={'SOVS_VAULT': str(root)}, home=home)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse(json.loads((state / 'curator-trust.json').read_text())['act_and_report'])
+
+    def test_unknown_provider_refused(self):
+        with tempfile.TemporaryDirectory() as home:
+            r = self.run_curator('provider', 'cohere', '--apply', home=home)
+            self.assertEqual(r.returncode, 65)
+
+    def test_key_must_match_the_chosen_provider(self):
+        with tempfile.TemporaryDirectory() as home:
+            state = Path(home) / 'state'; state.mkdir(parents=True)
+            (state / 'curator-provider.json').write_text(json.dumps({'provider': 'grok'}))
+            r = self.run_curator('key', env={'SOV_CURATOR_KEY': 'sk-ant-' + 'a' * 60}, home=home)
+            self.assertEqual(r.returncode, 65)
+            r = self.run_curator('key', env={'SOV_CURATOR_KEY': 'xai-short'}, home=home)
+            self.assertEqual(r.returncode, 65)
+
     def test_an_owner_profile_is_never_overwritten(self):
         import importlib.machinery, importlib.util
         loader = importlib.machinery.SourceFileLoader('sov_curator2', str(ROOT / 'bin/sov-curator'))

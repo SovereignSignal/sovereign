@@ -52,7 +52,8 @@ window.SovSettings = (() => {
       `<button id="set-change">${root ? "Change…" : "Open an archive…"}</button>${root ? `<button id="set-reveal">Show in Finder</button>` : ""}`);
   }
 
-  /* The curator for an archive with no hub: Claude under the owner's own key, every two
+  /* The curator for an archive with no hub: the owner's chosen provider under their
+     own key, every two
      hours, in ask-first until the owner grants background landing. A Mac that runs a hub
      curates from its own jobs, so the section says that instead of a second curator. */
   function curatorSection(C) {
@@ -62,8 +63,10 @@ window.SovSettings = (() => {
     const on = C.installed && C.loaded, pending = C.pending || 0, T = C.trust_record || {};
     const trustState = T.state || C.trust || "ask-first", trusted = trustState === "act-and-report";
     const incomplete = trustState === "incomplete" || T.repair_needed === true;
-    const lead = !C.key_saved ? "Add your Anthropic API key to turn on the curator."
-      : on ? `Claude curates this archive every two hours. ${pending ? pending + " waiting in Review." : "Nothing waiting."}`
+    const P = (Array.isArray(C.providers) ? C.providers : []).find(p => p.id === C.provider)
+      || { name: "Anthropic", hint: "sk-ant-…" };
+    const lead = !C.key_saved ? `Add your ${P.name} API key to turn on the curator.`
+      : on ? `${P.name} curates this archive every two hours. ${pending ? pending + " waiting in Review." : "Nothing waiting."}`
       : "The curator is off.";
     const clean = Number.isFinite(T.clean_streak) ? T.clean_streak : 0,
           threshold = Number.isFinite(T.threshold) && T.threshold > 0 ? T.threshold : 10;
@@ -82,7 +85,9 @@ window.SovSettings = (() => {
     const landedList = recent.length ? more("Recently landed on their own",
       recent.map(r => `<p class="set-note set-landed"><span><span class="mono">${esc(r.slug || "")}</span> · ${esc(r.type || "card")} · ${esc(r.confidence || "")}${r.ts ? ` · ${esc(String(r.ts).slice(0, 10))}` : ""}${r.reverted ? " · reverted" : ""}</span>${r.reverted ? "" : `<button data-cur-retire="${esc(r.slug || "")}">Retire…</button>`}</p>`).join("")
       + `<p class="set-note">Retiring moves the card out of trusted knowledge into the curator's rejected archive. It is never deleted.</p>`) : "";
-    const key = `<div class="set-inline"><input type="password" id="set-cur-key" autocomplete="off" spellcheck="false" placeholder="${C.key_saved ? "Replace key…" : "sk-ant-…"}" aria-label="Anthropic API key"><button id="set-cur-save">Save key</button></div>`;
+    const picker = Array.isArray(C.providers) && C.providers.length
+      ? `<div class="set-inline">${C.providers.map(p => `<button data-cur-provider="${esc(p.id)}"${p.id === C.provider ? ` class="brass"` : ""}>${esc(p.name)}</button>`).join("")}</div>` : "";
+    const key = `<div class="set-inline"><input type="password" id="set-cur-key" autocomplete="off" spellcheck="false" placeholder="${C.key_saved ? "Replace key…" : esc(P.hint || "API key…")}" aria-label="${esc(P.name)} API key"><button id="set-cur-save">Save key</button></div>`;
     const trustAct = !C.key_saved ? ""
       : trusted ? `<button id="set-cur-untrust">Ask first again</button>`
       : incomplete ? `<button class="brass" id="set-cur-trust">Repair trust</button>`
@@ -90,9 +95,9 @@ window.SovSettings = (() => {
     const acts = C.key_saved ? (on ? `<button class="brass" id="set-cur-run">Curate now</button>${trustAct}<button id="set-cur-off">Turn off</button>`
                                    : `<button class="brass" id="set-cur-on">Turn on</button>${trustAct}`) : "";
     const note = trusted
-      ? "Your key stays in this Mac's Keychain. Each pass sends new material to Anthropic under your account. Auto-rejection stays off."
-      : "Your key stays in this Mac's Keychain. Each pass sends new material to Anthropic under your account. Cards wait for you in Review until you grant background landing.";
-    return sect("Curator", say(lead) + key + trustSay + landedList + `<span class="pulls" id="set-cur-state" aria-live="polite"></span>`, note, acts);
+      ? `Your key stays in this Mac's Keychain. Each pass sends new material to ${P.name} under your account. Switching provider returns to ask-first. Auto-rejection stays off.`
+      : `Your key stays in this Mac's Keychain. Each pass sends new material to ${P.name} under your account. Cards wait for you in Review until you grant background landing.`;
+    return sect("Curator", say(lead) + picker + key + trustSay + landedList + `<span class="pulls" id="set-cur-state" aria-live="polite"></span>`, note, acts);
   }
 
   /* A job is what an operating system schedules; a lane runs inside one. The Jobs

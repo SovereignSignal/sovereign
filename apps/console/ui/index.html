@@ -1715,6 +1715,12 @@ window.onerror = function (msg, src, line, col) {
         SovSettings.note("set-cur-state", `Retiring ${slug}\u2026`);
         return bridge({ cmd: "curator", action: "retire", slug });
       }
+      if (b.dataset && b.dataset.curProvider) {
+        if (curatorBusy) return;
+        curatorBusy = true;
+        SovSettings.note("set-cur-state", "Switching provider…");
+        return bridge({ cmd: "curator", action: "provider", provider: b.dataset.curProvider });
+      }
       if (b.id === "set-cur-save" || b.id === "set-cur-on" || b.id === "set-cur-off" || b.id === "set-cur-run" || b.id === "set-cur-trust" || b.id === "set-cur-untrust") {
         if (curatorBusy) return;
         const action = { "set-cur-save": "key", "set-cur-on": "enable", "set-cur-off": "disable", "set-cur-run": "run", "set-cur-trust": "trust", "set-cur-untrust": "untrust" }[b.id];
@@ -1980,7 +1986,7 @@ window.onerror = function (msg, src, line, col) {
       }
       curatorBusy = false;
       const said = String((payload.exit === 0 ? payload.out : payload.err) || "").trim().split("\n").filter(Boolean).pop() || "";
-      const done = { key: "Key saved.", enable: "On. The first pass is running.", disable: "Off.", run: "Done. Anything new is in Review.", trust: "Background landing is on for routine cards.", untrust: "Ask-first restored.", retire: "Retired. The card is preserved in the rejected archive." }[payload.action];
+      const done = { key: "Key saved.", enable: "On. The first pass is running.", disable: "Off.", run: "Done. Anything new is in Review.", trust: "Background landing is on for routine cards.", untrust: "Ask-first restored.", retire: "Retired. The card is preserved in the rejected archive.", provider: "Provider switched. Ask-first until the new judge earns more room." }[payload.action];
       if (settingsOpen) SovSettings.note("set-cur-state", payload.exit === 0 ? done : (said || "That did not work."));
       bridge({ cmd: "curator", action: "status" });
       if ((payload.action === "run" || payload.action === "retire") && payload.exit === 0) setTimeout(refresh, 500);

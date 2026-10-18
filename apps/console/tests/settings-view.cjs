@@ -215,6 +215,22 @@ test('a disagreeing trust switch offers repair and reads as ask-first', () => {
   assert(html.includes('id="set-cur-trust">Repair trust'));
 });
 
+test('the curator provider can be chosen and names itself in the copy', () => {
+  const providers = [
+    { id: 'anthropic', name: 'Anthropic', hint: 'sk-ant-…', key_saved: true },
+    { id: 'openai', name: 'OpenAI', hint: 'sk-…', key_saved: false },
+    { id: 'gemini', name: 'Google Gemini', hint: 'API key…', key_saved: false },
+    { id: 'grok', name: 'xAI Grok', hint: 'xai-…', key_saved: false },
+    { id: 'muse', name: 'Muse', hint: 'API key…', key_saved: false }];
+  const html = paint({ root: '/Owner/Research', curator: { hub: false, key_saved: false, installed: false, loaded: false, pending: 0,
+    provider: 'grok', providers, trust: 'ask-first', trust_record: { state: 'ask-first' } } });
+  assert(html.includes('data-cur-provider="muse"'));
+  assert(html.includes('data-cur-provider="grok" class="brass"'));
+  assert(html.includes('Add your xAI Grok API key'));
+  assert(html.includes('placeholder="xai-…"'));
+  assert(html.includes('sends new material to xAI Grok'));
+});
+
 test('the scheduled work has a door here and a count', () => {
   const html = paint({ D: { hub: { jobs: { nightly: {}, curate: {} } }, jobs: [{ label: 'a' }, { label: 'b', kick: 'a' }] } });
   assert(html.includes('3 scheduled'));

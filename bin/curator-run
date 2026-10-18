@@ -17,12 +17,19 @@ Config via env (the mechanism is generic; the model/endpoint are swappable):
                     this at a cloud endpoint is an explicit owner decision, never a default.
   CURATOR_MODEL     model id (default: qwen3.8:27b; claude-opus-5-5 on the anthropic backend)
   CURATOR_EFFORT    the anthropic backend's effort (default: medium)
-  CURATOR_BACKEND   "openai" (default: the OpenAI-compatible chat API, i.e. local Ollama) or
-                    "anthropic" (the Claude Messages API at api.anthropic.com). The hosted
-                    backend is for an archive whose owner chose a hosted model under their own
-                    account (the standard's rule 5); its key comes from CURATOR_KEYFILE,
-                    CURATOR_KEY, or the login Keychain item "sovereign-curator-anthropic".
-                    CURATOR_LOCAL_ONLY=1 refuses it outright.
+  CURATOR_BACKEND   the wire shape: "openai" (default: the OpenAI-compatible chat API,
+                    i.e. local Ollama) or "anthropic" (the Claude Messages API).
+  CURATOR_PROVIDER  the hosted provider an owner chose for a hubless archive under
+                    their own account (the standard's rule 5, amended 2026-10-18):
+                    "anthropic", "openai", "gemini", "grok", or "muse". One at a
+                    time, pinned to that provider's own https API host; it sets
+                    the backend, endpoint, and default model (each still
+                    overridable, and the law still pins the host). Its key comes
+                    from CURATOR_KEYFILE, CURATOR_KEY, or the login Keychain item
+                    "sovereign-curator-<provider>". CURATOR_LOCAL_ONLY=1 refuses
+                    every hosted provider outright. Muse has no canonical public
+                    inference host yet, so CURATOR_ENDPOINT must name its https
+                    API endpoint or the run refuses.
   CURATOR_REASONING_EFFORT  reasoning_effort sent on every model call (default: empty,
                     which omits the field and leaves the model's own thinking on). Setting
                     it changes the judge, so it resets the gears.
@@ -72,12 +79,41 @@ K = os.path.join(VAULT, "knowledge")
 NON_KNOWLEDGE_DIRS = ("workstreams", "raw", "archive", "repos")
 # Local by default — the law: machine writers to knowledge/ run on owner-controlled
 # compute. Cloud is an explicit opt-in via CURATOR_ENDPOINT, never the shipped default.
-BACKEND = (os.environ.get("CURATOR_BACKEND") or "openai").strip().lower()
-ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_KEYCHAIN_SERVICE = "sovereign-curator-anthropic"
-ENDPOINT = os.environ.get("CURATOR_ENDPOINT") or (
+# The hosted providers a hubless archive's owner may choose (rule 5, amended
+# 2026-10-18): exactly one at a time, under the owner's own account, pinned to
+# that provider's own API host. "backend" is the wire shape; only Anthropic
+# speaks its Messages API, the rest speak the OpenAI chat shape. Default models
+# are starting points; CURATOR_MODEL overrides. Muse's endpoint is empty on
+# purpose: no canonical public inference host exists yet, so CURATOR_ENDPOINT
+# must name its https API endpoint or the run refuses below.
+PROVIDERS = {
+    "anthropic": {"name": "Anthropic", "backend": "anthropic",
+                  "endpoint": "https://api.anthropic.com/v1/messages",
+                  "host": "api.anthropic.com", "model": "claude-opus-5-5"},
+    "openai": {"name": "OpenAI", "backend": "openai",
+               "endpoint": "https://api.openai.com/v1/chat/completions",
+               "host": "api.openai.com", "model": "gpt-5.6"},
+    "gemini": {"name": "Google Gemini", "backend": "openai",
+               "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+               "host": "generativelanguage.googleapis.com", "model": "gemini-2.5-pro"},
+    "grok": {"name": "xAI Grok", "backend": "openai",
+             "endpoint": "https://api.x.ai/v1/chat/completions",
+             "host": "api.x.ai", "model": "grok-4.7"},
+    "muse": {"name": "Muse", "backend": "openai",
+             "endpoint": "", "host": "", "model": "muse-wonder-full-1.0"},
+}
+PROVIDER = (os.environ.get("CURATOR_PROVIDER") or "").strip().lower()
+_P = PROVIDERS.get(PROVIDER) or {}
+BACKEND = (os.environ.get("CURATOR_BACKEND") or _P.get("backend") or "openai").strip().lower()
+# A bare CURATOR_BACKEND=anthropic (the pre-provider single-Mac wiring) is the
+# anthropic provider by another name.
+if not PROVIDER and BACKEND == "anthropic":
+    PROVIDER, _P = "anthropic", PROVIDERS["anthropic"]
+ANTHROPIC_ENDPOINT = PROVIDERS["anthropic"]["endpoint"]
+ENDPOINT = os.environ.get("CURATOR_ENDPOINT") or _P.get("endpoint") or (
     ANTHROPIC_ENDPOINT if BACKEND == "anthropic" else "http://localhost:11434/v1/chat/completions")
-MODEL = os.environ.get("CURATOR_MODEL") or ("claude-opus-5-5" if BACKEND == "anthropic" else "qwen3.8:27b")
+MODEL = os.environ.get("CURATOR_MODEL") or _P.get("model") or ("claude-opus-5-5" if BACKEND == "anthropic" else "qwen3.8:27b")
+KEYCHAIN_SERVICE = f"sovereign-curator-{PROVIDER}" if PROVIDER else ""
 LOCAL_ONLY = os.environ.get("CURATOR_LOCAL_ONLY") == "1"
 # The judge thinks: empty sends no reasoning_effort, so the model's default applies.
 # 2026-09-23: "none" ran 3x faster and tied on the bake-off corpus, but live it lost
@@ -762,7 +798,7 @@ def _strip_raw_links(text, resolver=None):
 
 def _inference_violations(endpoint, model, screen_model, allow_remote,
                           local_hosts=("localhost", "127.0.0.1", "::1", "0.0.0.0"),
-                          backend="openai", local_only=False):
+                          backend="openai", local_only=False, provider=""):
     """The law: every model that reads vault-derived content runs on inference the
     owner controls, with no cloud primary and no cloud fallback in the curation
     path. Until 2026-08-28 that was enforced only by the DEFAULTS being local, so a
@@ -779,18 +815,31 @@ def _inference_violations(endpoint, model, screen_model, allow_remote,
     explicit owner opt-out the law allows, and is reported by the caller so an
     opted-out run is never silent.
 
-    backend="anthropic" is the standard's second lawful shape (rule 5, 2026-10-13): a
-    hosted provider the owner chose under their own account, judging and drafting only,
-    never holding the gate. It is exactly one provider at exactly its own API host, and
-    an archive marked local-only (local_only) refuses it whatever else is set."""
+    A chosen provider is the standard's second lawful shape (rule 5, 2026-10-13;
+    widened 2026-10-18 from Anthropic alone to the PROVIDERS table): a hosted
+    provider the owner chose under their own account, judging and drafting only,
+    never holding the gate. It is exactly one provider at a time at exactly its
+    own API host, and an archive marked local-only (local_only) refuses every
+    hosted provider whatever else is set. Muse's host is not canonical yet, so
+    its pin is the shape itself: an https, non-loopback endpoint the owner named."""
     if backend not in ("openai", "anthropic"):
         return [f"CURATOR_BACKEND is not a known backend: {backend}"]
-    if backend == "anthropic":
+    if not provider and backend == "anthropic":
+        provider = "anthropic"
+    if provider:
+        p = PROVIDERS.get(provider)
+        if p is None:
+            return [f"CURATOR_PROVIDER is not a known provider: {provider}"]
         if local_only:
-            return ["CURATOR_BACKEND=anthropic on an archive marked local-only (CURATOR_LOCAL_ONLY=1)"]
-        host = (urllib.parse.urlparse(endpoint).hostname or "").lower()
-        if urllib.parse.urlparse(endpoint).scheme != "https" or host != "api.anthropic.com":
-            return [f"the anthropic backend only talks to https://api.anthropic.com, not {endpoint}"]
+            return [f"CURATOR_PROVIDER={provider} on an archive marked local-only (CURATOR_LOCAL_ONLY=1)"]
+        if backend != p["backend"]:
+            return [f"CURATOR_BACKEND={backend} does not speak the {provider} provider's API shape"]
+        u = urllib.parse.urlparse(endpoint)
+        host = (u.hostname or "").lower()
+        if u.scheme != "https" or not host or host in local_hosts:
+            return [f"the {provider} provider only talks to its own https API host, not {endpoint}"]
+        if p["host"] and host != p["host"]:
+            return [f"the {provider} provider only talks to https://{p['host']}, not {endpoint}"]
         return []
     if allow_remote:
         return []
@@ -1113,7 +1162,31 @@ def _self_test():
                                    backend="anthropic"))),
         ("unknown backend refused", 1,
          len(_inference_violations("http://localhost:11434/v1/chat/completions", "qwen3.8:27b", "qwen3.8:27b", False,
-                                   backend="gemini"))),
+                                   backend="cohere"))),
+        ("openai provider at its own host = clean", 0,
+         len(_inference_violations("https://api.openai.com/v1/chat/completions", "gpt-5.6", "gpt-5.6", False,
+                                   provider="openai"))),
+        ("openai provider refused at any other host", 1,
+         len(_inference_violations("https://api.vendor.com/v1/chat/completions", "gpt-5.6", "gpt-5.6", False,
+                                   provider="openai"))),
+        ("gemini provider at its own host = clean", 0,
+         len(_inference_violations("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                                   "gemini-2.5-pro", "gemini-2.5-pro", False, provider="gemini"))),
+        ("grok provider refused over plain http", 1,
+         len(_inference_violations("http://api.x.ai/v1/chat/completions", "grok-4.7", "grok-4.7", False,
+                                   provider="grok"))),
+        ("muse provider refused without an https endpoint", 1,
+         len(_inference_violations("http://localhost:11434/v1/chat/completions", "muse-wonder-full-1.0",
+                                   "muse-wonder-full-1.0", False, provider="muse"))),
+        ("provider refused on a local-only archive", 1,
+         len(_inference_violations("https://api.openai.com/v1/chat/completions", "gpt-5.6", "gpt-5.6", False,
+                                   provider="openai", local_only=True))),
+        ("provider refused on the wrong wire shape", 1,
+         len(_inference_violations("https://api.openai.com/v1/chat/completions", "gpt-5.6", "gpt-5.6", False,
+                                   backend="anthropic", provider="openai"))),
+        ("unknown provider refused", 1,
+         len(_inference_violations("http://localhost:11434/v1/chat/completions", "qwen3.8:27b", "qwen3.8:27b", False,
+                                   provider="cohere"))),
     ]
     for name, want, got in guard_cases:
         ok = got == want
@@ -1271,7 +1344,7 @@ if a.self_test:
 _violations = _inference_violations(ENDPOINT, MODEL, SCREEN_MODEL,
                                     os.environ.get("CURATOR_ALLOW_REMOTE", "").strip().lower()
                                     in ("1", "on", "true", "yes"),
-                                    backend=BACKEND, local_only=LOCAL_ONLY)
+                                    backend=BACKEND, local_only=LOCAL_ONLY, provider=PROVIDER)
 if _violations:
     for _v in _violations:
         print(f"curator-run: REFUSING — sovereign-inference law: {_v}", file=sys.stderr)
@@ -1651,15 +1724,16 @@ rejected_topics = set()
 for _p in glob.glob(os.path.join(LANE, "rejected") + "/*.md"):
     rejected_topics.add(re.sub(r"--rejected-\d{8}-\d{6}$", "", os.path.basename(_p)[:-3]))
 KEY = open(KEYFILE).read().strip() if os.path.exists(KEYFILE) else os.environ.get("CURATOR_KEY", "")
-if BACKEND == "anthropic" and not KEY and not (a.init or a.dump_brief or a.brief_for or a.source_for):
-    # The owner's own key, saved by the app into the login Keychain; never on argv or disk.
+if PROVIDER and not KEY and not (a.init or a.dump_brief or a.brief_for or a.source_for):
+    # The owner's own key for the chosen provider, saved by the app into the
+    # login Keychain; never on argv or disk.
     try:
-        KEY = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", ANTHROPIC_KEYCHAIN_SERVICE, "-w"],
+        KEY = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
                              capture_output=True, text=True, timeout=20).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         KEY = ""
     if not KEY:
-        print("curator-run: no Anthropic key: save one in Sovereign (Settings › Curator) or set CURATOR_KEYFILE",
+        print(f"curator-run: no {PROVIDERS[PROVIDER]['name']} key: save one in Sovereign (Settings › Curator) or set CURATOR_KEYFILE",
               file=sys.stderr)
         raise SystemExit(4)
 

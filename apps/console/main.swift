@@ -210,7 +210,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             // The hubless curator on this Mac (bin/sov-curator). A key rides in the child's
             // environment only, never on argv and never in a log line.
             let action = d["action"] as? String ?? "status"
-            guard let sov = sov, ["status", "enable", "disable", "run", "key", "trust", "untrust", "retire"].contains(action) else {
+            guard let sov = sov, ["status", "enable", "disable", "run", "key", "trust", "untrust", "retire", "provider"].contains(action) else {
                 deliver("curatorResult", ["action": action, "exit": 64, "err": sov == nil ? "sov is not installed on this machine." : "Unknown curator action."], generation: generation); return
             }
             var args = [sov, "curator", action == "untrust" ? "trust" : action]
@@ -222,8 +222,15 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 }
                 args.append(slug)
             }
+            if action == "provider" {
+                guard let p = d["provider"] as? String,
+                      ["anthropic", "openai", "gemini", "grok", "muse"].contains(p) else {
+                    deliver("curatorResult", ["action": action, "exit": 64, "err": "No provider was named."], generation: generation); return
+                }
+                args.append(p)
+            }
             if action == "untrust" { args.append("--off") }
-            if action == "enable" || action == "disable" || action == "trust" || action == "untrust" || action == "retire" { args.append("--apply") }
+            if action == "enable" || action == "disable" || action == "trust" || action == "untrust" || action == "retire" || action == "provider" { args.append("--apply") }
             var env: [String: String] = [:]
             if let root = Settings.archive { env["SOVS_VAULT"] = root }
             if action == "key" { env["SOV_CURATOR_KEY"] = (d["key"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }

@@ -2,8 +2,9 @@
 """sov-curator — the curator on a single Mac, for an archive with no hub.
 
 An operator's archive is curated by its hub (`sov hub`). A newcomer's archive has none,
-so this runs curator-run on this Mac, on the hosted model its owner chose (Claude, under
-the owner's own Anthropic key, read from the login Keychain), every two hours. It starts
+so this runs curator-run on this Mac, on the hosted provider its owner chose (Anthropic
+unless they picked another with `sov curator provider`, under the owner's own key for
+that provider, read from the login Keychain), every two hours. It starts
 in ask-first: nothing lands by itself and every proposal waits in Review. Once its
 judgments have earned it, the owner can run `sov curator trust --apply` to let routine
 concept and synthesis cards (high and medium confidence) land on their own and report
@@ -16,8 +17,12 @@ auto-rejection stays off, and `sov curator trust --off --apply` returns to ask-f
   sov curator retire <slug> [--apply]              retire a recent background landing (dry run without --apply)
   sov curator status [--json]
   sov curator disable [--apply]
-  sov curator key                                  save the owner's Anthropic key in the login
-                                                   Keychain, from $SOV_CURATOR_KEY or stdin
+  sov curator provider [name] [--apply]            show or choose the hosted provider
+                                                   (anthropic, openai, gemini, grok, muse);
+                                                   a switch returns trust to ask-first
+  sov curator key                                  save the owner's key for the chosen
+                                                   provider in the login Keychain, from
+                                                   $SOV_CURATOR_KEY or stdin
 
 The key is never an argument and never written to disk. It goes to /usr/bin/security on
 stdin, which creates the Keychain item, so the scheduled job (which reads it with the same
@@ -32,11 +37,22 @@ from sovereign_config import pointer
 from sovereign_hub.digest_counts import parse_epoch
 
 LABEL = "com.sovereign.curator"
-KEYCHAIN_SERVICE = "sovereign-curator-anthropic"
+# The hosted providers a hubless archive's owner may choose (rule 5, amended
+# 2026-10-18): one at a time, under their own account. curator-run owns the
+# endpoints and model defaults; here we own the choice, each provider's
+# Keychain item, and what a plausible key looks like (prefix None = shape only).
+PROVIDERS = {
+    "anthropic": {"name": "Anthropic", "backend": "anthropic", "prefix": "sk-ant-", "minlen": 40, "hint": "sk-ant-…"},
+    "openai": {"name": "OpenAI", "backend": "openai", "prefix": "sk-", "minlen": 40, "hint": "sk-…"},
+    "gemini": {"name": "Google Gemini", "backend": "openai", "prefix": None, "minlen": 20, "hint": "API key…"},
+    "grok": {"name": "xAI Grok", "backend": "openai", "prefix": "xai-", "minlen": 40, "hint": "xai-…"},
+    "muse": {"name": "Muse", "backend": "openai", "prefix": None, "minlen": 20, "hint": "API key…"},
+}
 LANE = "curator"
 STATE = Path(os.environ.get("SOV_STATE_DIR") or "~/.local/state/sovereign").expanduser()
 UNIT = Path("~/Library/LaunchAgents").expanduser() / (LABEL + ".plist")
 TRUST_STATE = STATE / "curator-trust.json"
+PROVIDER_STATE = STATE / "curator-provider.json"
 TRUST_CAP = "12"
 TRUST_TYPES = ("concept", "synthesis")
 TRUST_CONFIDENCE = ["high", "med"]
@@ -71,8 +87,22 @@ def trust_on():
         return False
 
 
+def provider():
+    try:
+        p = json.loads(PROVIDER_STATE.read_text()).get("provider")
+    except Exception:
+        p = None
+    return p if p in PROVIDERS else "anthropic"
+
+
+def keychain_service(provider_id):
+    return f"sovereign-curator-{provider_id}"
+
+
 def curator_env(root):
-    env = {"SOVS_VAULT": str(root), "CURATOR_LANE": LANE, "CURATOR_BACKEND": "anthropic",
+    p = provider()
+    env = {"SOVS_VAULT": str(root), "CURATOR_LANE": LANE, "CURATOR_PROVIDER": p,
+           "CURATOR_BACKEND": PROVIDERS[p]["backend"],
            "CURATOR_SCREEN": "on", "ARCHIVIST_AUTO_PROMOTE_MAX": TRUST_CAP if trust_on() else "0",
            "ARCHIVIST_AUTO_REJECT_MAX": "0",
            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
@@ -99,25 +129,56 @@ def seed_profile(root):
         print(f"curator: wrote a starter owner profile to {profile.relative_to(root)}; edit it to say who you are")
 
 
-def key_saved():
+def key_saved(provider_id=None):
     try:
-        return subprocess.run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE],
+        return subprocess.run(["/usr/bin/security", "find-generic-password", "-s",
+                               keychain_service(provider_id or provider())],
                               capture_output=True, timeout=20).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
 
 def save_key(a):
+    p = provider(); spec = PROVIDERS[p]
     key = (os.environ.get("SOV_CURATOR_KEY") or sys.stdin.readline()).strip()
-    if not key.startswith("sk-ant-") or len(key) < 40 or any(c.isspace() for c in key):
-        print("That does not look like an Anthropic API key (they start with sk-ant-).", file=sys.stderr); return 65
+    if (spec["prefix"] and not key.startswith(spec["prefix"])) or len(key) < spec["minlen"] \
+            or any(c.isspace() for c in key):
+        shape = f" (they start with {spec['prefix']})" if spec["prefix"] else ""
+        print(f"That does not look like a {spec['name']} API key{shape}.", file=sys.stderr); return 65
     user = os.environ.get("USER") or "sovereign"
-    r = subprocess.run(["/usr/bin/security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", user,
-                        "-l", "Sovereign curator (Anthropic)", "-w"],
+    r = subprocess.run(["/usr/bin/security", "add-generic-password", "-U", "-s", keychain_service(p), "-a", user,
+                        "-l", f"Sovereign curator ({spec['name']})", "-w"],
                        input=f"{key}\n{key}\n", capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
         print("The key could not be saved in the Keychain.", file=sys.stderr); return 1
     print("saved in the login Keychain"); return 0
+
+
+def set_provider(a):
+    refuse_on_hub()
+    cur = provider()
+    if not a.name:
+        print(f"curator provider: {cur} ({PROVIDERS[cur]['name']})")
+        for pid, spec in PROVIDERS.items():
+            print(f"  {pid:10} {spec['name']}  key in Keychain: {'yes' if key_saved(pid) else 'no'}")
+        return 0
+    if a.name not in PROVIDERS:
+        print(f"curator: unknown provider {a.name!r}; choose one of {', '.join(PROVIDERS)}", file=sys.stderr); return 65
+    if a.name == cur:
+        print(f"curator provider is already {cur} ({PROVIDERS[cur]['name']})"); return 0
+    print(f"curator provider: {cur} -> {a.name} ({PROVIDERS[a.name]['name']})")
+    print("  a new judge has not earned background landing: trust returns to ask-first")
+    if not a.apply:
+        print("dry run. add --apply to switch."); return 0
+    STATE.mkdir(parents=True, exist_ok=True)
+    atomic_json(PROVIDER_STATE, {"provider": a.name})
+    atomic_json(TRUST_STATE, {"act_and_report": False})
+    try:
+        refresh_unit(vault())
+    except SystemExit:
+        pass  # no archive yet; the choice still stands for when one opens
+    print("switched. save this provider's key with `sov curator key` if the Keychain has none.")
+    return 0
 
 
 def launchctl(*args):
@@ -139,7 +200,7 @@ def unit(root, every):
 def enable(a):
     refuse_on_hub(); root = vault()
     body = plistlib.dumps(unit(root, a.every))
-    print(f"curator: {root} every {a.every}s on Claude (key in Keychain: {'yes' if key_saved() else 'NOT YET'})")
+    print(f"curator: {root} every {a.every}s on {PROVIDERS[provider()]['name']} (key in Keychain: {'yes' if key_saved() else 'NOT YET'})")
     print(f"  job  {UNIT}")
     if not a.apply:
         print("dry run. add --apply to install."); return 0
@@ -462,7 +523,9 @@ def status(a):
     record = trust_record(root, lane)
     out = {"archive": str(root) if root else None, "hub": hub, "installed": UNIT.exists(),
            "loaded": launchctl("print", f"gui/{os.getuid()}/{LABEL}").returncode == 0,
-           "key_saved": key_saved(), "model": "claude",
+           "key_saved": key_saved(), "model": provider(), "provider": provider(),
+           "providers": [{"id": pid, "name": spec["name"], "hint": spec["hint"],
+                          "key_saved": key_saved(pid)} for pid, spec in PROVIDERS.items()],
            "trust": record["state"], "trust_record": record, "last_run": last,
            "pending": len(list((lane / "proposals").glob("*.md"))) if lane and (lane / "proposals").is_dir() else 0}
     if a.json:
@@ -484,13 +547,15 @@ def main():
     sub.add_parser("run")
     t = sub.add_parser("trust"); t.add_argument("--off", action="store_true"); t.add_argument("--apply", action="store_true")
     r = sub.add_parser("retire"); r.add_argument("slug"); r.add_argument("--apply", action="store_true")
+    pv = sub.add_parser("provider"); pv.add_argument("name", nargs="?"); pv.add_argument("--apply", action="store_true")
     sub.add_parser("key")
     s = sub.add_parser("status"); s.add_argument("--json", action="store_true")
     a = ap.parse_args()
     if getattr(a, "every", 7200) < 600:
         sys.exit("--every must be at least 600 seconds")
     return {"enable": enable, "disable": disable, "run": run, "trust": trust,
-            "retire": retire, "status": status, "key": save_key}[a.cmd](a)
+            "retire": retire, "status": status, "key": save_key,
+            "provider": set_provider}[a.cmd](a)
 
 
 if __name__ == "__main__":
