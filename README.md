@@ -1,6 +1,10 @@
+<img src="apps/console/design/icon/AppIcon-1024.png" width="88" alt="Sovereign app icon">
+
 # Sovereign
 
 **Your context, in plain text you own, read by every AI tool you use.**
+
+**Status: source preview.** The current app is Sovereign 0.6.9 (build 48), built from this repo and in daily use by its maintainer. A signed, notarized download is not published yet, so today you build it from source (below). Apple Silicon Mac, macOS 13 or later.
 
 Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Sovereign keeps that context in one place you own: a folder of Markdown files on your Mac, versioned with git, that your tools read before they work and add to as they go. You approve what becomes trusted. Switch models or tools and your context comes with you.
 
@@ -20,7 +24,7 @@ It's deliberately simple. The whole standard fits on one page ([`CLAUDE.md`](CLA
 
 - **The archive** is five folders with one job each: `raw/` (the loading dock), `knowledge/` (the trusted cards), `workstreams/` (your active work), `archive/` (cold storage) and an optional `repos/` for code.
 - **Connectors** tie a tool to the archive both ways. Claude Code reads the relevant cards when a session starts and saves its memory into its own lane in `raw/`.
-- **The curator** reads what arrived, drafts one-screen briefing cards, and asks you before any of it becomes trusted. Its default answer is no: most raw material never becomes a card, and that's the system working.
+- **The curator** reads what arrived in the background and drafts one-screen briefing cards. At first it asks before any of it becomes trusted; routine cards can graduate to landing on their own once its judgments earn it. Its default answer is no: most raw material never becomes a card, and that's the system working.
 
 ## Get started on a Mac (about five minutes)
 
@@ -29,7 +33,7 @@ You need an Apple Silicon Mac on macOS 13 or later, [Claude Code](https://claude
 1. **Install Sovereign.** A signed, notarized download is on its way. Until it's published, [build the app from source](#build-the-app-from-source), which takes a few minutes more.
 2. **Create an archive.** Open Sovereign and choose **Create archive…**. Pick where it lives; `~/Sovereign` is a good default.
 3. **Connect Claude Code.** On the screen that follows, choose **Connect…** next to Claude Code, check the preview, then install. Claude Code will now read your archive at the start of every session.
-4. **Turn on the curator.** In **Settings › Curator**, paste your Anthropic API key and choose **Turn on**. The key is stored in your login Keychain, never in a plain file. Every two hours the curator sends newly saved material to Anthropic, under your account, and drafts cards. Nothing it drafts becomes trusted until you approve it.
+4. **Turn on the curator.** In **Settings › Curator**, paste your Anthropic API key and choose **Turn on**. The key is stored in your login Keychain, never in a plain file. Every two hours the curator sends newly saved material to Anthropic, under your account, and drafts cards. At first nothing it drafts becomes trusted until you approve it (see [Approval fades as trust is earned](#approval-fades-as-trust-is-earned)).
 5. **Save something worth remembering.** In Claude Code, tell it something durable, such as *"Remember: I'm building a garden planner for small urban plots, and it has to work offline."* Then choose **Curate now** in Settings › Curator.
 6. **Approve your first card.** Open **Review**, read the drafted card, and approve it.
 7. **See it used.** Start a new Claude Code session. It opens already knowing what you approved, and **Today** ticks off its **First steps**.
@@ -74,13 +78,27 @@ Claude Code is the one fully supported tool. The repo also ships best-effort con
 
 ### With Claude (no extra setup)
 
-The app's **Settings › Curator** is the whole setup. From the command line, with the app installed: `sov curator key` (reads the key from stdin), `sov curator enable --apply`, `sov curator run`, `sov curator status`. The curator never approves anything by itself on this path: every card waits for you in Review.
+The app's **Settings › Curator** is the whole setup. From the command line, with the app installed: `sov curator key` (reads the key from stdin), `sov curator enable --apply`, `sov curator run`, `sov curator status`. This path starts in ask-first: every card waits for you in Review until you grant it more room.
 
 The curator's default answer is no: most of what tools save never becomes a card. In a new archive it starts with a short owner profile (`raw/workspaces/curator/profile.md`) telling it that your own notes about your projects, goals, decisions and preferences are worth keeping. Rewrite it to say who you are and what matters to you; the curator reads it with every judgment.
 
+### Approval fades as trust is earned
+
+Reviewing every card forever would turn memory into inbox zero, so approval is a starting gear, not the steady state. Everything begins in **ask-first**. Once the curator's judgments run clean for a while, you can move routine work to **act-and-report**: it lands on its own in the background, gets listed in the next digest with a per-card revert, and git keeps the undo. Flagged items, new entities, slug collisions, and anything destructive always ask first, whatever the gear.
+
+On the Claude path above, the grant is one command once you are ready:
+
+```bash
+sov curator trust            # preview what changes
+sov curator trust --apply    # concepts and syntheses at high and medium confidence land on their own, at most 12 per pass
+sov curator trust --off --apply   # back to ask-first, any time
+```
+
+The grant lives in `gears.json` in the curator lane, and a change to the judging pipeline that earned it (a new model, prompt, or threshold) is the moment to re-earn it. The rulebook's *Validation and trust* section in [`CLAUDE.md`](CLAUDE.md) is the full model.
+
 ### Curating with a local model
 
-For a fully local setup, the app can prepare a **Hub** that curates on a model you run yourself (for example through Ollama). Open **Settings › Jobs › Hub setup…**; every step shows a preview first. See the [Hub setup and recovery guide](docs/hub-setup.md). Every card it drafts waits in Review for you; a prepared Hub keeps automatic approval off.
+For a fully local setup, the app can prepare a **Hub** that curates on a model you run yourself (for example through Ollama). Open **Settings › Jobs › Hub setup…**; every step shows a preview first. See the [Hub setup and recovery guide](docs/hub-setup.md). A prepared Hub starts in ask-first with automatic landing off in this build; a hub you run from this repo can use the same gears with its own per-run cap.
 
 `bin/sov-judge-bakeoff` helps you pick a local model on calibration rather than benchmarks. It runs the real curator against a bundled, entirely fictional corpus and scores false promotions, missed knowledge and resistance to adversarial documents:
 
