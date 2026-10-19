@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.1 (build 50) — release candidate
+
+Status: release candidate under clean-machine validation. Supersedes build 49.
+
+- New archives now default to the home folder instead of Documents. On a
+  clean Mac, macOS privacy rules deny Sovereign's background connector jobs
+  inside Documents, which stalled the first-run loop (found in Parallels
+  validation of build 49). Existing archives are untouched.
+- The hubless curator can run on the owner's choice of hosted provider:
+  Anthropic, OpenAI, Google Gemini, xAI Grok, or Muse, one at a time under
+  the owner's own key. Switching provider returns trust to ask-first.
+
 ## 0.7.0 (build 49) — release candidate
 
 Status: signed source-preview candidate. It is not a public download until

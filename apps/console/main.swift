@@ -1234,6 +1234,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         if create {
             let panel = NSSavePanel(); panel.title = "Create archive"; panel.nameFieldStringValue = "My Archive"
             panel.prompt = "Create"; panel.canCreateDirectories = false
+            // Start in the home folder, not the panel's Documents default: Documents
+            // is TCC-protected, and the background connector jobs are denied there
+            // on a clean Mac, so a default archive must not land inside it.
+            panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
             selected = panel.runModal() == .OK ? panel.url : nil
         } else {
             let panel = NSOpenPanel(); panel.title = "Open archive"; panel.canChooseDirectories = true
