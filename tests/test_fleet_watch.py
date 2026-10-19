@@ -8,6 +8,13 @@ entries for hosts already removed from the tailnet. These pin the fix: yellow ev
 remind daily, a non-critical host down for a week is muted as retired, and a host that
 leaves the fleet (tailnet removal or ignore list) is never announced as recovered. Red
 events keep their hourly reminder, which is what this watcher exists for.
+
+2026-10-19: grokbot, a workstation that sleeps when unused, paged four times in an
+hour because a first alert fired on the first missed poll. The grace tests pin the
+fix: a non-critical host earns its first alert only after SOV_FLEET_GRACE_MINUTES
+down, critical and red events bypass it, and a recovery inside the grace is never
+announced. The expiry tests pin the key-expiry warning: once per expiry date inside
+SOV_FLEET_EXPIRY_WARN_DAYS, silent beyond the window.
 """
 import datetime
 import json
@@ -43,12 +50,22 @@ class FleetWatch(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def configure(self, ignore="", critical="proxmox"):
-        self.conf.write_text("SOV_FLEET_IGNORE=%s\nSOV_FLEET_CRITICAL=%s\n" % (ignore, critical))
+    def configure(self, ignore="", critical="proxmox", grace=None, expiry=None):
+        lines = ["SOV_FLEET_IGNORE=%s" % ignore,
+                 "SOV_FLEET_CRITICAL=%s" % critical]
+        if grace is not None:
+            lines.append("SOV_FLEET_GRACE_MINUTES=%s" % grace)
+        if expiry is not None:
+            lines.append("SOV_FLEET_EXPIRY_WARN_DAYS=%s" % expiry)
+        self.conf.write_text("\n".join(lines) + "\n")
 
-    def tailnet(self, hosts):
-        peers = {str(i): {"HostName": h, "Online": up, "TailscaleIPs": ["100.0.0.%d" % i]}
-                 for i, (h, up) in enumerate(hosts.items(), 1)}
+    def tailnet(self, hosts, expiry=None):
+        peers = {}
+        for i, (h, up) in enumerate(hosts.items(), 1):
+            peer = {"HostName": h, "Online": up, "TailscaleIPs": ["100.0.0.%d" % i]}
+            if expiry and h in expiry:
+                peer["KeyExpiry"] = expiry[h]
+            peers[str(i)] = peer
         self.fleet.write_text(json.dumps({"Peer": peers}))
 
     def run_watch(self, *args):
@@ -145,6 +162,39 @@ class FleetWatch(unittest.TestCase):
         out = self.run_watch()
         self.assertTrue(out.startswith("Fleet DOWN"), out)
         self.assertIn("shared infrastructure", out)
+
+    def test_grace_holds_the_first_alert_until_the_outage_matures(self):
+        self.configure(grace=120)
+        self.tailnet(dict(BASE, spp3=False))
+        self.assertEqual(self.run_watch(), "")
+        self.patch_state(offline={"spp3": iso_ago(minutes=130)})
+        self.assertIn("went offline", self.run_watch())
+
+    def test_grace_recovery_inside_the_grace_is_never_announced(self):
+        self.configure(grace=120)
+        self.tailnet(dict(BASE, spp3=False))
+        self.assertEqual(self.run_watch(), "")
+        self.tailnet(BASE)
+        self.assertEqual(self.run_watch(), "")
+
+    def test_grace_critical_host_alerts_on_the_first_poll(self):
+        self.configure(grace=120)
+        self.tailnet(dict(BASE, proxmox=False))
+        self.assertIn("critical host down: proxmox", self.run_watch())
+
+    def test_grace_mass_outage_alerts_on_the_first_poll(self):
+        self.configure(grace=120)
+        self.tailnet({h: False for h in BASE})
+        self.assertTrue(self.run_watch().startswith("Fleet DOWN"))
+
+    def test_key_expiry_warns_once_inside_the_window(self):
+        self.tailnet(BASE, expiry={"spp3": iso_ago(days=-10)})
+        self.assertIn("key for spp3 expires", self.run_watch())
+        self.assertEqual(self.run_watch(), "")
+
+    def test_key_expiry_beyond_the_window_is_silent(self):
+        self.tailnet(BASE, expiry={"spp3": iso_ago(days=-90)})
+        self.assertEqual(self.run_watch(), "")
 
 
 if __name__ == "__main__":
