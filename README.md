@@ -4,7 +4,7 @@
 
 **Your context, in plain text you own, read by every AI tool you use.**
 
-**Status: source preview.** The current app is Sovereign 0.7.0 (build 49), built from this repo and in daily use by its maintainer. A signed, notarized download is not published yet, so today you build it from source (below). Apple Silicon Mac, macOS 13 or later.
+**Status: closed beta.** The current app is Sovereign 0.7.1 (build 50), built from this repo and in daily use by its maintainer. A signed, notarized download is on the [releases page](https://github.com/SovereignSignal/sovereign/releases), validated on clean installs of macOS 13.6 and the current macOS. Apple Silicon Mac, macOS 13 or later.
 
 Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Sovereign keeps that context in one place you own: a folder of Markdown files on your Mac, versioned with git, that your tools read before they work and add to as they go. You approve what becomes trusted. Switch models or tools and your context comes with you.
 
@@ -28,12 +28,12 @@ It's deliberately simple. The whole standard fits on one page ([`CLAUDE.md`](CLA
 
 ## Get started on a Mac (about five minutes)
 
-You need an Apple Silicon Mac on macOS 13 or later, [Claude Code](https://claude.com/claude-code), and an [Anthropic API key](https://console.anthropic.com/) for the curator.
+You need an Apple Silicon Mac on macOS 13 or later, [Claude Code](https://claude.com/claude-code), and an API key for the curator (Anthropic by default; OpenAI, Google Gemini, xAI Grok, and Muse are also supported).
 
-1. **Install Sovereign.** A signed, notarized download is on its way. Until it's published, [build the app from source](#build-the-app-from-source), which takes a few minutes more.
+1. **Install Sovereign.** Download `Sovereign-0.7.1-build50.zip` from the [v0.7.1 release](https://github.com/SovereignSignal/sovereign/releases/tag/v0.7.1), unzip it, and move `Sovereign.app` to Applications. Prefer source? [Build the app yourself](#build-the-app-from-source).
 2. **Create an archive.** Open Sovereign and choose **Create archive…**. Pick where it lives; `~/Sovereign` is a good default.
 3. **Connect Claude Code.** On the screen that follows, choose **Connect…** next to Claude Code, check the preview, then install. Claude Code will now read your archive at the start of every session.
-4. **Turn on the curator.** In **Settings › Curator**, paste your Anthropic API key and choose **Turn on**. The key is stored in your login Keychain, never in a plain file. Every two hours the curator sends newly saved material to Anthropic, under your account, and drafts cards. At first nothing it drafts becomes trusted until you approve it (see [Approval fades as trust is earned](#approval-fades-as-trust-is-earned)).
+4. **Turn on the curator.** In **Settings › Curator**, pick your provider, paste your API key, and choose **Turn on**. The key is stored in your login Keychain, never in a plain file. Every two hours the curator sends newly saved material to that provider, under your account, and drafts cards. At first nothing it drafts becomes trusted until you approve it (see [Approval fades as trust is earned](#approval-fades-as-trust-is-earned)).
 5. **Save something worth remembering.** In Claude Code, tell it something durable, such as *"Remember: I'm building a garden planner for small urban plots, and it has to work offline."* Then choose **Curate now** in Settings › Curator.
 6. **Approve your first card.** Open **Review**, read the drafted card, and approve it.
 7. **See it used.** Start a new Claude Code session. It opens already knowing what you approved, and **Today** ticks off its **First steps**.
@@ -42,7 +42,7 @@ You need an Apple Silicon Mac on macOS 13 or later, [Claude Code](https://claude
 
 Out of the box, nothing. Sovereign has no account, no telemetry and no server. The only outbound traffic is what you turn on:
 
-- **The hosted curator** sends newly saved material to Anthropic under your own key. Each pass costs cents, and the key can carry a spend limit you set in the Anthropic console.
+- **The hosted curator** sends newly saved material to the one provider you chose (Anthropic, OpenAI, Google Gemini, xAI Grok, or Muse), under your own key and at that provider's own API host only. Each pass costs cents, and the key can carry a spend limit you set with the provider.
 - **Optional connectors**, such as a Notion mirror, talk to the service they mirror.
 
 If you want nothing to leave at all, run the curator on a local model instead (see [Curating with a local model](#curating-with-a-local-model)). An archive can declare itself local-only, and the curator then refuses any hosted model.
