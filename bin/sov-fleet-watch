@@ -44,6 +44,15 @@ one-line machine-readable summary and alerts on nothing.
                       (default: 3, or a third of the fleet, whichever is larger)
   SOV_FLEET_CRITICAL  comma-separated hosts whose absence is red on its own, and
                       which are never muted
+  SOV_FLEET_GRACE_MINUTES
+                      minutes a non-critical host must be continuously down
+                      before its first alert (default 0: alert on first poll).
+                      Critical hosts and red events bypass the grace, and a
+                      host that recovers inside it is never announced.
+  SOV_FLEET_EXPIRY_WARN_DAYS
+                      warn once when a host's Tailscale key expiry is this
+                      many days out (default 30; 0 disables). Only known when
+                      the Tailscale CLI answers on this host.
   SOV_FLEET_NOTIFY    comma-separated executable paths fed EVERY message on stdin.
                       Use on a host with nothing else delivering stdout, so its
                       recoveries and yellows are not lost to a log file.
@@ -114,6 +123,8 @@ NOTIFY = [x.strip() for x in setting("SOV_FLEET_NOTIFY").split(",") if x.strip()
 # off-site watcher exists mainly to notice that the hub died, and one host
 # down would otherwise be a yellow it never escalates.
 CRITICAL = {h.strip() for h in setting("SOV_FLEET_CRITICAL").split(",") if h.strip()}
+GRACE = int(setting("SOV_FLEET_GRACE_MINUTES", "0") or 0)
+EXPIRY_WARN_DAYS = float(setting("SOV_FLEET_EXPIRY_WARN_DAYS", "30") or 0)
 
 
 def now():
@@ -128,6 +139,14 @@ def parse(s):
     try:
         return datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=datetime.timezone.utc)
+    except Exception:
+        return None
+
+
+def parse_expiry(s):
+    """Tailscale KeyExpiry carries fractional seconds, which parse() rejects."""
+    try:
+        return datetime.datetime.fromisoformat((s or "").replace("Z", "+00:00"))
     except Exception:
         return None
 
@@ -162,7 +181,7 @@ def ignored(name):
 
 
 def read_cli():
-    """{host: (online, ip)} from the Tailscale CLI, or None if it cannot be read.
+    """{host: (online, ip, key_expiry)} from the Tailscale CLI, or None if unreadable.
 
     The macOS CLI proxies to the GUI app. Outside an interactive session it tries
     to launch that app, fails, and prints "The Tailscale GUI failed to start" to
@@ -188,7 +207,7 @@ def read_cli():
         ip = (p.get("TailscaleIPs") or [""])[0]
         if name in seen:
             name = "%s (%s)" % (name, ip or p.get("ID", "?"))
-        seen[name] = (bool(p.get("Online")), ip)
+        seen[name] = (bool(p.get("Online")), ip, p.get("KeyExpiry") or "")
     return seen or None
 
 
@@ -238,9 +257,10 @@ def read_fleet():
         # Remember every address so the ping fallback keeps working when the CLI
         # stops answering, which is how this stays alive on the hub.
         st = load_state()
-        st["roster"] = {n: ip for n, (_, ip) in cli.items() if ip}
+        st["roster"] = {n: ip for n, (_, ip, _) in cli.items() if ip}
+        st["key_expiry"] = {n: e for n, (_, _, e) in cli.items() if e}
         save_state(st)
-        return {n: up for n, (up, _) in cli.items() if not ignored(n)}
+        return {n: up for n, (up, _, _) in cli.items() if not ignored(n)}
     roster = {n: ip for n, ip in (load_state().get("roster") or {}).items()
               if not ignored(n)}
     return probe_roster(roster)
@@ -327,11 +347,26 @@ def main():
     def is_red(hosts):
         return len(hosts) >= red_at or any(base_name(h) in CRITICAL for h in hosts)
 
-    new = [h for h in offline if h not in was]
-    still = [h for h in offline if h in was]
+    # Grace: a non-critical host earns its first alert only after GRACE minutes
+    # down. Critical hosts and red (shared-infrastructure) events bypass it, and
+    # a host that recovers inside the grace is never announced either way.
+    def age_min(h):
+        t = parse(st["offline"].get(h) or "")
+        return (now() - t).total_seconds() / 60.0 if t else 0.0
+
+    pending_before = set(st.get("grace_pending") or [])
+    pending = []
+    if GRACE > 0 and not is_red(offline):
+        pending = [h for h in offline
+                   if base_name(h) not in CRITICAL and age_min(h) < GRACE]
+    ready = [h for h in offline if h not in pending]
+
+    new = [h for h in ready if h not in was or h in pending_before]
+    still = [h for h in ready if h in was and h not in pending_before]
     # Only hosts still in the fleet and actually up count as recovered. A host that
     # vanished from the tailnet or was just added to the ignore list did not recover.
-    back = sorted(h for h in was if fleet.get(h) is True)
+    # Neither did a host inside its grace last run: it was never announced.
+    back = sorted(h for h in was if fleet.get(h) is True and h not in pending_before)
 
     lines, red = [], False
 
@@ -375,6 +410,33 @@ def main():
     if not offline:
         st.pop("last_alert", None)
 
+    # Key expiry: warn once per expiry date as it enters the window. An expired
+    # key later looks exactly like an outage (2026-09-22), so the warning has to
+    # land while renewing is still a browser click.
+    warned = {h: e for h, e in (st.get("expiry_warned") or {}).items()
+              if (st.get("key_expiry") or {}).get(h) == e}
+    if EXPIRY_WARN_DAYS > 0:
+        for h, exp in sorted((st.get("key_expiry") or {}).items()):
+            if ignored(h) or h in muted:
+                continue
+            t = parse_expiry(exp)
+            if not t:
+                continue
+            days = (t - now()).total_seconds() / 86400.0
+            if days <= EXPIRY_WARN_DAYS and warned.get(h) != exp:
+                lines.append("Fleet: tailscale key for %s expires %s (%dd). "
+                             "Renew it before the host drops off the tailnet."
+                             % (h, exp[:10], max(0, int(days))))
+                warned[h] = exp
+    if warned:
+        st["expiry_warned"] = warned
+    else:
+        st.pop("expiry_warned", None)
+
+    if pending:
+        st["grace_pending"] = sorted(pending)
+    else:
+        st.pop("grace_pending", None)
     if muted:
         st["muted"] = muted
     else:
