@@ -17,7 +17,7 @@ VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/
 BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 echo "    submitting $VERSION build $BUILD to Apple (this waits for the verdict)"
-ditto -c -k --keepParent "$APP" "$WORK/submit.zip"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$WORK/submit.zip"
 if ! xcrun notarytool submit "$WORK/submit.zip" --keychain-profile "$PROFILE" --wait --output-format json > "$WORK/result.json"; then
   cat "$WORK/result.json" >&2 || true; exit 1
 fi
@@ -32,6 +32,6 @@ xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
 spctl --assess --type execute -vv "$APP"
 OUT="$(dirname "$APP")/Sovereign-$VERSION-build$BUILD.zip"
-ditto -c -k --keepParent "$APP" "$OUT"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT"
 echo "    notarized, stapled and accepted by Gatekeeper"
 echo "    $OUT"
