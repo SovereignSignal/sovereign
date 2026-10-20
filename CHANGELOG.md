@@ -2,7 +2,8 @@
 
 ## 0.7.1 (build 50) — release candidate
 
-Status: release candidate under clean-machine validation. Supersedes build 49.
+Status: closed beta, published as a signed, notarized download. Validated end
+to end on clean installs of macOS 13.6 and the current macOS. Supersedes build 49.
 
 - New archives now default to the home folder instead of Documents. On a
   clean Mac, macOS privacy rules deny Sovereign's background connector jobs

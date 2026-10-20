@@ -18,7 +18,7 @@ impact you observed.
 
 ## Supported versions
 
-The current `0.7.0` source-preview line and `main` receive security fixes.
+The current `0.7.1` beta line and `main` receive security fixes.
 Older preview builds should be upgraded before a report is investigated,
 unless the report shows that upgrading is unsafe or impossible.
 
