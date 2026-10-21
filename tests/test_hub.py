@@ -143,7 +143,7 @@ class HubTests(unittest.TestCase):
 
     def test_08a_linked_write_roots_and_model_redirects_are_refused(self):
         archive=self.base/'LinkedArchive';brain_local.create(archive,ROOT)
-        (archive/'raw/workspaces').rmdir();(archive/'raw/workspaces').symlink_to(self.base)
+        (archive/'raw/workspaces/.gitkeep').unlink();(archive/'raw/workspaces').rmdir();(archive/'raw/workspaces').symlink_to(self.base)
         with self.assertRaises((ValueError,IntakeError)):
             core.install_plan(archive,self.base/'UnsafeHub','fixture-local')
         self.server.redirect_followed=False
