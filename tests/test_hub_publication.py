@@ -87,7 +87,7 @@ class Publication(unittest.TestCase):
             result = kit.build(inst, state, self.base, self.repo)
             self.assertEqual(result['publications']['publication']['state'], 'planned')
             self.assertFalse((self.base / 'snapshots').exists()); self.assertEqual(self.refs(), '')
-            def seal(entries, key, out):
+            def seal(entries, key, out, executables=()):
                 Path(out).write_bytes(b'fixture sealed kit')
             with patch.object(kit, '_seal', side_effect=seal), patch.object(kit, '_publish', return_value={'state': 'failed', 'detail': 'fixture rejection'}):
                 with self.assertRaisesRegex(ValueError, 'publication'):

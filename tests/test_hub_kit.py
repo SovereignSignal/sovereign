@@ -74,6 +74,64 @@ class Kit(unittest.TestCase):
         self.assertEqual((out / "include/secret.env").read_text(), "TOKEN=abc\n")
         self.assertEqual((out / "state/hub.json").read_bytes(), (self.state / "hub.json").read_bytes())
 
+    def _with_include(self, *paths):
+        inst = json.loads(json.dumps(self.inst)); inst["kit"]["include"] = [str(p) for p in paths]
+        return inst
+
+    def test_a_listed_extra_file_round_trips_and_a_helper_stays_executable(self):
+        """A hand-kept job can call a small compiled helper, for example one that mounts a
+        network share. A wrapper that checks the helper with -x falls back to whatever it
+        replaced when the bit is gone, so a restore that dropped it would undo the fix."""
+        helper = self.home / "bin" / "helper"; helper.parent.mkdir()
+        helper.write_bytes(b"\xcf\xfa\xed\xfe\x00\x01binary"); helper.chmod(0o755)
+        source = self.home / "bin" / "helper.c"; source.write_text("// helper source\n"); source.chmod(0o644)
+        inst = self._with_include(self.home / "secret.env", helper, source)
+        names = [n for n, _ in kit.inventory(inst, self.state, self.home)]
+        self.assertIn("include/helper", names); self.assertIn("include/helper.c", names)
+        kit.build(inst, self.state, self.home, ROOT, apply=True)
+        capsule = sorted((Path(inst["snapshot"]["folder"]) / "hub-kit").glob("*.kit"))[-1]
+        out = Path(self.tmp.name) / "restored"
+        kit.restore(capsule, out, self.key)
+        self.assertEqual((out / "include/helper").read_bytes(), helper.read_bytes())
+        self.assertEqual((out / "include/helper.c").read_bytes(), source.read_bytes())
+        self.assertEqual((out / "include/helper").stat().st_mode & 0o777, 0o700)
+        self.assertEqual((out / "include/helper.c").stat().st_mode & 0o777, 0o600)
+        self.assertEqual((out / "include/secret.env").stat().st_mode & 0o777, 0o600)
+
+    def test_a_missing_listed_file_fails_the_build_and_writes_no_kit(self):
+        folder = Path(self.inst["snapshot"]["folder"]) / "hub-kit"
+        kit.build(self.inst, self.state, self.home, ROOT, apply=True)
+        (good,) = folder.glob("*.kit"); before = good.read_bytes()
+        on_target = sorted(p.name for p in self.target.glob("*.kit"))
+        inst = self._with_include(self.home / "secret.env", self.home / "bin" / "gone")
+        with self.assertRaisesRegex(ValueError, "not there"):
+            kit.inventory(inst, self.state, self.home)
+        for apply in (False, True):
+            with self.assertRaisesRegex(ValueError, "gone"):
+                kit.build(inst, self.state, self.home, ROOT, apply=apply)
+        self.assertEqual(list(folder.glob("*.kit")), [good], "no new kit without every listed file")
+        self.assertEqual(good.read_bytes(), before, "the last good kit is untouched")
+        self.assertEqual(sorted(p.name for p in self.target.glob("*.kit")), on_target)
+
+    def test_two_listed_files_with_one_name_fail_instead_of_shadowing(self):
+        other = self.home / "elsewhere"; other.mkdir(); (other / "secret.env").write_text("OTHER=1\n")
+        inst = self._with_include(self.home / "secret.env", other / "secret.env")
+        with self.assertRaisesRegex(ValueError, "own name"):
+            kit.inventory(inst, self.state, self.home)
+        upper = self.home / "a" / "Helper"; upper.parent.mkdir(); upper.write_text("A\n")
+        lower = self.home / "b" / "helper"; lower.parent.mkdir(); lower.write_text("B\n")
+        folded = self._with_include(upper, lower)
+        with self.assertRaisesRegex(ValueError, "own name"):
+            kit.inventory(folded, self.state, self.home)
+        with self.assertRaisesRegex(ValueError, "own name"):
+            kit.build(folded, self.state, self.home, ROOT, apply=True)
+        self.assertFalse(any((Path(folded["snapshot"]["folder"]) / "hub-kit").glob("*.kit")))
+        same = self._with_include(self.home / "secret.env", self.home / "secret.env")
+        same["notify"] = {"archive": str(self.home / "tg.env"), "alerts": str(self.home / "tg.env")}
+        names = [n for n, _ in kit.inventory(same, self.state, self.home)]
+        self.assertEqual(names.count("include/secret.env"), 1, "one file named twice is carried once")
+        self.assertEqual(names.count("notify/tg.env"), 1)
+
     def test_a_wrong_key_restores_nothing(self):
         kit.build(self.inst, self.state, self.home, ROOT, apply=True)
         capsule = sorted((Path(self.inst["snapshot"]["folder"]) / "hub-kit").glob("*.kit"))[-1]
