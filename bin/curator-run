@@ -607,6 +607,21 @@ SCREEN_SYS = (
 )
 
 
+# Session captures (raw/tools/<lane>/sessions/*.md, distilled from AI sessions) are
+# a new input class. The owner's law enters a new input class at ask-first and lets it
+# earn its own record, so these sources are always screened whatever CURATOR_SCREEN
+# says, and no gear (auto-promote or auto-reject) ever moves what they produce. Their
+# judgments.jsonl rows carry input_class "session": that is the record. Identified by
+# path, never by frontmatter, because frontmatter is written by the producer.
+_SESSION_SOURCE = re.compile(r"raw/tools/[^/]+/sessions/[^/]+\.md")
+SESSION_HOLD = "session capture: new input class, ask-first until it earns its own record"
+
+
+def _session_source(rel):
+    """True when a vault-relative path is a session capture."""
+    return bool(_SESSION_SOURCE.fullmatch(rel or ""))
+
+
 def _screen_source(text, enabled, call):
     """Wiring: run the injection screen over one source. Never raises.
 
@@ -661,6 +676,9 @@ def _auto_reject(props, classes, cap, reject_script):
     out = {"applied": [], "failures": []}
     for pr in props:
         if pr.get("needs_owner_review"):
+            continue
+        if pr.get("input_class") == "session":
+            pr["hold_note"] = SESSION_HOLD  # surfaces in the INBOX bullet
             continue
         cls, slug = pr.get("auto_reject_class"), pr.get("slug")
         ok, _why_not = _decide_auto_reject(pr.get("type"), cls, classes,
@@ -1118,6 +1136,15 @@ def _self_test():
         ok = got == want if isinstance(want, tuple) else got is want
         failed += 0 if ok else 1
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got!r})"))
+    print(" session captures (always screened, never on a gear):")
+    session_cases = [
+        ("session capture is a session source",  True,  _session_source("raw/tools/claude-code-h/sessions/x.md")),
+        ("lane memory is not a session source",  False, _session_source("raw/tools/claude-code-h/memory/x.md")),
+    ]
+    for name, want, got in session_cases:
+        ok = got is want
+        failed += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got!r})"))
     print(" auto-reject wiring (fail-open; stderr FAILED lines below are the expected loudness):")
     _prop = [{"slug": "stub-prop", "type": "entity", "reason": "stub",
               "auto_reject_class": "news-no-engagement"}]
@@ -1241,7 +1268,7 @@ def _self_test():
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"  (got {got!r})"))
     # NOTE 2026-08-20: the taste tables were run but left OUT of this sum, so the
     # printed score under-reported by the size of the taste table. Counted now.
-    total = (len(wiring_cases) + len(screen_cases) + len(cases) + len(new_cases) + len(reject_cases)
+    total = (len(wiring_cases) + len(session_cases) + len(screen_cases) + len(cases) + len(new_cases) + len(reject_cases)
              + len(veto_cases) + len(fn_cases) + len(link_cases)
              + len(taste_redact_cases) + len(taste_veto_cases) + len(guard_cases))
     print(f"curator-run --self-test: {total - failed}/{total} passed")
@@ -1760,6 +1787,9 @@ def _auto_promote(props, meta):
     for pr in props:
         if pr.get("needs_owner_review"):
             continue
+        if pr.get("input_class") == "session":
+            pr["hold_note"] = SESSION_HOLD  # surfaces in the INBOX bullet
+            continue
         typ, slug, target = pr.get("type"), pr.get("slug"), pr.get("update_of")
         if not target:
             # NEW-card path (concepts and syntheses; entity is hard-excluded in
@@ -2108,6 +2138,9 @@ for _i, p in enumerate(cands):
         "mtime": os.path.getmtime(p),
         "excerpt": _excerpt(p),
     }
+    _is_session = _session_source(src)
+    if _is_session:
+        base_judgment["input_class"] = "session"
     try:
         v = _judge_ahead(_i)
     except Exception as exc:
@@ -2131,10 +2164,11 @@ for _i, p in enumerate(cands):
     # Injection screen — only on sources that produced a promote verdict, because
     # the veto only bites on the gears and only promoted sources reach them. A flag
     # is loud, recorded in judgments.jsonl, and costs the item its gears, nothing more.
-    if SCREEN:
+    # Session captures are screened whatever CURATOR_SCREEN says (see _session_source).
+    if SCREEN or _is_session:
         _progress.update('screening', current=_i + 1, total=len(cands))
     screen_flagged, screen_why = _screen_source(
-        _judge_text(p), SCREEN, _screen_call)
+        _judge_text(p), SCREEN or _is_session, _screen_call)
     if screen_flagged:
         print(f"curator-run: injection screen FLAGGED {src} ({screen_why}) — "
               f"{slug} queues for the owner, gears withheld", file=sys.stderr)
@@ -2276,6 +2310,8 @@ for _i, p in enumerate(cands):
                       "taste_flagged": taste_flagged, "taste_reason": taste_why,
                       "redactions": redactions,
                       "source_refs": [{"source": src, "hash": base_judgment["hash"]}]}
+    if _is_session or (prior and prior.get("input_class") == "session"):
+        proposal["input_class"] = "session"
     if prior:
         proposal["source_refs"] = prior["source_refs"] + proposal["source_refs"]
         proposal["needs_owner_review"] = True
@@ -2427,6 +2463,8 @@ if not a.dry:
                             "redactions": pr.get("redactions") or {},
                             "source_refs": pr.get("source_refs") or [],
                             "needs_owner_review": bool(pr.get("needs_owner_review"))}
+        if pr.get("input_class"):
+            meta[pr["slug"]]["input_class"] = pr["input_class"]
     # act-and-report: policy auto-reject of judge-flagged classes. Runs BEFORE
     # auto-promote — an owner always-reject ruling outranks a gear grant, and a
     # rejected file must never be considered for promotion in the same run.
@@ -2586,7 +2624,7 @@ if not a.dry:
           + (f", {len(auto['failures'])} auto-promote FAILURE(s) left pending" if auto["failures"] else ""))
     print(f"curator-run: auto-rejected {len(autorej['applied'])} proposal(s) via lane auto-reject.md (act-and-report)"
           + (f", {len(autorej['failures'])} auto-reject FAILURE(s) left queued" if autorej["failures"] else ""))
-    print(f"curator-run: injection screen {'on' if SCREEN else 'off'}"
+    print(f"curator-run: injection screen {'on' if SCREEN else 'off (session captures always screened)'}"
           + (f" — {len(screened)} source(s) FLAGGED, gears withheld, queued for the owner" if screened else ""))
     print(f"curator-run: taste veto on (deterministic)"
           + (f" — {len(tasted)} drafted body(ies) FLAGGED, gears withheld, queued for the owner"
