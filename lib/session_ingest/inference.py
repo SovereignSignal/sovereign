@@ -2,16 +2,18 @@
 
 The answer follows the archive, never the environment. A Mac that runs the hub uses the
 hub's local model (the template hub's STATE/hub.json, or the packaged local Hub that
-~/.sovereign-hub points at, which is always local-only). A client sends its work to a
-hub whose model it cannot reach, so session capture stays off there. A hubless archive
-uses the provider its owner chose, exactly as sov-curator does. CURATOR_ENDPOINT,
-CURATOR_MODEL and CURATOR_ALLOW_REMOTE are never read; CURATOR_LOCAL_ONLY=1 is, because
-it can only refuse more.
+~/.sovereign-hub points at); both are loopback by law, so both are local-only, which
+also keeps the request off any proxy. A client sends its work to a hub whose model it
+cannot reach, so session capture stays off there. A hubless archive uses the provider
+its owner chose, exactly as sov-curator does, and needs that provider's key saved in
+the Keychain. CURATOR_ENDPOINT, CURATOR_MODEL, CURATOR_ALLOW_REMOTE, CURATOR_KEY and
+CURATOR_KEYFILE are never read; CURATOR_LOCAL_ONLY=1 is, because it can only refuse more.
 
-Each answer comes from the loader that owns it. sovereign_hub.core.config_path and
-brain_discovery read the process HOME and SOV_STATE_DIR, so `home` and `state_dir`
-must be the process's own; the tick passes exactly those. A loader that refuses its
-file fails closed: the mode it was resolving, no config, and the loader's reason.
+Where to look is read once, from the process: Path.home() and state.state_dir(), the
+same HOME and SOV_STATE_DIR that sovereign_hub.core.config_path and brain_discovery
+read, so no argument can point one check somewhere the others do not look. Each answer
+comes from the loader that owns it, and a loader that refuses its file fails closed:
+the mode it was resolving, no config, and the loader's reason.
 """
 from pathlib import Path
 
@@ -19,9 +21,14 @@ import brain_discovery
 import curator_inference
 from sovereign_hub import core, instance
 
+from . import state
+
 CLIENT_REASON = ("This Mac sends its work to a hub archive. Session capture needs the archive's own "
                  "model, which runs on the hub, so it stays off here.")
 GUARD_REASON = "needs a local model on this archive"
+NO_HOST_REASON = ("Session capture cannot use %s until it has a fixed API host. Pick another provider "
+                  "in Settings \u203a Curator, or leave capture off.")
+NO_KEY_REASON = "No key is saved for %s. Add one in Settings \u203a Curator."
 
 
 def _cfg(env, base):
@@ -43,16 +50,19 @@ def _failed(mode, exc):
     return _answer(mode, reason=str(exc)[:300] or type(exc).__name__)
 
 
-def resolve(state_dir, env, home):
+def resolve(env):
     """{"mode": "hub"|"client"|"hubless", "cfg", "reason", "distiller"}. cfg is a
-    curator_inference config or None; distiller is "<provider or local>/<model>"."""
+    curator_inference config or None; distiller is "<provider or local>/<model>".
+    `env` is read for CURATOR_LOCAL_ONLY alone."""
+    home, state_dir = Path.home(), state.state_dir()
     if instance.path(state_dir).exists():
         try:
             inst = instance.load(state_dir)
         except Exception as exc:
             return _failed("hub", exc)
-        return _answer("hub", _cfg(env, {"CURATOR_ENDPOINT": inst["endpoint"], "CURATOR_MODEL": inst["model"]}))
-    if (Path(home) / ".sovereign-hub").exists():
+        return _answer("hub", _cfg(env, {"CURATOR_ENDPOINT": inst["endpoint"], "CURATOR_MODEL": inst["model"],
+                                         "CURATOR_LOCAL_ONLY": "1"}))
+    if (home / ".sovereign-hub").exists():
         try:
             config = core.load(core.config_path())
         except Exception as exc:
@@ -67,8 +77,10 @@ def resolve(state_dir, env, home):
     if client:
         return _answer("client", reason=CLIENT_REASON)
     provider = curator_inference.chosen_provider(str(state_dir))
-    return _answer("hubless", _cfg(env, {"CURATOR_PROVIDER": provider,
-                                         "CURATOR_BACKEND": curator_inference.PROVIDERS[provider]["backend"]}))
+    spec = curator_inference.PROVIDERS[provider]
+    if not spec["endpoint"]:
+        return _answer("hubless", reason=NO_HOST_REASON % spec["name"])
+    return _answer("hubless", _cfg(env, {"CURATOR_PROVIDER": provider, "CURATOR_BACKEND": spec["backend"]}))
 
 
 def ready(res):
@@ -78,6 +90,8 @@ def ready(res):
         return False, res.get("reason") or "no model for session capture"
     if curator_inference.violations(cfg):
         return False, GUARD_REASON
+    if cfg.get("provider") and not key(res):
+        return False, NO_KEY_REASON % curator_inference.PROVIDERS[cfg["provider"]]["name"]
     return True, ""
 
 

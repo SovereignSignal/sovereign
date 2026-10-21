@@ -52,7 +52,8 @@ class Base(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         for name in ("BRAIN_HUB", "SOVEREIGN_HUB", "CURATOR_LOCAL_ONLY", "CURATOR_ENDPOINT", "CURATOR_MODEL",
-                     "CURATOR_ALLOW_REMOTE", "CURATOR_KEY", "CURATOR_KEYFILE"):
+                     "CURATOR_ALLOW_REMOTE", "CURATOR_KEY", "CURATOR_KEYFILE", "http_proxy", "https_proxy",
+                     "HTTP_PROXY", "HTTPS_PROXY", "no_proxy", "NO_PROXY", "all_proxy", "ALL_PROXY"):
             os.environ.pop(name, None)  # patch.dict restores them
 
     def hub_json(self, endpoint, model="qwen-test:8b"):
@@ -60,7 +61,14 @@ class Base(unittest.TestCase):
             {"vault": str(self.vault), "lane": "curator", "model": model, "endpoint": endpoint}))
 
     def resolve(self, env=None):
-        return inference.resolve(self.state, dict(os.environ) if env is None else env, self.home)
+        return inference.resolve(dict(os.environ) if env is None else env)
+
+    def proxy_to(self, stub):
+        """Send any proxied request to `stub`, so a request that honours the proxy shows up there."""
+        patcher = mock.patch.dict(os.environ, {"http_proxy": stub.base, "https_proxy": stub.base,
+                                               "HTTP_PROXY": stub.base, "HTTPS_PROXY": stub.base})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
 
 class Validate(unittest.TestCase):
@@ -86,6 +94,11 @@ class Validate(unittest.TestCase):
         self.assertIsNone(distill.validate('{"captures": [', ids))
         four = [cand(title="Card %d" % i) for i in range(4)]
         self.assertEqual(distill.validate(reply(*four), ids), four[:3])
+        # evidence must be exactly T<n>; a padded number is normalised, then deduplicated
+        self.assertEqual(distill.validate(reply(cand(evidence=["T2\n"]), cand(title="Second")), ids),
+                         [cand(title="Second")])
+        self.assertEqual(distill.validate(reply(cand(evidence=["T02", "T2", "T4"])), ids),
+                         [cand(evidence=["T2", "T4"])])
         # the first {...} block, even with prose around it
         self.assertEqual(distill.validate("Here it is: " + reply(cand()) + " done.", ids), [cand()])
         self.assertEqual(distill.validate('{"captures": []}', ids), [])
@@ -130,6 +143,17 @@ class Distill(Base):
             self.assertTrue(system["content"].startswith('The normal answer is {"captures": []}'))
             self.assertEqual(system["content"], prompt.SYSTEM)
             self.assertNotIn("/private/secret", json.dumps(body))
+
+    def test_hub_json_never_goes_through_a_proxy(self):
+        with fx.ModelStub() as proxy, fx.ModelStub(lambda body: reply(cand())) as model:
+            self.proxy_to(proxy)
+            self.hub_json(model.url)
+            res = self.resolve()
+            self.assertTrue(res["cfg"]["local_only"])
+            out = distill.distill(res, "", SESSION, EXCERPT, [1, 2])
+            self.assertEqual(out["status"], "ok")
+            self.assertEqual(model.calls, 1)
+            self.assertEqual(proxy.calls, 0)
 
     def test_unparseable_reply_is_failed(self):
         with fx.ModelStub(lambda body: "I could not find anything.") as stub:
@@ -180,8 +204,7 @@ class Resolve(Base):
         self.assertEqual(res["cfg"]["endpoint"], stub.url)
         self.assertEqual(res["cfg"]["model"], "qwen-test:8b")
         self.assertFalse(res["cfg"]["allow_remote"])
-        self.assertFalse(res["cfg"]["local_only"])
-        self.assertTrue(self.resolve(dict(os.environ, CURATOR_LOCAL_ONLY="1"))["cfg"]["local_only"])
+        self.assertTrue(res["cfg"]["local_only"])  # loopback by law, so never through a proxy
 
     def test_local_hub_pointer(self):
         dest = Path(self.tmp.name).resolve() / "hubpkg"  # the loader refuses a linked /var
@@ -220,7 +243,23 @@ class Resolve(Base):
         self.assertEqual(res["mode"], "hubless")
         self.assertEqual(res["cfg"]["provider"], "openai")
         self.assertEqual(res["distiller"], "openai/" + res["cfg"]["model"])
-        self.assertEqual(inference.ready(res), (True, ""))
+        with mock.patch("curator_inference.load_key", return_value="sk-" + "x" * 40):
+            self.assertEqual(inference.ready(res), (True, ""))
+        with mock.patch("curator_inference.load_key", return_value="") as load:
+            self.assertEqual(inference.ready(res),
+                             (False, "No key is saved for OpenAI. Add one in Settings \u203a Curator."))
+        # the key comes from the Keychain item alone, never CURATOR_KEY or a keyfile
+        self.assertEqual(load.call_args[0][1], {})
+
+    def test_muse_has_no_fixed_host(self):
+        (self.state / "curator-provider.json").write_text(json.dumps({"provider": "muse"}))
+        res = self.resolve()
+        self.assertEqual(res["mode"], "hubless")
+        self.assertIsNone(res["cfg"])
+        reason = ("Session capture cannot use Muse until it has a fixed API host. Pick another provider "
+                  "in Settings \u203a Curator, or leave capture off.")
+        self.assertEqual(res["reason"], reason)
+        self.assertEqual(inference.ready(res), (False, reason))
 
     def test_local_only_hosted_refused(self):
         res = self.resolve(dict(os.environ, CURATOR_LOCAL_ONLY="1"))
@@ -229,10 +268,16 @@ class Resolve(Base):
         self.assertTrue(res["cfg"]["local_only"])
         self.assertEqual(inference.ready(res), (False, "needs a local model on this archive"))
         with fx.ModelStub() as stub:
-            out = distill.distill(res, "sk-test", SESSION, EXCERPT, [1, 2])
+            # Any request that leaves must land on the stub: proxied ones through the
+            # proxy settings, local-only ones (which skip proxies) through _post_json.
+            self.proxy_to(stub)
+            sent = []
+            with mock.patch("curator_inference._post_json", side_effect=lambda *a, **k: sent.append(a) or {}):
+                out = distill.distill(res, "sk-test", SESSION, EXCERPT, [1, 2])
             self.assertEqual(stub.calls, 0)
-        self.assertEqual(out["status"], "unreachable")
-        self.assertIn("sovereign-inference law", out["error"])
+            self.assertEqual(sent, [])
+        self.assertEqual(out["status"], "refused")
+        self.assertTrue(out["error"].startswith("REFUSING - sovereign-inference law: "))
 
     def test_bad_hub_json_fails_closed(self):
         (self.state / "hub.json").write_text(json.dumps({"vault": str(self.vault), "lane": "curator",
