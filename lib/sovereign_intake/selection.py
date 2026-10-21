@@ -1,6 +1,6 @@
 """Deterministic method selectors extracted from the existing lane exporter."""
 import re
-from brain_redact import redact_text
+from brain_redact import SHAPES, redact_text
 
 FORBIDDEN = re.compile(
     r"(CREDS|\.env|/secrets?/|ACCESS\.md|token|credential|"          # credentials
@@ -14,24 +14,50 @@ FORBIDDEN = re.compile(
     r"\.sh$|\.py$|\.pem$|crontab|\.venv|node_modules)", re.I)
 
 
+# Detector-side shapes, (pattern, name, check). The detector is the fail-closed gate, so it
+# is strict: it runs these plus every brain_redact.SHAPES pattern (with the shape's own check,
+# never the redactor's glued leniency), and a token-shaped string the redactor let through
+# still trips it. The boundary rule is brain_redact's: a vendor token matches wherever it
+# starts, and \b stays only on the short prefixes that end ordinary words (bare sk-, pat, re_).
+# On connection URLs it is deliberately stricter than the redactor: every scheme the redactor
+# knows, any password length, and no port-and-query exemption, so it may fire where the
+# redactor does not (a dropped line is the accepted cost), never the reverse.
+
+
+def _jwt_pair(value):
+    """A run of the JWT alphabet with an eyJ header of 18+ (from any eyJ in a segment to its
+    dot) followed by a segment of 15+. Earlier fragments in the run are skipped."""
+    segs = value.split(".")
+    for i in range(len(segs) - 1):
+        j = segs[i].find("eyJ")
+        if j >= 0 and len(segs[i]) - j >= 18 and len(segs[i + 1]) >= 15:
+            return True
+    return False
+
+
 SECRET_PATTERNS = [
-    (r"-----BEGIN [A-Z ]*(PRIVATE|PUBLIC) KEY-----",     "key block"),
-    (r"\bssh-(ed25519|rsa|dss)\s+AAAA",                  "ssh public key"),
-    (r"\bghp_[A-Za-z0-9]{20,}",                          "github token"),
-    (r"\bgithub_pat_[A-Za-z0-9_]{20,}",                  "github fine-grained pat"),
-    (r"\bsk-[A-Za-z0-9_\-]{20,}",                        "openai-style key"),
-    (r"\bpat[A-Za-z0-9]{10,}\.[A-Za-z0-9]{40,}",         "airtable pat"),
-    (r"\bre_[A-Za-z0-9_\-]{20,}",                        "resend key"),
-    (r"\bntn_[A-Za-z0-9]{20,}",                          "notion token"),
-    (r"\bxox[baprs]-[A-Za-z0-9\-]{10,}",                 "slack token"),
-    (r"\bAKIA[0-9A-Z]{16}\b",                            "aws access key id"),
-    (r"\b\d{8,10}:AA[A-Za-z0-9_\-]{30,}",                "telegram bot token"),
-    (r"\beyJ[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{15,}",   "jwt"),
-    (r"\bAIza[0-9A-Za-z_\-]{30,}",                       "google api key"),
-    (r"(?i)\b(api[_-]?key|secret|password|passwd|access[_-]?token|bearer|pat)\b"
-     r"\s*[:=]\s*[\"']?[A-Za-z0-9_\-\.]{16,}",           "assigned credential value"),
-    (r"(?i)postgres(?:ql)?://[^\s:@]+:[^\s@]+@",         "database url with password"),
+    (r"-----BEGIN [A-Z ]*(PRIVATE|PUBLIC) KEY-----",     "key block", None),
+    (r"ssh-(ed25519|rsa|dss)\s+AAAA",                    "ssh public key", None),
+    (r"ghp_[A-Za-z0-9]{20,}",                            "github token", None),
+    (r"github_pat_[A-Za-z0-9_]{20,}",                    "github fine-grained pat", None),
+    (r"(?:sk-(?=proj-|ant-|svcacct-)|\bsk-)[A-Za-z0-9_\-]{20,}", "openai-style key", None),
+    (r"\bpat[A-Za-z0-9]{10,}\.[A-Za-z0-9]{40,}",         "airtable pat", None),
+    (r"\bre_[A-Za-z0-9_\-]{20,}",                        "resend key", None),
+    (r"ntn_[A-Za-z0-9]{20,}",                            "notion token", None),
+    (r"xox[baprs]-[A-Za-z0-9\-]{10,}",                   "slack token", None),
+    (r"A(?:KIA|SIA)[0-9A-Z]{16}(?![0-9A-Z])",            "aws access key id", None),
+    (r"\d{8,10}:AA[A-Za-z0-9_\-]{30,}",                  "telegram bot token", None),
+    (r"eyJ[A-Za-z0-9_.\-]*[A-Za-z0-9_\-]",               "jwt", _jwt_pair),
+    (r"AIza[0-9A-Za-z_\-]{30,}",                         "google api key", None),
+    (r"(?i)(?<![a-z0-9])(api[_-]?key|secret|password|passwd|access[_-]?token|bearer|pat)\b"
+     r"\s*[:=]\s*[\"']?[A-Za-z0-9_\-\.]{16,}",           "assigned credential value", None),
+    (r"(?i)(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)(?:\+[a-z0-9]+)?"
+     r"://[^\s:@/]+:(?:[^\s@]{1,512}|[^\s@/]+)@",
+     "database url with password", None),
 ]
+# The detector's full list: its own shapes, then every redactor shape, strict.
+DETECTOR = ([(re.compile(pat), name, check) for pat, name, check in SECRET_PATTERNS]
+            + [(rx, kind, check) for kind, rx, check, _glued in SHAPES])
 
 
 ADDRESS = re.compile(
@@ -54,8 +80,30 @@ FORENSIC = re.compile(
     r"|\b\d{9,}\b)")
 
 
+def _found(rx, check, text):
+    return any(check is None or check(m.group(0)) for m in rx.finditer(text))
+
+
+def detector_hits(text):
+    """The kinds the strict DETECTOR list finds, without redact_text's lenient judgement."""
+    return sorted({name for rx, name, check in DETECTOR if _found(rx, check, text)})
+
+
+def scrub_detected(text):
+    """Replace every DETECTOR hit with [redacted <name>]. Returns (text, names)."""
+    hits = []
+    for rx, name, check in DETECTOR:
+        def sub(m, name=name, check=check):
+            if check is not None and not check(m.group(0)):
+                return m.group(0)
+            hits.append(name)
+            return "[redacted " + name + "]"
+        text = rx.sub(sub, text)
+    return text, hits
+
+
 def secret_hits(text):
-    return sorted(set([name for pat, name in SECRET_PATTERNS if re.search(pat, text)] + redact_text(text)[1]))
+    return sorted(set(detector_hits(text) + redact_text(text)[1]))
 
 
 def filter_lines(lines):

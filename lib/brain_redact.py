@@ -14,12 +14,34 @@ contract addresses, hashes and ordinary words pass through untouched. A miss is
 possible (a short plain-word password has no shape); a wrong hit costs one value in a
 backup, so the rules lean towards catching.
 
+A token is recognised by its own shape, never by what precedes it. A key pasted onto a
+word, a path, a URL or a bot endpoint (`bot<id>:<secret>`) has no word boundary in front,
+so a fixed vendor prefix with a fixed-alphabet body matches wherever it starts; the body's
+alphabet stops the match at the first separator. A leading boundary stays only where the
+prefix is short enough to end ordinary words and the body is ordinary text: bare `sk-`
+(task-, risk-, desk-), Stripe's `sk_`/`rk_` (snake_case test names), SendGrid's `SG.`
+(MSG.member chains) and Firecrawl's `fc-` plus hex (hex-joined ids).
+
+The redactor rewrites prose, so it is lenient where a glued match is likely an identifier:
+a match glued onto a word character must also look like a key (a 20-character run, mixed
+classes, a digit), so `laughs_LoudlyAtTheEnd...` stays, and an AWS id must not sit inside a
+longer uppercase run. The detector (sovereign_intake.selection) runs the same SHAPES with
+none of that leniency, so a token-shaped string the redactor let through still fails
+closed there. Every scan is linear: a JWT is found as one run of its alphabet and its
+segments are checked in code, and every other body a later part must follow is bounded.
+Credential labels count after an underscore, so `DB_PASSWORD=` and `OPENAI_API_KEY=` are
+labels. A connection-URL password is recognised only between `scheme://user:` and the `@`
+that ends the authority. The redactor skips one shape there: a port (1 to 5 digits), a
+slash, then a `?` or `#` before that `@` (`host:5432/app?notify=ops@example.com`), which is
+a path with a query or fragment, not a password. Any other run is redacted. The detector
+has no such exemption and flags that URL too.
+
 Each hit becomes `[redacted <kind>]`. Idempotent: redacted text has no shapes left.
 """
 import os
 import re
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 REDACTED = "[redacted %s]"
 
@@ -34,44 +56,120 @@ def _keylike(value: str) -> bool:
     classes = sum(1 for test in (str.islower, str.isupper, str.isdigit) if any(test(c) for c in value))
     return classes >= 2
 
-# (kind, pattern, check). Fixed-alphabet runs, never "prefix plus anything", so ordinary
-# prose and identifiers do not trip them; a check, when given, judges the match itself.
-SHAPES: List[Tuple[str, "re.Pattern[str]", Optional[Callable[[str], bool]]]] = [
-    ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), None),
-    ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[^\n]*(?:\n[A-Za-z0-9+/=]+)+"), None),
-    ("api key", re.compile(r"\bsk-(?:proj-|ant-(?:api\d\d-)?|svcacct-|or-)?[A-Za-z0-9_-]{24,}"), _keylike),
-    ("github token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"), None),
-    ("github token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}"), None),
-    ("gitlab token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"), None),
-    ("aws key", re.compile(r"\bA(?:KIA|SIA)[0-9A-Z]{16}\b"), None),
-    ("slack token", re.compile(r"\bxox[baprse]-[0-9A-Za-z]{8,}-[0-9A-Za-z-]{8,}"), None),
-    ("google key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}"), None),
-    ("oauth secret", re.compile(r"\bGOCSPX-[A-Za-z0-9_-]{20,}"), None),
-    ("notion token", re.compile(r"\b(?:ntn|secret)_[A-Za-z0-9]{40,}"), None),
-    ("stripe key", re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{20,}"), None),
-    ("sendgrid key", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"), None),
-    ("xai key", re.compile(r"\bxai-[A-Za-z0-9]{40,}"), None),
-    ("perplexity key", re.compile(r"\bpplx-[A-Za-z0-9]{40,}"), None),
-    ("huggingface token", re.compile(r"\bhf_[A-Za-z0-9]{34,}"), None),
-    ("firecrawl key", re.compile(r"\bfc-[a-f0-9]{32}\b"), None),
-    ("telegram bot token", re.compile(r"\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b"), None),
-    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), None),
+
+def _glued_keylike(value: str) -> bool:
+    """A token glued onto a word has no boundary to vouch for it, so it must look random:
+    a camelCase or snake_case identifier ending in a vendor prefix has no digit."""
+    return _keylike(value) and any(c.isdigit() for c in value)
+
+
+def _jwt_offset(value: str) -> int:
+    """Where a JWT starts inside a run of its alphabet, or -1. A token is an eyJ header of 13+
+    characters (from its eyJ to the dot), an eyJ payload of 13+ and a signature of 10+; earlier
+    fragments in the same run (`eyJfoo.` glued in front) are skipped, not fatal. One pass:
+    within a segment the first eyJ gives the longest header, so later ones cannot do better."""
+    segs = value.split(".")
+    start = 0
+    for i in range(len(segs) - 2):
+        j = segs[i].find("eyJ")
+        if (j >= 0 and len(segs[i]) - j >= 13 and segs[i + 1].startswith("eyJ")
+                and len(segs[i + 1]) >= 13 and len(segs[i + 2]) >= 10):
+            return start + j
+        start += len(segs[i]) + 1
+    return -1
+
+
+def _jwt_run(value: str) -> bool:
+    """A run of the JWT alphabet holds a token somewhere (see _jwt_offset). Checked here so the
+    regex stays one linear run."""
+    return _jwt_offset(value) >= 0
+
+
+# A shape whose match may carry text in front of the credential: where the credential starts.
+_TOKEN_START: Dict[str, Callable[[str], int]] = {"jwt": _jwt_offset}
+
+
+def _benign_prefix(prefix: str) -> bool:
+    """Text kept in front of a cut token must be short and not token-shaped itself: under 16
+    characters and no dot-separated piece of 10 or more. Anything else goes with the token."""
+    return len(prefix) < 16 and all(len(piece) < 10 for piece in prefix.split("."))
+
+
+# How a match glued onto the text before it is judged (redactor only, see the docstring).
+GLUED_KEYLIKE = "keylike"   # glued onto a word character: must pass _glued_keylike
+GLUED_UPPER_RUN = "upper"   # must not continue a longer uppercase-or-digit run
+
+
+def shape_accepts(m: "re.Match[str]", check: Optional[Callable[[str], bool]], glued: Optional[str]) -> bool:
+    """Whether the redactor treats a shape match as a credential."""
+    value = m.group(0)
+    if check is not None and not check(value):
+        return False
+    if glued and m.start() > 0:
+        before = m.string[m.start() - 1]
+        if glued == GLUED_UPPER_RUN:
+            if "0" <= before <= "9" or "A" <= before <= "Z":
+                return False
+        elif (before.isalnum() or before == "_") and not _glued_keylike(value):
+            return False
+    return True
+
+
+# (kind, pattern, check, glued). Fixed-alphabet runs, never "prefix plus anything", so
+# ordinary prose and identifiers do not trip them; a check, when given, judges the match itself.
+# No leading \b unless the module docstring names the shape: a glued token is still a token,
+# and `glued` names the redactor's leniency for a glued match (shape_accepts). A check is part
+# of the shape and the detector applies it too; `glued` is not.
+# sovereign_intake.selection.SECRET_PATTERNS mirrors these prefixes; change both together.
+SHAPES: List[Tuple[str, "re.Pattern[str]", Optional[Callable[[str], bool]], Optional[str]]] = [
+    ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----"), None, None),
+    ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[^\n]{0,256}(?:\n[A-Za-z0-9+/=]+)+"), None, None),
+    ("api key", re.compile(r"(?:sk-(?:proj-|ant-(?:api\d\d-)?|svcacct-)|\bsk-(?:or-)?)[A-Za-z0-9_-]{24,}"), _keylike, GLUED_KEYLIKE),
+    ("github token", re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}"), None, GLUED_KEYLIKE),
+    ("github token", re.compile(r"github_pat_[A-Za-z0-9_]{40,}"), None, GLUED_KEYLIKE),
+    ("gitlab token", re.compile(r"glpat-[A-Za-z0-9_-]{20,}"), None, GLUED_KEYLIKE),
+    ("aws key", re.compile(r"A(?:KIA|SIA)[0-9A-Z]{16}(?![0-9A-Z])"), None, GLUED_UPPER_RUN),
+    ("slack token", re.compile(r"xox[baprse]-[0-9A-Za-z]{8,}-[0-9A-Za-z-]{8,}"), None, GLUED_KEYLIKE),
+    ("google key", re.compile(r"AIza[0-9A-Za-z_-]{35}"), None, GLUED_KEYLIKE),
+    ("oauth secret", re.compile(r"GOCSPX-[A-Za-z0-9_-]{20,}"), None, GLUED_KEYLIKE),
+    ("notion token", re.compile(r"(?:ntn|secret)_[A-Za-z0-9]{40,}"), None, GLUED_KEYLIKE),
+    ("stripe key", re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{20,}"), None, None),
+    ("sendgrid key", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"), None, None),
+    ("xai key", re.compile(r"xai-[A-Za-z0-9]{40,}"), None, GLUED_KEYLIKE),
+    ("perplexity key", re.compile(r"pplx-[A-Za-z0-9]{40,}"), None, GLUED_KEYLIKE),
+    ("huggingface token", re.compile(r"hf_[A-Za-z0-9]{34,}"), None, GLUED_KEYLIKE),
+    ("firecrawl key", re.compile(r"\bfc-[a-f0-9]{32}\b"), None, None),
+    ("telegram bot token", re.compile(r"[0-9]{8,10}:AA[A-Za-z0-9_-]{33}"), None, GLUED_KEYLIKE),
+    ("jwt", re.compile(r"eyJ[A-Za-z0-9_.-]*[A-Za-z0-9_-]"), _jwt_run, GLUED_KEYLIKE),
 ]
 
-# postgres://user:PASSWORD@host: only the password goes; user and host stay readable.
+# postgres://user:PASSWORD@host (or postgresql+psycopg2://...): only the password goes; user
+# and host stay readable. The password is either a slash-free run of any length (it stops at
+# the next slash, so the scan stays linear) or a run of up to 512 that may hold a slash. The
+# one exemption is a real port and path: digits, a slash, then a ? or # before the @
+# ("db:5432/app?to=ops@example.com", "cache:6379/0#owner@team") is a query or fragment that
+# carries an @, not a password. A non-digit run before the slash is never a port. Every
+# lookahead is bounded, so each start costs O(512). The detector keeps no exemption.
 _URL_PASSWORD = re.compile(
-    r"\b((?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)://[A-Za-z0-9_.%-]+:)([^@\s/]{6,})(@)")
+    r"((?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)(?:\+[a-z0-9]+)?://[A-Za-z0-9_.%-]+:)((?!\d{1,5}/[^@\s]{0,512}[?#])[^@\s]{6,512}|[^@\s/]{6,})(@)")
 
 # "api key: VALUE", "password = VALUE": the value is judged by _looks_secret. "token" alone is
-# not a label: in a workspace about crypto it names public things all day long.
+# not a label: in a workspace about crypto it names public things all day long. A label may
+# follow an underscore (DB_PASSWORD=). The value stops at whitespace or a quote, and at an
+# escaped newline or tab only when what follows ends the value too (a new NAME=, a quote,
+# another backslash, whitespace, the end): "KEY=k\nROOT=%s\n" in quoted source is the value
+# "k", while a password that happens to contain the two characters \n stays whole. A value
+# that runs on past an escape into code ("KEY=Zx9...\nprint(x)") is judged again on the part
+# before the escape.
 _LABELED = re.compile(
-    r"(?i)\b(api[ _-]?key|secret[ _-]?key|client[ _-]?secret|access[ _-]?token|auth[ _-]?token|refresh[ _-]?token|bearer|"
-    r"password|passwd|passphrase|private[ _-]?key|secret)\b\s*[:=]\s*[\"'`]?([^\s\"'`,;|]{12,})")
+    r"(?i)(?<![a-z0-9])(api[ _-]?key|secret[ _-]?key|client[ _-]?secret|access[ _-]?token|auth[ _-]?token|refresh[ _-]?token|bearer|"
+    r"password|passwd|passphrase|private[ _-]?key|secret)\b\s*[:=]\s*[\"'`]?((?:(?!\\[nrt](?:[A-Za-z_][A-Za-z0-9_]*=|[\"'`\\]|\s|$))[^\s\"'`,;|]){12,})")
 
 # a value that is code, not a credential: a call, an index, a member access, a path
 _CODE = re.compile(r"[()\[\]{}]|\.[A-Za-z_]|^[~./]|^(?:this|self|process|os|env|ENV|config|settings|import)\b")
 _PLACEHOLDER = re.compile(r"^(?:<.*>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|x{6,}|X{6,}|\*{6,}|\.{3,}|your[-_].*|changeme|change-me|redacted.*|\[redacted.*)$", re.I)
 _HEX = re.compile(r"^(?:0x)?[0-9a-fA-F]+$")
+_ESCAPE = re.compile(r"\\[nrt]")
 
 
 def _looks_secret(value: str) -> bool:
@@ -89,17 +187,19 @@ def redact_text(text: str) -> Tuple[str, List[str]]:
     """Return (redacted text, kinds hit, one per value). Unchanged text returns ([])."""
     hits: List[str] = []
 
-    def shape_sub(kind):
-        def sub(_m):
+    def shape_sub(kind, check, glued):
+        def sub(m):
+            if not shape_accepts(m, check, glued):
+                return m.group(0)
             hits.append(kind)
-            return REDACTED % kind
+            start = _TOKEN_START[kind](m.group(0)) if kind in _TOKEN_START else 0
+            if start and not _benign_prefix(m.group(0)[:start]):
+                start = 0
+            return m.group(0)[:start] + REDACTED % kind
         return sub
 
-    for kind, pattern, check in SHAPES:
-        if check is None:
-            text = pattern.sub(shape_sub(kind), text)
-        else:
-            text = pattern.sub(lambda m, k=kind: (hits.append(k) or REDACTED % k) if check(m.group(0)) else m.group(0), text)
+    for kind, pattern, check, glued in SHAPES:
+        text = pattern.sub(shape_sub(kind, check, glued), text)
 
     def url_sub(m):
         if _PLACEHOLDER.match(m.group(2)) or m.group(2).lower() in ("password", "passwd", "pass", "secret"):
@@ -110,11 +210,14 @@ def redact_text(text: str) -> Tuple[str, List[str]]:
     text = _URL_PASSWORD.sub(url_sub, text)
 
     def labeled_sub(m):
-        value = m.group(2)
+        value, tail = m.group(2), ""
         if not _looks_secret(value):
-            return m.group(0)
+            esc = _ESCAPE.search(value)
+            if not esc or esc.start() < 12 or not _looks_secret(value[: esc.start()]):
+                return m.group(0)
+            tail = value[esc.start():]
         hits.append(m.group(1).lower().replace("_", " ").replace("-", " "))
-        return m.group(0)[: m.start(2) - m.start(0)] + (REDACTED % "value")
+        return m.group(0)[: m.start(2) - m.start(0)] + (REDACTED % "value") + tail
 
     text = _LABELED.sub(labeled_sub, text)
     return text, hits
