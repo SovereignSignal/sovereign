@@ -26,6 +26,8 @@
 - `sov-capture` on a staged host: a capture for a lane with no `raw/workspaces/<lane>`
   now lands in the staging area's `raw/tools/<lane>`, as the write wires already did,
   instead of the vault's `raw/workspaces/<lane>`.
+- Sovereign in `/Applications` now shows its version and updates itself in place, as one
+  in `~/Applications` always did; an app this user cannot change is refused up front.
 
 ## 0.8.0 "Reach" (build 51)
 

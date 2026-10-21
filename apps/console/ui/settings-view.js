@@ -35,7 +35,7 @@ window.SovSettings = (() => {
   function appSection(D) {
     if (unread(D)) return sect("Version", say(unread(D)));
     const m = (D && D.machine) || {}, a = m.app || {}, src = String(m.template_rev || "").split(" ")[0];
-    if (!a.installed) return sect("Version", `<p class="set-lead">Sovereign is running from a build this device cannot identify.</p>`, "Install once from this device's source and it will be able to check itself from then on.");
+    if (!a.installed) return sect("Version", `<p class="set-lead">Sovereign is running from a build this device cannot identify.</p>`, "It is not in ~/Applications or /Applications. Move Sovereign.app into either one and it can check itself for updates from then on.");
     const name = `Sovereign ${esc(a.version || "?")} build ${esc(a.build || "?")}`;
     const commit = String(a.source_commit || "").replace("+local", "");
     let lead, action = true, why = "";

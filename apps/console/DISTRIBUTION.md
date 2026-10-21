@@ -184,8 +184,14 @@ installed app untouched and deletes the download from
 
 When it passes, Sovereign closes, the current app is copied to
 `~/sovereign-rollback/app-update-<time>/previous.app`, the new one takes its place
-at `~/Applications/Sovereign.app`, and Sovereign reopens. To go back, quit
-Sovereign and copy `previous.app` over the installed app.
+wherever the running app is installed, `~/Applications/Sovereign.app` or
+`/Applications/Sovereign.app`, and Sovereign reopens. To go back, quit Sovereign and
+copy `previous.app` over the installed app.
+
+The installed app is the bundle the updater runs from, so a copy in the other folder
+is never touched. If this user cannot change that folder or the app in it (an
+`/Applications` copy installed by another account, say), the update is refused before
+anything is downloaded, and the message names the path.
 
 **Update from source** appears beside it only when this device's checkout holds a
 newer build than the one installed. It builds that checkout instead of

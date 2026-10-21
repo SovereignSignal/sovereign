@@ -53,6 +53,14 @@ test('a build newer than this source is not called a newer version', () => {
   assert(html.includes(RELEASE) && !html.includes(SOURCE));
 });
 
+test('an app found in neither Applications folder says where it can check itself from', () => {
+  const html = paint({ D: app({ app: { installed: false } }) });
+  assert(html.includes('cannot identify'));
+  // Either folder works; a newcomer is not sent to build from source to get updates.
+  assert(html.includes('~/Applications') && html.includes('/Applications or'), html);
+  assert(!html.includes('Install once'));
+});
+
 test('an unstamped build claims no agreement it cannot check', () => {
   const html = paint({ D: app({ app: { installed: true, version: '0.1', build: '1' } }) });
   assert(html.includes('predates update checking'));
