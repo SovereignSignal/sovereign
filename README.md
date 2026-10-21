@@ -6,7 +6,7 @@
 
 **Status: closed beta.** The current app is Sovereign 0.7.1 (build 50), built from this repo and in daily use by its maintainer. A signed, notarized download is on the [releases page](https://github.com/SovereignSignal/sovereign/releases), validated on clean installs of macOS 13.6 and the current macOS. Apple Silicon Mac, macOS 13 or later.
 
-Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Most memory tools fix that by writing on their own, so whatever one session said becomes what the next one believes, and there's no step where you decide it's true.
+Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Many memory tools fix that by writing on their own, so whatever one session said becomes what the next one believes, and there's no step where you decide it's true.
 
 Sovereign keeps that context in a folder of Markdown files on your Mac that your tools read before they work and add to as they go. A curator drafts short cards from what they save, and at first nothing becomes trusted until you approve it. Every trusted card names its source, and an append-only decisions log records who let it in and when; keep the archive in git and each verdict is a commit too. After ten clean routine decisions you can let routine cards land on their own, and one button sends the curator back to asking first. The rules fit on one page ([`CLAUDE.md`](CLAUDE.md)), and the files read fine in any editor with no Sovereign software installed. Where Sovereign goes next: [`ROADMAP.md`](ROADMAP.md).
 
@@ -30,7 +30,7 @@ Sovereign keeps that context in a folder of Markdown files on your Mac that your
 
 You need an Apple Silicon Mac on macOS 13 or later, [Claude Code](https://claude.com/claude-code), and an API key for the curator (Anthropic by default; OpenAI, Google Gemini, xAI Grok, and Muse are also supported).
 
-1. **Install Sovereign.** Download `Sovereign-0.7.1-build50.zip` from the [v0.7.1 release](https://github.com/SovereignSignal/sovereign/releases/tag/v0.7.1), unzip it, and move `Sovereign.app` to Applications. Prefer source? [Build the app yourself](#build-the-app-from-source).
+1. **Install Sovereign.** Download `Sovereign-0.7.1-build50.zip` from the [v0.7.1 release](https://github.com/SovereignSignal/sovereign/releases/tag/v0.7.1), unzip it, and move `Sovereign.app` to `~/Applications` (the Applications folder inside your home folder; create it if it is not there). Prefer source? [Build the app yourself](#build-the-app-from-source).
 2. **Create an archive.** Open Sovereign and choose **Create archive…**. Pick where it lives; `~/Sovereign` is a good default.
 3. **Connect Claude Code.** On the screen that follows, choose **Connect…** next to Claude Code, check the preview, then install. Claude Code will now read your archive at the start of every session.
 4. **Turn on the curator.** In **Settings › Curator**, pick your provider, paste your API key, and choose **Turn on**. No key yet? **Get your key** under the field walks you through the provider's own pages, including how to cap what a month can cost. The key is stored in your login Keychain, never in a plain file. Every two hours the curator sends newly saved material to that provider, under your account, and drafts cards. In a new archive that includes what your connected tools had already saved before you turned it on, such as Claude Code's existing memory, worked through 20 files a pass. At first nothing it drafts becomes trusted until you approve it (see [Approval fades as trust is earned](#approval-fades-as-trust-is-earned)).
@@ -44,6 +44,7 @@ Out of the box, nothing. Sovereign has no account, no telemetry and no server. T
 
 - **The hosted curator** sends newly saved material to the one provider you chose (Anthropic, OpenAI, Google Gemini, xAI Grok, or Muse), under your own key and at that provider's own API host only. Each pass costs cents, and the key can carry a spend limit you set with the provider.
 - **Optional connectors**, such as a Notion mirror, talk to the service they mirror.
+- **Check for updates** in Settings contacts nothing until you click it, and then only GitHub's release pages, to find the latest signed release and download it.
 
 If you want nothing to leave at all, run the curator on a local model instead (see [Curating with a local model](#curating-with-a-local-model)). An archive can declare itself local-only, and the curator then refuses any hosted model.
 
@@ -80,7 +81,7 @@ bin/sov disconnect claude-code --apply   # undo; the lane's files in raw/ stay a
 claude mcp add sovereign -- ~/brain-bin/sov mcp
 ```
 
-Other clients take the same command in their MCP settings (`"command": "<path to sov>", "args": ["mcp"]`). With only the app installed, the path is `/Applications/Sovereign.app/Contents/MacOS/sov`, or under `~/Applications` if that's where you put it. A client set to contribute-only gets nothing back.
+Other clients take the same command in their MCP settings (`"command": "<path to sov>", "args": ["mcp"]`). With only the app installed, the path is `~/Applications/Sovereign.app/Contents/MacOS/sov`, or under `/Applications` if that's where you put it. A client set to contribute-only gets nothing back.
 
 ### Bring in what ChatGPT knows
 

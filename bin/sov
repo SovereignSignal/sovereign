@@ -33,8 +33,10 @@
 #                                 convert, redact, content-dedup, hand each file to
 #                                 sov-capture. Dry plan unless --apply; an undeclared
 #                                 lane is printed and refused, the owner saves LANE.md (sov-ingest)
-#   sov app-update [--apply]    build this machine's source into the installed app and
-#                                 reopen it; preview without --apply (sov-app-update)
+#   sov app-update [--source release|local] [--apply]  install the latest signed release, or build
+#                                 this machine's source into the installed app; preview without --apply (sov-app-update)
+#   sov gate approve|reject <slug> [reason]
+#                                 the owner's verdict on one proposal, from a console or a shell
 #   sov signing-identity        create this machine's local code-signing identity so a
 #                                 rebuild stops re-asking for permissions (--apply)
 #   sov about [--json]          explain this installation, offline and read-only

@@ -173,13 +173,13 @@ def apply(token, template=None):
 
     # 2. Now, and only now, stand the app down and swap.
     stand_down()
-    back = swap_in(built)
-    subprocess.run(["rm", "-rf", built + "-built"], capture_output=True)
-    os.rename(built, built + "-built")   # one launchable bundle, as build.sh --install leaves it
 
-    now = confirm_installed({"source_commit": p["source_commit"]},
-                            "The installed app does not match the source it was built from.", back)
-    subprocess.run(["open", APP], capture_output=True, timeout=60)
+    def tidy():
+        subprocess.run(["rm", "-rf", built + "-built"], capture_output=True)
+        os.rename(built, built + "-built")   # one launchable bundle, as build.sh --install leaves it
+
+    now, back = install(built, {"source_commit": p["source_commit"]},
+                        "The installed app does not match the source it was built from.", tidy)
     return {"state": "installed", "installed": now, "source_commit": p["source_commit"],
             "rollback": back, "verification": "Sovereign was rebuilt from this device's source and reopened."}
 
@@ -196,19 +196,67 @@ def stand_down():
         raise ValueError("Sovereign did not close, so it was not replaced. Quit it and try again.")
 
 
-def swap_in(new_app):
-    """Keep what is installed under ~/sovereign-rollback, then put new_app in its place."""
+def install(new_app, expected, mismatch, tidy=None):
+    """Swap new_app in, confirm it and reopen Sovereign. Call only after stand_down().
+
+    By then the app that would show an error is gone, so a failure here used to be silent:
+    Sovereign vanished, and if the copy failed nothing was left in ~/Applications. Any
+    failure now puts the kept copy back and reopens it before the error is raised, and the
+    error says where the previous app is. Both sources share this path.
+    """
     back = os.path.expanduser("~/sovereign-rollback/app-update-%s" % time.strftime("%Y%m%dT%H%M%S"))
+    had = os.path.isdir(APP)
+    try:
+        swap_in(new_app, back)
+        if tidy:
+            tidy()
+        now = confirm_installed(expected, mismatch)
+    except Exception as e:
+        raise restore(back, had, e) from e
+    subprocess.run(["open", APP], capture_output=True, timeout=60)
+    return now, back
+
+
+def swap_in(new_app, back):
+    """Keep what is installed under back, then put new_app in its place.
+
+    The copy lands as previous.app only once it is whole, so restore() never puts a
+    half-made copy over an app that was still intact.
+    """
     os.makedirs(back, exist_ok=True)
     if os.path.isdir(APP):
-        subprocess.run(["ditto", APP, os.path.join(back, "previous.app")], check=True, timeout=300)
+        kept = os.path.join(back, "previous.app")
+        subprocess.run(["ditto", APP, kept + ".partial"], check=True, timeout=300)
+        os.rename(kept + ".partial", kept)
         subprocess.run(["rm", "-rf", APP], check=True, timeout=120)
     os.makedirs(os.path.dirname(APP), exist_ok=True)
     subprocess.run(["cp", "-R", new_app, APP], check=True, timeout=300)
     return back
 
 
-def confirm_installed(expected, mismatch, back):
+def restore(back, had, error):
+    """Put the kept app back after a failed swap, reopen it, and return the error to raise."""
+    kept = os.path.join(back, "previous.app")
+    shutil.rmtree(kept + ".partial", ignore_errors=True)
+    if os.path.isdir(kept):
+        try:
+            subprocess.run(["rm", "-rf", APP], check=True, capture_output=True, timeout=120)
+            subprocess.run(["ditto", kept, APP], check=True, capture_output=True, timeout=300)
+            where = "The previous app was put back and reopened, and a copy stays at %s." % kept
+        except (OSError, subprocess.SubprocessError):
+            where = "The previous app could not be put back. It is at %s; copy it to %s." % (kept, APP)
+    elif had:
+        where = "The installed app had not been moved yet, so it was reopened as it was."
+    else:
+        where = "No app was installed before, so there was nothing to put back."
+    try:
+        subprocess.run(["open", APP], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ValueError("%s %s" % (str(error).rstrip(), where))
+
+
+def confirm_installed(expected, mismatch):
     """Reread the installed Info.plist: the swap is done only if it says what was expected."""
     now = installed()
     for key, want in expected.items():
@@ -216,7 +264,7 @@ def confirm_installed(expected, mismatch, back):
         if key == "source_commit":
             have = have.replace("+local", "")
         if have != want:
-            raise ValueError("%s The previous app is at %s" % (mismatch, back))
+            raise ValueError(mismatch)
     return now
 
 
@@ -471,10 +519,8 @@ def apply_release(token):
 
         # 2. Now, and only now, stand the app down and swap.
         stand_down()
-        back = swap_in(new_app)
-        now = confirm_installed({"version": latest["version"], "build": latest["build"]},
-                                "The installed app does not match the release that was verified.", back)
-        subprocess.run(["open", APP], capture_output=True, timeout=60)
+        now, back = install(new_app, {"version": latest["version"], "build": latest["build"]},
+                            "The installed app does not match the release that was verified.")
         return {"state": "installed", "installed": now, "rollback": back, "verification": verification}
     finally:
         shutil.rmtree(work, ignore_errors=True)

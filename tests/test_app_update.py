@@ -359,6 +359,19 @@ class ReleaseUpdate(unittest.TestCase):
             self.assertIn("refused", out["error"])
             self.assertFalse(self.updates.exists(), "no download may start for " + url)
             self.assert_untouched()
+    def test_12_a_copy_that_fails_after_the_app_closed_puts_the_previous_app_back(self):
+        # After stand_down() the app that would show an error is gone. A cp that fails after
+        # the installed app was removed used to leave nothing in ~/Applications and no word.
+        stub(self.bin / "cp", 'echo "cp: No space left on device" >&2; exit 1')
+        code, out = self.apply(self.publish("0.8.0", "51"), verify=self.ok)
+        self.assertEqual(code, 1, out)
+        kept = list((self.home / "sovereign-rollback").glob("app-update-*/previous.app"))
+        self.assertEqual(len(kept), 1)
+        self.assertIn("cp", out["error"]); self.assertIn("put back", out["error"])
+        self.assertIn(str(kept[0]), out["error"])
+        self.assertEqual((self.app / "Contents/Info.plist").read_bytes(), self.plist, "the previous app must be back")
+        self.assertIn(str(self.app), self.opened.read_text(), "the restored app must be reopened")
+        self.assertFalse(self.updates.exists() and any(self.updates.iterdir()), "the download must be deleted")
     def test_a_verify_hook_that_is_not_executable_is_ignored(self):
         # The stub replaces Apple's gate only when it is a real executable. Anything else
         # falls through to codesign, which a fake bundle cannot pass.
