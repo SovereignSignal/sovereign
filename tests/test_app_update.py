@@ -24,6 +24,17 @@ def commits(checkout):
         return subprocess.run(["git", "-C", str(checkout), "log", "-1", "--format=%h"],
                               capture_output=True, text=True, check=True).stdout.strip()
     return commit
+def embed(app, script):
+    """Ship a copy of script inside app the way build.sh does: backend/bin beside backend/lib.
+
+    A copy, not a symlink, because the updater locates its bundle from its own realpath,
+    and a symlink would resolve back into this checkout."""
+    inside = app / "Contents/Resources/backend/bin"; inside.mkdir(parents=True, exist_ok=True)
+    shutil.copy(str(script), str(inside / Path(script).name))
+    lib = app / "Contents/Resources/backend/lib"
+    if not lib.exists():
+        lib.symlink_to(ROOT / "lib")
+    return inside
 def run(home, *args):
     env = dict(os.environ, HOME=str(home))
     cp = subprocess.run([sys.executable, str(UPD), *args], env=env, capture_output=True, text=True)
@@ -104,8 +115,7 @@ class AppUpdatePreview(unittest.TestCase):
             home = Path(tmp); app = home / "Applications/Sovereign.app"
             (app / "Contents/Resources/runtime/bin").mkdir(parents=True)
             (app / "Contents/Resources/runtime/bin/python3").write_text("")
-            inside = app / "Contents/Resources/backend/bin"; inside.mkdir(parents=True)
-            shutil.copy(UPD, inside / "sov-app-update")
+            inside = embed(app, UPD)
             checkout = home / "src"; (checkout / "apps/console").mkdir(parents=True)
             marker = checkout / "build-ran-here"
             (checkout / "apps/console/build.sh").write_text(
@@ -131,7 +141,8 @@ class AppUpdatePreview(unittest.TestCase):
         updater = runpy.run_path(str(UPD))
         apply = updater['apply']
         fake = {'token': 'ok', 'template': '/test/source', 'source_commit': 'abc', 'buildable': True}
-        with patch.dict(apply.__globals__, plan=lambda template: fake), \
+        # In process, APP is wherever this machine keeps its app; never ask about it here.
+        with patch.dict(apply.__globals__, plan=lambda template: fake, check_writable=lambda: None), \
              patch('os.path.isfile', return_value=True), \
              patch('subprocess.run', return_value=subprocess.CompletedProcess([], 9, 'stdout diagnostic', '')) as run:
             with self.assertRaisesRegex(ValueError, 'exit 9.*stdout diagnostic'):
@@ -192,8 +203,11 @@ class AppUpdatePreview(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             code, out = run(Path(tmp), "--preview")
             self.assertEqual(code, 0, out)
-            self.assertEqual(out["installed"], {})
-            self.assertFalse(out["current"])
+            if not Path("/Applications/Sovereign.app").exists():   # outside any temp HOME
+                self.assertEqual(out["installed"], {})
+                self.assertFalse(out["current"])
+                self.assertEqual(out["app_path"], str(Path(tmp) / "Applications/Sovereign.app"),
+                                 "a fresh install goes to the home folder's Applications")
 def release_app(path, version, build, bundle_id="com.sovereign.console"):
     (path / "Contents/MacOS").mkdir(parents=True, exist_ok=True)
     (path / "Contents/Info.plist").write_bytes(plistlib.dumps(
@@ -247,13 +261,15 @@ class ReleaseUpdate(unittest.TestCase):
                                     "html_url": "https://github.com/SovereignSignal/sovereign/releases/tag/v" + version,
                                     "assets": [a for a in assets if not any(a["name"].endswith(d) for d in drop)]}))
         return feed
-    def upd(self, feed, *args, verify=None):
+    def upd(self, feed, *args, verify=None, script=None):
         env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                    SOV_UPDATE_FEED=str(feed))
         env.pop("SOV_UPDATE_VERIFY", None)
         if verify:
             env["SOV_UPDATE_VERIFY"] = str(verify)
-        cp = subprocess.run([sys.executable, str(UPD), "--source", "release", *args],
+        # The app runs its bundled updater with -I -B, so PYTHONPATH cannot paper over a missing lib.
+        command = [sys.executable, "-I", "-B", str(script)] if script else [sys.executable, str(UPD)]
+        cp = subprocess.run(command + ["--source", "release", *args],
                             env=env, capture_output=True, text=True)
         try:
             return cp.returncode, json.loads(cp.stdout or "{}")
@@ -266,10 +282,15 @@ class ReleaseUpdate(unittest.TestCase):
         self.assertFalse(self.updates.exists() and any(self.updates.iterdir()), "the download must be deleted")
         self.assertFalse(self.opened.exists(), "nothing was installed, so nothing reopens")
         self.assertFalse((self.home / "sovereign-rollback").exists())
-    def apply(self, feed, verify=None):
-        _, prev = self.upd(feed, "--preview", verify=verify)
+    def apply(self, feed, verify=None, script=None):
+        _, prev = self.upd(feed, "--preview", verify=verify, script=script)
         self.assertFalse(prev["current"], prev)
-        return self.upd(feed, "--apply", "--token", prev["token"], verify=verify)
+        return self.upd(feed, "--apply", "--token", prev["token"], verify=verify, script=script)
+    def system_app(self):
+        """An app in an Applications folder outside HOME, as /Applications is, running its own backend."""
+        app = Path(os.path.realpath(self._tmp.name)) / "Applications/Sovereign.app"
+        release_app(app, "0.7.1", "50")
+        return app, embed(app, UPD) / "sov-app-update"
 
     def test_1_the_installed_release_is_current_and_preview_writes_nothing(self):
         before = self.files()
@@ -372,6 +393,47 @@ class ReleaseUpdate(unittest.TestCase):
         self.assertEqual((self.app / "Contents/Info.plist").read_bytes(), self.plist, "the previous app must be back")
         self.assertIn(str(self.app), self.opened.read_text(), "the restored app must be reopened")
         self.assertFalse(self.updates.exists() and any(self.updates.iterdir()), "the download must be deleted")
+    def test_13_an_app_outside_home_updates_itself_in_place(self):
+        # Run from inside a bundle, the updater's own bundle is the installed app, wherever
+        # it sits. An app in /Applications used to get no version and no update, because
+        # only ~/Applications was ever looked at; and a copy in ~/Applications must not be
+        # mistaken for the one that is running.
+        app, script = self.system_app()
+        home_plist = self.plist   # the ~/Applications copy from setUp
+        code, prev = self.upd(self.publish("0.8.0", "51"), "--preview", verify=self.ok, script=script)
+        self.assertEqual(code, 0, prev)
+        self.assertEqual(prev["app_path"], str(app))
+        self.assertEqual((prev["installed"]["version"], prev["installed"]["build"]), ("0.7.1", "50"))
+        code, out = self.apply(self.publish("0.8.0", "51"), verify=self.ok, script=script)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["state"], "installed")
+        self.assertEqual((app / "Contents/MacOS/Sovereign").read_text(), "build 51\n")
+        kept = list((self.home / "sovereign-rollback").glob("app-update-*/previous.app"))
+        self.assertEqual(len(kept), 1)
+        self.assertTrue((kept[0] / "Contents/Resources/backend/bin/sov-app-update").exists(), "the whole bundle is kept")
+        self.assertIn(str(app), self.opened.read_text())
+        self.assertEqual((self.app / "Contents/Info.plist").read_bytes(), home_plist,
+                         "the copy in ~/Applications is not the running app and must not change")
+    def test_14_an_app_folder_this_user_cannot_write_is_refused_before_anything_changes(self):
+        # /Applications needs an administrator to change. Say so, name the folder, and
+        # stop before the download, the quit and the swap.
+        app, script = self.system_app()
+        plist = (app / "Contents/Info.plist").read_bytes()
+        folder = app.parent
+        folder.chmod(0o555)
+        try:
+            if os.access(str(folder), os.W_OK):
+                self.skipTest("running as a user who can write anything")
+            code, out = self.apply(self.publish("0.8.0", "51"), verify=self.ok, script=script)
+        finally:
+            folder.chmod(0o755)
+        self.assertEqual(code, 1, out)
+        self.assertIn(str(app), out["error"])
+        self.assertIn("Nothing was changed", out["error"])
+        self.assertEqual((app / "Contents/Info.plist").read_bytes(), plist)
+        self.assertFalse(self.updates.exists() and any(self.updates.iterdir()), "nothing may be downloaded")
+        self.assertFalse(self.opened.exists())
+        self.assertFalse((self.home / "sovereign-rollback").exists())
     def test_a_verify_hook_that_is_not_executable_is_ignored(self):
         # The stub replaces Apple's gate only when it is a real executable. Anything else
         # falls through to codesign, which a fake bundle cannot pass.
@@ -423,5 +485,53 @@ class ReleaseUpdateUnits(unittest.TestCase):
             good = handler.redirect_request(req, None, 302, "Found", {},
                                             "https://release-assets.githubusercontent.com/x")
             self.assertEqual(good.full_url, "https://release-assets.githubusercontent.com/x")
+class InstalledAppLocation(unittest.TestCase):
+    """Where the installed app is: the bundle the backend runs from, else the known folders."""
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(ROOT / "lib"))
+        import sovereign_app
+        cls.mod = sovereign_app
+    def test_the_bundle_the_backend_runs_from_is_the_app(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp) / "Elsewhere/Sovereign.app"
+            release_app(app, "0.8.0", "51")
+            here = embed(app, UPD) / "sov-app-update"
+            self.assertEqual(self.mod.installed_app_path(str(here), roots=()), os.path.realpath(str(app)))
+    def test_from_a_checkout_the_first_known_folder_that_holds_the_app_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mine, system = Path(tmp) / "home/Applications", Path(tmp) / "Applications"
+            roots = (str(mine), str(system))
+            self.assertEqual(self.mod.installed_app_path(str(UPD), roots=roots), str(mine / "Sovereign.app"),
+                             "nothing installed: a fresh install goes to the first folder")
+            release_app(system / "Sovereign.app", "0.8.0", "51")
+            self.assertEqual(self.mod.installed_app_path(str(UPD), roots=roots), str(system / "Sovereign.app"))
+            release_app(mine / "Sovereign.app", "0.8.0", "51")
+            self.assertEqual(self.mod.installed_app_path(str(UPD), roots=roots), str(mine / "Sovereign.app"))
+    def test_a_preview_bundle_is_never_taken_for_the_installed_app(self):
+        # Preview builds stay separate (build.sh refuses to install one), so an update or a
+        # version read from inside one is about the installed app, never the preview.
+        with tempfile.TemporaryDirectory() as tmp:
+            preview = Path(tmp) / "build/Sovereign Preview.app"
+            release_app(preview, "0.9.0", "60")
+            info = plistlib.loads((preview / "Contents/Info.plist").read_bytes())
+            info["SovereignPreview"] = True
+            (preview / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+            here = embed(preview, UPD) / "sov-app-update"
+            mine = Path(tmp) / "home/Applications"
+            self.assertEqual(self.mod.installed_app_path(str(here), roots=(str(mine),)), str(mine / "Sovereign.app"))
+    def test_status_reads_the_app_it_runs_inside_wherever_it_is(self):
+        import importlib.machinery, importlib.util
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp) / "Applications/Sovereign.app"
+            release_app(app, "0.8.0", "51")
+            script = embed(app, ROOT / "bin/sov-status") / "sov-status"
+            loader = importlib.machinery.SourceFileLoader("sov_status_in_bundle", str(script))
+            status = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+            loader.exec_module(status)
+            found = status._installed_app()
+            self.assertTrue(found["installed"], found)
+            self.assertEqual(found["path"], os.path.realpath(str(app)))
+            self.assertEqual((found["version"], found["build"]), ("0.8.0", "51"))
 if __name__ == "__main__":
     unittest.main()

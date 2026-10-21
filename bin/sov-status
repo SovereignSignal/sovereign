@@ -36,6 +36,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))   # brain-bin symlinks here; 
 TEMPLATE_ROOT = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(TEMPLATE_ROOT, "lib"))
 import brain_discovery
+import sovereign_app
 NOW = time.time()
 # launchd/systemd labels the status watches. The connector prefix is built in; an
 # instance can add its own legacy prefixes in ~/.brain-job-prefixes (comma separated).
@@ -1697,12 +1698,13 @@ def _installed_app():
     prototype for months while the other moved through twenty-two builds and every
     release note truthfully said the first was "unchanged".
 
-    Reads ~/Applications/Sovereign.app only. That is the project's one canonical
-    install location, and deliberately not whatever the bundle id resolves to: four
-    bundles shared com.sovereign.console on one machine and macOS picked the highest
-    VERSION, which on that day was an unreleased build sitting in /private/tmp.
+    Run from inside the app, that is the bundle this status runs from, wherever it was
+    put; from a checkout, the first of ~/Applications and /Applications that holds one.
+    Deliberately not whatever the bundle id resolves to: four bundles shared
+    com.sovereign.console on one machine and macOS picked the highest VERSION, which on
+    that day was an unreleased build sitting in /private/tmp. See lib/sovereign_app.py.
     """
-    app = os.path.expanduser("~/Applications/Sovereign.app")
+    app = sovereign_app.installed_app_path(__file__)
     info = os.path.join(app, "Contents", "Info.plist")
     if not os.path.isfile(info):
         return {"installed": False}

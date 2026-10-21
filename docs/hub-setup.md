@@ -13,7 +13,7 @@ Choose **Prepare Hub**, supply the folder and model, preview, then apply. The ge
 The installed app includes the same command interface. Change these example paths and model before running:
 
 ```bash
-SOV="$HOME/Applications/Sovereign.app/Contents/MacOS/sov"
+SOV="$HOME/Applications/Sovereign.app/Contents/MacOS/sov"   # or /Applications/Sovereign.app/...
 ARCHIVE="$HOME/Documents/My Archive"
 HUB="$HOME/Sovereign Hub"
 MODEL="your-installed-local-model"

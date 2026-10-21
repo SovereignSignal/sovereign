@@ -13,7 +13,7 @@ running app exactly as it was.
 
 It quits by PATH, never by bundle identifier. On 2026-09-20 four bundles on one machine
 shared com.sovereign.console, macOS resolves an id to the highest VERSION it has indexed
-rather than to ~/Applications, and an installer's "quit normally" step therefore quit an
+rather than to the installed app, and an installer's "quit normally" step therefore quit an
 unreleased build sitting in /private/tmp while truthfully reporting success.
 
   sov-app-update [--source release|local] --preview          what would happen, as JSON
@@ -34,11 +34,16 @@ import time
 import urllib.parse
 import urllib.request
 
-APP = os.path.expanduser("~/Applications/Sovereign.app")
 # Where the source actually is. Run from a checkout this is the checkout; run from inside
 # the app it is not, because the bundled backend/ ships bin, lib, connectors and templates
 # and no apps/console/build.sh. Nothing can be built from in there, so the caller says.
 TEMPLATE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, os.path.join(TEMPLATE, "lib"))
+import sovereign_app  # noqa: E402
+
+# The app this updater replaces: the bundle it runs from, wherever that is, or from a
+# checkout the first of ~/Applications and /Applications that holds one.
+APP = sovereign_app.installed_app_path(__file__)
 
 RELEASE_REPO = "SovereignSignal/sovereign"
 FEED_URL = "https://api.github.com/repos/%s/releases/latest" % RELEASE_REPO
@@ -157,6 +162,7 @@ def apply(token, template=None):
         raise ValueError("The installed app has no bundled runtime to build against.")
     if p.get("ahead"):
         raise ValueError(p["summary"])
+    check_writable()
 
     # 1. Build. The installed app is untouched until this succeeds.
     env = dict(os.environ, SOV_PYTHON_RUNTIME=runtime)
@@ -184,6 +190,14 @@ def apply(token, template=None):
             "rollback": back, "verification": "Sovereign was rebuilt from this device's source and reopened."}
 
 
+def check_writable():
+    """Refuse up front when this user cannot replace the app, as in an /Applications
+    folder that needs an administrator. Before a build, a download or a quit."""
+    if not sovereign_app.writable(APP):
+        raise ValueError("Sovereign is installed at %s, which this user cannot change without "
+                         "an administrator, so it was not updated. Nothing was changed." % APP)
+
+
 def stand_down():
     """Quit the installed app. By path, never by bundle id (see the module docstring)."""
     for pid in running():
@@ -200,7 +214,7 @@ def install(new_app, expected, mismatch, tidy=None):
     """Swap new_app in, confirm it and reopen Sovereign. Call only after stand_down().
 
     By then the app that would show an error is gone, so a failure here used to be silent:
-    Sovereign vanished, and if the copy failed nothing was left in ~/Applications. Any
+    Sovereign vanished, and if the copy failed nothing was left installed. Any
     failure now puts the kept copy back and reopens it before the error is raised, and the
     error says where the previous app is. Both sources share this path.
     """
@@ -502,6 +516,7 @@ def apply_release(token):
     name = "Sovereign-%s-build%s.zip" % (latest["version"], latest["build"])
     for url in (latest["zip_url"], latest["sha_url"]):
         check_url(url)   # before a directory exists or a byte is requested
+    check_writable()
     agent = user_agent(p["installed"])
     os.makedirs(UPDATES, exist_ok=True)
     work = tempfile.mkdtemp(prefix="update-", dir=UPDATES)
