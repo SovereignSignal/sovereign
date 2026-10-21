@@ -23,6 +23,8 @@
 - `sov mcp` serves an archive reached through a symlink, caps a single
   card's size, and answers an unexpected failure with an error instead of
   ending the session.
+- The README, the welcome screen and the release notes now lead with what
+  Sovereign is for: memory you can audit, kept as plain files you own.
 
 ## 0.7.1 (build 50) — release candidate
 
