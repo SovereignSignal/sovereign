@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.0 "Capture" (unreleased)
+
+- Session capture for Claude Code, off until you turn it on. Quiet sessions are
+  distilled into candidate captures in the tool's own lane, for the curator to judge.
+  A model-free pre-filter drops most sessions before any call; the rest send a
+  redacted excerpt of typed prompts and replies, never tool results or the archive's
+  own session-start pack, to the archive's own curator provider through the inference
+  guard. At most 3 calls and 60,000 characters per tick, 30 calls a day.
+- `sov ingest sessions` shows a dry plan first, `--show <id>` prints the exact excerpt
+  a model would receive, and `--on [--since D]`, `--off`, `--allow`, `--deny`,
+  `--apply` and `status` do the rest. Settings › Session capture offers the same, and
+  Turn on appears only after a Preview.
+- A session that ran inside an archive is always refused. Client Macs of a hub archive
+  stay off, since the model is on the hub. Session captures are always screened by the
+  curator and held at ask-first until they earn their own record; nothing reaches
+  `knowledge/` without your approval.
+- Sources and Review show session captures, and Open session takes you to the folder
+  a session ran in.
+
 ## 0.8.0 "Reach" (build 51)
 
 Status: closed beta, release candidate, a signed, notarized download.
