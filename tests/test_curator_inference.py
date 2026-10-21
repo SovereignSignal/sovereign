@@ -27,10 +27,12 @@ LOCAL = "http://localhost:11434/v1/chat/completions"
 class Stub:
     """Loopback model endpoint: records each request, answers or redirects."""
 
-    def __init__(self):
+    def __init__(self, reply=None):
         self.bodies = []
         self.headers = []
+        self.paths = []
         self.redirect_followed = False
+        self.reply = reply or {"choices": [{"message": {"content": '{"promote": false}'}}]}
         stub = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -48,8 +50,9 @@ class Stub:
                 if self.path.startswith("/landed"):
                     stub.redirect_followed = True
                 stub.bodies.append(json.loads(body or b"{}"))
-                stub.headers.append(dict(self.headers))
-                out = json.dumps({"choices": [{"message": {"content": '{"promote": false}'}}]}).encode()
+                stub.headers.append({k.lower(): v for k, v in self.headers.items()})
+                stub.paths.append(self.path)
+                out = json.dumps(stub.reply).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(out)))
@@ -190,10 +193,60 @@ class InferenceModule(unittest.TestCase):
         self.assertEqual((body["model"], body["temperature"], body["stream"]), ("qwen3.8:27b", 0.1, False))
         self.assertEqual(body["messages"], msgs)
         self.assertNotIn("reasoning_effort", body)
-        self.assertEqual(stub.headers[0].get("Authorization"), "Bearer k")
+        self.assertEqual(stub.headers[0].get("authorization"), "Bearer k")
         cfg["reasoning_effort"] = "none"
         ci.chat(cfg, "k", "qwen3.8:27b", 0, msgs, 10)
         self.assertEqual(stub.bodies[1]["reasoning_effort"], "none")
+
+    def test_chat_refuses_an_unguarded_config(self):
+        stub = Stub()
+        self.addCleanup(stub.close)
+        msgs = [{"role": "user", "content": "u"}]
+        cfg = ci.config_from_env({"CURATOR_ENDPOINT": "https://api.vendor.com/v1/chat/completions"})
+        self.assertFalse(cfg["allow_remote"])
+        with self.assertRaises(RuntimeError) as err:
+            ci.chat(cfg, "k", "qwen3.8:27b", 0, msgs, 5)
+        self.assertIn("sovereign-inference law: endpoint is not local: api.vendor.com", str(err.exception))
+        # a config edited after it was checked is checked again at the call
+        cfg = ci.config_from_env({"CURATOR_ENDPOINT": stub.base + "/v1/chat/completions"})
+        self.assertEqual(ci.violations(cfg), [])
+        cfg["model"] = "qwen3.5:cloud"
+        with self.assertRaises(RuntimeError):
+            ci.chat(cfg, "k", cfg["model"], 0, msgs, 5)
+        self.assertEqual(stub.bodies, [])
+
+    def test_chat_anthropic_shape(self):
+        reply = {"stop_reason": "end_turn", "content": [{"type": "thinking", "thinking": "x"},
+                                                          {"type": "text", "text": '{"promote": true}'}]}
+        stub = Stub(reply)
+        self.addCleanup(stub.close)
+        cfg = ci.config_from_env({"CURATOR_BACKEND": "anthropic", "CURATOR_EFFORT": "high",
+                                  "CURATOR_ENDPOINT": stub.base + "/v1/messages"})
+        msgs = [{"role": "system", "content": "brief"}, {"role": "user", "content": "source"}]
+        # The guard pins Anthropic to its own https host, so a loopback stub can only
+        # see the wire shape with the guard stood aside; the refusal is tested above.
+        with patch.object(ci, "violations", return_value=[]):
+            out = ci.chat(cfg, "sk-test", "claude-opus-5-5", 0.1, msgs, 10)
+            self.assertEqual(out, '{"promote": true}')
+            self.assertEqual(stub.paths[0], "/v1/messages")
+            head = stub.headers[0]
+            self.assertEqual(head.get("x-api-key"), "sk-test")
+            self.assertEqual(head.get("anthropic-version"), "2023-06-01")
+            body = stub.bodies[0]
+            self.assertEqual(body["system"], "brief")
+            self.assertEqual(body["messages"], [{"role": "user", "content": "source"}])
+            self.assertNotIn("temperature", body)
+            self.assertEqual(body["max_tokens"], 16000)
+            self.assertEqual(body["output_config"], {"effort": "high"})
+            self.assertEqual(body["model"], "claude-opus-5-5")
+            stub.reply = {"stop_reason": "max_tokens", "content": [{"type": "text", "text": '{"promo'}]}
+            with self.assertRaises(ValueError) as err:
+                ci.chat(cfg, "sk-test", "claude-opus-5-5", 0.1, msgs, 10)
+            self.assertIn("Claude stopped with max_tokens", str(err.exception))
+            stub.reply = {"stop_reason": "refusal", "stop_details": {"category": "cyber"}, "content": []}
+            with self.assertRaises(ValueError) as err:
+                ci.chat(cfg, "sk-test", "claude-opus-5-5", 0.1, msgs, 10)
+            self.assertIn("Claude stopped with refusal (cyber)", str(err.exception))
 
     def test_local_only_refuses_redirect(self):
         stub = Stub()

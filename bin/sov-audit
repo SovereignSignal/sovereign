@@ -96,7 +96,7 @@ try:
     _violations = _inference_guard()(ENDPOINT, MODEL, None, _ALLOW_REMOTE)
 except Exception as _exc:
     print("sov-audit: REFUSING - could not load the shared sovereign-inference guard "
-          "from curator-run (%s). Refusing rather than auditing unverified." % _exc,
+          "from lib/curator_inference (%s). Refusing rather than auditing unverified." % _exc,
           file=sys.stderr)
     raise SystemExit(4)
 if _violations:

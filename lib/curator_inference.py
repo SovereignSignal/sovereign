@@ -6,7 +6,8 @@ judge through the same law without lifting source by AST or importing a script t
 evaluates its own guard at module level. curator-run keeps its old names as aliases.
 
 Nothing here reads os.environ: config_from_env takes the env it is given, and chat
-reads local_only from that config, so a caller decides what the call sees.
+reads local_only from that config, so a caller decides what the call sees. chat runs
+the guard itself on every call and refuses a config that fails it.
 """
 import json
 import os
@@ -226,7 +227,12 @@ def _anthropic_body(model, messages, effort="medium"):
 
 def chat(cfg, key, model, temperature, messages, timeout):
     """Every model call goes through here, so the backends cannot drift apart. Returns
-    the reply text. The caller checks violations(cfg) first."""
+    the reply text. The guard runs here on every call, before any request is built,
+    so a caller that skipped violations(cfg), or edited cfg after checking it, is
+    refused rather than sent."""
+    found = violations(cfg)
+    if found:
+        raise RuntimeError(f"REFUSING - sovereign-inference law: {found[0]}")
     local_only = bool(cfg.get("local_only"))
     if cfg["backend"] == "anthropic":
         req = urllib.request.Request(cfg["endpoint"], _anthropic_body(model, messages, cfg.get("anthropic_effort") or "medium"),
