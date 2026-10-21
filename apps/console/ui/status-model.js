@@ -457,6 +457,27 @@ window.SovStatus = (() => {
     if (s.error || status?.error) return "refresh failed";
     return Number.isFinite(stamp) ? new Date(stamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   }
+  // The Claude Code lane's week of session capture (sov-status `sessions`, from the lane's
+  // sessions/MANIFEST.md). Parts after the first are left out at zero. While the lane waits
+  // on its model the line says only that, and warn asks for amber.
+  function sessionLine(s, now = Date.now()) {
+    if (!s || typeof s !== "object") return null;
+    const n = (k) => Number.isSafeInteger(s[k]) && s[k] > 0 ? s[k] : 0, many = (k, w) => k + " " + w + (k === 1 ? "" : "s");
+    if (typeof s.waiting_reason === "string" && s.waiting_reason.trim()) {
+      const text = s.waiting_reason.trim().replace(/ since (\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?Z)$/, (all, iso) => {
+        const t = new Date(Date.parse(iso)), day = new Date(now), pad = (x) => String(x).padStart(2, "0");
+        if (isNaN(t)) return all;
+        const hm = pad(t.getHours()) + ":" + pad(t.getMinutes());
+        const same = t.getFullYear() === day.getFullYear() && t.getMonth() === day.getMonth() && t.getDate() === day.getDate();
+        return " since " + (same ? hm : t.getFullYear() + "-" + pad(t.getMonth() + 1) + "-" + pad(t.getDate()) + " " + hm);
+      });
+      return { text: "waiting: " + text, warn: true };
+    }
+    let text = many(n("distilled"), "session") + " distilled this week";
+    if (n("captures")) text += ", " + many(n("captures"), "capture");
+    for (const k of ["skipped", "waiting", "failed", "refused"]) if (n(k)) text += " · " + n(k) + " " + k;
+    return { text, warn: false };
+  }
   // Today's headline, which the Glance shares: it counts attention items, never individual proposals.
   function headline(D, A) {
     if (!D?.machine?.connected) return { state: "", text: "Not connected" };
@@ -464,5 +485,5 @@ window.SovStatus = (() => {
     return { state: A.need.some(n => n.state === "down") ? "down" : count ? "warn" : "live",
       text: count ? count + (count === 1 ? " thing needs" : " things need") + " you" : "All clear" };
   }
-  return {assess, verdict, headline, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, remoteMirror, week: isoWeekKey};
+  return {assess, verdict, headline, backupState, backupScope, hubJob, shortLabel, safeURL, caption, retain, contributionIssue, associations, brief, seen, remoteMirror, sessionLine, week: isoWeekKey};
 })();

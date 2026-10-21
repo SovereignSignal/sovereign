@@ -20,6 +20,8 @@
 	<string>51</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Sovereign asks Terminal to resume a Claude Code session when you choose Open session in Review.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

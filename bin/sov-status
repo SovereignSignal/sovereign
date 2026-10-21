@@ -104,6 +104,36 @@ def manifest_last_run(lane_dir):
     return None
 
 
+SESSIONS_LINE = re.compile(r"^Sessions this week: distilled (\d+), captures (\d+), skipped (\d+), "
+                           r"waiting (\d+), failed (\d+), refused (\d+)\.$")
+
+
+def sessions_week(lane_dir):
+    """This week's session capture counts from <lane_dir>/sessions/MANIFEST.md, which the
+    sessions tick writes (lib/session_ingest/run.py write_manifest), or None when the lane
+    has no such manifest or it carries no counts line."""
+    if not lane_dir:
+        return None
+    try:
+        lines = open(os.path.join(lane_dir, "sessions", "MANIFEST.md"), encoding="utf-8").read(65536).splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    out = None
+    for line in lines:
+        m = SESSIONS_LINE.match(line.strip())
+        if m and out is None:
+            keys = ("distilled", "captures", "skipped", "waiting", "failed", "refused")
+            out = dict(zip(keys, (int(g) for g in m.groups())))
+            out["waiting_reason"] = None
+    if out is not None:
+        for line in lines:
+            line = line.strip()
+            if line.startswith("Waiting: ") and line.endswith(".") and len(line) <= 300:
+                out["waiting_reason"] = line[len("Waiting: "):-1].strip() or None
+                break
+    return out
+
+
 def one_line(path):
     if not path:
         return None
@@ -690,6 +720,32 @@ for cand in glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json"
     try: inbox_txt = open(os.path.join(lane, "INBOX.md"), errors="ignore").read()
     except OSError: inbox_txt = ""
     props = []
+    # A proposal drawn from a session capture names where it came from: the capture's own
+    # labels (sov-capture), read only from a file whose real path is inside this archive.
+    real_root = os.path.realpath(root)
+    def session_of(src):
+        if not re.match(r"^raw/tools/[^/]+/sessions/[^/]+\.md$", src or "") or "/../" in "/" + src + "/":
+            return None
+        path = os.path.realpath(os.path.join(real_root, src))
+        if not path.startswith(real_root + os.sep) or not os.path.isfile(path):
+            return None
+        try: head = open(path, encoding="utf-8", errors="ignore").read(8192)
+        except OSError: return None
+        if not head.startswith("---\n"):
+            return None
+        end = head.find("\n---", 3)
+        fm = {}
+        for k, v in re.findall(r"(?m)^(\w+):[ \t]*(.*)$", head[4:end if end != -1 else len(head)]):
+            v = v.strip()
+            if v.startswith('"'):
+                try: v = json.loads(v)
+                except ValueError: v = v.strip('"')
+            fm.setdefault(k, v if isinstance(v, str) else "")
+        m = re.match(r"^[a-z0-9-]+-session:([A-Za-z0-9][A-Za-z0-9-]{0,127})$", fm.get("origin", ""))
+        ev = fm.get("evidence", "")
+        evidence = re.findall(r"T\d+", ev) if re.match(r"^\[\s*T\d+(\s*,\s*T\d+)*\s*\]$", ev) else []
+        return {"id": m.group(1) if m else None, "title": fm.get("session_title") or None,
+                "project": fm.get("project") or None, "span": fm.get("span") or None, "evidence": evidence}
     for pp in sorted(glob.glob(os.path.join(lane, "proposals", "*.md")), key=os.path.getmtime, reverse=True)[:60]:
         slug = os.path.basename(pp)[:-3]
         try: txt = open(pp, encoding="utf-8", errors="ignore").read()
@@ -711,6 +767,9 @@ for cand in glob.glob(os.path.join(root, "raw", "workspaces", "*", "status.json"
                       "update_of": upd, "flags": [f for f in (m.group(2).split(" ⚠ ") if m else []) if f],
                       "reason": reason, "hold": hold, "words": len(body.split()),
                       "age_h": round((now - os.path.getmtime(pp)) / 3600, 1), "body": body.strip()[:2500]})
+        sess = session_of((fm.get("source") or "").strip().strip('"'))
+        if sess:
+            props[-1]["session"] = sess
     out["proposals"] = props
     stop = os.path.join(lane, ".burndown-stop")
     out["burndown"] = {"stopped": os.path.exists(stop),
@@ -1512,6 +1571,22 @@ def fetch_hub(root, hub_pointer, want):
     return {"reachable": None, "error": "no ~/.brain-hub pointer and this machine holds no hub lane"}
 
 
+SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,127}$")
+
+
+def mark_local_sessions(hub):
+    """Whether THIS machine holds each session a proposal came from: the hub reads the
+    capture, but Open session runs here, so `local` is answered here, never by the hub."""
+    home = os.path.expanduser("~")
+    for p in (hub.get("proposals") or []) if isinstance(hub, dict) else []:
+        sess = p.get("session") if isinstance(p, dict) else None
+        if not isinstance(sess, dict):
+            continue
+        sid = sess.get("id")
+        sess["local"] = bool(isinstance(sid, str) and SESSION_ID.match(sid) and
+                             glob.glob(os.path.join(glob.escape(home), ".claude", "projects", "*", sid + ".jsonl")))
+
+
 def script_drift_finding(facts, whose):
     """Format a drift fact set, or None when the two sides agree.
 
@@ -1714,6 +1789,7 @@ def main():
         return
 
     hub = fetch_hub(root, hub_pointer, want_hub)
+    mark_local_sessions(hub)
     out["hub"] = hub
     if not out["machine"].get("role") and hub.get("via") == "local":
         out["machine"].update(role="hub", role_basis="local-hub-status")
@@ -1891,6 +1967,7 @@ def main():
                           "last_run": file_last_run(meta) or (manifest_last_run(lane_dir) if lane_dir else None),
                           "last_status": one_line(meta.get("last_status_file")),
                           "reads_7d": receipts_7d(lane_dir) if lane_dir else {"total": 0, "real": 0},
+                          "sessions": sessions_week(lane_dir),
                           "manual_step": meta.get("manual_step"), "secret": meta.get("secret"), "state": state,
                           "has_mirror": os.path.exists(os.path.join(hd, "mirror.sh")),
                           "instruction": os.path.join(hd, "INSTRUCTION.md") if os.path.exists(os.path.join(hd, "INSTRUCTION.md")) else None})
@@ -2032,7 +2109,11 @@ def main():
         lane = runner_lane(hid, manifest, runs) or {}
         if not lane.get("enabled"):
             continue
-        nm = names.get(hid, hid)
+        # A wire declared beside its tool (`parent`, as claude-code-sessions is beside
+        # claude-code) has no row and no connect command of its own: it reports under its
+        # parent, and reinstalling the parent is what puts its script back.
+        owner = lane.get("parent") if isinstance(lane.get("parent"), str) and lane.get("parent") else hid
+        nm = names.get(owner, owner)
         mirror = lane.get("mirror")
         # A lane the runner refuses is the quietest failure this design can produce: the
         # shared job stays green, the lane's error log stays empty, and nothing mirrors. It
@@ -2043,27 +2124,27 @@ def main():
             if refused == "mirror missing":
                 kind = "mirror-missing"
                 why = "the declared mirror script is gone (%s)" % (mirror or "none is declared")
-                fix = "Run: sov connect %s --apply" % hid
+                fix = "Run: sov connect %s --apply" % owner
             elif refused == "timeout exceeds interval":
                 kind = "lane-refused"
                 why = "its timeout (%ss) is longer than the %ss tick" % (lane_timeout(lane), runner_interval(manifest))
                 fix = "Lower timeout_s below the tick, or give this lane a job of its own."
             else:
                 kind, why, fix = "lane-refused", refused, ""
-            needs.append({"kind": kind, "harness": hid,
+            needs.append({"kind": kind, "harness": owner,
                           "text": ("%s: the connector job refuses to run this lane, so nothing is mirroring it: %s. %s"
                                    % (nm, why, fix)).strip()})
             continue
         if lane.get("timed_out"):
             lane_flagged.add(hid)
-            needs.append({"kind": "lane-timeout", "harness": hid,
+            needs.append({"kind": "lane-timeout", "harness": owner,
                           "text": "%s: the mirror was killed after %ss. It is hanging." % (nm, lane_timeout(lane))})
         if not ticked:
             continue
         seen = iso_age_h(lane.get("checked_at"))
         cad = lane.get("cadence_s") or 900
         if seen is None or seen > 2 * (cad / 3600.0):
-            needs.append({"kind": "lane-silent", "harness": hid,
+            needs.append({"kind": "lane-silent", "harness": owner,
                           "text": "%s: the connector job is running but has not visited this lane %s (cadence %ss). Check %s."
                                   % (nm, ("for %.1fh" % seen) if seen is not None else "at all", cad,
                                      os.path.join((manifest.get("runner") or {}).get("log_dir") or os.path.join(_state_dir(), "lanes"), "%s.error.log" % hid))})

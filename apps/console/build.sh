@@ -149,7 +149,9 @@ while IFS= read -r -d '' nested; do
 done < <(find "$APP/Contents/Resources/runtime" -type f -print0)
 codesign --force --sign "$SIGN_ID" --options runtime ${TIMESTAMP[@]+"${TIMESTAMP[@]}"} "$BACKEND/bin/hub-crypto"
 codesign --force --sign "$SIGN_ID" --options runtime ${TIMESTAMP[@]+"${TIMESTAMP[@]}"} "$APP/Contents/MacOS/sov"
-codesign --force --sign "$SIGN_ID" --options runtime ${TIMESTAMP[@]+"${TIMESTAMP[@]}"} "$APP" >/dev/null
+# Open session (Review) asks Terminal to run claude --resume; under the hardened runtime an
+# app may send Apple events only with the entitlement in Sovereign.entitlements.
+codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$HERE/Sovereign.entitlements" ${TIMESTAMP[@]+"${TIMESTAMP[@]}"} "$APP" >/dev/null
 codesign --verify --deep --strict "$APP"
 echo "    signed and verified (distribution notarization is separate)"
 echo "    $APP"

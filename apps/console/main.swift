@@ -265,6 +265,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             // other backend bridges run: status and the Preview plan never read the Keychain
             // secret or call a model; on, off, allow and deny change only its config.
             let action = d["action"] as? String ?? "status"
+            if action == "resume" { resumeSession(d["id"], generation: generation); return }
             let commands: [String: [String]] = ["status": ["status", "--json"], "preview": [], "on": ["--on"],
                                                 "off": ["--off"], "allow": ["--allow"], "deny": ["--deny"]]
             guard var tail = commands[action], let resources = Bundle.main.resourceURL else {
@@ -1037,6 +1038,62 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             if stopped { send(["line": "stopped after \(Int(timeLimit / 60)) min without finishing"]) }
             DispatchQueue.main.async { completion?(p.terminationStatus) }
             send(["line": "exit \(p.terminationStatus)", "state": "end", "exit": Int(p.terminationStatus)])
+        }
+    }
+
+    /// A session id as Claude Code names its transcripts: a UUID, checked character by
+    /// character so nothing else (a newline, a quote, a longer string) can pass.
+    static func isSessionUUID(_ id: String) -> Bool {
+        let chars = Array(id.unicodeScalars)
+        guard chars.count == 36 else { return false }
+        for (i, c) in chars.enumerated() {
+            if [8, 13, 18, 23].contains(i) { if c != "-" { return false } }
+            else if !("0"..."9").contains(c) && !("a"..."f").contains(c) && !("A"..."F").contains(c) { return false }
+        }
+        return true
+    }
+
+    /// Open session (Review): `claude --resume <id>` in Terminal, in the folder the session
+    /// ran in. The id is a UUID before anything else happens; the folder comes from
+    /// `sov ingest sessions --where <id>` and must be an existing absolute directory. The id
+    /// enters the script only after the UUID check; the folder only as an AppleScript
+    /// string, which `quoted form of` hands to the shell as one word.
+    func resumeSession(_ raw: Any?, generation: UUID?) {
+        let reply: (Int32, String) -> Void = { code, err in
+            self.deliver("sessionsResult", ["action": "resume", "exit": code, "err": err], generation: generation)
+        }
+        guard let id = raw as? String, Bridge.isSessionUUID(id) else { reply(64, "That is not a session this Mac can open."); return }
+        guard let resources = Bundle.main.resourceURL else { reply(70, "The app's backend is missing."); return }
+        let args = [resources.appendingPathComponent("runtime/bin/python3").path, "-I", "-B",
+                    resources.appendingPathComponent("backend/bin/sov-ingest").path, "sessions", "--where", id]
+        var env: [String: String] = [:]
+        if let root = Settings.archive { env["SOVS_VAULT"] = root }
+        run(args, environment: env, timeLimit: 30) { out, err, code in
+            DispatchQueue.main.async {
+                guard code == 0 else { reply(code, err.split(separator: "\n").last.map(String.init) ?? "The session's folder could not be found."); return }
+                var cwd = out
+                while cwd.hasSuffix("\n") { cwd.removeLast() }
+                var isDir: ObjCBool = false
+                guard !cwd.isEmpty, cwd.hasPrefix("/"), cwd.unicodeScalars.count <= 1024,
+                      cwd.rangeOfCharacter(from: CharacterSet(charactersIn: "\n\r\u{0}")) == nil,
+                      FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else {
+                    reply(65, "The folder this session ran in is not on this Mac any more."); return
+                }
+                let literal = cwd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+                let source = """
+                tell application "Terminal"
+                    activate
+                    do script "cd " & quoted form of "\(literal)" & " && claude --resume \(id)"
+                end tell
+                """
+                var error: NSDictionary?
+                NSAppleScript(source: source)?.executeAndReturnError(&error)
+                if let error = error {
+                    reply(69, (error[NSAppleScript.errorMessage] as? String) ?? "Terminal did not open the session.")
+                } else {
+                    reply(0, "")
+                }
+            }
         }
     }
 

@@ -58,3 +58,19 @@ for(const meta of [{pending:true},{stale:true},{stale:true,error:'failed'}]){
  assert.equal(result.available,false);assert.equal(result.proposals.length,0);
 }
 console.log('Retained and refreshing status never authorize a Review decision.');
+
+// A proposal drawn from a session capture says which session, with the turns it rests on.
+const sess={id:'0b4f7c9e-2d1a-4c3b-9e8f-1a2b3c4d5e6f',title:'Judge bake-off rerun',project:'sovereign',span:'2026-10-21T09:02Z..2026-10-21T10:40Z',evidence:['T4','T9'],local:true};
+assert.equal(g.sessionLine({slug:'x',session:sess}),'From a Claude Code session: Judge bake-off rerun, sovereign, 2026-10-21 09:02 to 10:40 UTC, turns T4, T9');
+assert.equal(g.sessionLine({slug:'x',session:{...sess,evidence:[]}}),'From a Claude Code session: Judge bake-off rerun, sovereign, 2026-10-21 09:02 to 10:40 UTC');
+assert.equal(g.sessionLine({slug:'x',session:{...sess,evidence:undefined}}),'From a Claude Code session: Judge bake-off rerun, sovereign, 2026-10-21 09:02 to 10:40 UTC');
+assert.equal(g.sessionLine({slug:'x',session:{...sess,span:'2026-10-20T23:50Z..2026-10-21T00:40Z'}}),'From a Claude Code session: Judge bake-off rerun, sovereign, 2026-10-20 23:50 to 2026-10-21 00:40 UTC, turns T4, T9');
+assert.equal(g.sessionLine({slug:'x',session:{id:sess.id,title:null,project:null,span:null,evidence:[]}}),'From a Claude Code session');
+assert.equal(g.sessionLine({slug:'x'}),null);
+assert.equal(g.sessionLine(null),null);
+assert.equal(g.canOpenSession({session:sess}),true);
+assert.equal(g.canOpenSession({session:{...sess,local:false}}),false);
+assert.equal(g.canOpenSession({session:{...sess,id:'not-a-uuid'}}),false);
+assert.equal(g.canOpenSession({session:{...sess,id:sess.id+'\n'}}),false);
+assert.equal(g.canOpenSession({}),false);
+console.log('Review: a session capture names its session and offers Open session only where the transcript is.');

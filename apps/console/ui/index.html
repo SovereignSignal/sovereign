@@ -154,6 +154,7 @@
   .pnl-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 14px; margin: 0; font-size: 12px; }
   .pnl-facts dt { color: var(--muted); }
   .pnl-facts dd { margin: 0; font: 12px/18px var(--mono); color: var(--ink); text-align: right; overflow-wrap: anywhere; }
+  .pnl-facts dd .pnl-warn { color: var(--warn); }
   #inspector .pnl .acts { position: static; margin: 0; padding: 0; border: 0; background: none; gap: 8px; align-items: flex-start; }
   .pnl .acts:empty { display: none; }
   .pnl p[role="status"]:empty { display: none; }
@@ -1137,6 +1138,8 @@ window.onerror = function (msg, src, line, col) {
   let importState={prompt:'',plan:'',ready:false,note:''},importAsked=false,importBusy=false;
   // Settings › Session capture: its status, the last Preview plan (Turn on waits for one), one action at a time.
   let sessionsState={status:null,plan:'',previewed:false,note:''},sessionsAsked=false,sessionsBusy=false;
+  // Open session in Review: which proposal asked, and what the bridge said back.
+  let sessionOpen={slug:null,note:''};
   // A hub job the owner can retry from here: the button, why it may be held, and the honest outcome.
   function retryActions(o){
     const health=o.health||{},fresh=!D?._status?.stale&&!D?._status?.error&&hub().reachable===true&&selectedRoot===D?.machine?.vault;
@@ -1194,11 +1197,12 @@ window.onerror = function (msg, src, line, col) {
       const update=existing.length||p.update_of;
       const tone=state==='ready'?'live':['checking','running','busy'].includes(state)?'':['failed','unavailable','missing','invalid','changed','uncertain'].includes(state)?'down':'warn';
       const proposed=mdBlocks(body).map(b=>mdBlock(b)).join('')||'<p>(empty)</p>';
+      const sline=GateModel.sessionLine(p),opening=sessionOpen.slug===p.slug?sessionOpen.note:'';
       box.innerHTML =
         `<div class="rv-head"><div class="rv-title"><h2>${esc(shown.title || p.slug)}</h2>
           <div class="rv-sub"><span class="tag">${esc(shown.type || '?')}</span><span class="tag ${update?'hold':'on'}">${update?'update':'new'}</span>${p.hold?'<span class="tag hold">held</span>':''}<span>${esc(p.confidence || '?')} confidence · ${age(p.age_h)}</span></div></div>
           <div class="rv-pos"><span>${at+1} of ${queue.length}</span><button class="quiet" data-act="review-prev" title="Previous (K)" aria-label="Previous proposal">↑</button><button class="quiet" data-act="review-next" title="Next (J)" aria-label="Next proposal">↓</button></div></div>`+
-        (p.reason||shown.source?`<div class="rv-why">${p.reason?`<span class="cap">Why</span><p>${esc(p.reason)}</p>`:''}${shown.source?`<span class="rv-src">${esc(shown.source)}</span>`:''}</div>`:'')+
+        (p.reason||shown.source||sline?`<div class="rv-why">${p.reason?`<span class="cap">Why</span><p>${esc(p.reason)}</p>`:''}${sline?`<p class="rv-session">${esc(sline)}</p>`:''}${shown.source?`<span class="rv-src">${esc(shown.source)}</span>`:''}</div>`:'')+
         (['ready','checking'].includes(state)?'':`<section class="rv-state ${esc(state)}" role="status"><h3>${esc(title)}</h3><p>${esc(message)}</p>
           ${['type_conflict','update_conflict','resolution_pending'].includes(state)?`<button class="quiet" data-act="gate-copy" data-slug="${esc(p.slug)}">${state==='resolution_pending'?'Copy recovery request':'Copy resolution request'}</button>`:''}
           ${check?.detail?`<details><summary>Technical details</summary><pre>${esc(check.detail)}</pre></details>`:''}</section>`)+
@@ -1211,7 +1215,9 @@ window.onerror = function (msg, src, line, col) {
         `<div class="acts">${resolvable ? `<button class="brass" data-act="${resolving?'gate':'gate-resolve'}" data-verb="resolve" data-slug="${esc(p.slug)}">${resolving?'Approve update as '+esc(retained):'Resolve and review'}</button>` : `<button class="brass" data-act="gate" data-verb="approve" data-slug="${esc(p.slug)}" ${GateModel.canApprove(check,gatePending)?'':'disabled'}>${state==='running'?'Saving…':'Approve'}</button>`}<kbd title="Approve">⌘↵</kbd>
         <button class="danger" data-act="gate" data-verb="reject" data-slug="${esc(p.slug)}" ${GateModel.canReject(check,gatePending)?'':'disabled'}>Reject</button><kbd title="Reject, pressed twice">R</kbd>
         <button class="quiet rv-check ${esc(state)}" data-act="gate-check" data-slug="${esc(p.slug)}" title="${esc(message)}" ${['checking','running'].includes(state)||gatePending?'disabled':''}>${dot(tone,title)}${state==='checking'?'Checking…':state==='running'?'Saving…':state==='ready'?'Checked':'Check again'}</button>
-        ${shown.source?obsBtn(shown.source.replace(/\.md$/,''),'Open source'):''}</div>`;
+        ${shown.source?obsBtn(shown.source.replace(/\.md$/,''),'Open source'):''}
+        ${GateModel.canOpenSession(p)?`<button class="quiet" data-act="open-session" data-slug="${esc(p.slug)}" title="Resume this session in Terminal">Open session</button>`:''}</div>`+
+        (opening?`<div class="note" role="status">${esc(opening)}</div>`:'');
       return;
     }
     if (it.kind === "host") {
@@ -1319,10 +1325,12 @@ window.onerror = function (msg, src, line, col) {
           <input type="password" class="secret" id="secret-${esc(o.connector)}" data-env="${esc(h.secret.env)}" autocomplete="off" spellcheck="false" placeholder="${connected ? "kept on this machine; paste again only to replace it" : "paste it here, then Add"}"></label>
           ${h.secret.help ? help(h.secret.help) : ""}` : "";
       const canAdd = o.connector && o.detected !== false && h?.state !== "removed";
+      // Session capture's week, from the lane's sessions/MANIFEST.md; amber while it waits on its model.
+      const sl = h ? SovStatus.sessionLine(h.sessions) : null;
       box.innerHTML = panel({ dot: s.dot, dotText: s.word || "delivering", name: o.name, where: h?.runs_on || me || "", state: s.word, age: s.age, say,
         note: h && h.manual_step ? `<div class="note">${esc(h.manual_step)}</div>` : "",
         facts: t ? [["Prepared this week", h.read === "none" ? null : String(t.reads)], [h.runs_on ? "Last pull" : "Last write", t.run != null ? age(t.run) + " ago" : h.last_run ? h.last_run.replace(/^Last run: /, "") : "never"],
-          ["Runs every", cadence], ["Lane", h.lane]] : [],
+          ["Runs every", cadence], ...(sl ? [["Sessions", sl.warn ? `<span class="pnl-warn">${esc(sl.text)}</span>` : sl.text, sl.warn ? "raw" : ""]] : []), ["Lane", h.lane]] : [],
         body: canAdd && !connected ? secret : "",
         acts: `<div class="acts">${actions([canAdd && !connected ? `<button class="brass" data-act="connect" data-harness="${esc(o.connector)}">Add producer…</button>` : "", addAgainBtn(h),
           runNowBtn(h, "Run now"), h && h.lane_dir ? `<button data-act="reveal" data-path="${esc(h.lane_dir)}">Show folder</button>` : ""],
@@ -1824,6 +1832,12 @@ window.onerror = function (msg, src, line, col) {
       if (act === "openurl") return bridge({ cmd: "openurl", url: b.dataset.url });
       if (act === "clearlog") return armOrFire(b, "Clear log", () => { const request = openDrawer("Clear log", false); if (request) bridge({ cmd: "clearlog", path: b.dataset.path, request }); });
       if (act === 'gate-check') { requestGateCheck(b.dataset.slug); renderInspector(); return; }
+      if (act === 'open-session') {
+        const p=reviewQueue().proposals.find(x=>x.slug===b.dataset.slug);
+        if(!GateModel.canOpenSession(p))return;
+        sessionOpen={slug:p.slug,note:'Opening the session in Terminal.'};renderInspector();
+        return bridge({cmd:'sessions',action:'resume',id:p.session.id});
+      }
       if (act === 'gate-resolve') { const slug=b.dataset.slug,check=gateChecks.get(slug)?.value;if(canReview(slug)&&GateModel.canResolve(check,gatePending)){gateResolutions.set(slug,check.fingerprint);reviewTab='changes';renderInspector();$('#gate-resolution-preview')?.scrollIntoView({block:'start'});}return; }
       if (act === 'gate-cancel-resolution') {gateResolutions.delete(b.dataset.slug);renderInspector();return;}
       if (act === 'gate-copy') {
@@ -2034,6 +2048,12 @@ window.onerror = function (msg, src, line, col) {
       if (settingsOpen) renderList();
     } else if (kind === "sessionsResult") {
       const out = String(payload.out || "").trim(), err = String(payload.err || "").trim().split("\n").filter(Boolean).pop() || "";
+      if (payload.action === "resume") {
+        // Terminal shows the session itself; only a refusal needs saying here.
+        sessionOpen.note = payload.exit === 0 ? "" : (err || "The session could not be opened.");
+        if (view === "review" && !settingsOpen) renderInspector();
+        return;
+      }
       if (payload.action === "status") {
         let parsed = null; try { parsed = JSON.parse(out); } catch (e) {}
         sessionsState.status = parsed || { error: err || "Session capture's status could not be read." };

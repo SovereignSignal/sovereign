@@ -53,5 +53,24 @@ window.GateModel = (() => {
       title:h.pending?'Awaiting your decision':'You’re caught up',
       message:h.pending?(proposals.length<h.pending?'Showing '+proposals.length+' of '+h.pending+' proposals. Refresh after decisions to load more.':'Compare each proposal with existing knowledge, then decide what to keep.'):'The review service reported no waiting proposals in its latest observation.'};
   }
-  return {describe,canApprove,canReject,canResolve,reviewKey,queue,decisionTimeoutMS:120000};
+  // A proposal drawn from a session capture (sov-status `session`): which session, and the
+  // turns its evidence rests on. The span is UTC, as the capture wrote it.
+  function spanText(span){
+    const m=/^(\d{4}-\d\d-\d\d)T(\d\d:\d\d)Z\.\.(\d{4}-\d\d-\d\d)T(\d\d:\d\d)Z$/.exec(span||'');
+    if(!m)return span||'';
+    return m[1]+' '+m[2]+' to '+(m[3]===m[1]?'':m[3]+' ')+m[4]+' UTC';
+  }
+  function sessionLine(p){
+    const s=p?.session;
+    if(!s||typeof s!=='object')return null;
+    const turns=(Array.isArray(s.evidence)?s.evidence:[]).filter(t=>/^T\d+$/.test(t));
+    const parts=[s.title,s.project,spanText(s.span)].filter(x=>typeof x==='string'&&x.trim()).map(x=>x.trim());
+    if(turns.length)parts.push('turns '+turns.join(', '));
+    return 'From a Claude Code session'+(parts.length?': '+parts.join(', '):'');
+  }
+  // Open session runs claude --resume in Terminal, so only on the machine that holds the
+  // transcript, and only for a session id the bridge will accept (a UUID).
+  const SESSION_UUID=/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  function canOpenSession(p){const s=p?.session;return !!s&&s.local===true&&typeof s.id==='string'&&s.id.length===36&&SESSION_UUID.test(s.id)}
+  return {describe,canApprove,canReject,canResolve,reviewKey,queue,sessionLine,canOpenSession,decisionTimeoutMS:120000};
 })();
