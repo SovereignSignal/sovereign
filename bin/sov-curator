@@ -129,6 +129,19 @@ def seed_profile(root):
         print(f"curator: wrote a starter owner profile to {profile.relative_to(root)}; edit it to say who you are")
 
 
+# curator-run's first pass, with no watermark, looks back two days by mtime, and the
+# connectors copy memory with its original times: a newcomer's older memory would land in
+# raw/ and never be judged. A hub drains that backlog with its burndown job; a hubless
+# archive has none, so a lane that has never run starts its watermark at zero. Overflow
+# past --max is deferred, never dropped, so the backlog drains a pass at a time.
+def seed_backfill(root):
+    wm = root / "raw" / "workspaces" / LANE / ".last-run"
+    if not wm.exists():
+        wm.parent.mkdir(parents=True, exist_ok=True)
+        wm.write_text("0")
+        print("curator: first passes judge everything your connected tools already saved, 20 files a pass")
+
+
 def key_saved(provider_id=None):
     try:
         return subprocess.run(["/usr/bin/security", "find-generic-password", "-s",
@@ -207,7 +220,7 @@ def enable(a):
     STATE.mkdir(parents=True, exist_ok=True); UNIT.parent.mkdir(parents=True, exist_ok=True)
     if UNIT.exists() and UNIT.read_bytes() == body and launchctl("print", f"gui/{os.getuid()}/{LABEL}").returncode == 0:
         print("already installed and loaded"); return 0
-    seed_profile(root)
+    seed_profile(root); seed_backfill(root)
     UNIT.write_bytes(body)
     launchctl("bootout", f"gui/{os.getuid()}/{LABEL}")
     r = launchctl("bootstrap", f"gui/{os.getuid()}", str(UNIT))
@@ -496,7 +509,7 @@ def retire(a):
 
 
 def run(a):
-    refuse_on_hub(); root = vault(); seed_profile(root)
+    refuse_on_hub(); root = vault(); seed_profile(root); seed_backfill(root)
     env = dict(os.environ, **curator_env(root))
     # "Curate now" means now: pull what the connected tools saved since their last tick
     # (the runner's cadence is 15 minutes) before judging, so a note made a minute ago counts.
