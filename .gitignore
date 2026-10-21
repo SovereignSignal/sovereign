@@ -5,3 +5,6 @@
 *.pre-*
 __pycache__/
 apps/console/build/
+
+# private operator handoff, never published
+HANDOFF.local.md

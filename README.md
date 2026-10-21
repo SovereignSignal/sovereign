@@ -8,7 +8,7 @@
 
 Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Sovereign keeps that context in one place you own: a folder of Markdown files on your Mac, versioned with git, that your tools read before they work and add to as they go. You approve what becomes trusted. Switch models or tools and your context comes with you.
 
-It's deliberately simple. The whole standard fits on one page ([`CLAUDE.md`](CLAUDE.md)), the archive is ordinary files you can open in any editor, and nothing about it depends on this app, this repo, or any one AI company staying around.
+It's deliberately simple. The whole standard fits on one page ([`CLAUDE.md`](CLAUDE.md)), the archive is ordinary files you can open in any editor, and nothing about it depends on this app, this repo, or any one AI company staying around. Where Sovereign goes next: [`ROADMAP.md`](ROADMAP.md).
 
 ## How it works
 
