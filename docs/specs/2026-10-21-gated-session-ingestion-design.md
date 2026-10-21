@@ -1,6 +1,6 @@
 # Gated session ingestion (v0.9.0 "Capture", issue #6)
 
-Status: draft for owner review. Scope: Claude Code first, Codex behind the same contract.
+Status: implemented for owner review. Scope: Claude Code first, Codex behind the same contract.
 
 ## 1. Problem and goal
 

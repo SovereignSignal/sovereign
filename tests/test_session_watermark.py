@@ -11,7 +11,6 @@ import sys
 import tempfile
 import threading
 import time
-import types
 import unittest
 from unittest import mock
 
@@ -19,7 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "tests"))
 import session_fixtures as fx  # noqa: E402
-import curator_inference  # noqa: E402
 from session_ingest import run  # noqa: E402
 
 SID = "5e551011-0000-4000-8000-0000000000b1"
@@ -265,7 +263,7 @@ def slow_or_valid(body):
 
 class InProcess(unittest.TestCase):
     """Ticks run in this process, so the module can be pointed at a missing sov-capture or
-    given a short per-call timeout (the retry's 30 s sleep is skipped)."""
+    given a short per-call timeout (a session call is one attempt, so nothing sleeps)."""
 
     def rig(self, reply_fn=valid, **cfg):
         tmp = tempfile.TemporaryDirectory()
@@ -275,10 +273,9 @@ class InProcess(unittest.TestCase):
         return rig
 
     def short_calls(self):
-        for patcher in (mock.patch.object(run, "windows", return_value=(0.5, 100, 200)),
-                        mock.patch.object(curator_inference, "time", types.SimpleNamespace(sleep=lambda s: None))):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(run, "windows", return_value=(0.5, 100, 200))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_a_missing_sov_capture_is_a_fault_before_any_call(self):
         rig = self.rig()
@@ -357,6 +354,47 @@ class InProcess(unittest.TestCase):
             if n > 1:   # the first tick only holds it; from the second on the model is waited on
                 self.assertEqual(rig.watermark()["waiting"]["reason"], "model unreachable", n)
         self.assertEqual(rig.watermark()["waiting"]["reason"], "model unreachable")
+
+    def test_a_held_model_lock_makes_no_call_and_says_model_busy(self):
+        """On a hub the tick shares curator-run's model lock: held, it makes no call and
+        stages only the Waiting line; released, the next tick runs as usual."""
+        import fcntl
+        rig = self.rig()
+        rig.transcript(SID)
+        path = rig.home / ".local/state/sovs-cron/model.lock"
+        path.parent.mkdir(parents=True)
+        holder = open(path, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)   # curator-run, mid-run
+        summary = rig.tick_here()
+        self.assertEqual((summary["status"], summary["reason"], summary["calls"], summary["exit"]),
+                         ("waiting", "model busy", 0, 0))
+        self.assertEqual(rig.stub.calls, 0)
+        self.assertIsNone(rig.verdict(SID))
+        self.assertEqual(rig.watermark()["waiting"]["reason"], "model busy")
+        manifest = (rig.private / "MANIFEST.md").read_text()
+        self.assertRegex(manifest, r"\nWaiting: model busy since \d{4}-\d\d-\d\dT\d\d:\d\dZ\.\n")
+        self.assertEqual([p.name for p in rig.private.iterdir()], ["MANIFEST.md"])
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        summary = rig.tick_here()
+        self.assertEqual((summary["status"], summary["calls"]), ("ran", 1))
+        self.assertEqual(rig.verdict(SID), "distilled")
+        self.assertIsNone(rig.watermark()["waiting"])
+        self.assertNotIn("Waiting:", (rig.private / "MANIFEST.md").read_text())
+        self.assertTrue(path.read_text().startswith("session-capture pid "))
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)   # the tick released it
+
+    def test_before_enable_rows_are_not_counted_in_the_week(self):
+        rig = self.rig()
+        for n in range(3):
+            rig.transcript("5e551011-0000-4000-8000-0000000000c%d" % n, age_s=3 * 86400 + n)
+        rig.transcript(SID)
+        summary = rig.tick_here()
+        self.assertEqual(summary["calls"], 1)
+        verdicts = [r.get("verdict") for r in rig.watermark()["sessions"].values()]
+        self.assertEqual(sorted(verdicts), ["distilled"] + ["skipped:before-enable"] * 3)
+        self.assertIn("Sessions this week: distilled 1, captures 1, skipped 0, waiting 0, failed 0, refused 0.",
+                      (rig.private / "MANIFEST.md").read_text())
 
 
 if __name__ == "__main__":

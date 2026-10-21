@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import stat
+import sys
 
 REFUSED = "refused-archive"
 DENIED = "denied"
@@ -58,7 +59,16 @@ def _norm(path):
     return os.path.realpath(os.path.expanduser(str(path))).rstrip("/") or "/"
 
 
+def _fold(path):
+    """The form a prefix compare uses. macOS volumes are usually case-insensitive and
+    realpath keeps the case it was given, so there both sides are casefolded, which errs
+    toward a match (a deny or a refusal); elsewhere the compare is exact."""
+    path = os.path.normcase(path)
+    return path.casefold() if sys.platform == "darwin" else path
+
+
 def _under(p, x):
+    p, x = _fold(p), _fold(x)
     return x == "/" or p == x or p.startswith(x + "/")
 
 

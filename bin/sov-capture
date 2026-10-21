@@ -151,7 +151,13 @@ ws_lane = os.path.join(VAULT, "raw", "workspaces", lane)
 stage = os.environ.get("BRAIN_STAGE") or os.environ.get("SOVEREIGN_STAGE")
 if not stage and os.path.isdir(os.path.expanduser("~/.vault-staging")):
     stage = "~/.vault-staging"
-STAGED = bool(stage) and not (os.path.isdir(ws_lane) or os.path.islink(ws_lane))
+WS_LANE = os.path.isdir(ws_lane) or os.path.islink(ws_lane)
+if a.subdir and WS_LANE:
+    # Sessions live only in a tool lane, where the strict publish pass and the curator's
+    # session hold (raw/tools/*/sessions/) apply; a workspace lane would skip both.
+    _refuse(f"{lane} is a workspace lane (raw/workspaces/{lane}); session captures go only "
+            f"to a tool lane, raw/tools/{lane}/sessions/")
+STAGED = bool(stage) and not WS_LANE
 if STAGED:
     ROOT = os.path.abspath(os.path.expanduser(stage))
     LANE_DIR = os.path.join(ROOT, "raw", "tools", lane)

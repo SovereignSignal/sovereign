@@ -196,6 +196,18 @@ class Privacy(unittest.TestCase):
         shop.mkdir()
         self.assertIsNone(gate(str(shop)))
 
+    def test_deny_ignores_case_on_darwin(self):
+        """macOS volumes are usually case-insensitive, so a deny entry matches the same
+        folder spelled in another case there; elsewhere the compare stays exact."""
+        cfg = dict(self.cfg, deny=["/Users/me/Work"])
+        with mock.patch.object(privacy.sys, "platform", "darwin"):
+            self.assertEqual(self.gate(cfg)("/users/me/work/proj"), "denied")
+            self.assertEqual(self.gate(cfg)("/USERS/ME/WORK"), "denied")
+            self.assertIsNone(self.gate(cfg)("/users/me/workshop"))
+        with mock.patch.object(privacy.sys, "platform", "linux"):
+            self.assertIsNone(self.gate(cfg)("/users/me/work/proj"))
+            self.assertEqual(self.gate(cfg)("/Users/me/Work/proj"), "denied")
+
     def test_temporary_roots_off_unless_allowed(self):
         cfg = dict(self.cfg, allow=[])
         self.assertEqual(self.gate(cfg)("/private/tmp/x"), "denied")

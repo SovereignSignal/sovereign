@@ -48,8 +48,9 @@ results, file snapshots, and anything the harness wrote rather than you, includi
 `<system-reminder>` spans, which is where the archive's own session-start pack arrives.
 Only interactive CLI sessions count. Subagent and sidechain sessions are skipped, as is
 any session with fewer than three typed prompts or one touched in the last 45 minutes.
-A model-free pre-filter then keeps a session only when it shows signal: a phrase like
-"remember" or "from now on", a decision, a correction, or a new name with no card yet.
+A model-free pre-filter then keeps a session only when it shows signal: one memory phrase
+like "remember" or "from now on" is enough; otherwise it needs two points, one per typed
+prompt for a decision or a correction phrase and one for a new name with no card yet.
 Most sessions stop there, with no model call.
 
 **What is cleaned.** Each prompt and reply is redacted for credentials before it is cut
@@ -61,8 +62,11 @@ inference guard the curator uses. On a hub it is the hub's local model. A hubles
 archive uses the provider you chose in Settings › Curator and needs that provider's key
 in the Keychain; a missing key refuses the call. Muse has no fixed API host yet, so
 capture stays off while it is the chosen provider. A client Mac of a hub archive stays
-off, because the model it would need runs on the hub. Nothing in the environment can
-redirect it elsewhere.
+off, because the model it would need runs on the hub. In every mode the call ignores proxy
+settings, from the environment or the system, and refuses a redirect, so it reaches that
+one endpoint or nothing; behind a proxy that is the only way out, capture fails rather
+than going through it. On a hub, a tick that finds the curator or the weekly audit using
+the model makes no call and says "Waiting: model busy".
 
 **Where it never reads.** A session that ran inside an archive is refused, and no allow
 entry overrides that: its transcript carries the archive's own text, and distilling it
@@ -79,12 +83,14 @@ that far. `--allow` and `--deny` take a path; deny wins. `--apply` runs one tick
 and `status` shows the switch, the model, the budget and this week's counts.
 
 **Budget.** At most 3 model calls and 60,000 characters per tick, and 30 calls a day,
-oldest session first, with 60 seconds per call. What a tick does not reach waits for the
-next one. A reply the model rejects counts against that session, and after three it is
-left alone. An unreachable model never counts against a session: the session stays
-pending and the manifest says "Waiting: model unreachable". A 401 or 403, or a refusal
-by the guard, shows as "model refused this configuration"; a missing key, a client Mac
-and anything else have their own fixed phrases, never a host or a path.
+oldest session first. Each call is one attempt of up to 150 seconds, with no retry inside
+the tick. What a tick does not reach waits for the next one. A reply the model rejects
+counts against that session, and after three it is left alone. An unreachable model never
+counts against a session: the session stays pending and the manifest says "Waiting: model
+unreachable". A call that times out is held uncharged until a later call gets an answer;
+then the timeout counts against its session, and three timeouts end it. A 401 or 403, or
+a refusal by the guard, shows as "model refused this configuration"; a missing key, a
+client Mac and anything else have their own fixed phrases, never a host or a path.
 
 **What lands.** Up to three captures per session, each labelled with its session,
 project, distiller, kind, confidence and the turns that back it. They arrive untrusted,

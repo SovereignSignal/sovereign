@@ -1313,19 +1313,12 @@ def _model_lock(job):
     Blocking wait with a 4h deadline; past it, exit nonzero so the cron wrapper
     alerts instead of a silent stall. The returned handle must stay referenced
     for the life of the run."""
-    import fcntl
-    d = os.path.expanduser("~/.local/state/sovs-cron")
-    os.makedirs(d, exist_ok=True)
-    fh = open(os.path.join(d, "model.lock"), "a+")
+    fh = curator_inference.open_model_lock()
     deadline = time.time() + 4 * 3600
     waited = False
     while True:
         try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fh.seek(0)
-            fh.truncate()
-            fh.write("%s pid %d since %s\n" % (job, os.getpid(), time.strftime("%F %T")))
-            fh.flush()
+            curator_inference.hold_model_lock(fh, job)
             _progress.update('gathering')
             if waited:
                 print("%s: model lock acquired, proceeding" % job)

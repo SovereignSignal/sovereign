@@ -275,6 +275,54 @@ class Resolve(Base):
         # the key comes from the Keychain item alone, never CURATOR_KEY or a keyfile
         self.assertEqual(load.call_args[0][1], {})
 
+    def test_every_mode_is_strict_on_the_wire_with_one_attempt(self):
+        with fx.ModelStub() as stub:
+            self.hub_json(stub.url)
+            hub = self.resolve()
+        (self.state / "hub.json").unlink()
+        hosted = self.resolve()
+        self.assertEqual((hub["mode"], hosted["mode"]), ("hub", "hubless"))
+        for res in (hub, hosted):
+            self.assertIs(res["cfg"]["strict_wire"], True, res["mode"])
+            self.assertIs(res["cfg"]["no_retry"], True, res["mode"])
+
+    def test_hubless_hosted_call_takes_no_proxy_and_no_redirect(self):
+        """A hubless archive's hosted provider is not local-only, and its call still never
+        goes through a proxy from the environment and never follows a redirect."""
+        import http.server
+        import threading
+        hits = []
+
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                hits.append(self.path)
+                self.send_response(302)
+                self.send_header("Location", "https://elsewhere.example/v1/messages")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        res = self.resolve()
+        self.assertEqual((res["mode"], res["cfg"]["provider"], res["cfg"]["local_only"]),
+                         ("hubless", "anthropic", False))
+        # The guard pins the provider to its own https host, so the stub can stand in for
+        # it only with the guard stood aside; the endpoint is the one thing changed.
+        res["cfg"]["endpoint"] = "http://127.0.0.1:%d/v1/messages" % server.server_address[1]
+        with fx.ModelStub() as proxy:
+            self.proxy_to(proxy)
+            with mock.patch("curator_inference.violations", return_value=[]):
+                out = distill.distill(res, "sk-test", SESSION, EXCERPT, [1, 2], timeout=5)
+            self.assertEqual(proxy.calls, 0)
+        self.assertEqual(hits, ["/v1/messages"])
+        self.assertEqual(out["status"], "unreachable")
+        self.assertIn("redirects are refused", out["error"])
+
     def test_muse_has_no_fixed_host(self):
         (self.state / "curator-provider.json").write_text(json.dumps({"provider": "muse"}))
         res = self.resolve()

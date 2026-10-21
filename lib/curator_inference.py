@@ -172,14 +172,43 @@ def chosen_provider(state_dir):
     return p if p in PROVIDERS else "anthropic"
 
 
-def _post_json(req, timeout, local_only=False):
+MODEL_LOCK = os.path.join(".local", "state", "sovs-cron", "model.lock")
+
+
+def open_model_lock(home=None):
+    """The model lock file every local-model job serialises on (curator-run, the weekly
+    audit, the session tick), opened for flock. Under `home`, else the process's ~."""
+    path = os.path.join(home or os.path.expanduser("~"), MODEL_LOCK)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return open(path, "a+")
+
+
+def hold_model_lock(fh, job):
+    """Take the lock without waiting and write the holder line; raises OSError when
+    another job holds it."""
+    import fcntl
+    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    fh.seek(0)
+    fh.truncate()
+    fh.write("%s pid %d since %s\n" % (job, os.getpid(), time.strftime("%F %T")))
+    fh.flush()
+
+
+def _post_json(req, timeout, local_only=False, strict_wire=False, retry=True):
     """One retry on a timed-out model call. A single timeout otherwise costs the
-    document until the next run; transient queue pressure should not do that."""
+    document until the next run; transient queue pressure should not do that.
+
+    local_only or strict_wire: no proxy (neither the environment's nor the system's)
+    and no redirect, so the request reaches the endpoint named or nothing. retry=False
+    makes one attempt only, for a caller that retries across runs on its own."""
     open_request = urllib.request.urlopen
-    if local_only:
+    if local_only or strict_wire:
+        refusal = ("Local Hub inference redirects are refused." if local_only
+                   else "Model call redirects are refused.")
+
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
-                raise ValueError("Local Hub inference redirects are refused.")
+                raise ValueError(refusal)
         open_request = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open
     try:
         return json.load(open_request(req, timeout=timeout))
@@ -193,7 +222,7 @@ def _post_json(req, timeout, local_only=False):
             detail = ""
         raise RuntimeError(f"HTTP {exc.code}: {detail or exc.reason}") from None
     except Exception as exc:
-        if "timed out" not in str(exc).lower():
+        if not retry or "timed out" not in str(exc).lower():
             raise
         time.sleep(30)
         return json.load(open_request(req, timeout=timeout))
@@ -229,17 +258,20 @@ def chat(cfg, key, model, temperature, messages, timeout):
     """Every model call goes through here, so the backends cannot drift apart. Returns
     the reply text. The guard runs here on every call, before any request is built,
     so a caller that skipped violations(cfg), or edited cfg after checking it, is
-    refused rather than sent."""
+    refused rather than sent. Two optional cfg flags, both absent from config_from_env so
+    curator-run's calls are unchanged: strict_wire (no proxy, no redirect, whatever the
+    mode) and no_retry (one attempt, no in-call retry after a timeout)."""
     found = violations(cfg)
     if found:
         raise RuntimeError(f"REFUSING - sovereign-inference law: {found[0]}")
-    local_only = bool(cfg.get("local_only"))
+    wire = {"local_only": bool(cfg.get("local_only")), "strict_wire": bool(cfg.get("strict_wire")),
+            "retry": not cfg.get("no_retry")}
     if cfg["backend"] == "anthropic":
         req = urllib.request.Request(cfg["endpoint"], _anthropic_body(model, messages, cfg.get("anthropic_effort") or "medium"),
                                      {"x-api-key": key, "anthropic-version": "2023-06-01",
                                       "anthropic-beta": "server-side-fallback-2026-07-01",
                                       "Content-Type": "application/json"})
-        out = _post_json(req, timeout, local_only)
+        out = _post_json(req, timeout, **wire)
         # Read the stop reason before the content: a refusal or a cut-off reply is an
         # error for this item (recorded, retried next run), never an empty verdict.
         stop = out.get("stop_reason")
@@ -249,4 +281,4 @@ def chat(cfg, key, model, temperature, messages, timeout):
         return "".join(b.get("text", "") for b in out.get("content", []) if b.get("type") == "text")
     req = urllib.request.Request(cfg["endpoint"], _chat_body(model, temperature, messages, cfg.get("reasoning_effort") or ""),
                                  {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-    return _post_json(req, timeout, local_only)["choices"][0]["message"]["content"]
+    return _post_json(req, timeout, **wire)["choices"][0]["message"]["content"]

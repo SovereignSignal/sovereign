@@ -137,10 +137,24 @@ class CaptureMeta(unittest.TestCase):
     def test_workspace_lane_ignores_the_stage(self):
         ws = self.vault / "raw/workspaces" / LANE
         ws.mkdir(parents=True)
-        r = self.session()
+        r = self.run_capture("--lane", LANE, "--title", "An agent note")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.files(self.stage), [])
-        self.assertTrue((ws / "sessions/s1.md").is_file())
+        self.assertTrue((ws / "s1.md").is_file())
+
+    def test_sessions_refused_on_a_workspace_lane(self):
+        """Sessions live only in a tool lane, where the strict publish pass and the
+        curator's session hold apply; a workspace lane would skip both."""
+        ws = self.vault / "raw/workspaces" / LANE
+        ws.mkdir(parents=True)
+        for stage in (True, False):
+            r = self.session(stage=stage)
+            self.assert_refused(r)
+            self.assertIn("is a workspace lane", r.stderr)
+            self.assertIn("raw/tools/%s/sessions/" % LANE, r.stderr)
+        ws.rmdir()
+        ws.symlink_to(Path(self.tmp.name) / "nowhere")
+        self.assert_refused(self.session())
 
     def test_stage_order_matches_sov_dest(self):
         other = Path(self.tmp.name) / "other-stage"

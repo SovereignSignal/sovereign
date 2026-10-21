@@ -2,8 +2,8 @@
 
 The answer follows the archive, never the environment. A Mac that runs the hub uses the
 hub's local model (the template hub's STATE/hub.json, or the packaged local Hub that
-~/.sovereign-hub points at); both are loopback by law, so both are local-only, which
-also keeps the request off any proxy. A client sends its work to a hub whose model it
+~/.sovereign-hub points at); both are loopback by law, so both are local-only. Every
+mode's call takes no proxy and follows no redirect (strict_wire). A client sends its work to a hub whose model it
 cannot reach, so session capture stays off there. A hubless archive uses the provider
 its owner chose, exactly as sov-curator does, and needs that provider's key saved in
 the Keychain. CURATOR_ENDPOINT, CURATOR_MODEL, CURATOR_ALLOW_REMOTE, CURATOR_KEY and
@@ -33,11 +33,15 @@ NO_KEY_REASON = "No key is saved for %s. Add one in Settings \u203a Curator."
 
 
 def _cfg(env, base):
-    """A curator config from `base` alone, plus CURATOR_LOCAL_ONLY from `env`."""
+    """A curator config from `base` alone, plus CURATOR_LOCAL_ONLY from `env`. Every
+    session call, in every mode, is strict on the wire (no proxy from the environment or
+    the system, no redirect) and makes one attempt: a timeout is retried by a later tick."""
     fixed = dict(base)
     if env.get("CURATOR_LOCAL_ONLY") == "1":
         fixed["CURATOR_LOCAL_ONLY"] = "1"
-    return curator_inference.config_from_env(fixed)  # no CURATOR_ALLOW_REMOTE: always False
+    cfg = curator_inference.config_from_env(fixed)  # no CURATOR_ALLOW_REMOTE: always False
+    cfg.update(strict_wire=True, no_retry=True)
+    return cfg
 
 
 def _answer(mode, cfg=None, reason=""):

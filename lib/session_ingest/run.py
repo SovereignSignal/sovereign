@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 
+import curator_inference
 import sovereign_config
 
 from . import READERS, distill, excerpt, inference, prefilter, privacy, prompt, state
@@ -28,17 +29,21 @@ from . import READERS, distill, excerpt, inference, prefilter, privacy, prompt, 
 CAPTURE = Path(__file__).resolve().parents[2] / "bin" / "sov-capture"
 NAMES = {"claude-code": "Claude Code"}
 # The connector runner kills a lane at its timeout_s: 300 s, or the machine's tick when
-# that is shorter, which reaches the tick as BOUND_ENV. A call with timeout T can block
-# about 2T + 30 s (one retry after a timeout), so windows() keeps the last call inside
-# 90% of the bound, leaving the rest for the gate, the publish and the commit; the walk
-# stops at 80%. What a tick did not reach waits for the next one.
+# that is shorter, which reaches the tick as BOUND_ENV. A session call is one attempt
+# (no in-call retry: a held timeout is retried by a later tick) of at most half the bound,
+# capped at CALL_TIMEOUT_S, and windows() starts no call later than one full call plus
+# CALL_MARGIN_S before the bound, which leaves that margin for the gate, the publish and
+# the commit; the walk stops at 80%. What a tick did not reach waits for the next one.
 BOUND_ENV = "SOV_WIRE_TIMEOUT_S"
 DEFAULT_BOUND_S = 300
-CALL_TIMEOUT_S = 60
-RETRY_SLEEP_S = 30
+CALL_TIMEOUT_S = 150
+CALL_MARGIN_S = 30
 CAPTURE_TIMEOUT_S = 60
 WEEK_S = 7 * 86400
 UNREACHABLE = "model unreachable"
+# On a hub the tick shares the one local model slot with curator-run and the weekly
+# audit, which serialise on the model lock; a tick that finds it held makes no call.
+BUSY = "model busy"
 MAX_TIMEOUTS = 3
 AUTH_CODES = (401, 403)
 # The Waiting line is published into the lane, so it carries one of these phrases and
@@ -46,7 +51,7 @@ AUTH_CODES = (401, 403)
 # reason stays in the watermark for `status`.
 WAITING_PHRASES = ("model unreachable", "model refused this configuration",
                    "no key saved for the curator's provider", "session capture needs the hub's model",
-                   "capture is not ready")
+                   "capture is not ready", BUSY)
 OFF_REASON = "Session capture is off."
 _KEBAB = re.compile(r"[^a-z0-9]+")
 _DISTILLER_PROVIDER = re.compile(r"[^a-z0-9.-]+")
@@ -218,9 +223,11 @@ def _lane_paths(ctx, env, dest_dir):
 
 def windows(bound_s):
     """(call timeout, no-new-call window, walk window) in seconds for a tick the runner
-    bounds at bound_s: (60, 120, 240) at 300, proportionally less below."""
-    call = min(CALL_TIMEOUT_S, bound_s / 5.0)
-    window = max(0.0, bound_s * 0.9 - (2 * call + RETRY_SLEEP_S))
+    bounds at bound_s: (150, 120, 240) at 300. The call is min(150, bound // 2) and the
+    window is bound - call - 30, so a call started at the end of the window still ends
+    30 s before the bound."""
+    call = min(CALL_TIMEOUT_S, bound_s // 2)
+    window = max(0, bound_s - call - CALL_MARGIN_S)
     shape = lambda x: int(x) if float(x).is_integer() else x  # noqa: E731
     return shape(call), shape(window), shape(bound_s * 0.8)
 
@@ -238,6 +245,8 @@ def waiting_phrase(reason):
     reason = str(reason or "")
     if reason == UNREACHABLE:
         return WAITING_PHRASES[0]
+    if reason == BUSY:
+        return BUSY
     if (reason.startswith(distill.REFUSING) or reason == inference.GUARD_REASON
             or reason.startswith(tuple("HTTP %d" % c for c in AUTH_CODES))):
         return WAITING_PHRASES[1]
@@ -332,154 +341,171 @@ def tick(tool, env, dest_dir, now):
         summary.update(status="waiting", reason=reason)
         write_manifest(dest, lane, wm, now, host=host, tool=tool)
         return summary
-    key = inference.key(res)
-    summary.update(status="ran", reason="")
-    budget = ctx["cfg"]["budget"]
-    day = time.strftime("%Y-%m-%d", time.gmtime(now))
-    # Only a call's outcome changes a waiting set by a call: an answer clears it, an
-    # outage or a 401/403 sets it, and a tick that ends on a held timeout leaves it be.
-    from_call = (UNREACHABLE, distill.REFUSING) + tuple("HTTP %d" % c for c in AUTH_CODES)
-    waiting = prior if prior and str(prior.get("reason") or "").startswith(from_call) else None
-    calls_open, chars, failed_writes, faults = True, 0, 0, 0
-    # A timeout is not proof of an outage, and one timed-out call uses up a tick, so it is
-    # held in the session's row (held_timeout) across ticks until the next call, on any
-    # session, says whether the model is working. An answer charges every hold (three
-    # timeouts end a session); a timeout or no answer drops every hold, uncharged.
-    holds = {k: v for k, v in wm.rows.items() if isinstance(v, dict) and v.get("held_timeout")}
-    resolved = set()
+    lock = None
+    if res["mode"] == "hub":
+        # The hub's one local model slot: take curator-run's lock without waiting, or make
+        # no call this tick and stage nothing but the Waiting line.
+        lock = curator_inference.open_model_lock(str(ctx["home"]))
+        try:
+            curator_inference.hold_model_lock(lock, "session-capture")
+        except OSError:
+            lock.close()
+            wm.stage_waiting(_waiting(prior, BUSY, now))
+            summary.update(status="waiting", reason=BUSY)
+            write_manifest(dest, lane, wm, now, host=host, tool=tool)
+            return summary
+    try:
+        key = inference.key(res)
+        summary.update(status="ran", reason="")
+        budget = ctx["cfg"]["budget"]
+        day = time.strftime("%Y-%m-%d", time.gmtime(now))
+        # Only a call's outcome changes a waiting set by a call: an answer clears it, an
+        # outage or a 401/403 sets it, and a tick that ends on a held timeout leaves it be.
+        from_call = (UNREACHABLE, distill.REFUSING) + tuple("HTTP %d" % c for c in AUTH_CODES)
+        waiting = prior if prior and str(prior.get("reason") or "").startswith(from_call) else None
+        calls_open, chars, failed_writes, faults = True, 0, 0, 0
+        # A timeout is not proof of an outage, and one timed-out call uses up a tick, so it is
+        # held in the session's row (held_timeout) across ticks until the next call, on any
+        # session, says whether the model is working. An answer charges every hold (three
+        # timeouts end a session); a timeout or no answer drops every hold, uncharged.
+        holds = {k: v for k, v in wm.rows.items() if isinstance(v, dict) and v.get("held_timeout")}
+        resolved = set()
 
-    def release(charge):
-        """Resolve every held timeout, charged or dropped; returns {sid: new timeouts}."""
-        counts = {}
-        for hsid, hrow in holds.items():
-            nrow = {k: v for k, v in hrow.items() if k not in ("held_timeout", "seen")}
-            if charge:
-                nrow["timeouts"] = int(nrow.get("timeouts") or 0) + 1
-                if nrow["timeouts"] >= MAX_TIMEOUTS:
-                    nrow.update(verdict="failed:%d" % MAX_TIMEOUTS, at=_iso(now),
-                                error="timed out %d times" % nrow["timeouts"])
-                    summary["verdicts"][hsid] = nrow["verdict"]
-            counts[hsid] = int(nrow.get("timeouts") or 0)
-            wm.stage(hsid, nrow, write=False)
-            resolved.add(hsid)
-        holds.clear()
-        return counts
+        def release(charge):
+            """Resolve every held timeout, charged or dropped; returns {sid: new timeouts}."""
+            counts = {}
+            for hsid, hrow in holds.items():
+                nrow = {k: v for k, v in hrow.items() if k not in ("held_timeout", "seen")}
+                if charge:
+                    nrow["timeouts"] = int(nrow.get("timeouts") or 0) + 1
+                    if nrow["timeouts"] >= MAX_TIMEOUTS:
+                        nrow.update(verdict="failed:%d" % MAX_TIMEOUTS, at=_iso(now),
+                                    error="timed out %d times" % nrow["timeouts"])
+                        summary["verdicts"][hsid] = nrow["verdict"]
+                counts[hsid] = int(nrow.get("timeouts") or 0)
+                wm.stage(hsid, nrow, write=False)
+                resolved.add(hsid)
+            holds.clear()
+            return counts
 
-    for look in _walk(ctx, wm.rows, now, observe=lambda *a: wm.observe(*a, write=False),
-                      deadline=started + walk_window):
-        if look["active"]:
-            continue
-        sid, s, row = look["sid"], look["scan"], look["row"]
-        cwds = (s or {}).get("cwds") or []
-        verdict_row = {"size": look["size"], "mtime": look["mtime"], "policy": ctx["policy"],
-                       "cwd": cwds[0] if cwds else None, "project": _project(s) if s else "", "at": _iso(now),
-                       "attempts": int((row or {}).get("attempts") or 0), "captures": 0,
-                       "timeouts": int((row or {}).get("timeouts") or 0),
-                       "distiller": res["distiller"], "prompt": prompt.VERSION}
-        if look["verdict"] is not None:
-            wm.stage(sid, dict(verdict_row, verdict=look["verdict"]), write=False)
-            summary["verdicts"][sid] = look["verdict"]
-            continue
-        if sid in resolved:
-            summary["pending"] += 1   # its hold was resolved by this tick's answer: next tick
-            continue
-        if (not calls_open or summary["calls"] >= budget["calls_per_tick"]
-                or wm.calls_today(day) >= budget["calls_per_day"]
-                or time.monotonic() - started >= call_window):
-            summary["pending"] += 1
-            continue
-        text, turn_ids = excerpt_text(s, look["hits"])
-        if chars + len(text) > budget["chars_per_tick"]:
-            summary["pending"] += 1
-            continue
-        wm.write_seen()       # the sizes seen so far survive whatever this call does
-        wm.record_call(day)
-        summary["calls"] += 1
-        chars += len(text)
-        out = distill.distill(res, key, s, text, turn_ids, timeout=call_timeout)
-        verdict_row["attempts"] += 1
-        answered = out["status"] in ("ok", "failed") or out.get("responded")
-        if answered:
-            own = sid in holds
-            charged = release(charge=True)   # the model is working: every held timeout stands
-            if own:
-                verdict_row["timeouts"] = charged[sid]
-        if out["status"] == "ok":
-            waiting = None
-            before = set(os.listdir(str(dest)))
-            results = []
-            for c in out["captures"]:
-                results.append(_capture(c, s, sid, tool, lane, stage, ctx["vault"], res["distiller"], env))
-                if results[-1] != "ok":
-                    break
-            if results.count("ok") != len(out["captures"]):
-                # One session's refused capture costs that session alone: what it wrote this
-                # tick is taken back and it counts a failed attempt (three end it), so the
-                # rest of the tick still publishes. Only a sov-capture that cannot run at
-                # all fails the tick.
-                _take_back(dest, before)
-                failed_writes += len(out["captures"])
-                if "fault" in results:
-                    faults += 1
-                    calls_open = False    # every later capture would fail the same way
-                    summary["pending"] += 1
+        for look in _walk(ctx, wm.rows, now, observe=lambda *a: wm.observe(*a, write=False),
+                          deadline=started + walk_window):
+            if look["active"]:
+                continue
+            sid, s, row = look["sid"], look["scan"], look["row"]
+            cwds = (s or {}).get("cwds") or []
+            verdict_row = {"size": look["size"], "mtime": look["mtime"], "policy": ctx["policy"],
+                           "cwd": cwds[0] if cwds else None, "project": _project(s) if s else "", "at": _iso(now),
+                           "attempts": int((row or {}).get("attempts") or 0), "captures": 0,
+                           "timeouts": int((row or {}).get("timeouts") or 0),
+                           "distiller": res["distiller"], "prompt": prompt.VERSION}
+            if look["verdict"] is not None:
+                wm.stage(sid, dict(verdict_row, verdict=look["verdict"]), write=False)
+                summary["verdicts"][sid] = look["verdict"]
+                continue
+            if sid in resolved:
+                summary["pending"] += 1   # its hold was resolved by this tick's answer: next tick
+                continue
+            if (not calls_open or summary["calls"] >= budget["calls_per_tick"]
+                    or wm.calls_today(day) >= budget["calls_per_day"]
+                    or time.monotonic() - started >= call_window):
+                summary["pending"] += 1
+                continue
+            text, turn_ids = excerpt_text(s, look["hits"])
+            if chars + len(text) > budget["chars_per_tick"]:
+                summary["pending"] += 1
+                continue
+            wm.write_seen()       # the sizes seen so far survive whatever this call does
+            wm.record_call(day)
+            summary["calls"] += 1
+            chars += len(text)
+            out = distill.distill(res, key, s, text, turn_ids, timeout=call_timeout)
+            verdict_row["attempts"] += 1
+            answered = out["status"] in ("ok", "failed") or out.get("responded")
+            if answered:
+                own = sid in holds
+                charged = release(charge=True)   # the model is working: every held timeout stands
+                if own:
+                    verdict_row["timeouts"] = charged[sid]
+            if out["status"] == "ok":
+                waiting = None
+                before = set(os.listdir(str(dest)))
+                results = []
+                for c in out["captures"]:
+                    results.append(_capture(c, s, sid, tool, lane, stage, ctx["vault"], res["distiller"], env))
+                    if results[-1] != "ok":
+                        break
+                if results.count("ok") != len(out["captures"]):
+                    # One session's refused capture costs that session alone: what it wrote this
+                    # tick is taken back and it counts a failed attempt (three end it), so the
+                    # rest of the tick still publishes. Only a sov-capture that cannot run at
+                    # all fails the tick.
+                    _take_back(dest, before)
+                    failed_writes += len(out["captures"])
+                    if "fault" in results:
+                        faults += 1
+                        calls_open = False    # every later capture would fail the same way
+                        summary["pending"] += 1
+                        continue
+                    verdict = "failed:%d" % (_failures(row) + 1)
+                    wm.stage(sid, dict(verdict_row, verdict=verdict), write=False)
+                    summary["verdicts"][sid] = verdict
                     continue
+                summary["captures"] += len(out["captures"])
+                verdict = "distilled"
+                wm.stage(sid, dict(verdict_row, verdict=verdict, captures=len(out["captures"])), write=False)
+            elif out["status"] == "failed" or out.get("responded"):
+                # An unparseable reply, or an HTTP error the model host answered with: either
+                # way the model saw this excerpt and rejected it. It counts against this
+                # session alone (three end it) and the tick goes on to the next one.
+                waiting = None
                 verdict = "failed:%d" % (_failures(row) + 1)
                 wm.stage(sid, dict(verdict_row, verdict=verdict), write=False)
-                summary["verdicts"][sid] = verdict
+            elif out["status"] == "unreachable" and out.get("timed_out") and not holds:
+                # The first timeout with none held: hold it in the row, charge nothing, leave
+                # waiting as it was, and make no further call this tick (a timed-out call leaves
+                # no time for another).
+                wm.stage(sid, dict(verdict_row, verdict=(row or {}).get("verdict") or None,
+                                   held_timeout={"at": _iso(now)}), write=False)
+                calls_open = False
+                summary["pending"] += 1
                 continue
-            summary["captures"] += len(out["captures"])
-            verdict = "distilled"
-            wm.stage(sid, dict(verdict_row, verdict=verdict, captures=len(out["captures"])), write=False)
-        elif out["status"] == "failed" or out.get("responded"):
-            # An unparseable reply, or an HTTP error the model host answered with: either
-            # way the model saw this excerpt and rejected it. It counts against this
-            # session alone (three end it) and the tick goes on to the next one.
-            waiting = None
-            verdict = "failed:%d" % (_failures(row) + 1)
-            wm.stage(sid, dict(verdict_row, verdict=verdict), write=False)
-        elif out["status"] == "unreachable" and out.get("timed_out") and not holds:
-            # The first timeout with none held: hold it in the row, charge nothing, leave
-            # waiting as it was, and make no further call this tick (a timed-out call leaves
-            # no time for another).
-            wm.stage(sid, dict(verdict_row, verdict=(row or {}).get("verdict") or None,
-                               held_timeout={"at": _iso(now)}), write=False)
-            calls_open = False
-            summary["pending"] += 1
-            continue
-        else:
-            # A timeout while one is held, no answer at all, or a 404, 408, 429 or 5xx: an
-            # outage, never counted against a session, which stays pending for as long as
-            # it lasts, and every held timeout is dropped uncharged. 401 or 403, or a guard
-            # refusal at call time: a configuration the owner must see, holds dropped the
-            # same way. Either way this tick makes no further call.
-            release(charge=False)
-            if out["status"] == "refused":
-                reason = _one_line(out["error"], 300) or "refused"
-            elif out.get("code") in AUTH_CODES:
-                reason = _one_line(out["error"], 300)
             else:
-                reason = UNREACHABLE
-            waiting = _waiting(prior, reason, now)
-            calls_open = False
-            summary["pending"] += 1
-            continue
-        if verdict != "distilled" and verdict_row["timeouts"] >= MAX_TIMEOUTS:
-            verdict = "failed:%d" % MAX_TIMEOUTS   # its own answer charged its third timeout
-            wm.stage(sid, dict(verdict_row, verdict=verdict, error="timed out %d times" % verdict_row["timeouts"]),
-                     write=False)
-        summary["verdicts"][sid] = verdict
-    wm.write_seen()
-    wm.write_pending()        # one write for every row staged above
-    if waiting != prior:
-        wm.stage_waiting(waiting)
-    if waiting:
-        summary.update(status="waiting", reason=waiting["reason"])
-    if faults:
-        summary["exit"] = 1
-    write_manifest(dest, lane, wm, now, host=host, items=summary["captures"], failed=failed_writes,
-                   waiting=summary["pending"], tool=tool)
-    return summary
+                # A timeout while one is held, no answer at all, or a 404, 408, 429 or 5xx: an
+                # outage, never counted against a session, which stays pending for as long as
+                # it lasts, and every held timeout is dropped uncharged. 401 or 403, or a guard
+                # refusal at call time: a configuration the owner must see, holds dropped the
+                # same way. Either way this tick makes no further call.
+                release(charge=False)
+                if out["status"] == "refused":
+                    reason = _one_line(out["error"], 300) or "refused"
+                elif out.get("code") in AUTH_CODES:
+                    reason = _one_line(out["error"], 300)
+                else:
+                    reason = UNREACHABLE
+                waiting = _waiting(prior, reason, now)
+                calls_open = False
+                summary["pending"] += 1
+                continue
+            if verdict != "distilled" and verdict_row["timeouts"] >= MAX_TIMEOUTS:
+                verdict = "failed:%d" % MAX_TIMEOUTS   # its own answer charged its third timeout
+                wm.stage(sid, dict(verdict_row, verdict=verdict, error="timed out %d times" % verdict_row["timeouts"]),
+                         write=False)
+            summary["verdicts"][sid] = verdict
+        wm.write_seen()
+        wm.write_pending()        # one write for every row staged above
+        if waiting != prior:
+            wm.stage_waiting(waiting)
+        if waiting:
+            summary.update(status="waiting", reason=waiting["reason"])
+        if faults:
+            summary["exit"] = 1
+        write_manifest(dest, lane, wm, now, host=host, items=summary["captures"], failed=failed_writes,
+                       waiting=summary["pending"], tool=tool)
+        return summary
+    finally:
+        if lock is not None:
+            lock.close()   # closing the descriptor releases the flock
 
 
 def week_counts(wm, now):
@@ -494,6 +520,8 @@ def week_counts(wm, now):
         if verdict == "distilled":
             counts["distilled"] += 1
             counts["captures"] += int(row.get("captures") or 0)
+        elif verdict == "skipped:before-enable":
+            continue   # never looked at: nothing was written after capture was enabled
         elif verdict.startswith("skipped:") or verdict == privacy.DENIED:
             counts["skipped"] += 1
         elif verdict.startswith("failed:"):

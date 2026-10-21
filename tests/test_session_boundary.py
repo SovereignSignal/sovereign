@@ -190,10 +190,10 @@ class OffByDefault(unittest.TestCase):
             self.assertEqual(m["runner"]["interval_s"], 120)
             self.assertEqual(wire["timeout_s"], 120)
             self.assertEqual(wire["env"], {"SOV_WIRE_TIMEOUT_S": "120"})
-            self.assertEqual(run.windows(300), (60, 120, 240))
+            self.assertEqual(run.windows(300), (150, 120, 240))
             call, window, walk = run.windows(120)
-            self.assertLess(window, 120)
-            self.assertLessEqual(window + 2 * call + 30, 120 * 0.9)   # a call started last still ends in time
+            self.assertEqual((call, window), (60, 30))
+            self.assertLessEqual(window + call + 30, 120)   # one attempt started last still ends in time
             self.assertLess(walk, 120)
             # A later tool with a faster tick shortens the bound again rather than being refused.
             r = b.connect("windsurf", ["--interval", "90"])

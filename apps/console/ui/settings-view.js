@@ -148,8 +148,9 @@ window.SovSettings = (() => {
     const T = "Session capture";
     if (!X) return sect(T, say("Checking…"));
     if (X.error) return sect(T, say(esc(X.error)));
-    if (X.mode === "client") return sect(T, say("Session capture is off on this Mac.") + (X.reason ? `<p class="set-note">${esc(X.reason)}</p>` : ""));
     const off = `<button id="set-ses-off">Turn off</button>`;
+    // A config switched on before this Mac's role changed keeps its Turn off here too.
+    if (X.mode === "client") return sect(T, say("Session capture is off on this Mac.") + (X.reason ? `<p class="set-note">${esc(X.reason)}</p>` : ""), "", X.enabled ? off : "");
     if (!X.available) {
       const r = String(X.reason || "no model can read a session here").trim();
       const line = /^[a-z]/.test(r) ? `Session capture ${r}${/[.!?]$/.test(r) ? "" : "."}` : r;
@@ -175,7 +176,7 @@ window.SovSettings = (() => {
       + `<span class="pulls" id="set-ses-state" aria-live="polite"></span>`;
     const acts = `<button id="set-ses-preview">Preview</button>`
       + (X.enabled ? off : previewed && plan ? `<button class="brass" id="set-ses-on">Turn on</button>` : "");
-    const note = X.enabled ? "Transcripts stay on this Mac. A cleaned excerpt of each quiet session goes to the distiller, and what it keeps lands untrusted in the lane for the curator and you to judge."
+    const note = X.enabled ? "Transcripts stay on this Mac. A cleaned excerpt of each quiet session that passes the pre-filter goes to the distiller, and what it keeps lands untrusted in the lane for the curator and you to judge."
       : "Preview shows what the next tick would read, with no model call. Turn on appears after it.";
     return sect(T, body, note, acts);
   }

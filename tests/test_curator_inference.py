@@ -259,6 +259,74 @@ class InferenceModule(unittest.TestCase):
                 ci.chat(cfg, "", "qwen3.8:27b", 0, [{"role": "user", "content": "u"}], 5)
         self.assertFalse(stub.redirect_followed)
 
+    def test_no_retry_makes_one_request_on_a_timeout(self):
+        """cfg no_retry (the session tick's): a timed-out call is one request, no sleep and
+        no second send. Without the flag curator-run's one retry is unchanged."""
+        seen = []
+
+        class Slow(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                seen.append(self.path)
+                threading.Event().wait(1.0)   # past the 0.3 s timeout below
+                try:
+                    self.send_response(200)
+                    self.end_headers()
+                except OSError:
+                    pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        cfg = ci.config_from_env({"CURATOR_ENDPOINT": "http://127.0.0.1:%d/v1" % server.server_address[1]})
+        msgs = [{"role": "user", "content": "u"}]
+        sleeps = []
+        with patch.object(ci.time, "sleep", side_effect=sleeps.append):
+            with self.assertRaises(Exception) as err:
+                ci.chat(dict(cfg, no_retry=True), "", "m", 0, msgs, 0.3)
+            self.assertIn("timed out", str(err.exception).lower())
+            self.assertEqual((len(seen), sleeps), (1, []))
+            with self.assertRaises(Exception):
+                ci.chat(cfg, "", "m", 0, msgs, 0.3)
+            self.assertEqual((len(seen), sleeps), (3, [30]))
+
+    def test_strict_wire_takes_no_proxy_and_refuses_a_redirect(self):
+        """cfg strict_wire (every session call, hosted included): the env and system proxies
+        are ignored and a 302 is refused, so the request reaches the endpoint or nothing."""
+        model, proxy = Stub(), Stub()
+        self.addCleanup(model.close)
+        self.addCleanup(proxy.close)
+        cfg = ci.config_from_env({"CURATOR_ENDPOINT": model.base + "/redirect/completions"})
+        msgs = [{"role": "user", "content": "u"}]
+        env = {"http_proxy": proxy.base, "https_proxy": proxy.base, "HTTP_PROXY": proxy.base,
+               "HTTPS_PROXY": proxy.base, "no_proxy": "", "NO_PROXY": ""}
+        with patch.dict(os.environ, env), patch.object(ci.urllib.request, "_opener", None):
+            with self.assertRaises(ValueError) as err:
+                ci.chat(dict(cfg, strict_wire=True), "", "m", 0, msgs, 5)
+            self.assertIn("redirects are refused", str(err.exception))
+            self.assertEqual(proxy.paths, [])
+            self.assertFalse(model.redirect_followed)
+            # the control: without the flag the same call goes through the proxy
+            ci.chat(cfg, "", "m", 0, msgs, 5)
+            self.assertEqual(len(proxy.paths), 1)
+
+    def test_model_lock_helpers(self):
+        fh = ci.open_model_lock(str(self.home))
+        self.addCleanup(fh.close)
+        self.assertEqual(fh.name, str(self.home / ".local/state/sovs-cron/model.lock"))
+        ci.hold_model_lock(fh, "first")
+        self.assertTrue(Path(fh.name).read_text().startswith("first pid %d since " % os.getpid()))
+        other = ci.open_model_lock(str(self.home))
+        self.addCleanup(other.close)
+        with self.assertRaises(OSError):
+            ci.hold_model_lock(other, "second")
+        fh.close()
+        ci.hold_model_lock(other, "second")
+        self.assertTrue(Path(other.name).read_text().startswith("second pid "))
+
     def test_http_error_keeps_the_server_reason(self):
         class Fail(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):

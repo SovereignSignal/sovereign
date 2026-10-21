@@ -343,6 +343,14 @@ test('a client Mac says capture is off here and why, with no controls', () => {
   assert(!html.includes('data-ses-path'));
 });
 
+test('a client Mac with capture carried on from another role still offers Turn off, and only that', () => {
+  const html = ses({ sessions: SES({ mode: 'client', available: false, enabled: true, reason: 'r' }), sessionsPreviewed: true, sessionsPlan: 'plan' });
+  assert(html.includes('Session capture is off on this Mac.'));
+  assert(html.includes('id="set-ses-off"'));
+  for (const id of ['set-ses-on', 'set-ses-preview']) assert(!html.includes(`id="${id}"`), id);
+  assert(!html.includes('data-ses-path'));
+});
+
 test('an archive with no usable model gives the reason and no switch', () => {
   const html = ses({ sessions: SES({ available: false, reason: 'No key is saved for Anthropic. Add one in Settings › Curator.' }), sessionsPreviewed: true });
   assert(html.includes('No key is saved for Anthropic.'));
@@ -400,7 +408,8 @@ test('sections run Curator, Session capture, Import', () => {
 
 test('no em or en dash in any session capture string', () => {
   const states = [{ sessions: null }, { sessions: { error: 'x' } },
-    { sessions: SES({ mode: 'client', available: false, reason: 'r' }) }, { sessions: SES({ available: false, reason: 'r' }) },
+    { sessions: SES({ mode: 'client', available: false, reason: 'r' }) }, { sessions: SES({ mode: 'client', available: false, enabled: true, reason: 'r' }) },
+    { sessions: SES({ available: false, reason: 'r' }) },
     { sessions: SES() }, { sessions: SES(), sessionsPreviewed: true, sessionsPlan: 'p' },
     { sessions: SES({ enabled: true, waiting: { reason: 'r', since: 's' } }) }, { sessions: SES({ projects: [] }) }];
   for (const s of states) assert(!/[\u2013\u2014]/.test(ses(s)), JSON.stringify(s));

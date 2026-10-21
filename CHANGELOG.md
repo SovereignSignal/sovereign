@@ -19,6 +19,9 @@
 - Sources and Review show session captures. Open session opens Terminal in the folder
   the session ran in and resumes it, and only when the transcript is on this Mac, so
   not on a client Mac of a hub archive, where the archive's model runs on the hub.
+- `sov-capture` on a staged host: a capture for a lane with no `raw/workspaces/<lane>`
+  now lands in the staging area's `raw/tools/<lane>`, as the write wires already did,
+  instead of the vault's `raw/workspaces/<lane>`.
 
 ## 0.8.0 "Reach" (build 51)
 
