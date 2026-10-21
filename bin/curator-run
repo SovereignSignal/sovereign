@@ -612,14 +612,24 @@ SCREEN_SYS = (
 # earn its own record, so these sources are always screened whatever CURATOR_SCREEN
 # says, and no gear (auto-promote or auto-reject) ever moves what they produce. Their
 # judgments.jsonl rows carry input_class "session": that is the record. Identified by
-# path, never by frontmatter, because frontmatter is written by the producer.
-_SESSION_SOURCE = re.compile(r"raw/tools/[^/]+/sessions/[^/]+\.md")
+# path, never by frontmatter, because frontmatter is written by the producer. Every
+# file at any depth under sessions/ counts, whatever its extension, so a stray
+# sessions/x.MD or sessions/2026/x.md can never ride a gear. The tick's own
+# sessions/MANIFEST.md is lane bookkeeping and is never gathered (_session_manifest).
+_SESSION_SOURCE = re.compile(r"raw/tools/[^/]+/sessions/(?:[^/]+/)*[^/]+")
+_SESSION_MANIFEST = re.compile(r"raw/tools/[^/]+/sessions/MANIFEST\.md")
 SESSION_HOLD = "session capture: new input class, ask-first until it earns its own record"
 
 
 def _session_source(rel):
-    """True when a vault-relative path is a session capture."""
+    """True when a vault-relative path is at or under raw/tools/<lane>/sessions/."""
     return bool(_SESSION_SOURCE.fullmatch(rel or ""))
+
+
+def _session_manifest(rel):
+    """True for the session tick's raw/tools/<lane>/sessions/MANIFEST.md, which the
+    gather and the coverage counter skip as config, the way they skip LANE.md."""
+    return bool(_SESSION_MANIFEST.fullmatch(rel or ""))
 
 
 def _screen_source(text, enabled, call):
@@ -1140,6 +1150,8 @@ def _self_test():
     session_cases = [
         ("session capture is a session source",  True,  _session_source("raw/tools/claude-code-h/sessions/x.md")),
         ("lane memory is not a session source",  False, _session_source("raw/tools/claude-code-h/memory/x.md")),
+        ("nested session file is a session source", True, _session_source("raw/tools/claude-code-h/sessions/2026/x.md")),
+        ("upper-case extension is a session source", True, _session_source("raw/tools/claude-code-h/sessions/x.MD")),
     ]
     for name, want, got in session_cases:
         ok = got is want
@@ -1606,6 +1618,8 @@ def candidates():
                 if f == "LANE.md":
                     continue  # the lane's contract file — config, never material
                 p = os.path.join(dp, f)
+                if _session_manifest(os.path.relpath(p, VAULT)):
+                    continue  # the session tick's manifest: config, never material
                 if only is not None and os.path.relpath(p, VAULT) not in only:
                     continue  # --only: a narrowed harvest, nothing else changed
                 try:
@@ -2400,6 +2414,8 @@ def _coverage():
                 # shows was computed against a universe that excluded them.
                 if f.startswith(".") or not _judgeable(f) or f == "LANE.md":
                     continue
+                if _session_manifest(os.path.join(rel_dp, f)):
+                    continue  # skipped by the gather too; the two must stay in step
                 universe += 1
                 if os.path.join(rel_dp, f) in judged_srcs:
                     judged_n += 1

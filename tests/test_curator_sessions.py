@@ -38,7 +38,8 @@ class SessionCaptures(unittest.TestCase):
             {'rules': {'concept': {'auto_approve_confidence': ['high']}}}))
         self.screen_reply = 'flagged'   # 'flagged', 'clean' or 'down'
         self.reject_class = None
-        self.screens, self.judged = [], []
+        self.shared_slug = None          # every source drafts this slug when set
+        self.screens, self.judged, self.merges = [], [], []
         test = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -53,12 +54,16 @@ class SessionCaptures(unittest.TestCase):
                     if test.screen_reply == 'down':
                         self.send_response(500); self.end_headers(); return
                     result = {'decision': test.screen_reply, 'reason': 'synthetic screen'}
+                elif text.startswith('UPDATE TASK'):
+                    test.merges.append(text)
+                    result = {'body': 'A durable idea, merged.', 'title': 'Merged', 'why': 'Both matter'}
                 else:
                     m = re.search(r'SOURCE: (\S+)', text)
                     src = m.group(1) if m else '?'
                     test.judged.append(src)
                     stem = Path(src).stem
-                    result = {'promote': True, 'slug': 'topic-' + stem, 'type': 'concept',
+                    result = {'promote': True, 'slug': test.shared_slug or 'topic-' + stem,
+                              'type': 'concept',
                               'title': 'Topic ' + stem, 'confidence': 'high', 'update_of': None,
                               'auto_reject_class': test.reject_class,
                               'body': 'A durable idea from ' + stem + '.', 'reason': 'Useful'}
@@ -70,11 +75,11 @@ class SessionCaptures(unittest.TestCase):
         self.addCleanup(self.server.shutdown)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
-    def place(self, rel):
+    def place(self, rel, age=0):
         path = self.vault/rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('---\ntype: capture\nsource: test\n---\n# Note\nA durable idea.\n')
-        stamp = time.time() + 10
+        stamp = time.time() + 10 - age
         os.utime(path, (stamp, stamp))
         return path
 
@@ -158,6 +163,39 @@ class SessionCaptures(unittest.TestCase):
         self.assertTrue((self.proposals/'topic-x.md').exists())
         self.assertFalse((self.proposals/'topic-y.md').exists())
         self.assertEqual(self.status()['auto_rejected'], 1)
+
+    def test_session_manifest_is_never_gathered(self):
+        self.screen_reply = 'clean'
+        manifest = 'raw/tools/claude-code-h/sessions/MANIFEST.md'
+        self.place(manifest)
+        self.place(SESSION)
+        self.run_curator()
+        self.assertEqual(self.judged, [SESSION])
+        self.assertNotIn(manifest, [r['source'] for r in self.rows()])
+        self.assertEqual(self.status()['coverage']['processable'], 1)
+
+    def consolidate(self, session_first):
+        # candidates are judged newest first, so the younger file drafts first and
+        # the older one consolidates onto it
+        self.screen_reply = 'clean'
+        self.shared_slug = 'shared-topic'
+        self.place(SESSION, age=0 if session_first else 5)
+        self.place(MEMORY, age=5 if session_first else 0)
+        self.run_curator()
+        self.assertEqual(self.judged[:2], [SESSION, MEMORY] if session_first else [MEMORY, SESSION])
+        self.assertEqual(len(self.merges), 1)
+        self.assertEqual([p.name for p in self.proposals.glob('*.md')], ['shared-topic.md'])
+        self.assertEqual(list((self.vault/'knowledge/concepts').glob('*.md')), [])
+        meta = self.meta()['shared-topic']
+        self.assertEqual(meta['input_class'], 'session')
+        self.assertEqual(sorted(r['source'] for r in meta['source_refs']), sorted([MEMORY, SESSION]))
+        self.assertEqual(self.status()['auto_promoted'], 0)
+
+    def test_session_draft_then_other_source_stays_session(self):
+        self.consolidate(session_first=True)
+
+    def test_other_draft_then_session_source_becomes_session(self):
+        self.consolidate(session_first=False)
 
 
 if __name__ == '__main__':
