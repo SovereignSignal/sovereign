@@ -226,6 +226,11 @@ def install(new_app, expected, mismatch, tidy=None):
     failure now puts the kept copy back and reopens it before the error is raised, and the
     error says where the previous app is. Both sources share this path.
     """
+    # Again, right before the delete: the early check ran before a download or a build,
+    # and whatever sits at APP could have changed since. Outside the try, so restore()
+    # never reopens a bundle that is not Sovereign.
+    if os.path.isdir(APP) and not sovereign_app.is_sovereign(APP):
+        raise ValueError("%s is no longer a Sovereign app, so it was not replaced. Nothing was changed." % APP)
     back = os.path.expanduser("~/sovereign-rollback/app-update-%s" % time.strftime("%Y%m%dT%H%M%S"))
     had = os.path.isdir(APP)
     try:

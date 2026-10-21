@@ -208,6 +208,7 @@ class AppUpdatePreview(unittest.TestCase):
         import runpy
         from unittest.mock import patch
         sys.path.insert(0, str(ROOT / "lib"))
+        self.addCleanup(sys.path.remove, str(ROOT / "lib"))
         import sovereign_app
         with tempfile.TemporaryDirectory() as tmp:
             mine, system = Path(tmp) / "home/Applications", Path(tmp) / "Applications"
@@ -454,6 +455,21 @@ class ReleaseUpdate(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("%s is not a Sovereign app" % self.app, out["error"])
         self.assert_untouched()
+    def test_16_an_app_that_stops_being_sovereign_before_the_swap_is_not_deleted(self):
+        # The early check runs before the download. Plant a foreign bundle at the app path
+        # after it, while the download is being verified, and the swap must still refuse.
+        plant = stub(Path(self._tmp.name) / "verify-then-plant",
+                     '/usr/bin/plutil -replace CFBundleIdentifier -string com.example.other "%s/Contents/Info.plist"; exit 0'
+                     % self.app)
+        code, out = self.apply(self.publish("0.8.0", "51"), verify=plant)
+        self.assertEqual(code, 1, out)
+        self.assertIn("%s is no longer a Sovereign app" % self.app, out["error"])
+        self.assertIn("Nothing was changed", out["error"])
+        self.assertEqual((self.app / "Contents/MacOS/Sovereign").read_text(), "build 50\n", "nothing may be deleted")
+        self.assertIn(b"com.example.other", (self.app / "Contents/Info.plist").read_bytes())
+        self.assertFalse((self.home / "sovereign-rollback").exists())
+        self.assertFalse(self.opened.exists(), "a bundle that is not Sovereign is never opened")
+        self.assertFalse(self.updates.exists() and any(self.updates.iterdir()), "the download must be deleted")
     def test_a_verify_hook_that_is_not_executable_is_ignored(self):
         # The stub replaces Apple's gate only when it is a real executable. Anything else
         # falls through to codesign, which a fake bundle cannot pass.
@@ -512,6 +528,9 @@ class InstalledAppLocation(unittest.TestCase):
         sys.path.insert(0, str(ROOT / "lib"))
         import sovereign_app
         cls.mod = sovereign_app
+    @classmethod
+    def tearDownClass(cls):
+        sys.path.remove(str(ROOT / "lib"))
     def test_the_bundle_the_backend_runs_from_is_the_app(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = Path(tmp) / "Elsewhere/Sovereign.app"
