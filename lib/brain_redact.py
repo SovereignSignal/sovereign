@@ -31,9 +31,10 @@ closed there. Every scan is linear: a JWT is found as one run of its alphabet an
 segments are checked in code, and every other body a later part must follow is bounded.
 Credential labels count after an underscore, so `DB_PASSWORD=` and `OPENAI_API_KEY=` are
 labels. A connection-URL password is recognised only between `scheme://user:` and the `@`
-that ends the authority. A run with a slash and then a `?` or `#` before that `@` is a port,
-a path and a query or fragment (`host:5432/app?notify=ops@example.com`), not a password, so
-such a URL keeps its port and path; any other run there is redacted, digits and slash too.
+that ends the authority. The redactor skips one shape there: a port (1 to 5 digits), a
+slash, then a `?` or `#` before that `@` (`host:5432/app?notify=ops@example.com`), which is
+a path with a query or fragment, not a password. Any other run is redacted. The detector
+has no such exemption and flags that URL too.
 
 Each hit becomes `[redacted <kind>]`. Idempotent: redacted text has no shapes left.
 """
@@ -145,11 +146,12 @@ SHAPES: List[Tuple[str, "re.Pattern[str]", Optional[Callable[[str], bool]], Opti
 # postgres://user:PASSWORD@host (or postgresql+psycopg2://...): only the password goes; user
 # and host stay readable. The password is either a slash-free run of any length (it stops at
 # the next slash, so the scan stays linear) or a run of up to 512 that may hold a slash. The
-# one exemption is a real port and path: a slash-holding run with a ? or # after its first
-# slash ("db:5432/app?to=ops@example.com", "cache:6379/0#owner@team") is a query or fragment
-# that carries an @, not a password. Every lookahead is bounded, so each start costs O(512).
+# one exemption is a real port and path: digits, a slash, then a ? or # before the @
+# ("db:5432/app?to=ops@example.com", "cache:6379/0#owner@team") is a query or fragment that
+# carries an @, not a password. A non-digit run before the slash is never a port. Every
+# lookahead is bounded, so each start costs O(512). The detector keeps no exemption.
 _URL_PASSWORD = re.compile(
-    r"((?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)(?:\+[a-z0-9]+)?://[A-Za-z0-9_.%-]+:)((?![^@\s/]{0,512}/[^@\s]{0,512}[?#])[^@\s]{6,512}|[^@\s/]{6,})(@)")
+    r"((?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)(?:\+[a-z0-9]+)?://[A-Za-z0-9_.%-]+:)((?!\d{1,5}/[^@\s]{0,512}[?#])[^@\s]{6,512}|[^@\s/]{6,})(@)")
 
 # "api key: VALUE", "password = VALUE": the value is judged by _looks_secret. "token" alone is
 # not a label: in a workspace about crypto it names public things all day long. A label may

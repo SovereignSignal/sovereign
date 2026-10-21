@@ -19,6 +19,9 @@ FORBIDDEN = re.compile(
 # never the redactor's glued leniency), and a token-shaped string the redactor let through
 # still trips it. The boundary rule is brain_redact's: a vendor token matches wherever it
 # starts, and \b stays only on the short prefixes that end ordinary words (bare sk-, pat, re_).
+# On connection URLs it is deliberately stricter than the redactor: every scheme the redactor
+# knows, any password length, and no port-and-query exemption, so it may fire where the
+# redactor does not (a dropped line is the accepted cost), never the reverse.
 
 
 def _jwt_pair(value):
@@ -48,7 +51,8 @@ SECRET_PATTERNS = [
     (r"AIza[0-9A-Za-z_\-]{30,}",                         "google api key", None),
     (r"(?i)(?<![a-z0-9])(api[_-]?key|secret|password|passwd|access[_-]?token|bearer|pat)\b"
      r"\s*[:=]\s*[\"']?[A-Za-z0-9_\-\.]{16,}",           "assigned credential value", None),
-    (r"(?i)postgres(?:ql)?(?:\+[a-z0-9]+)?://[^\s:@/]+:(?:(?![^\s@/]{0,512}/[^\s@]{0,512}[?#])[^\s@]{1,512}|[^\s@/]+)@",
+    (r"(?i)(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)(?:\+[a-z0-9]+)?"
+     r"://[^\s:@/]+:(?:[^\s@]{1,512}|[^\s@/]+)@",
      "database url with password", None),
 ]
 # The detector's full list: its own shapes, then every redactor shape, strict.

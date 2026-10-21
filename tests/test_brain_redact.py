@@ -114,6 +114,12 @@ SLACK = "xo" + "xb-" + "1234567890" + "-" + "1234567890123" + "-" + MIX[:24]
 AWS = "AK" + "IA" + "B" * 16
 HEX36 = "3f9a8b7c6d5e" * 3
 
+PORT_QUERY_URLS = (
+    "postgres://db.internal:5432/app?notify=ops@example.com",
+    "redis://cache:6379/0#owner@team",
+    "mysql://db:3306/shop?contact=dba@example.org",
+)
+
 PEM = ("-----BEGIN " + "PRIVATE KEY-----\n" + "MIIEv" + MIX[:40] + "\n" + MIX[:40]
        + "\n-----END " + "PRIVATE KEY-----")
 
@@ -260,12 +266,15 @@ class GluedTokens(unittest.TestCase):
             self.assertIn("database url with password", detector_hits(url), url)
             self.assertNotIn(pw, out)
 
-    def test_a_port_and_a_path_with_an_at_sign_are_not_a_password(self):
-        for url in ("postgres://db.internal:5432/app?notify=ops@example.com",
-                    "redis://cache:6379/0#owner@team",
-                    "mysql://db:3306/shop?contact=dba@example.org"):
+    def test_a_port_and_a_query_with_an_at_sign_are_kept_but_detected(self):
+        for url in PORT_QUERY_URLS:
             self.assertEqual(redact_text(url), (url, []), url)
-            self.assertEqual(secret_hits(url), [], url)
+            self.assertEqual(detector_hits(url), ["database url with password"], url)
+
+    def test_a_non_digit_run_before_a_slash_is_never_a_port(self):
+        url = "postgres://u:" + "ab/cd?ef" + "@host"
+        self.assertEqual(redact_text(url), ("postgres://u:[redacted password]@host", ["password"]))
+        self.assertIn("database url with password", detector_hits(url))
 
     def test_a_jwt_after_an_earlier_eyj_fragment_in_the_same_run(self):
         jwt = "ey" + "J" + MIX[:20] + ".ey" + "J" + MIX[:24] + "." + MIX[:20]
@@ -316,6 +325,20 @@ class DetectorAgreesWithRedactor(unittest.TestCase):
         detector = {(rx.pattern, check) for rx, _name, check in DETECTOR}
         for kind, rx, check, _glued in SHAPES:
             self.assertIn((rx.pattern, check), detector, kind)
+
+    def test_on_urls_the_detector_may_be_stricter_never_looser(self):
+        """The one deliberate difference: the detector has no port-and-query exemption."""
+        urls = list(PORT_QUERY_URLS) + [
+            "postgres://app:" + "Xy9kLm2pQ" + "@db/x", "postgresql+psycopg2://app:" + "Xy9kLm2pQ" + "@db/x",
+            "mysql://app:" + "Xy9/kLm2pQ" + "@db/x", "redis://u:" + "5432/abcdef" + "@h",
+            "postgres://u:" + "ab/cd?ef" + "@h", "mongodb+srv://u:" + "Q7x" * 334 + "@h/x",
+            "postgres://user:password@host/db", "redis://host:6379/0",
+        ]
+        for url in urls:
+            redacted = bool(redact_text(url)[1])
+            detected = bool(detector_hits(url))
+            self.assertTrue(detected or not redacted, url)
+        self.assertTrue(any(detector_hits(u) and not redact_text(u)[1] for u in PORT_QUERY_URLS))
 
     def test_the_corpus_covers_every_redactor_shape(self):
         kinds = set()
