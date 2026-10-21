@@ -23,7 +23,7 @@ Sovereign keeps that context in a folder of Markdown files on your Mac that your
 ```
 
 - **The archive** is five folders with one job each: `raw/` (the loading dock), `knowledge/` (the trusted cards), `workstreams/` (your active work), `archive/` (cold storage) and an optional `repos/` for code.
-- **Connectors** tie a tool to the archive both ways. Claude Code reads the relevant cards when a session starts and saves its memory into its own lane in `raw/`. It can also distil quiet sessions into candidate captures, but only after you turn that on and look at a preview.
+- **Connectors** tie a tool to the archive both ways. Claude Code reads the relevant cards when a session starts and saves its memory into its own lane in `raw/`. It can also distil quiet sessions into candidate captures, but it stays off until you turn it on, and the app shows Turn on only after a preview.
 - **The curator** reads what arrived in the background and drafts one-screen briefing cards. At first it asks before any of it becomes trusted; routine cards can graduate to landing on their own once its judgments earn it, and every approval, rejection and background landing goes in the decisions log. Its default answer is no: most raw material never becomes a card, and that's the system working.
 
 ## Get started on a Mac (about five minutes)

@@ -16,8 +16,9 @@
   stay off, since the model is on the hub. Session captures are always screened by the
   curator and held at ask-first until they earn their own record; nothing reaches
   `knowledge/` without your approval.
-- Sources and Review show session captures, and Open session takes you to the folder
-  a session ran in.
+- Sources and Review show session captures. Open session opens Terminal in the folder
+  the session ran in and resumes it, and only when the transcript is on this Mac, so
+  not on a client Mac of a hub archive, where the archive's model runs on the hub.
 
 ## 0.8.0 "Reach" (build 51)
 

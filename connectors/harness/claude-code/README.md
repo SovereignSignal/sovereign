@@ -37,7 +37,8 @@ that fails silently is worse than one that never ran.
 
 Off until you turn it on. It reads quiet Claude Code sessions and writes candidate
 captures into the lane under `sessions/`, for the curator to judge. The memory mirror
-above is unaffected either way. Transcripts still never leave the machine; only the
+above is unaffected either way. Transcripts are never copied into the archive. Only a
+cleaned, redacted excerpt reaches the model you chose for the curator, and only the
 captures and `sessions/MANIFEST.md` (last run, this week's counts, and a one-line
 Waiting reason when the model cannot be reached) are published.
 
