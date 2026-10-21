@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -226,11 +227,13 @@ class ReleaseUpdate(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
     def publish(self, version, build, bundle_id="com.sovereign.console", plist=None,
-                tamper=False, drop=(), url=None):
+                tamper=False, drop=(), url=None, prepare=None):
         """A release as GitHub serves it: the zip, its .sha256, and the latest-release feed."""
         name = "Sovereign-%s-build%s.zip" % (version, build)
         stage = self.rel / ("stage-" + name); app = stage / "Sovereign.app"
         release_app(app, *(plist or (version, build)), bundle_id=bundle_id)
+        if prepare:
+            prepare(app)
         z = self.rel / name
         subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(z)], check=True)
         sha = self.rel / (name + ".sha256")
@@ -347,6 +350,8 @@ class ReleaseUpdate(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertTrue(out["current"]); self.assertIsNone(out["latest"])
         self.assertIn("could not be reached", out["summary"])
+        # The app reports this as an error, never styled as up to date.
+        self.assertEqual(out["state"], "preview"); self.assertEqual(out["error"], out["summary"])
     def test_11_an_address_outside_github_is_refused_before_any_request(self):
         for url in ("http://github.com/SovereignSignal/sovereign/x.zip", "https://example.com/x.zip"):
             code, out = self.apply(self.publish("0.8.0", "51", url=url), verify=self.ok)
@@ -362,5 +367,48 @@ class ReleaseUpdate(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("signature is not valid", out["error"])
         self.assert_untouched()
+    def test_an_ad_hoc_bundle_that_prints_the_team_text_is_refused(self):
+        # The executable's name is printed in codesign -dvv output, so a substring check
+        # on that text passed this bundle. The code requirement does not.
+        trick = "TeamIdentifier=SM97GYTF25 Authority=Developer ID Application"
+        def sign(app):
+            shutil.copy("/usr/bin/true", str(app / "Contents/MacOS" / trick))
+            info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+            info.update(CFBundleExecutable=trick, CFBundlePackageType="APPL")
+            (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+            (app / "Contents/MacOS/Sovereign").unlink()
+            subprocess.run(["codesign", "-s", "-", "--force", str(app)], check=True, capture_output=True)
+            # The plain checks the old code relied on all pass for it.
+            self.assertEqual(subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)]).returncode, 0)
+            shown = subprocess.run(["codesign", "-dvv", str(app)], capture_output=True, text=True).stderr
+            self.assertIn(trick, shown); self.assertIn("Signature=adhoc", shown)
+        code, out = self.apply(self.publish("0.8.0", "51", prepare=sign))
+        self.assertEqual(code, 1, out)
+        self.assertIn("not signed with Sovereign's Developer ID", out["error"])
+        self.assert_untouched()
+class ReleaseUpdateUnits(unittest.TestCase):
+    """Pieces of the release path checked in process, without a release on disk."""
+    @classmethod
+    def setUpClass(cls):
+        import runpy
+        cls.mod = runpy.run_path(str(UPD))
+    def test_the_code_requirement_names_apples_anchor_developer_id_the_team_and_the_bundle(self):
+        self.assertEqual(self.mod["code_requirement"](),
+            '=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists '
+            'and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
+            'and certificate leaf[subject.OU] = "SM97GYTF25" and identifier "com.sovereign.console"')
+    def test_a_redirect_passes_the_same_address_check_as_the_first_request(self):
+        import urllib.request
+        from unittest.mock import patch
+        handler = self.mod["_CheckedRedirects"]()
+        req = urllib.request.Request("https://github.com/SovereignSignal/sovereign/releases/download/v1/x.zip")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SOV_UPDATE_FEED", None)
+            for bad in ("http://github.com/x", "https://evil.example/x"):
+                with self.assertRaises(ValueError, msg=bad):
+                    handler.redirect_request(req, None, 302, "Found", {}, bad)
+            good = handler.redirect_request(req, None, 302, "Found", {},
+                                            "https://release-assets.githubusercontent.com/x")
+            self.assertEqual(good.full_url, "https://release-assets.githubusercontent.com/x")
 if __name__ == "__main__":
     unittest.main()

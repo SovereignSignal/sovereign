@@ -591,8 +591,13 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         }
         let options = source == "release" ? ["--source", "release"] : ["--source", "local", "--template", template]
         let base = qa.map { [$0] + options } ?? [py, "-I", "-B", script] + options
+        // SOV_UPDATE_FEED and SOV_UPDATE_VERIFY replace the release and Apple's gate in tests.
+        // Only a QA harness may hand them to the updater, never the app's own environment.
+        var childEnv = env()
+        if !App.shared.snapshotting { for key in childEnv.keys where key.hasPrefix("SOV_UPDATE_") { childEnv.removeValue(forKey: key) } }
+        let updaterEnv = childEnv
         appUpdateBusy = true
-        run(base + ["--preview"], timeLimit: 60) { out, _, code in
+        run(base + ["--preview"], environment: updaterEnv, timeLimit: 60, isolated: true) { out, _, code in
             DispatchQueue.main.async {
                 guard self.generation == generation else { self.appUpdateBusy = false; return }
                 let plan = (out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any] ?? [:]
@@ -602,6 +607,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 }
                 if plan["current"] as? Bool == true {
                     self.appUpdateBusy = false
+                    // An unreachable feed or an incomplete release is a preview with nothing to
+                    // install, but it is not "up to date": say what went wrong.
+                    if let problem = plan["error"] as? String {
+                        fail(problem); return
+                    }
                     self.deliver("appUpdateResult", ["state": "current", "verification": plan["summary"] as? String ?? "Sovereign is already up to date."], generation: generation)
                     return
                 }
@@ -616,7 +626,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                     self.deliver("appUpdateResult", ["state": "cancelled"], generation: generation); return
                 }
                 let log = FileManager.default.temporaryDirectory.appendingPathComponent("sovereign-app-update-\(UUID().uuidString).log")
-                let started = self.launchDetached(base + ["--apply", "--token", token], logTo: log) { result in
+                let started = self.launchDetached(base + ["--apply", "--token", token], logTo: log, environment: updaterEnv) { result in
                     self.appUpdateBusy = false
                     self.appUpdateProcess = nil
                     // Report to the current document even if navigation changed during the build.
@@ -638,14 +648,14 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     /// File output lets the updater survive this app exiting. Observe termination while
     /// the app remains open so a failed build cannot leave a permanent Building banner.
     @discardableResult
-    func launchDetached(_ args: [String], logTo log: URL, done: @escaping ([String: Any]) -> Void) -> Bool {
+    func launchDetached(_ args: [String], logTo log: URL, environment: [String: String]? = nil, done: @escaping ([String: Any]) -> Void) -> Bool {
         guard FileManager.default.createFile(atPath: log.path, contents: nil),
               let handle = try? FileHandle(forWritingTo: log) else { return false }
         defer { try? handle.close() }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: args[0])
         p.arguments = Array(args.dropFirst())
-        p.environment = env()
+        p.environment = environment ?? env()
         p.standardOutput = handle
         p.standardError = handle
         p.terminationHandler = { process in

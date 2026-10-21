@@ -384,11 +384,26 @@ def check_sum(zip_path, sha_path, name):
         refuse("its checksum does not match the one published with the release")
 
 
+def code_requirement():
+    """The signer Sovereign accepts, as a code requirement codesign evaluates itself.
+
+    Never parse `codesign -dvv` text for this: a bundle's executable name is printed in
+    that text, so an ad-hoc bundle named "TeamIdentifier=<team> Authority=Developer ID
+    Application" passed a substring check. The requirement names Apple's anchor, the
+    Developer ID intermediate (field ...6.2.6), a Developer ID Application leaf (field
+    ...6.1.13), this team as the leaf's OU, and this bundle id. Gatekeeper alone accepts
+    a notarized app from any team, so this is what ties the download to Sovereign.
+    """
+    return ('=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists '
+            'and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
+            'and certificate leaf[subject.OU] = "%s" and identifier "%s"' % (TEAM_ID, BUNDLE_ID))
+
+
 def verify_bundle(app, latest):
     """Apple's gate, then the bundle's own claims. Returns the sentence for the result.
 
-    Signed with a valid signature, by Sovereign's Developer ID team, accepted by
-    Gatekeeper (which means notarized), and carrying the bundle id, version and build the
+    Signed with a valid signature that meets code_requirement(), accepted by Gatekeeper
+    (which means notarized), and carrying the bundle id, version and build the
     release named. Any failure refuses the update.
     """
     stub = stub_verifier()
@@ -404,8 +419,9 @@ def verify_bundle(app, latest):
                            capture_output=True, text=True, timeout=300)
         if r.returncode != 0:
             refuse("its signature is not valid (%s)" % last(r))
-        r = subprocess.run(["/usr/bin/codesign", "-dvv", app], capture_output=True, text=True, timeout=60)
-        if "TeamIdentifier=%s" % TEAM_ID not in r.stderr or "Authority=Developer ID Application" not in r.stderr:
+        r = subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "-R", code_requirement(), app],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
             refuse("it is not signed with Sovereign's Developer ID (team %s)" % TEAM_ID)
         r = subprocess.run(["/usr/sbin/spctl", "--assess", "--type", "execute", app],
                            capture_output=True, text=True, timeout=120)

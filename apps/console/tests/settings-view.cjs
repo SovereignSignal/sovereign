@@ -16,6 +16,14 @@ const app = extra => ({ machine: Object.assign({ app: { installed: true, version
 const RELEASE = '<button class="brass" id="set-update">Check for updates</button>';
 const SOURCE = 'id="set-update-source">Update from source';
 
+test('an archive that is open is named, and one that is not says so', () => {
+  assert(paint({ root: '/Owner/Research' }).includes('/Owner/Research'));
+  const none = paint({ root: null });
+  assert(none.includes('No archive is open'));
+  // Nothing to reveal when nothing is open, so the button is not offered.
+  assert(!none.includes('set-reveal'));
+});
+
 test('a build current with this source offers only the release check', () => {
   const html = paint({ D: app() });
   assert(html.includes('You are running Sovereign 0.5.6 build 28.'));

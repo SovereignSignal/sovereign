@@ -165,8 +165,10 @@ passes, but a path publishes the build machine's folder layout.
 Before anything is replaced, the download has to pass every check:
 
 1. Its SHA-256 matches the published `.sha256`.
-2. `codesign --verify --deep --strict` accepts it, and `codesign -dvv` shows
-   `Authority=Developer ID Application` and `TeamIdentifier=SM97GYTF25`.
+2. `codesign --verify --deep --strict` accepts it, and again under a code
+   requirement: Apple's anchor, a Developer ID Application certificate, team
+   `SM97GYTF25` and identifier `com.sovereign.console`. The requirement is
+   evaluated by codesign, never read off `codesign -dvv` text.
 3. Gatekeeper accepts it (`spctl --assess --type execute`), which a bundle passes
    only when notarized.
 4. Its Info.plist says `com.sovereign.console` and the version and build in the
