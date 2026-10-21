@@ -65,8 +65,10 @@ def read_allowed() -> bool:
 
 
 def archive_root() -> Optional[Path]:
+    # The owner chose this path, so a symlink here (an archive on another volume) is
+    # resolved; the fence applies to what is inside it.
     root = os.environ.get("BRAIN_ROOT") or pointer("~/.brain-root")
-    return Path(os.path.expanduser(root)) if root else None
+    return Path(os.path.realpath(os.path.expanduser(root))) if root else None
 
 
 def core_slugs() -> List[str]:
@@ -178,7 +180,8 @@ def call(name: str, args: dict) -> str:
             slug = args.get("slug")
             if not isinstance(slug, str):
                 raise Refused("read_card needs a slug.")
-            return served(archive.bind(slug.strip()))
+            text = served(archive.bind(slug.strip()))
+            return text if len(text) <= MAX_CHARS else text[:MAX_CHARS] + f"\n\n[card truncated at {MAX_CHARS} chars]"
         if name == "search_cards":
             query, limit = args.get("query"), args.get("limit", 10)
             if not isinstance(query, str):
@@ -228,6 +231,9 @@ def handle(message) -> Optional[dict]:
             text, failed = call(params["name"], args if isinstance(args, dict) else {}), False
         except Refused as exc:
             text, failed = str(exc), True
+        except Exception as exc:  # one bad read must not end the session the client holds open
+            print(f"sov mcp: {params['name']} failed: {type(exc).__name__}", file=sys.stderr)
+            text, failed = f"The archive could not be read ({type(exc).__name__}).", True
         return ok({"content": [{"type": "text", "text": text}], "isError": failed})
     return {"jsonrpc": "2.0", "id": ident, "error": {"code": -32601, "message": f"Method not found: {method}"}}
 

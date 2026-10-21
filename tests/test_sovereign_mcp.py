@@ -136,6 +136,27 @@ class Tools(Base):
             _, failed = self.tool(name, **args)
             self.assertTrue(failed, (name, args))
 
+    def test_an_archive_reached_through_a_symlink_is_served(self):
+        link = self.vault.parent / "linked-archive"
+        os.symlink(self.vault, link)
+        with mock.patch.dict(os.environ, {"BRAIN_ROOT": str(link)}):
+            text, failed = self.tool("read_card", slug="watering")
+        self.assertFalse(failed, text)
+        self.assertIn("Drip lines.", text)
+
+    def test_an_oversized_card_is_truncated(self):
+        write(self.vault / "knowledge/concepts/huge.md", CARD.format(kind="concept", title="Huge", body="x" * 100000))
+        text, failed = self.tool("read_card", slug="huge")
+        self.assertFalse(failed)
+        self.assertLess(len(text), sovereign_mcp.MAX_CHARS + 100)
+        self.assertIn("[card truncated", text)
+
+    def test_an_unexpected_failure_is_an_error_result_not_a_dead_server(self):
+        with mock.patch.object(sovereign_mcp, "call", side_effect=RuntimeError("boom")):
+            text, failed = self.tool("list_cards")
+        self.assertTrue(failed)
+        self.assertNotIn("boom", text)
+
     def test_pack_budget_truncates_with_a_pointer_to_read_card(self):
         text = sovereign_mcp.Archive(self.vault).pack("garden-planner", max_chars=200)
         self.assertLess(len(text), 300)
