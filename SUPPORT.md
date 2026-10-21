@@ -1,6 +1,6 @@
 # Support
 
-Sovereign is currently a closed beta for Apple Silicon Macs (0.7.1). Start with the
+Sovereign is currently a closed beta for Apple Silicon Macs (0.8.0). Start with the
 status already inside the app before opening an issue.
 
 ## Before reporting a problem

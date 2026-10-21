@@ -4,7 +4,7 @@
 
 **Memory you can audit for the AI tools you use, kept as plain files you own.**
 
-**Status: closed beta.** The current app is Sovereign 0.7.1 (build 50), built from this repo and in daily use by its maintainer. A signed, notarized download is on the [releases page](https://github.com/SovereignSignal/sovereign/releases), validated on clean installs of macOS 13.6 and the current macOS. Apple Silicon Mac, macOS 13 or later.
+**Status: closed beta.** The current app is Sovereign 0.8.0 (build 51), built from this repo and in daily use by its maintainer. A signed, notarized download is on the [releases page](https://github.com/SovereignSignal/sovereign/releases), validated on clean installs of macOS 13.6 and the current macOS. Apple Silicon Mac, macOS 13 or later.
 
 Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Many memory tools fix that by writing on their own, so whatever one session said becomes what the next one believes, and there's no step where you decide it's true.
 
@@ -30,7 +30,7 @@ Sovereign keeps that context in a folder of Markdown files on your Mac that your
 
 You need an Apple Silicon Mac on macOS 13 or later, [Claude Code](https://claude.com/claude-code), and an API key for the curator (Anthropic by default; OpenAI, Google Gemini, xAI Grok, and Muse are also supported).
 
-1. **Install Sovereign.** Download `Sovereign-0.7.1-build50.zip` from the [v0.7.1 release](https://github.com/SovereignSignal/sovereign/releases/tag/v0.7.1), unzip it, and move `Sovereign.app` to `~/Applications` (the Applications folder inside your home folder; create it if it is not there). Prefer source? [Build the app yourself](#build-the-app-from-source).
+1. **Install Sovereign.** Download `Sovereign-0.8.0-build51.zip` from the [v0.8.0 release](https://github.com/SovereignSignal/sovereign/releases/tag/v0.8.0), unzip it, and move `Sovereign.app` to `~/Applications` (the Applications folder inside your home folder; create it if it is not there). Prefer source? [Build the app yourself](#build-the-app-from-source).
 2. **Create an archive.** Open Sovereign and choose **Create archive…**. Pick where it lives; `~/Sovereign` is a good default.
 3. **Connect Claude Code.** On the screen that follows, choose **Connect…** next to Claude Code, check the preview, then install. Claude Code will now read your archive at the start of every session.
 4. **Turn on the curator.** In **Settings › Curator**, pick your provider, paste your API key, and choose **Turn on**. No key yet? **Get your key** under the field walks you through the provider's own pages, including how to cap what a month can cost. The key is stored in your login Keychain, never in a plain file. Every two hours the curator sends newly saved material to that provider, under your account, and drafts cards. In a new archive that includes what your connected tools had already saved before you turned it on, such as Claude Code's existing memory, worked through 20 files a pass. At first nothing it drafts becomes trusted until you approve it (see [Approval fades as trust is earned](#approval-fades-as-trust-is-earned)).

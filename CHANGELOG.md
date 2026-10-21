@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.8.0 "Reach" (in progress)
+## 0.8.0 "Reach" (build 51)
+
+Status: closed beta, release candidate, a signed, notarized download.
+Validation on clean macOS 13 and current macOS installs is recorded in the
+release record.
 
 - `sov mcp`: a read-only MCP server any MCP client can use. Four tools
   (`load_context`, `read_card`, `search_cards`, `list_cards`) serve the
