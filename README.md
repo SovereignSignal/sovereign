@@ -72,6 +72,18 @@ bin/sov status            # what's connected, and how fresh each lane is
 bin/sov disconnect claude-code --apply   # undo; the lane's files in raw/ stay as history
 ```
 
+### Any MCP client, read-only
+
+`sov mcp` serves your trusted cards to any tool that speaks MCP. It has four tools, all read-only: `load_context` (the same slice `sov load` gives a session), `read_card`, `search_cards` and `list_cards`. Every card arrives with its path and content hash, so the tool can cite exactly what it read. It reads only `knowledge/`, never follows a symlink out of the archive, and redacts anything shaped like a secret on the way out. It has no write path at all: new material still enters through a tool's own lane and the curator. In Claude Code:
+
+```bash
+claude mcp add sovereign -- ~/brain-bin/sov mcp
+```
+
+Other clients take the same command in their MCP settings (`"command": "<path to sov>", "args": ["mcp"]`). With only the app installed, the path is `/Applications/Sovereign.app/Contents/MacOS/sov`, or under `~/Applications` if that's where you put it. A client set to contribute-only gets nothing back.
+
+### Other tools
+
 Claude Code is the one fully supported tool. The repo also ships best-effort connectors for Codex, Cursor, Claude Desktop, Windsurf, Hermes, Muse Code and a Notion mirror, plus a plain watch folder (`sov relay add <path>`) for anything else. Best-effort connectors can break when their tools change. A broken one only stops new captures: everything already in the archive stays, and `sov status` shows how fresh each lane is. One background job per Mac runs every connected tool's save on a schedule; when the app installs it, macOS lists it under Login Items as Sovereign.
 
 ## Curating

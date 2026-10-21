@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 "Reach" (in progress)
+
+- `sov mcp`: a read-only MCP server any MCP client can use. Four tools
+  (`load_context`, `read_card`, `search_cards`, `list_cards`) serve the
+  trusted layer only, each card with its path and content hash. No symlink
+  is followed out of the archive, an ambiguous slug is refused, anything
+  shaped like a secret is redacted on the way out, and the read gate is
+  checked on every call. There is no write path.
+
 ## 0.7.1 (build 50) — release candidate
 
 Status: closed beta, published as a signed, notarized download. Validated end

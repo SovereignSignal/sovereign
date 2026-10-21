@@ -80,7 +80,8 @@ def _listdir(fd: int) -> List[str]:
         raise CardError("source_scan_failed") from exc
 
 
-def _topic_candidates(root: Path, slug: str) -> List[Path]:
+def card_index(root: Path) -> Dict[str, List[Path]]:
+    """Every knowledge/<lane>/<slug>.md by slug, scanned without following a symlinked directory."""
     _, root_fd = _root_fd(root)
     try:
         knowledge_fd = os.open("knowledge", _DIR_FLAGS, dir_fd=root_fd)
@@ -88,7 +89,7 @@ def _topic_candidates(root: Path, slug: str) -> List[Path]:
         os.close(root_fd)
         raise CardError("unsafe_source") from exc
     os.close(root_fd)
-    matches: List[Path] = []
+    index: Dict[str, List[Path]] = {}
     try:
         for lane in sorted(_listdir(knowledge_fd)):
             if lane in (".", "..") or "/" in lane:
@@ -98,13 +99,18 @@ def _topic_candidates(root: Path, slug: str) -> List[Path]:
             except OSError:
                 continue
             try:
-                if f"{slug}.md" in _listdir(lane_fd):
-                    matches.append(Path("knowledge") / lane / f"{slug}.md")
+                for name in sorted(_listdir(lane_fd)):
+                    if name.endswith(".md") and _SLUG.fullmatch(name[:-3]):
+                        index.setdefault(name[:-3], []).append(Path("knowledge") / lane / name)
             finally:
                 os.close(lane_fd)
     finally:
         os.close(knowledge_fd)
-    return matches
+    return index
+
+
+def _topic_candidates(root: Path, slug: str) -> List[Path]:
+    return card_index(root).get(slug, [])
 
 
 def _read_alias_file(parent_fd: int, name: str) -> Dict[str, str]:
