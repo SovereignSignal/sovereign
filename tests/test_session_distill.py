@@ -181,6 +181,7 @@ class Distill(Base):
             out = distill.distill(self.resolve(), "", SESSION, EXCERPT, [1, 2])
         self.assertEqual(out["status"], "unreachable")
         self.assertIn("HTTP 500", out["error"])
+        self.assertIs(out["responded"], True)   # the host answered: about this excerpt, not an outage
 
     def test_unreachable(self):
         sock = socket.socket()
@@ -190,6 +191,7 @@ class Distill(Base):
         self.hub_json("http://127.0.0.1:%d/v1/chat/completions" % port)
         out = distill.distill(self.resolve(), "", SESSION, EXCERPT, [1, 2], timeout=5)
         self.assertEqual(out["status"], "unreachable")
+        self.assertIs(out["responded"], False)
         self.assertEqual(out["captures"], [])
         self.assertTrue(out["error"])
 

@@ -83,20 +83,41 @@ class Watermark(unittest.TestCase):
         self.assertEqual(rig.stub.calls, 3)
         self.assertEqual(rig.verdict(SID), "failed:3")
 
-    def test_a_500_leaves_the_session_pending_and_waits(self):
-        replies = iter([500, json.dumps({"captures": [VALID]})])
-        rig = self.rig(lambda body: next(replies))
+    def test_an_outage_leaves_the_session_pending_and_waits(self):
+        rig = self.rig()
         rig.transcript(SID)
+        rig.hub_json("http://127.0.0.1:9/v1/chat/completions")   # nothing listens: no HTTP response
         self.ok(rig.tick())
         self.assertIsNone(rig.verdict(SID))
-        waiting = rig.watermark()["waiting"]
-        self.assertEqual(waiting["reason"], "model unreachable")
+        self.assertEqual(rig.watermark()["waiting"]["reason"], "model unreachable")
         self.assertRegex(rig.manifest(), r"Waiting: model unreachable since \d{4}-\d\d-\d\dT\d\d:\d\dZ\.")
         self.assertIn("waiting 1", rig.manifest())
+        rig.hub_json(rig.stub.url)
         self.ok(rig.tick())
         self.assertEqual(rig.verdict(SID), "distilled")
         self.assertIsNone(rig.watermark()["waiting"])
         self.assertNotIn("Waiting:", rig.manifest())
+
+    def test_a_500_answer_fails_the_session_and_the_tick_goes_on(self):
+        bad, good = "5e551011-0000-4000-8000-0000000000h1", "5e551011-0000-4000-8000-0000000000h2"
+
+        def reply(body):
+            return 500 if "HTTP-REJECTED" in json.dumps(body) else json.dumps({"captures": [VALID]})
+        rig = self.rig(reply)
+        rig.transcript(bad, prompts=["Remember HTTP-REJECTED always."] + list(fx.PROMPTS[1:]), age_s=7200)
+        rig.transcript(good)
+        self.ok(rig.tick())
+        self.assertEqual(rig.verdict(bad), "failed:1")
+        self.assertEqual(rig.verdict(good), "distilled")      # the same tick went on to it
+        self.assertEqual(rig.stub.calls, 2)
+        self.assertIsNone(rig.watermark()["waiting"])
+        self.assertNotIn("Waiting:", rig.manifest())
+        for n in (2, 3):
+            self.ok(rig.tick())
+            self.assertEqual(rig.verdict(bad), "failed:%d" % n)
+        self.ok(rig.tick())
+        self.assertEqual(rig.verdict(bad), "failed:3")          # terminal
+        self.assertEqual(rig.stub.calls, 4)
 
     def test_a_refused_capture_fails_its_session_alone(self):
         poison_sid, good_sid = "5e551011-0000-4000-8000-0000000000p1", "5e551011-0000-4000-8000-0000000000g1"
@@ -121,21 +142,18 @@ class Watermark(unittest.TestCase):
         self.assertIn("failed 1", rig.manifest())
         self.assertIn("Items mirrored: 1. Failed: 2.", rig.manifest())
 
-    def test_three_unreachable_results_end_a_session(self):
+    def test_an_outage_across_three_ticks_fails_no_session(self):
         rig = self.rig()
         rig.transcript(SID, age_s=7200)
         rig.transcript("5e551011-0000-4000-8000-0000000000b2")
         rig.hub_json("http://127.0.0.1:9/v1/chat/completions")
-        for n in (1, 2):
+        for _ in range(3):
             self.ok(rig.tick())
-            self.assertIsNone(rig.verdict(SID))
-        self.ok(rig.tick())
-        self.assertEqual(rig.verdict(SID), "failed:3")
-        rig.hub_json(rig.stub.url)
-        self.ok(rig.tick())       # the newer session is no longer blocked behind it
-        self.assertEqual(rig.verdict("5e551011-0000-4000-8000-0000000000b2"), "distilled")
-        self.assertEqual(rig.verdict(SID), "failed:3")
-        self.assertEqual(rig.stub.calls, 1)
+        rows = rig.watermark()["sessions"]
+        self.assertEqual([r.get("verdict") for r in rows.values()], [None, None])
+        self.assertEqual(rig.watermark()["waiting"]["reason"], "model unreachable")
+        self.assertIn("failed 0", rig.manifest())
+        self.assertIn("waiting 2", rig.manifest())
 
     def test_unreachable_stops_the_ticks_calls(self):
         rig = self.rig()

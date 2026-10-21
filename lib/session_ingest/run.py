@@ -39,7 +39,6 @@ RETRY_SLEEP_S = 30
 CAPTURE_TIMEOUT_S = 60
 WEEK_S = 7 * 86400
 UNREACHABLE = "model unreachable"
-MAX_UNREACHABLE = 3
 # The Waiting line is published into the lane, so it carries one of these phrases and
 # never the reason itself, which can name a path, a host or an endpoint. The full
 # reason stays in the watermark for `status`.
@@ -381,27 +380,21 @@ def tick(tool, env, dest_dir, now):
             summary["captures"] += len(out["captures"])
             verdict = "distilled"
             wm.stage(sid, dict(verdict_row, verdict=verdict, captures=len(out["captures"])), write=False)
-        elif out["status"] == "failed":
+        elif out["status"] == "failed" or out.get("responded"):
+            # An unparseable reply, or an HTTP error the model host answered with: either
+            # way the model saw this excerpt and rejected it. It counts against this
+            # session alone (three end it) and the tick goes on to the next one.
             waiting = None
             verdict = "failed:%d" % (_failures(row) + 1)
             wm.stage(sid, dict(verdict_row, verdict=verdict), write=False)
         else:
-            # unreachable: the road to the model, nothing about the session. refused: a
-            # guard refusal at call time, a configuration the owner must see. Either way
-            # the session stays pending and this tick makes no further call.
+            # unreachable with no answer at all: an outage, nothing about the session, so
+            # it is never counted against it and stays pending for as long as it lasts.
+            # refused: a guard refusal at call time, a configuration the owner must see.
+            # Either way this tick makes no further call.
             waiting = _waiting(prior, UNREACHABLE if out["status"] == "unreachable" else
                                _one_line(out["error"], 300) or "refused", now)
             calls_open = False
-            if out["status"] == "unreachable":
-                # Three in a row end the session, so one excerpt the model never answers
-                # cannot hold every newer session behind it.
-                n = int((row or {}).get("unreachable") or 0) + 1
-                if n >= MAX_UNREACHABLE:
-                    verdict = "failed:%d" % MAX_UNREACHABLE
-                    wm.stage(sid, dict(verdict_row, verdict=verdict), write=False)
-                    summary["verdicts"][sid] = verdict
-                    continue
-                wm.stage(sid, dict(verdict_row, verdict=None, unreachable=n), write=False)
             summary["pending"] += 1
             continue
         summary["verdicts"][sid] = verdict

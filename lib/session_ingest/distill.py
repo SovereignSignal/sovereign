@@ -85,16 +85,21 @@ def validate(raw, turn_ids):
     return out
 
 
-def _result(status, captures=(), error=None):
-    return {"status": status, "captures": list(captures), "error": error}
+def _result(status, captures=(), error=None, **extra):
+    out = {"status": status, "captures": list(captures), "error": error}
+    out.update(extra)
+    return out
 
 
 def distill(res, key, session, excerpt, turn_ids, timeout=90):
     """Ask the resolved model (inference.resolve) about one excerpt. Returns
-    {"status": "ok"|"failed"|"unreachable"|"refused", "captures", "error"}."""
+    {"status": "ok"|"failed"|"unreachable"|"refused", "captures", "error"}. An
+    unreachable result also carries `responded`: True when the model host answered with
+    an HTTP error (it rejected this excerpt), False when no answer came at all (an
+    outage: refused connection, DNS, a timeout after the retry)."""
     cfg = res.get("cfg")
     if cfg is None:
-        return _result("unreachable", error=res.get("reason") or "no model for session capture")
+        return _result("unreachable", error=res.get("reason") or "no model for session capture", responded=False)
     provider = cfg.get("provider")
     if provider and not key:
         # A hosted provider without its key would only fail at the provider, after the
@@ -115,7 +120,9 @@ def distill(res, key, session, excerpt, turn_ids, timeout=90):
             return _result("failed", error=error)
         if isinstance(exc, RuntimeError) and str(exc).startswith(REFUSING):
             return _result("refused", error=str(exc))
-        return _result("unreachable", error=error)
+        # curator_inference._post_json turns an HTTP error response into "HTTP <code>: ...".
+        responded = isinstance(exc, RuntimeError) and str(exc).startswith("HTTP ")
+        return _result("unreachable", error=error, responded=responded)
     captures = validate(raw, turn_ids)
     if captures is None:
         return _result("failed", error="the reply held no captures object")
