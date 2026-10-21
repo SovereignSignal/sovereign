@@ -1,7 +1,10 @@
 """The rebuild kit: what only exists on the hub machine, sealed and copied off-site nightly.
 
 Contents: hub.json, the machine pointers (~/.brain-*), the notify env files, and every
-path the owner lists under kit.include. Never the recovery key, never anything under the
+path the owner lists under kit.include. A listed path that is not there fails the build,
+as do two different files that would land under one name: the kit never drops a listed
+file quietly. An owner-executable file (a compiled helper a hand-kept job calls) keeps
+its executable bit through restore. Never the recovery key, never anything under the
 vault (the vault has its own copies). Sealed with hub-crypto like the recovery capsule,
 so one key opens both. Targets are copied with scp (host:path) or cp (a local path); the
 same run mirror-pushes the vault and the template to the offsite remotes and writes a
@@ -37,16 +40,29 @@ def _files(path):
     p = Path(os.path.expanduser(str(path)))
     if p.is_dir():
         return [q for q in sorted(p.rglob("*")) if q.is_file() and not q.is_symlink()]
-    return [p] if p.is_file() else []
+    if p.is_file():
+        return [p]
+    # A rebuild that trusts the kit would come up without it, and nothing would say so.
+    raise ValueError("kit.include lists a path that is not there: " + str(p))
 
 
-def inventory(inst, state, home):
+def inventory(inst, state, home, executables=None):
+    """(name, bytes) for every file the kit carries. Pass a set as `executables` to learn
+    which of those names were owner-executable at the source."""
     state = Path(state); home = Path(home); k = inst.get("kit") or {}
     key = Path(os.path.expanduser(k["key_file"])).resolve() if k.get("key_file") else None
-    entries = []
+    entries = []; seen = {}
 
     def add(name, p):
-        entries.append((name, Path(p).read_bytes()))
+        src = Path(p).resolve()
+        if name in seen:
+            if seen[name] == src:      # the same file named twice (one env for both notify slots)
+                return
+            # Listed files land under include/ by name; a second one would shadow the first.
+            raise ValueError("two kit entries would share the name %s; list their folder instead" % name)
+        seen[name] = src; entries.append((name, Path(p).read_bytes()))
+        if executables is not None and Path(p).stat().st_mode & 0o100:
+            executables.add(name)
 
     add("state/hub.json", state / "hub.json")
     # Its sibling says which machine is the hub (machine.role) and which tools are connected.
@@ -76,12 +92,12 @@ def inventory(inst, state, home):
     return entries
 
 
-def _seal(entries, key, out):
+def _seal(entries, key, out, executables=()):
     with tempfile.TemporaryDirectory(prefix="sov-kit-", dir=str(Path(out).parent)) as tmp:
         plain = Path(tmp) / "kit.tar.gz"; hashes = {}
         with tarfile.open(plain, "w:gz") as tar:
             for name, raw in entries:
-                h = tarfile.TarInfo(name); h.size = len(raw); h.mode = 0o600; h.mtime = int(time.time())
+                h = tarfile.TarInfo(name); h.size = len(raw); h.mode = 0o700 if name in executables else 0o600; h.mtime = int(time.time())
                 tar.addfile(h, io.BytesIO(raw)); hashes[name] = hashlib.sha256(raw).hexdigest()
             payload = json.dumps({"version": 1, "hashes": hashes, "created": time.time()}, sort_keys=True).encode()
             h = tarfile.TarInfo("manifest.json"); h.size = len(payload); h.mode = 0o600; tar.addfile(h, io.BytesIO(payload))
@@ -165,7 +181,7 @@ def build(inst, state, home, template, apply=False):
         raise ValueError("hub.json needs snapshot.folder and kit.key_file before a kit can be built")
     key = check_key(Path(os.path.expanduser(k["key_file"])), Path(inst["vault"]))
     folder = Path(os.path.expanduser(snap)) / "hub-kit"
-    entries = inventory(inst, state, home)
+    executables = set(); entries = inventory(inst, state, home, executables)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()); out = folder / (stamp + ".kit")
     n = 0
     while out.exists():
@@ -175,7 +191,7 @@ def build(inst, state, home, template, apply=False):
     if not apply:
         return result
     folder.mkdir(parents=True, exist_ok=True)
-    _seal(entries, key, out)
+    _seal(entries, key, out, executables)
     result["sha256"] = hashlib.sha256(out.read_bytes()).hexdigest()
     targets = k.get("targets") or []
     for target in targets:
@@ -218,6 +234,6 @@ def restore(capsule, destination, key):
                 raw = tar.extractfile(m).read()
                 if hashlib.sha256(raw).hexdigest() != manifest["hashes"].get(m.name):
                     raise ValueError("hash mismatch in kit: " + m.name)
-                p = staged / m.name; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(raw); p.chmod(0o600); names.append(m.name)
+                p = staged / m.name; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(raw); p.chmod(0o700 if m.mode & 0o100 else 0o600); names.append(m.name)
         shutil.move(str(staged), str(destination))
     return names

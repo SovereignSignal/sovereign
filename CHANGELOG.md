@@ -2,6 +2,8 @@
 
 ## 0.9.0 "Capture" (unreleased)
 
+- The hub kit fails when a path in `kit.include` is missing or two listed files share a
+  name, instead of dropping one quietly; a listed executable restores executable.
 - Session capture for Claude Code, off until you turn it on. Quiet sessions are
   distilled into candidate captures in the tool's own lane, for the curator to judge.
   A model-free pre-filter drops most sessions before any call; the rest send a
