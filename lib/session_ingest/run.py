@@ -139,14 +139,17 @@ def _walk(ctx, rows, now, observe=None, deadline=None):
             st = os.stat(path)
         except OSError:
             continue
-        found.append((st.st_mtime, path, st.st_size))
-    found.sort()
-    for mtime, path, size in found:
-        if deadline is not None and time.monotonic() >= deadline:
-            return
         # The watermark id is the file's own name, which is also what `claude --resume`
         # takes; a resumed file can open with an earlier session's sessionId.
         sid = os.path.splitext(os.path.basename(path))[0]
+        # A session holding an unresolved timeout goes last, so the next call goes to
+        # another session when there is one.
+        held = bool((rows.get(sid) or {}).get("held_timeout"))
+        found.append((held, st.st_mtime, path, st.st_size, sid))
+    found.sort()
+    for _, mtime, path, size, sid in found:
+        if deadline is not None and time.monotonic() >= deadline:
+            return
         row = rows.get(sid)
         quiet = prefilter.quiet(size, mtime, row, now, ctx["cfg"]["quiet_min"])
         seen = (row or {}).get("seen") or {}
@@ -337,20 +340,34 @@ def tick(tool, env, dest_dir, now):
     summary.update(status="ran", reason="")
     budget = ctx["cfg"]["budget"]
     day = time.strftime("%Y-%m-%d", time.gmtime(now))
-    waiting = prior if prior and prior.get("reason") == UNREACHABLE else None
+    # Only a call's outcome changes a waiting set by a call: an answer clears it, an
+    # outage or a 401/403 sets it, and a tick that ends on a held timeout leaves it be.
+    from_call = (UNREACHABLE, distill.REFUSING) + tuple("HTTP %d" % c for c in AUTH_CODES)
+    waiting = prior if prior and str(prior.get("reason") or "").startswith(from_call) else None
     calls_open, chars, failed_writes, faults = True, 0, 0, 0
-    # A timeout is held until the next call says whether the model is working: then it
-    # counts against its session; a second timeout in a row, or no answer at all, makes
-    # both an outage and neither counts.
-    held = None
+    # A timeout is not proof of an outage, and one timed-out call uses up a tick, so it is
+    # held in the session's row (held_timeout) across ticks until the next call, on any
+    # session, says whether the model is working. An answer charges every hold (three
+    # timeouts end a session); a timeout or no answer drops every hold, uncharged.
+    holds = {k: v for k, v in wm.rows.items() if isinstance(v, dict) and v.get("held_timeout")}
+    resolved = set()
 
-    def settle(entry):
-        hsid, hrow = entry
-        wm.stage(hsid, hrow, write=False)
-        if hrow.get("verdict") == "failed:%d" % MAX_TIMEOUTS and hrow.get("timeouts") == MAX_TIMEOUTS:
-            summary["verdicts"][hsid] = hrow["verdict"]
-        else:
-            summary["pending"] += 1
+    def release(charge):
+        """Resolve every held timeout, charged or dropped; returns {sid: new timeouts}."""
+        counts = {}
+        for hsid, hrow in holds.items():
+            nrow = {k: v for k, v in hrow.items() if k not in ("held_timeout", "seen")}
+            if charge:
+                nrow["timeouts"] = int(nrow.get("timeouts") or 0) + 1
+                if nrow["timeouts"] >= MAX_TIMEOUTS:
+                    nrow.update(verdict="failed:%d" % MAX_TIMEOUTS, at=_iso(now),
+                                error="timed out %d times" % nrow["timeouts"])
+                    summary["verdicts"][hsid] = nrow["verdict"]
+            counts[hsid] = int(nrow.get("timeouts") or 0)
+            wm.stage(hsid, nrow, write=False)
+            resolved.add(hsid)
+        holds.clear()
+        return counts
 
     for look in _walk(ctx, wm.rows, now, observe=lambda *a: wm.observe(*a, write=False),
                       deadline=started + walk_window):
@@ -366,6 +383,9 @@ def tick(tool, env, dest_dir, now):
         if look["verdict"] is not None:
             wm.stage(sid, dict(verdict_row, verdict=look["verdict"]), write=False)
             summary["verdicts"][sid] = look["verdict"]
+            continue
+        if sid in resolved:
+            summary["pending"] += 1   # its hold was resolved by this tick's answer: next tick
             continue
         if (not calls_open or summary["calls"] >= budget["calls_per_tick"]
                 or wm.calls_today(day) >= budget["calls_per_day"]
@@ -383,9 +403,11 @@ def tick(tool, env, dest_dir, now):
         out = distill.distill(res, key, s, text, turn_ids, timeout=call_timeout)
         verdict_row["attempts"] += 1
         answered = out["status"] in ("ok", "failed") or out.get("responded")
-        if answered and held is not None:
-            settle(held)          # the model is working, so the last call's timeout stands
-            held = None
+        if answered:
+            own = sid in holds
+            charged = release(charge=True)   # the model is working: every held timeout stands
+            if own:
+                verdict_row["timeouts"] = charged[sid]
         if out["status"] == "ok":
             waiting = None
             before = set(os.listdir(str(dest)))
@@ -420,26 +442,22 @@ def tick(tool, env, dest_dir, now):
             waiting = None
             verdict = "failed:%d" % (_failures(row) + 1)
             wm.stage(sid, dict(verdict_row, verdict=verdict), write=False)
-        elif out["status"] == "unreachable" and out.get("timed_out") and held is None:
-            # One timeout is not proof of an outage: one large excerpt on a slow model can
-            # time out every tick. It counts in its own counter (three end the session) once
-            # the next call shows the model is working, and the walk goes on.
-            n = verdict_row["timeouts"] + 1
-            if n >= MAX_TIMEOUTS:
-                held = (sid, dict(verdict_row, verdict="failed:%d" % MAX_TIMEOUTS, timeouts=n,
-                                  error="timed out %d times" % n))
-            else:
-                held = (sid, dict(verdict_row, verdict=(row or {}).get("verdict") or None, timeouts=n))
+        elif out["status"] == "unreachable" and out.get("timed_out") and not holds:
+            # The first timeout with none held: hold it in the row, charge nothing, leave
+            # waiting as it was, and make no further call this tick (a timed-out call leaves
+            # no time for another).
+            wm.stage(sid, dict(verdict_row, verdict=(row or {}).get("verdict") or None,
+                               held_timeout={"at": _iso(now)}), write=False)
+            calls_open = False
+            summary["pending"] += 1
             continue
         else:
-            # No answer at all, a second timeout in a row, or a 404, 408, 429 or 5xx: an
+            # A timeout while one is held, no answer at all, or a 404, 408, 429 or 5xx: an
             # outage, never counted against a session, which stays pending for as long as
-            # it lasts. 401 or 403, or a guard refusal at call time: a configuration the
-            # owner must see. Either way this tick makes no further call, and a timeout
-            # held from the call before counts for nothing.
-            if held is not None:
-                held = None
-                summary["pending"] += 1
+            # it lasts, and every held timeout is dropped uncharged. 401 or 403, or a guard
+            # refusal at call time: a configuration the owner must see, holds dropped the
+            # same way. Either way this tick makes no further call.
+            release(charge=False)
             if out["status"] == "refused":
                 reason = _one_line(out["error"], 300) or "refused"
             elif out.get("code") in AUTH_CODES:
@@ -450,9 +468,11 @@ def tick(tool, env, dest_dir, now):
             calls_open = False
             summary["pending"] += 1
             continue
+        if verdict != "distilled" and verdict_row["timeouts"] >= MAX_TIMEOUTS:
+            verdict = "failed:%d" % MAX_TIMEOUTS   # its own answer charged its third timeout
+            wm.stage(sid, dict(verdict_row, verdict=verdict, error="timed out %d times" % verdict_row["timeouts"]),
+                     write=False)
         summary["verdicts"][sid] = verdict
-    if held is not None:
-        settle(held)
     wm.write_seen()
     wm.write_pending()        # one write for every row staged above
     if waiting != prior:

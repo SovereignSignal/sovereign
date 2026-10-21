@@ -303,39 +303,60 @@ class InProcess(unittest.TestCase):
         self.assertIsNone(rig.verdict(SID))          # never failed:n for a broken install
         self.assertIsNone(rig.verdict("5e551011-0000-4000-8000-0000000000b2"))
 
-    def test_a_slow_session_times_out_alone_and_ends_at_three(self):
-        self.short_calls()
-        rig = self.rig(slow_or_valid)
-        slow, fast = SID, "5e551011-0000-4000-8000-0000000000b2"
-        rig.transcript(slow, prompts=["Remember %s always." % SLOW] + list(fx.PROMPTS[1:]), age_s=7200)
-        rig.transcript(fast)
-        self.assertEqual(rig.tick_here()["exit"], 0)
-        self.assertEqual(rig.verdict(fast), "distilled")        # the same tick went on to it
-        row = rig.watermark()["sessions"][slow]
-        self.assertEqual((row.get("verdict"), row.get("timeouts")), (None, 1))
-        self.assertIsNone(rig.watermark()["waiting"])
-        for n in (2, 3):
-            rig.tick_here()
-        row = rig.watermark()["sessions"][slow]
-        self.assertEqual((row["verdict"], row["timeouts"], row["error"]), ("failed:3", 3, "timed out 3 times"))
-        calls = rig.stub.calls
-        rig.tick_here()
-        self.assertEqual(rig.stub.calls, calls)                  # terminal: no further call
+    def slow(self, rig, sid, age_s=7200):
+        rig.transcript(sid, prompts=["Remember %s always." % SLOW] + list(fx.PROMPTS[1:]), age_s=age_s)
 
-    def test_two_timeouts_in_a_row_are_an_outage(self):
+    def row(self, rig, sid):
+        return rig.watermark()["sessions"].get(sid) or {}
+
+    def test_a_held_timeout_is_charged_when_another_session_is_answered(self):
         self.short_calls()
         rig = self.rig(slow_or_valid)
-        a, b, c = SID, "5e551011-0000-4000-8000-0000000000b2", "5e551011-0000-4000-8000-0000000000b3"
-        for i, sid in enumerate((a, b)):
-            rig.transcript(sid, prompts=["Remember %s always." % SLOW] + list(fx.PROMPTS[1:]), age_s=9000 - i * 600)
-        rig.transcript(c)
-        self.assertEqual(rig.tick_here()["exit"], 0)
-        rows = rig.watermark()["sessions"]
-        for sid in (a, b, c):
-            self.assertIsNone(rows[sid].get("verdict"), sid)
-            self.assertFalse(rows[sid].get("timeouts"), sid)     # no increment in an outage
+        self.slow(rig, SID)
+        for cycle in (1, 2, 3):
+            fast = "5e551011-0000-4000-8000-00000000f%03d" % cycle
+            rig.transcript(fast)
+            held = rig.tick_here()
+            self.assertEqual(held["calls"], 1)                       # the timeout ends the tick's calls
+            self.assertIn("held_timeout", self.row(rig, SID))
+            self.assertIsNone(rig.verdict(fast))                     # not called behind the timeout
+            if cycle == 1:
+                self.assertIsNone(rig.watermark()["waiting"])        # a held timeout sets no waiting
+            answered = rig.tick_here()
+            self.assertEqual(answered["calls"], 1)                   # held sorts last; it is not called again
+            self.assertEqual(rig.verdict(fast), "distilled")
+            self.assertNotIn("held_timeout", self.row(rig, SID))
+            self.assertEqual(self.row(rig, SID).get("timeouts"), cycle)
+        row = self.row(rig, SID)
+        self.assertEqual((row["verdict"], row["error"]), ("failed:3", "timed out 3 times"))
+        self.assertEqual(rig.tick_here()["calls"], 0)                # terminal
+
+    def test_a_timeout_after_a_held_one_is_an_outage(self):
+        self.short_calls()
+        rig = self.rig(slow_or_valid)
+        t = "5e551011-0000-4000-8000-0000000000b2"
+        self.slow(rig, SID, age_s=9000)
+        self.slow(rig, t)
+        self.assertEqual(rig.tick_here()["calls"], 1)
+        self.assertIn("held_timeout", self.row(rig, SID))
+        self.assertEqual(rig.tick_here()["calls"], 1)                 # T goes first now
+        for sid in (SID, t):
+            self.assertNotIn("held_timeout", self.row(rig, sid))
+            self.assertFalse(self.row(rig, sid).get("timeouts"))
+            self.assertIsNone(rig.verdict(sid))
         self.assertEqual(rig.watermark()["waiting"]["reason"], "model unreachable")
-        self.assertEqual(len([r for r in rig.stub.requests if SLOW not in json.dumps(r)]), 0)  # calls closed
+
+    def test_one_slow_session_alone_is_never_charged(self):
+        self.short_calls()
+        rig = self.rig(slow_or_valid)
+        self.slow(rig, SID)
+        for n in range(1, 7):
+            self.assertEqual(rig.tick_here()["calls"], 1)
+            self.assertFalse(self.row(rig, SID).get("timeouts"), n)
+            self.assertIsNone(rig.verdict(SID))
+            if n > 1:   # the first tick only holds it; from the second on the model is waited on
+                self.assertEqual(rig.watermark()["waiting"]["reason"], "model unreachable", n)
+        self.assertEqual(rig.watermark()["waiting"]["reason"], "model unreachable")
 
 
 if __name__ == "__main__":
