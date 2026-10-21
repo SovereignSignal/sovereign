@@ -8,6 +8,17 @@
   is followed out of the archive, an ambiguous slug is refused, anything
   shaped like a secret is redacted on the way out, and the read gate is
   checked on every call. There is no write path.
+- Import from ChatGPT, in Settings › Import or with `sov import chatgpt`: a
+  prompt for ChatGPT, a preview, then one untrusted capture per memory for
+  the curator to judge. Re-importing brings in only what changed.
+- A new archive's curator now judges what connected tools saved before it
+  was turned on, such as existing Claude Code memory, 20 files a pass.
+  Before, it looked back only two days and never saw the rest.
+- Capture titles and origins that YAML would misread (`[Work] notes`,
+  `2026`) are quoted, so a capture's labels always parse.
+- `sov mcp` serves an archive reached through a symlink, caps a single
+  card's size, and answers an unexpected failure with an error instead of
+  ending the session.
 
 ## 0.7.1 (build 50) — release candidate
 

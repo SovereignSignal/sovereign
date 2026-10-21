@@ -246,4 +246,31 @@ test('permissions stay closed until one has an open question', () => {
   assert(drift.includes('<details class="set-more" open><summary>1 source · 1 to settle</summary>'));
 });
 
+test('import appears only for an open archive and waits for its prompt', () => {
+  assert(!paint({ root: null }).includes('set-imp-text'));
+  const loading = paint({ root: '/a', imports: null });
+  assert(loading.includes('Loading the prompt') && loading.includes('id="set-imp-preview"'));
+  assert(!loading.includes('Copy prompt') && !loading.includes('id="set-imp-apply"'));
+});
+
+test('import escapes the prompt, the pasted answer and the plan', () => {
+  view.importText('## </textarea><script>x()</script>');
+  const html = paint({ root: '/a', imports: { prompt: 'Say "hi" & <b>list</b>', plan: '<img src=x onerror=y>' } });
+  assert(!html.includes('<script>x()') && html.includes('&lt;/textarea&gt;'));
+  assert(html.includes('data-text="Say &quot;hi&quot; &amp; &lt;b&gt;list&lt;/b&gt;"'));
+  assert(!html.includes('<img src=x') && html.includes('&lt;img src=x'));
+  view.importText('');
+});
+
+test('import offers Import only after a preview, and keeps the answer across redraws', () => {
+  const before = paint({ root: '/a', imports: { prompt: 'p' } });
+  assert(before.includes('Copy prompt') && !before.includes('id="set-imp-apply"'));
+  listeners.input({ target: { id: 'set-imp-text', value: '## Garden\nYou plan gardens offline.' } });
+  const after = paint({ root: '/a', imports: { prompt: 'p', plan: '2 new', ready: true } });
+  assert(after.includes('class="brass" id="set-imp-apply"'));
+  assert(after.includes('## Garden\nYou plan gardens offline.</textarea>'));
+  assert.equal(view.importText(), '## Garden\nYou plan gardens offline.');
+  view.importText('');
+});
+
 console.log(checks + ' settings view checks passed.');

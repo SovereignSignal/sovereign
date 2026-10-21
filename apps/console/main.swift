@@ -239,6 +239,27 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                     self.deliver("curatorResult", ["action": action, "exit": code, "out": out, "err": err], generation: generation)
                 }
             }
+        case "import":
+            // sov import chatgpt (lib/sovereign_import.py): the prompt, a dry plan, or the
+            // import itself. The pasted answer rides stdin only and lands untrusted in a raw lane.
+            let action = d["action"] as? String ?? "prompt"
+            let text = d["text"] as? String ?? ""
+            guard let sov = sov, ["prompt", "preview", "apply"].contains(action) else {
+                deliver("importResult", ["action": action, "exit": 64, "err": sov == nil ? "sov is not installed on this machine." : "Unknown import action."], generation: generation); return
+            }
+            if action != "prompt" && (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || text.utf8.count > 1_048_576) {
+                deliver("importResult", ["action": action, "exit": 64, "err": text.isEmpty ? "Paste ChatGPT's answer first." : "That answer is over 1 MB; import it in parts."], generation: generation); return
+            }
+            var args = [sov, "import", "chatgpt"]
+            args += action == "prompt" ? ["--prompt"] : ["--from", "-"]
+            if action == "apply" { args.append("--apply") }
+            var env: [String: String] = [:]
+            if let root = Settings.archive { env["SOVS_VAULT"] = root }
+            run(args, environment: env, timeLimit: 300, input: action == "prompt" ? nil : text) { out, err, code in
+                DispatchQueue.main.async {
+                    self.deliver("importResult", ["action": action, "exit": code, "out": out, "err": err], generation: generation)
+                }
+            }
         case "connect":
             guard let sov = sov else { refuse(d, "connect", "sov is not installed on this machine.", generation: generation); return }
             guard let h = d["harness"] as? String else { refuse(d, "connect", "No tool was named.", generation: generation); return }
@@ -881,15 +902,26 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : "Diagnostics unavailable."
     }
 
-    func run(_ args: [String], environment extra: [String: String] = [:], timeLimit: Double? = nil, isolated: Bool = false, done: @escaping (String, String, Int32) -> Void) {
+    func run(_ args: [String], environment extra: [String: String] = [:], timeLimit: Double? = nil, isolated: Bool = false, input: String? = nil, done: @escaping (String, String, Int32) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: args[0])
             p.arguments = Array(args.dropFirst())
             p.environment = isolated ? extra : self.env().merging(extra) { _, new in new }
-            let o = Pipe(), e = Pipe()
+            let o = Pipe(), e = Pipe(), i = Pipe()
             p.standardOutput = o; p.standardError = e
+            // Text the owner pasted goes over a pipe, never through a file on disk.
+            p.standardInput = input == nil ? FileHandle.nullDevice : i
             do { try p.run() } catch { done("", "\(error)", -1); return }
+            if let text = input {
+                // A child that exits before reading (no archive, a refusal) must fail the
+                // write with EPIPE, not deliver SIGPIPE, whose default action ends the app.
+                _ = fcntl(i.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+                DispatchQueue.global().async {
+                    try? i.fileHandleForWriting.write(contentsOf: Data(text.utf8))
+                    try? i.fileHandleForWriting.close()
+                }
+            }
             var deadline: DispatchWorkItem?
             if let seconds = timeLimit {
                 let stop = DispatchWorkItem {

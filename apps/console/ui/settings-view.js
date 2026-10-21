@@ -100,6 +100,33 @@ window.SovSettings = (() => {
     return sect("Curator", say(lead) + picker + key + trustSay + landedList + `<span class="pulls" id="set-cur-state" aria-live="polite"></span>`, note, acts);
   }
 
+  /* What ChatGPT already remembers, brought in without a terminal. The prompt is the one
+     `sov import chatgpt --prompt` prints, so the app and the command line never ask
+     ChatGPT different things. A preview always comes before Import, and Import only
+     writes untrusted captures: the curator and the owner still decide what becomes a card.
+     The pane re-renders on every status refresh, so the pasted answer lives here, not in
+     the textarea. */
+  let importText = "";
+  function importSection(I) {
+    I = I || {};
+    const prompt = I.prompt ? `<pre class="set-prompt" id="set-imp-prompt">${esc(I.prompt)}</pre>`
+      : `<p class="set-note">${esc(I.error || "Loading the prompt…")}</p>`;
+    const body = say("Bring in what ChatGPT remembers about you.")
+      + `<p class="set-note">1. Copy this prompt into a new ChatGPT chat, with memory on.</p>` + prompt
+      + `<p class="set-note">2. Paste ChatGPT's whole answer below, then preview what will come in.</p>`
+      + `<textarea id="set-imp-text" rows="7" spellcheck="false" aria-label="ChatGPT's answer" placeholder="## A short title&#10;Two to five sentences ChatGPT remembers.">${esc(importText)}</textarea>`
+      + (I.plan ? `<pre class="set-prompt set-imp-plan">${esc(I.plan)}</pre>` : "")
+      + `<span class="pulls" id="set-imp-state" aria-live="polite"></span>`;
+    const acts = (I.prompt ? `<button data-act="copy" data-text="${esc(I.prompt)}">Copy prompt</button>` : "")
+      + `<button id="set-imp-preview">Preview</button>`
+      + (I.ready ? `<button class="brass" id="set-imp-apply">Import</button>` : "");
+    return sect("Import", body,
+      "Each memory lands untrusted as its own capture. The curator judges each one, and nothing becomes a card until you approve it.", acts);
+  }
+  document.addEventListener("input", e => {
+    if (e.target && e.target.id === "set-imp-text") importText = e.target.value;
+  });
+
   /* A job is what an operating system schedules; a lane runs inside one. The Jobs
      header counts with this too, so the two places never disagree. */
   function jobCount(D) {
@@ -184,11 +211,12 @@ window.SovSettings = (() => {
 
   function render() {
     if (!host || !host.isConnected) return;
-    const { S = {}, D = null, root = null, pinned = false, curator = null } = ctx;
+    const { S = {}, D = null, root = null, pinned = false, curator = null, imports = null } = ctx;
     host.className = "";
     host.innerHTML = `<div class="set-pane">
       ${archiveSection(root)}
       ${root ? curatorSection(curator) : ""}
+      ${root ? importSection(imports) : ""}
       ${appSection(D)}
       ${prefsSection(S, pinned)}
       ${S.error ? `<div class="note">${esc(S.error)}</div>` : ""}
@@ -213,6 +241,7 @@ window.SovSettings = (() => {
        lands without the owner losing their scroll position in a long pane. */
     refresh(next) { if (next) ctx = Object.assign({}, ctx, next); render(); },
     note(id, text) { const n = host && host.querySelector("#" + id); if (n) n.textContent = text; },
+    importText(next) { if (next !== undefined) importText = next; return importText; },
     get mounted() { return !!(host && host.isConnected && host.querySelector(".set-pane")); }
   };
 })();

@@ -82,6 +82,18 @@ claude mcp add sovereign -- ~/brain-bin/sov mcp
 
 Other clients take the same command in their MCP settings (`"command": "<path to sov>", "args": ["mcp"]`). With only the app installed, the path is `/Applications/Sovereign.app/Contents/MacOS/sov`, or under `~/Applications` if that's where you put it. A client set to contribute-only gets nothing back.
 
+### Bring in what ChatGPT knows
+
+A new archive doesn't have to start empty. In **Settings › Import**, copy the prompt into a new ChatGPT chat, paste its answer back, preview, then import. From the command line it's the same three steps:
+
+```bash
+sov import chatgpt                         # prints the prompt to paste into ChatGPT
+sov import chatgpt --from answer.md        # preview what will come in
+sov import chatgpt --from answer.md --apply
+```
+
+Each memory becomes its own capture in `raw/workspaces/chatgpt-import/`, untrusted like anything else that arrives. The curator judges each one, and none becomes a card until you approve it. Importing a later answer brings in only what changed.
+
 ### Other tools
 
 Claude Code is the one fully supported tool. The repo also ships best-effort connectors for Codex, Cursor, Claude Desktop, Windsurf, Hermes, Muse Code and a Notion mirror, plus a plain watch folder (`sov relay add <path>`) for anything else. Best-effort connectors can break when their tools change. A broken one only stops new captures: everything already in the archive stays, and `sov status` shows how fresh each lane is. One background job per Mac runs every connected tool's save on a schedule; when the app installs it, macOS lists it under Login Items as Sovereign.

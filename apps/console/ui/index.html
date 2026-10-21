@@ -876,7 +876,9 @@ window.onerror = function (msg, src, line, col) {
       // A redraw keeps the disclosures the owner opened and the last update result.
       const open=[...rows.querySelectorAll('.set-pane details')].map(x=>x.open),note=$('#set-update-state')?.textContent;
       if(selectedRoot&&!curatorAsked){curatorAsked=true;bridge({cmd:'curator',action:'status'});}
-      SovSettings.mount(rows,{S,D,root:selectedRoot,pinned,curator:curatorState});
+      if(selectedRoot&&!importAsked){importAsked=true;bridge({cmd:'import',action:'prompt'});}
+      SovSettings.mount(rows,{S,D,root:selectedRoot,pinned,curator:curatorState,imports:importState});
+      if(importState.note)SovSettings.note('set-imp-state',importState.note);
       const now=rows.querySelectorAll('.set-pane details');if(now.length===open.length)now.forEach((x,i)=>{x.open=open[i];});
       if(note)SovSettings.note('set-update-state',note);footerMeta(0);return;}
     if(view==='recovery'){region('Archive backups');SovBackups.mount(rows,selectedRoot);footerMeta(0);return;}
@@ -1122,6 +1124,8 @@ window.onerror = function (msg, src, line, col) {
   let appUpdatePending=false,appUpdateResult=null;
   // The hubless curator (sov curator): its status, and one action in flight at a time.
   let curatorState=null,curatorAsked=false,curatorBusy=false;
+  // Settings › Import: the prompt (asked for once), the last preview, and whether Import may run.
+  let importState={prompt:'',plan:'',ready:false,note:''},importAsked=false,importBusy=false;
   // A hub job the owner can retry from here: the button, why it may be held, and the honest outcome.
   function retryActions(o){
     const health=o.health||{},fresh=!D?._status?.stale&&!D?._status?.error&&hub().reachable===true&&selectedRoot===D?.machine?.vault;
@@ -1731,6 +1735,16 @@ window.onerror = function (msg, src, line, col) {
         SovSettings.note("set-cur-state", { key: "Saving\u2026", enable: "Turning on\u2026", disable: "Turning off\u2026", run: "Curating\u2026 this can take a few minutes.", trust: "Granting background landing\u2026", untrust: "Returning to ask-first\u2026" }[action]);
         return bridge(action === "key" ? { cmd: "curator", action, key } : { cmd: "curator", action });
       }
+      if (b.id === "set-imp-preview" || b.id === "set-imp-apply") {
+        if (importBusy) return;
+        const text = SovSettings.importText(), apply = b.id === "set-imp-apply";
+        if (!text.trim()) { importState.note = "Paste ChatGPT's answer first."; SovSettings.note("set-imp-state", importState.note); return; }
+        // Import runs exactly what was previewed: an answer edited since needs a fresh preview.
+        if (apply && text !== importState.previewed) { importState.ready = false; importState.note = "The answer changed since the preview. Preview it again."; renderList(); return; }
+        importBusy = true; importState.note = apply ? "Importing…" : "Checking…";
+        SovSettings.note("set-imp-state", importState.note);
+        return bridge({ cmd: "import", action: apply ? "apply" : "preview", text });
+      }
       if (b.id === "set-update") {
         const template = D && D.machine && D.machine.template;
         if (!template) { SovSettings.note("set-update-state", "This device\u2019s source location is not known, so there is nothing to build from."); return; }
@@ -1976,6 +1990,28 @@ window.onerror = function (msg, src, line, col) {
       render(payload);
       if(resumeReview&&view==='review'&&!settingsOpen&&reviewQueue().available&&!sel&&!gatePending)gotoGate();
       if (pendingGoto) { const destination = pendingGoto; pendingGoto = null; deliverInner("goto", destination); }
+    } else if (kind === "importResult") {
+      const out = String(payload.out || "").trim(), err = String(payload.err || "").trim().split("\n").filter(Boolean).pop() || "";
+      if (payload.action === "prompt") {
+        if (payload.exit === 0 && out) importState.prompt = out;
+        else { importState.error = err || "The import prompt could not be loaded."; importAsked = false; }
+      } else {
+        importBusy = false;
+        if (payload.exit !== 0) { importState.ready = false; importState.note = err || "That did not work."; }
+        else if (payload.action === "preview") {
+          // The plan as sov import prints it, minus the dry-run footer the buttons replace.
+          importState.plan = out.split("\n").filter(l => !/^dry run\.|^--apply also/.test(l.trim())).join("\n").trim();
+          importState.previewed = SovSettings.importText();
+          importState.ready = !/: 0 new,/.test(out);
+          importState.note = importState.ready ? "Nothing is written until you choose Import." : "Everything in this answer is already in the archive.";
+        } else {
+          const line = out.split("\n").pop() || "imported.";
+          importState = { prompt: importState.prompt, plan: "", ready: false, note: line[0].toUpperCase() + line.slice(1) + " Curate now to judge them sooner." };
+          SovSettings.importText("");
+          setTimeout(refresh, 500);
+        }
+      }
+      if (settingsOpen) renderList();
     } else if (kind === "curatorResult") {
       if (payload.action === "status") {
         let parsed = null; try { parsed = JSON.parse(payload.out || ""); } catch (e) {}

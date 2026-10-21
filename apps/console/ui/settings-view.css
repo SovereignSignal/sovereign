@@ -18,6 +18,16 @@
 .set-sect .set-lead+.set-more summary{font-size:11px;color:var(--muted);margin-top:2px}
 .set-sect:has(.set-perms){align-items:start}
 .set-sect:has(.set-perms) .set-body{grid-column:2/-1}
+/* Import: the prompt to copy, the answer to paste, the plan to read before importing. */
+/* The body takes the whole row and the buttons follow the plan, so Import sits where the
+   owner has just read what it will do, and a narrow window keeps the text readable. */
+.set-sect:has(#set-imp-text){align-items:start}
+.set-sect:has(#set-imp-text) .set-body{grid-column:2/-1}
+.set-sect:has(#set-imp-text) .acts{grid-column:2/-1;justify-content:flex-start}
+.set-prompt,.set-sect textarea{display:block;box-sizing:border-box;width:100%;max-width:640px;font:11px/1.55 var(--mono);border-radius:5px;padding:8px 10px;margin:6px 0 0}
+.set-prompt{color:var(--ink-2);background:var(--panel);border:1px solid var(--rule-soft);white-space:pre-wrap;overflow-wrap:anywhere;max-height:168px;overflow:auto}
+.set-sect textarea{color:var(--ink);background:var(--panel);border:1px solid var(--rule);resize:vertical}
+.set-imp-plan{max-height:none}
 @media(max-width:800px){.set-sect{grid-template-columns:96px minmax(0,1fr) auto}.set-pane{padding:8px 16px 24px}}
 
 /* Permissions read as a table because the comparison between lanes is the point:

@@ -6,6 +6,9 @@
 #   sov mcp                       serve the trusted cards to MCP clients over stdio,
 #                                 read-only, behind the same read gate as load (sov-mcp)
 #   sov capture <slug> ...        stage a capture into your lane (sov-capture)
+#   sov import chatgpt [--from FILE] [--apply]
+#                                 bring what another AI tool remembers about you into its
+#                                 own raw lane, one capture per memory (sov-import)
 #   sov connect <harness>|all    install a connector on this machine, both wires (all = every tool found)
 #                                 (see connectors/harness/<harness>/install.sh; dry run
 #                                 without --apply)
@@ -94,6 +97,7 @@ case "$cmd" in
   load)     "$PYTHON" "$BIN/sov-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/sov-load" "$@";;
   mcp)      "$PYTHON" "$BIN/sov-about" --read-enabled || { echo "Context reading is disabled for this client mode or invalid role configuration." >&2; exit 65; }; exec "$PYTHON" "$BIN/sov-mcp" "$@";;
   capture)  exec "$PYTHON" "$BIN/sov-capture" "$@";;
+  import)   exec "$PYTHON" "$BIN/sov-import" "$@";;
   curator)  exec "$PYTHON" "$BIN/sov-curator" "$@";;
   ingest)   exec "$PYTHON" "$BIN/sov-ingest" "$@";;
   app-update) exec "$PYTHON" "$BIN/sov-app-update" "$@";;
