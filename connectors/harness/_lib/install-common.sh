@@ -361,7 +361,20 @@ def runner_interval(d):
     return min([int(h.get("cadence_s") or 900) for h in en] or [900])
 
 
+def bound_wires(d):
+    """A wire declared with a timeout_cap rides whatever tick this machine has: its bound is
+    the cap or the tick, whichever is shorter, and the wire is told it through its env, so it
+    plans its work to end inside the bound rather than being killed mid-call."""
+    ivl = runner_interval(d)
+    for e in d["harnesses"].values():
+        if isinstance(e, dict) and e.get("timeout_cap"):
+            b = min(int(e["timeout_cap"]), ivl)
+            e["timeout_s"] = b
+            e["env"] = dict(e.get("env") or {}, SOV_WIRE_TIMEOUT_S=str(b))
+
+
 def save(d):
+    bound_wires(d)
     ivl = runner_interval(d)
     runner = d.get("runner") or {}
     runner.update({"label": os.environ["SOV_RUNNER_LABEL"], "interval_s": ivl,
@@ -403,12 +416,15 @@ if op == "upsert-harness":
             e["at"] = kw["at"]
     if kw.get("parent"):
         e["parent"] = kw["parent"]       # a second wire of that harness, removed with it
+    if kw.get("timeout_cap"):
+        e["timeout_cap"] = int(kw["timeout_cap"])
     e.setdefault("registered", kw["registered"])
     d["harnesses"][hid] = e
     d.setdefault("retired_harnesses", {}).pop(hid, None)
     # The runner's tick is the SMALLEST cadence on this machine, not this lane's, and it
     # skips every lane whose timeout exceeds that tick. Judging against the lane's own
     # cadence accepts what the runner then refuses on every tick, for good.
+    bound_wires(d)
     ivl = runner_interval(d)
     over = [(k, int(v.get("timeout_s") or 0)) for k, v in sorted(d["harnesses"].items())
             if runs_on_the_tick(v) and int(v.get("timeout_s") or 0) > ivl]
@@ -608,7 +624,9 @@ sov_register_connector() {
 # A second write wire of this harness on the same shared tick, such as Claude Code's session
 # capture: its own manifest entry, lock and logs, writing <lane>/sessions/, with `parent` naming
 # this harness so disconnecting the harness removes it too. Called after
-# sov_register_connector, so the shared job it rides is already up.
+# sov_register_connector, so the shared job it rides is already up. <timeout_s> is a cap:
+# on a machine whose tick is shorter the wire is bounded by the tick, as a mirror's default
+# timeout is clamped in sov_resolve, and the wire reads its bound from SOV_WIRE_TIMEOUT_S.
 #   sov_register_extra_wire <id> <script> <cadence_s> <timeout_s>
 sov_register_extra_wire() {
   local id="$1" script="$2" cadence="$3" timeout="$4" label
@@ -616,9 +634,9 @@ sov_register_extra_wire() {
   if [ "$PLATFORM" = "Darwin" ]; then label="com.sovereign.connector.$id"; else label="sovereign-connector-$id"; fi
   : >> "$LANES_DIR/$id.log"; : >> "$LANES_DIR/$id.error.log"
   _sov_manifest_py upsert-harness "id=$id" "label=$label" "mirror=$script" "lane=$LANE" \
-    "lane_dir=$LANE_DIR/sessions" "cadence_s=$cadence" "timeout_s=$timeout" enabled=true env_json='{}' \
-    "registered=$TODAY" "parent=$HARNESS" >/dev/null
-  say "[runner] $id registered beside $HARNESS (every ${cadence}s, bounded at ${timeout}s)"
+    "lane_dir=$LANE_DIR/sessions" "cadence_s=$cadence" "timeout_s=$timeout" "timeout_cap=$timeout" \
+    enabled=true env_json='{}' "registered=$TODAY" "parent=$HARNESS" >/dev/null
+  say "[runner] $id registered beside $HARNESS (every ${cadence}s, bounded at $(_sov_manifest_py get harness "$id" timeout_s)s)"
 }
 
 # Render the unit, compare byte for byte, and only rewrite plus reload when it changed:

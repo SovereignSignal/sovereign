@@ -44,13 +44,14 @@ class Boundary(unittest.TestCase):
         self.assertEqual(rig.stub.calls, 2)
         self.assertEqual(len(rig.captures()), 2)
         sent = json.dumps(rig.stub.requests)
-        lane_text = "".join(p.read_text() for p in rig.lane.rglob("*") if p.is_file())
+        vault_text = "".join(p.read_bytes().decode("utf-8", "ignore") for p in rig.vault.rglob("*") if p.is_file())
+        self.assertIn("Every archive copy stays encrypted", vault_text)   # the grep reads the captures
         for marker in fx.MARKERS:
             self.assertNotIn(marker, sent)
-            self.assertNotIn(marker, lane_text)
+            self.assertNotIn(marker, vault_text)
         for key in fx.KEYS:
             self.assertNotIn(key, sent)
-            self.assertNotIn(key, lane_text)
+            self.assertNotIn(key, vault_text)
         self.assertNotIn(str(rig.proj), sent)  # the project's folder name only, never its path
         self.assertEqual([str(p) for p in rig.vault.rglob("*.jsonl")], [])
 
@@ -101,8 +102,45 @@ class Boundary(unittest.TestCase):
         self.assertEqual(rig.stub.calls, 0)
         self.assertEqual(rig.captures(), [])
         self.assertIsNone(rig.verdict("5e551011-0000-4000-8000-0000000000f2"))
-        self.assertIn("Waiting: needs a local model on this archive.", rig.manifest())
+        self.assertRegex(rig.manifest(), r"Waiting: model refused this configuration since [0-9T:-]+Z\.")
         self.assertEqual(rig.watermark()["waiting"]["reason"], "needs a local model on this archive")
+
+    def test_the_waiting_line_never_carries_a_path_or_an_endpoint(self):
+        rig = self.rig()
+        (rig.state / "hub.json").write_text(json.dumps(
+            {"vault": str(rig.vault), "lane": "curator", "model": "m", "endpoint": "https://api.vendor.example/v1"}))
+        rig.transcript("5e551011-0000-4000-8000-0000000000f3")
+        r = rig.tick()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(rig.stub.calls, 0)
+        line = [l for l in rig.manifest().splitlines() if l.startswith("Waiting:")]
+        self.assertEqual(len(line), 1, rig.manifest())
+        self.assertRegex(line[0], r"^Waiting: capture is not ready since [0-9T:-]+Z\.$")
+        self.assertNotIn("http", rig.manifest())
+
+    def test_each_waiting_reason_maps_to_a_fixed_phrase(self):
+        from session_ingest import inference, run, state
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        url = "REFUSING - sovereign-inference law: endpoint https://api.vendor.example/v1/chat/completions is not loopback"
+        cases = {url: "model refused this configuration",
+                 inference.GUARD_REASON: "model refused this configuration",
+                 "model unreachable": "model unreachable",
+                 "No key is saved for OpenAI. Add one in Settings \u203a Curator.": "no key saved for the curator's provider",
+                 "No key is saved for OpenAI.": "no key saved for the curator's provider",
+                 inference.CLIENT_REASON: "session capture needs the hub's model",
+                 "no hub.json at /Users/someone/.local/state/sovereign/hub.json": "capture is not ready"}
+        for i, (reason, phrase) in enumerate(cases.items()):
+            folder = Path(tmp.name) / str(i)
+            folder.mkdir()
+            wm = state.Watermark(folder, "claude-code")
+            wm.stage_waiting({"reason": reason, "since": "2026-10-21T14:05:09Z"})
+            text = run.write_manifest(folder, "claude-code-testhost", wm, 1792937109.0, host="testhost").read_text()
+            waiting = [l for l in text.splitlines() if l.startswith("Waiting:")]
+            self.assertEqual(waiting, ["Waiting: %s since 2026-10-21T14:05Z." % phrase], reason)
+            self.assertNotIn("http", text)
+            self.assertNotIn("/", waiting[0][len("Waiting:"):])
+            self.assertEqual(wm.merged()[1]["reason"], reason)   # the full reason stays in the watermark
 
 
 class OffByDefault(unittest.TestCase):
@@ -140,6 +178,28 @@ class OffByDefault(unittest.TestCase):
             r = b.disconnect("claude-code")
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertEqual(b.manifest()["harnesses"], {})
+
+    def test_a_short_tick_bounds_the_wire_instead_of_refusing_the_install(self):
+        from session_ingest import run
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Box(tmp)
+            r = b.connect("claude-code", ["--interval", "120", "--timeout", "60"])
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            m = b.manifest()
+            wire = m["harnesses"]["claude-code-sessions"]
+            self.assertEqual(m["runner"]["interval_s"], 120)
+            self.assertEqual(wire["timeout_s"], 120)
+            self.assertEqual(wire["env"], {"SOV_WIRE_TIMEOUT_S": "120"})
+            self.assertEqual(run.windows(300), (60, 120, 240))
+            call, window, walk = run.windows(120)
+            self.assertLess(window, 120)
+            self.assertLessEqual(window + 2 * call + 30, 120 * 0.9)   # a call started last still ends in time
+            self.assertLess(walk, 120)
+            # A later tool with a faster tick shortens the bound again rather than being refused.
+            r = b.connect("windsurf", ["--interval", "90"])
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            wire = b.manifest()["harnesses"]["claude-code-sessions"]
+            self.assertEqual((wire["timeout_s"], wire["env"]["SOV_WIRE_TIMEOUT_S"]), (90, "90"))
 
     def test_disconnect_all_takes_the_session_wire_with_its_parent(self):
         with tempfile.TemporaryDirectory() as tmp:

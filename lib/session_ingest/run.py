@@ -27,15 +27,25 @@ from . import READERS, distill, excerpt, inference, prefilter, privacy, prompt, 
 
 CAPTURE = Path(__file__).resolve().parents[2] / "bin" / "sov-capture"
 NAMES = {"claude-code": "Claude Code"}
-# The connector runner kills a lane at 300 s. A call with timeout T can block about
-# 2T + 30 s (one retry after a timeout), so no call starts after CALL_WINDOW_S and the
-# walk itself stops at WALK_WINDOW_S; what it did not reach waits for the next tick.
+# The connector runner kills a lane at its timeout_s: 300 s, or the machine's tick when
+# that is shorter, which reaches the tick as BOUND_ENV. A call with timeout T can block
+# about 2T + 30 s (one retry after a timeout), so windows() keeps the last call inside
+# 90% of the bound, leaving the rest for the gate, the publish and the commit; the walk
+# stops at 80%. What a tick did not reach waits for the next one.
+BOUND_ENV = "SOV_WIRE_TIMEOUT_S"
+DEFAULT_BOUND_S = 300
 CALL_TIMEOUT_S = 60
-CALL_WINDOW_S = 150
-WALK_WINDOW_S = 240
+RETRY_SLEEP_S = 30
 CAPTURE_TIMEOUT_S = 60
 WEEK_S = 7 * 86400
 UNREACHABLE = "model unreachable"
+MAX_UNREACHABLE = 3
+# The Waiting line is published into the lane, so it carries one of these phrases and
+# never the reason itself, which can name a path, a host or an endpoint. The full
+# reason stays in the watermark for `status`.
+WAITING_PHRASES = ("model unreachable", "model refused this configuration",
+                   "no key saved for the curator's provider", "session capture needs the hub's model",
+                   "capture is not ready")
 OFF_REASON = "Session capture is off."
 _KEBAB = re.compile(r"[^a-z0-9]+")
 _DISTILLER_PROVIDER = re.compile(r"[^a-z0-9.-]+")
@@ -206,8 +216,41 @@ def _lane_paths(ctx, env, dest_dir):
     return lane, stage, dest
 
 
+def windows(bound_s):
+    """(call timeout, no-new-call window, walk window) in seconds for a tick the runner
+    bounds at bound_s: (60, 120, 240) at 300, proportionally less below."""
+    call = min(CALL_TIMEOUT_S, bound_s / 5.0)
+    window = max(0.0, bound_s * 0.9 - (2 * call + RETRY_SLEEP_S))
+    shape = lambda x: int(x) if float(x).is_integer() else x  # noqa: E731
+    return shape(call), shape(window), shape(bound_s * 0.8)
+
+
+def _bound(env):
+    try:
+        bound = int(env.get(BOUND_ENV) or DEFAULT_BOUND_S)
+    except ValueError:
+        bound = DEFAULT_BOUND_S
+    return min(max(bound, 1), DEFAULT_BOUND_S)
+
+
+def waiting_phrase(reason):
+    """The fixed phrase the published Waiting line uses for a waiting reason."""
+    reason = str(reason or "")
+    if reason == UNREACHABLE:
+        return WAITING_PHRASES[0]
+    if reason.startswith(distill.REFUSING) or reason == inference.GUARD_REASON:
+        return WAITING_PHRASES[1]
+    if reason.startswith("No key is saved for"):
+        return WAITING_PHRASES[2]
+    if reason == inference.CLIENT_REASON:
+        return WAITING_PHRASES[3]
+    return WAITING_PHRASES[4]
+
+
 def _capture(c, s, sid, tool, lane, stage, vault, distiller, env):
-    """Hand one validated candidate to sov-capture. True when it was written."""
+    """Hand one validated candidate to sov-capture: "ok" when it was written, "refused"
+    when sov-capture ran and declined it (a fence or label refusal, or a body it will not
+    take), "fault" when sov-capture could not be run at all."""
     slug = "%s-%s" % (_kebab(c["title"])[:50].strip("-") or "capture", _kebab(sid)[:8].strip("-") or "session")
     meta = []
     for key, value in (("session_title", _one_line(s.get("title"), 200)), ("project", _project(s)),
@@ -226,12 +269,20 @@ def _capture(c, s, sid, tool, lane, stage, vault, distiller, env):
                               timeout=CAPTURE_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError) as exc:
         sys.stderr.write("sessions: capture for %s did not run: %s\n" % (sid, exc))
-        return False
+        return "fault"
     if done.returncode != 0:
-        sys.stderr.write("sessions: capture for %s was not written (exit %d): %s\n"
+        sys.stderr.write("sessions: capture for %s was refused (exit %d): %s\n"
                          % (sid, done.returncode, done.stderr.strip()[:300]))
-        return False
-    return True
+        return "refused"
+    return "ok"
+
+
+def _take_back(dest, before):
+    """Remove what one session's captures added to dest this tick."""
+    for name in sorted(set(os.listdir(str(dest))) - before):
+        path = os.path.join(str(dest), name)
+        if os.path.isfile(path) or os.path.islink(path):
+            os.unlink(path)
 
 
 def _waiting(prior, reason, now):
@@ -244,8 +295,9 @@ def _waiting(prior, reason, now):
 def tick(tool, env, dest_dir, now):
     """One pass. Returns {"tool", "status": "off"|"waiting"|"ran", "reason", "calls",
     "captures", "pending", "verdicts": {id: verdict}, "exit"}; exit is 1 only when a
-    capture write failed. Writes sessions/MANIFEST.md into dest_dir unless off."""
+    sov-capture could not be run. Writes sessions/MANIFEST.md into dest_dir unless off."""
     started = time.monotonic()
+    call_timeout, call_window, walk_window = windows(_bound(env))
     ctx = _context(tool, env)
     summary = {"tool": tool, "status": "off", "reason": OFF_REASON, "calls": 0, "captures": 0, "pending": 0,
                "verdicts": {}, "exit": 0}
@@ -272,10 +324,10 @@ def tick(tool, env, dest_dir, now):
     budget = ctx["cfg"]["budget"]
     day = time.strftime("%Y-%m-%d", time.gmtime(now))
     waiting = prior if prior and prior.get("reason") == UNREACHABLE else None
-    calls_open, chars, failed_writes = True, 0, 0
+    calls_open, chars, failed_writes, faults = True, 0, 0, 0
 
     for look in _walk(ctx, wm.rows, now, observe=lambda *a: wm.observe(*a, write=False),
-                      deadline=started + WALK_WINDOW_S):
+                      deadline=started + walk_window):
         if look["active"]:
             continue
         sid, s, row = look["sid"], look["scan"], look["row"]
@@ -290,7 +342,7 @@ def tick(tool, env, dest_dir, now):
             continue
         if (not calls_open or summary["calls"] >= budget["calls_per_tick"]
                 or wm.calls_today(day) >= budget["calls_per_day"]
-                or time.monotonic() - started >= CALL_WINDOW_S):
+                or time.monotonic() - started >= call_window):
             summary["pending"] += 1
             continue
         text, turn_ids = _excerpt(s, look["hits"])
@@ -301,22 +353,34 @@ def tick(tool, env, dest_dir, now):
         wm.record_call(day)
         summary["calls"] += 1
         chars += len(text)
-        out = distill.distill(res, key, s, text, turn_ids, timeout=CALL_TIMEOUT_S)
+        out = distill.distill(res, key, s, text, turn_ids, timeout=call_timeout)
         verdict_row["attempts"] += 1
         if out["status"] == "ok":
             waiting = None
-            written = 0
+            before = set(os.listdir(str(dest)))
+            results = []
             for c in out["captures"]:
-                if _capture(c, s, sid, tool, lane, stage, ctx["vault"], res["distiller"], env):
-                    written += 1
-                else:
-                    failed_writes += 1
-            if written != len(out["captures"]):
-                summary["pending"] += 1   # the tick fails and is discarded: this session retries
+                results.append(_capture(c, s, sid, tool, lane, stage, ctx["vault"], res["distiller"], env))
+                if results[-1] != "ok":
+                    break
+            if results.count("ok") != len(out["captures"]):
+                # One session's refused capture costs that session alone: what it wrote this
+                # tick is taken back and it counts a failed attempt (three end it), so the
+                # rest of the tick still publishes. Only a sov-capture that cannot run at
+                # all fails the tick.
+                _take_back(dest, before)
+                failed_writes += len(out["captures"])
+                if "fault" in results:
+                    faults += 1
+                    summary["pending"] += 1
+                    continue
+                verdict = "failed:%d" % (_failures(row) + 1)
+                wm.stage(sid, dict(verdict_row, verdict=verdict), write=False)
+                summary["verdicts"][sid] = verdict
                 continue
-            summary["captures"] += written
+            summary["captures"] += len(out["captures"])
             verdict = "distilled"
-            wm.stage(sid, dict(verdict_row, verdict=verdict, captures=written), write=False)
+            wm.stage(sid, dict(verdict_row, verdict=verdict, captures=len(out["captures"])), write=False)
         elif out["status"] == "failed":
             waiting = None
             verdict = "failed:%d" % (_failures(row) + 1)
@@ -328,6 +392,16 @@ def tick(tool, env, dest_dir, now):
             waiting = _waiting(prior, UNREACHABLE if out["status"] == "unreachable" else
                                _one_line(out["error"], 300) or "refused", now)
             calls_open = False
+            if out["status"] == "unreachable":
+                # Three in a row end the session, so one excerpt the model never answers
+                # cannot hold every newer session behind it.
+                n = int((row or {}).get("unreachable") or 0) + 1
+                if n >= MAX_UNREACHABLE:
+                    verdict = "failed:%d" % MAX_UNREACHABLE
+                    wm.stage(sid, dict(verdict_row, verdict=verdict), write=False)
+                    summary["verdicts"][sid] = verdict
+                    continue
+                wm.stage(sid, dict(verdict_row, verdict=None, unreachable=n), write=False)
             summary["pending"] += 1
             continue
         summary["verdicts"][sid] = verdict
@@ -337,7 +411,7 @@ def tick(tool, env, dest_dir, now):
         wm.stage_waiting(waiting)
     if waiting:
         summary.update(status="waiting", reason=waiting["reason"])
-    if failed_writes:
+    if faults:
         summary["exit"] = 1
     write_manifest(dest, lane, wm, now, host=host, items=summary["captures"], failed=failed_writes,
                    waiting=summary["pending"], tool=tool)
@@ -376,12 +450,10 @@ def write_manifest(dest_dir, lane, wm, now, host="", items=0, failed=0, waiting=
              "Sessions this week: distilled %d, captures %d, skipped %d, waiting %d, failed %d, refused %d."
              % (week["distilled"], week["captures"], week["skipped"], waiting, week["failed"], week["refused"])]
     if wait:
-        reason = _one_line(wait.get("reason"), 300)
+        phrase = waiting_phrase(wait.get("reason"))
         since = _epoch(wait.get("since"))
-        if reason == UNREACHABLE and since is not None:
-            lines.append("Waiting: %s since %s." % (reason, _iso(since, True)))
-        else:
-            lines.append("Waiting: %s%s" % (reason, "" if reason.endswith(".") else "."))
+        lines.append("Waiting: %s since %s." % (phrase, _iso(since, True)) if since is not None
+                     else "Waiting: %s." % phrase)
     path = Path(dest_dir) / "MANIFEST.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

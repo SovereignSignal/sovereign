@@ -98,6 +98,45 @@ class Watermark(unittest.TestCase):
         self.assertIsNone(rig.watermark()["waiting"])
         self.assertNotIn("Waiting:", rig.manifest())
 
+    def test_a_refused_capture_fails_its_session_alone(self):
+        poison_sid, good_sid = "5e551011-0000-4000-8000-0000000000p1", "5e551011-0000-4000-8000-0000000000g1"
+        poison = [dict(VALID, title="Written then taken back again"),
+                  dict(VALID, title="Frontmatter body", body="---\ntype: entity\n---\nnot a body")]
+
+        def reply(body):
+            return json.dumps({"captures": poison if "POISON-PROMPT" in json.dumps(body) else [VALID]})
+        rig = self.rig(reply)
+        rig.transcript(poison_sid, prompts=["Remember POISON-PROMPT always."] + list(fx.PROMPTS[1:]), age_s=7200)
+        rig.transcript(good_sid)
+        r = rig.tick()
+        self.ok(r)
+        self.assertEqual(rig.stub.calls, 2)
+        self.assertEqual(rig.verdict(poison_sid), "failed:1")
+        self.assertEqual(rig.verdict(good_sid), "distilled")
+        names = [p.name for p in rig.captures()]
+        self.assertEqual(names, ["every-archive-copy-stays-encrypted-5e551011.md"])
+        vault_text = "".join(p.read_bytes().decode("utf-8", "ignore") for p in rig.vault.rglob("*") if p.is_file())
+        self.assertNotIn("Written then taken back", vault_text)
+        self.assertNotIn(poison_sid, vault_text)
+        self.assertIn("failed 1", rig.manifest())
+        self.assertIn("Items mirrored: 1. Failed: 2.", rig.manifest())
+
+    def test_three_unreachable_results_end_a_session(self):
+        rig = self.rig()
+        rig.transcript(SID, age_s=7200)
+        rig.transcript("5e551011-0000-4000-8000-0000000000b2")
+        rig.hub_json("http://127.0.0.1:9/v1/chat/completions")
+        for n in (1, 2):
+            self.ok(rig.tick())
+            self.assertIsNone(rig.verdict(SID))
+        self.ok(rig.tick())
+        self.assertEqual(rig.verdict(SID), "failed:3")
+        rig.hub_json(rig.stub.url)
+        self.ok(rig.tick())       # the newer session is no longer blocked behind it
+        self.assertEqual(rig.verdict("5e551011-0000-4000-8000-0000000000b2"), "distilled")
+        self.assertEqual(rig.verdict(SID), "failed:3")
+        self.assertEqual(rig.stub.calls, 1)
+
     def test_unreachable_stops_the_ticks_calls(self):
         rig = self.rig()
         for i in range(3):
