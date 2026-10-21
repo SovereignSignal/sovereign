@@ -12,35 +12,36 @@ require(process.argv[2] || '../ui/settings-view.js');
 const view = global.window.SovSettings;
 const paint = ctx => { host.innerHTML = ''; view.mount(host, Object.assign({ S: {}, D: null, root: null, pinned: false }, ctx)); return host.innerHTML };
 
-const app = extra => ({ machine: Object.assign({ app: { installed: true, version: '0.5.6', build: '28', source_commit: 'abc1234' }, template_rev: 'abc1234 subject' }, extra) });
+const app = extra => ({ machine: Object.assign({ app: { installed: true, version: '0.5.6', build: '28', source_commit: 'abc1234' }, template: '/Owner/src', template_rev: 'abc1234 subject' }, extra) });
+const RELEASE = '<button class="brass" id="set-update">Check for updates</button>';
+const SOURCE = 'id="set-update-source">Update from source';
 
-test('an archive that is open is named, and one that is not says so', () => {
-  assert(paint({ root: '/Owner/Research' }).includes('/Owner/Research'));
-  const none = paint({ root: null });
-  assert(none.includes('No archive is open'));
-  // Nothing to reveal when nothing is open, so the button is not offered.
-  assert(!none.includes('set-reveal'));
-});
-
-test('a current build offers no update action', () => {
+test('a build current with this source offers only the release check', () => {
   const html = paint({ D: app() });
-  assert(html.includes('is the newest build'));
-  assert(html.includes('Check again'));
-  assert(!html.includes('id="set-update">Update now'));
+  assert(html.includes('You are running Sovereign 0.5.6 build 28.'));
+  assert(html.includes('is the newest build'), 'the source comparison is kept behind Details');
+  assert(html.includes(RELEASE));
+  assert(!html.includes(SOURCE));
 });
 
-test('a behind build offers the action and shows both revisions', () => {
+test('a behind build also offers the source update and shows both revisions', () => {
   const html = paint({ D: app({ template_rev: 'def5678 newer' }) });
   assert(html.includes('A newer version is ready'));
-  assert(html.includes('class="brass" id="set-update"'));
+  assert(html.includes(RELEASE) && html.includes(SOURCE));
   assert(html.includes('abc1234') && html.includes('def5678'));
+});
+
+test('a behind build with no known source location offers no source update', () => {
+  const html = paint({ D: app({ template: '', template_rev: 'def5678 newer' }) });
+  assert(html.includes(RELEASE));
+  assert(!html.includes(SOURCE));
 });
 
 test('a build newer than this source is not called a newer version', () => {
   const html = paint({ D: app({ app: { installed: true, version: '0.6.0', build: '39', source_commit: 'abc1234', behind: false }, template_rev: 'def5678 older' }) });
   assert(!html.includes('A newer version'));
   assert(html.includes('nothing newer to install'));
-  assert(!html.includes('id="set-update">Update now'));
+  assert(html.includes(RELEASE) && !html.includes(SOURCE));
 });
 
 test('an unstamped build claims no agreement it cannot check', () => {
@@ -48,12 +49,20 @@ test('an unstamped build claims no agreement it cannot check', () => {
   assert(html.includes('predates update checking'));
   assert(!html.includes('newest build'));
   assert(!html.includes('is ready to install'));
+  // Building from source stamps it, so that stays on offer beside the release check.
+  assert(html.includes(RELEASE) && html.includes(SOURCE));
 });
 
 test('a source revision that cannot be read offers no build', () => {
   const html = paint({ D: app({ template_rev: '' }) });
   assert(html.includes('cannot be checked right now'));
-  assert(!html.includes('class="brass" id="set-update"'));
+  assert(html.includes(RELEASE) && !html.includes(SOURCE));
+});
+
+test('the release check is offered for every identified build', () => {
+  for (const extra of [{}, { template_rev: 'def5678 newer' }, { template_rev: '' }, { template: '' },
+                       { app: { installed: true, version: '0.6.0', build: '39', source_commit: 'abc1234', behind: false }, template_rev: 'def5678 older' }])
+    assert(paint({ D: app(extra) }).includes(RELEASE), JSON.stringify(extra));
 });
 
 test('contribute-only and read-and-contribute are told apart', () => {

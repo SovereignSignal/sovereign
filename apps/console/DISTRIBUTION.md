@@ -142,6 +142,53 @@ native navigation, draft preservation, visible decisions, archive isolation,
 failed-status recovery and capped-queue checks. Gate tests use Review and retain
 the real local approval command against disposable proposal files.
 
+## Updates
+
+Settings › Version › **Check for updates** installs the latest GitHub release of
+`SovereignSignal/sovereign`. Nothing is contacted until the person clicks it. The
+click asks GitHub's latest-release API once, over HTTPS, and shows what it found
+(the version, build and download size, or that this build is current) before
+anything is downloaded. `bin/sov-app-update --source release --preview` gives the
+same answer as JSON.
+
+The updater depends on the latest release carrying two assets, named exactly:
+
+- `Sovereign-<version>-build<N>.zip`: the notarized, stapled app, zipped with
+  `ditto -c -k --sequesterRsrc --keepParent`.
+- `Sovereign-<version>-build<N>.zip.sha256`: one line, `<sha256>  <zip name>`.
+
+The tag is `v<version>`. This naming is a contract. A release missing either asset
+is reported by name as not installable, never guessed at. Write the bare zip name
+in the checksum line: the updater compares only the file name, so a path also
+passes, but a path publishes the build machine's folder layout.
+
+Before anything is replaced, the download has to pass every check:
+
+1. Its SHA-256 matches the published `.sha256`.
+2. `codesign --verify --deep --strict` accepts it, and `codesign -dvv` shows
+   `Authority=Developer ID Application` and `TeamIdentifier=SM97GYTF25`.
+3. Gatekeeper accepts it (`spctl --assess --type execute`), which a bundle passes
+   only when notarized.
+4. Its Info.plist says `com.sovereign.console` and the version and build in the
+   asset name.
+5. It is newer than the installed build. An older or equal release is never
+   installed.
+
+Requests go only to `api.github.com`, `github.com` and the hosts GitHub redirects
+asset downloads to, over HTTPS, with a 20 second timeout; any other address is
+refused before a request is made, redirects included. A refused update leaves the
+installed app untouched and deletes the download from
+`~/Library/Caches/Sovereign/updates/`.
+
+When it passes, Sovereign closes, the current app is copied to
+`~/sovereign-rollback/app-update-<time>/previous.app`, the new one takes its place
+at `~/Applications/Sovereign.app`, and Sovereign reopens. To go back, quit
+Sovereign and copy `previous.app` over the installed app.
+
+**Update from source** appears beside it only when this device's checkout holds a
+newer build than the one installed. It builds that checkout instead of
+downloading, with the same swap and the same rollback copy.
+
 ## Public release gates
 
 This is a development preview. Before advertising a public download:

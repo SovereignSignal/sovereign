@@ -28,11 +28,13 @@ window.SovSettings = (() => {
   const unread = D => !D || D.error || (D._status && !D.machine) ? (D && D.error ? "Status unavailable" : "Checking…") : "";
   const say = text => `<p class="set-lead">${text}</p>`;
 
-  /* The app's own currency, in the same words the Today row uses. The revisions
-     are evidence and sit behind the sentence, never in place of it. */
+  /* The app's own currency. Check for updates asks the signed GitHub release and is
+     always offered: nothing is contacted until it is clicked. Update from source appears
+     only when this device's checkout holds a newer build, in the same words the Today
+     row uses; otherwise that comparison sits behind Details, with its evidence. */
   function appSection(D) {
     if (unread(D)) return sect("Version", say(unread(D)));
-    const a = (D && D.machine && D.machine.app) || {}, src = String((D && D.machine && D.machine.template_rev) || "").split(" ")[0];
+    const m = (D && D.machine) || {}, a = m.app || {}, src = String(m.template_rev || "").split(" ")[0];
     if (!a.installed) return sect("Version", `<p class="set-lead">Sovereign is running from a build this device cannot identify.</p>`, "Install once from this device's source and it will be able to check itself from then on.");
     const name = `Sovereign ${esc(a.version || "?")} build ${esc(a.build || "?")}`;
     const commit = String(a.source_commit || "").replace("+local", "");
@@ -42,8 +44,12 @@ window.SovSettings = (() => {
     else if (commit !== src && a.behind === false) { lead = `${name} was built from newer or different source than this device has, so there is nothing newer to install.`; why = `Built from source ${esc(commit)}, which this device's source ${esc(src)} does not contain.`; action = false; }
     else if (commit !== src) { lead = `A newer version is ready to install. You are running ${name}.`; why = `Built from source ${esc(commit)}; this device's source is now ${esc(src)}.`; }
     else { lead = `${name} is the newest build of this device's source.`; why = `Built from source ${esc(src)}, which is what this device has.`; action = false; }
-    return sect("Version", `<p class="set-lead">${lead}</p>${more("Details", `<p class="set-note">${why}</p>`)}<span class="pulls" id="set-update-state" aria-live="polite"></span>`, "",
-      action ? `<button class="brass" id="set-update">Update now</button>` : `<button id="set-update">Check again</button>`);
+    const fromSource = action && !!m.template;
+    const body = fromSource
+      ? `<p class="set-lead">${lead}</p>${more("Details", `<p class="set-note">${why}</p>`)}`
+      : `<p class="set-lead">You are running ${name}.</p>${more("Details", `<p class="set-note">${lead}</p><p class="set-note">${why}</p>`)}`;
+    return sect("Version", `${body}<span class="pulls" id="set-update-state" aria-live="polite"></span>`, "",
+      `<button class="brass" id="set-update">Check for updates</button>${fromSource ? `<button id="set-update-source">Update from source</button>` : ""}`);
   }
 
   function archiveSection(root) {

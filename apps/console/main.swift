@@ -562,7 +562,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    /// Rebuild this machine's source into the installed app.
+    /// Update the installed app from the signed release (`source: "release"`, the default)
+    /// or by rebuilding this machine's source (`source: "local"`, which needs `template`).
     ///
     /// The apply step is launched DETACHED on purpose. It replaces this very bundle, so
     /// it has to outlive the process that starts it; run through the normal helper it
@@ -576,8 +577,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         }
         let qa = App.shared.snapshotting ? ProcessInfo.processInfo.environment["SOV_QA_UPDATE_COMMAND"] : nil
         guard !App.shared.snapshotting || qa != nil else { fail("Updates are disabled during QA."); return }
+        let source = request["source"] as? String ?? "release"
+        guard source == "release" || source == "local" else { fail("Unknown update source."); return }
         // The app cannot build from its own bundle: backend/ ships no apps/console.
-        guard let template = request["template"] as? String, !template.isEmpty else {
+        let template = request["template"] as? String ?? ""
+        guard source == "release" || !template.isEmpty else {
             fail("This machine's source location is not known, so there is nothing to build from."); return
         }
         let py = resources.appendingPathComponent("runtime/bin/python3").path
@@ -585,7 +589,8 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         guard FileManager.default.isReadableFile(atPath: script) else {
             fail("This build of Sovereign predates in-app updating. Install once from the source checkout and the button works from then on."); return
         }
-        let base = qa.map { [$0, "--template", template] } ?? [py, "-I", "-B", script, "--template", template]
+        let options = source == "release" ? ["--source", "release"] : ["--source", "local", "--template", template]
+        let base = qa.map { [$0] + options } ?? [py, "-I", "-B", script] + options
         appUpdateBusy = true
         run(base + ["--preview"], timeLimit: 60) { out, _, code in
             DispatchQueue.main.async {
@@ -619,7 +624,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 }
                 if started {
                     self.deliver("appUpdateResult", ["state": "started",
-                        "verification": "Building. Sovereign will close and reopen when the new build is ready."], generation: generation)
+                        "verification": source == "release"
+                            ? "Downloading and verifying. Sovereign will close and reopen when the update is installed."
+                            : "Building. Sovereign will close and reopen when the new build is ready."], generation: generation)
                 } else {
                     self.appUpdateBusy = false
                     fail("The update could not be started. Nothing was changed.")

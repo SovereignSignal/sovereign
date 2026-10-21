@@ -1,33 +1,57 @@
 #!/usr/bin/env python3
-"""Build this machine's source into the installed app, and reopen it.
+"""Update the installed app from the signed release, or from this machine's source.
+
+Two sources, one swap. `--source release` downloads the latest GitHub release and checks
+it (published checksum, Developer ID signature, Gatekeeper, bundle id, version and build)
+before anything is replaced. `--source local` builds this machine's checkout. Without
+`--source` it builds when a buildable checkout is found and uses the release otherwise.
 
 An app cannot replace itself while it is running, so `--apply` does the safe half first
-(build from source, which never touches the installed bundle), and only then quits the
-app, swaps it and reopens. A failed build leaves the running app exactly as it was.
+(download and verify, or build, neither of which touches the installed bundle), and only
+then quits the app, swaps it and reopens. A refused download or a failed build leaves the
+running app exactly as it was.
 
 It quits by PATH, never by bundle identifier. On 2026-09-20 four bundles on one machine
 shared com.sovereign.console, macOS resolves an id to the highest VERSION it has indexed
 rather than to ~/Applications, and an installer's "quit normally" step therefore quit an
 unreleased build sitting in /private/tmp while truthfully reporting success.
 
-  sov-app-update --preview          what would happen, as JSON, writing nothing
-  sov-app-update --apply --token T  do it; the token must match the preview's
+  sov-app-update [--source release|local] --preview          what would happen, as JSON
+  sov-app-update [--source release|local] --apply --token T  do it; the token must match
 """
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import urllib.parse
+import urllib.request
 
 APP = os.path.expanduser("~/Applications/Sovereign.app")
 # Where the source actually is. Run from a checkout this is the checkout; run from inside
 # the app it is not, because the bundled backend/ ships bin, lib, connectors and templates
 # and no apps/console/build.sh. Nothing can be built from in there, so the caller says.
 TEMPLATE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+RELEASE_REPO = "SovereignSignal/sovereign"
+FEED_URL = "https://api.github.com/repos/%s/releases/latest" % RELEASE_REPO
+BUNDLE_ID = "com.sovereign.console"
+TEAM_ID = "SM97GYTF25"
+# The API, the release download page, and the hosts GitHub redirects an asset download
+# to. GitHub moved release assets from objects. to release-assets. in 2025; both are its own.
+ALLOWED_HOSTS = ("api.github.com", "github.com", "objects.githubusercontent.com",
+                 "release-assets.githubusercontent.com")
+TIMEOUT = 20
+UPDATES = os.path.expanduser("~/Library/Caches/Sovereign/updates")
+EFFECTS = ("Sovereign will close and reopen. The current app is kept so it can be put back. "
+           "Your settings and the selected archive are not touched.")
 
 
 def buildable(template):
@@ -147,7 +171,21 @@ def apply(token, template=None):
     if not os.path.isdir(built):
         raise ValueError("The build reported success but produced no app bundle.")
 
-    # 2. Now, and only now, stand the app down. By path, never by bundle id.
+    # 2. Now, and only now, stand the app down and swap.
+    stand_down()
+    back = swap_in(built)
+    subprocess.run(["rm", "-rf", built + "-built"], capture_output=True)
+    os.rename(built, built + "-built")   # one launchable bundle, as build.sh --install leaves it
+
+    now = confirm_installed({"source_commit": p["source_commit"]},
+                            "The installed app does not match the source it was built from.", back)
+    subprocess.run(["open", APP], capture_output=True, timeout=60)
+    return {"state": "installed", "installed": now, "source_commit": p["source_commit"],
+            "rollback": back, "verification": "Sovereign was rebuilt from this device's source and reopened."}
+
+
+def stand_down():
+    """Quit the installed app. By path, never by bundle id (see the module docstring)."""
     for pid in running():
         subprocess.run(["kill", pid], capture_output=True)
     for _ in range(40):
@@ -157,36 +195,295 @@ def apply(token, template=None):
     if running():
         raise ValueError("Sovereign did not close, so it was not replaced. Quit it and try again.")
 
-    # 3. Keep what is there, then swap.
+
+def swap_in(new_app):
+    """Keep what is installed under ~/sovereign-rollback, then put new_app in its place."""
     back = os.path.expanduser("~/sovereign-rollback/app-update-%s" % time.strftime("%Y%m%dT%H%M%S"))
     os.makedirs(back, exist_ok=True)
     if os.path.isdir(APP):
         subprocess.run(["ditto", APP, os.path.join(back, "previous.app")], check=True, timeout=300)
         subprocess.run(["rm", "-rf", APP], check=True, timeout=120)
-    subprocess.run(["cp", "-R", built, APP], check=True, timeout=300)
-    subprocess.run(["rm", "-rf", built + "-built"], capture_output=True)
-    os.rename(built, built + "-built")   # one launchable bundle, as build.sh --install leaves it
+    os.makedirs(os.path.dirname(APP), exist_ok=True)
+    subprocess.run(["cp", "-R", new_app, APP], check=True, timeout=300)
+    return back
 
+
+def confirm_installed(expected, mismatch, back):
+    """Reread the installed Info.plist: the swap is done only if it says what was expected."""
     now = installed()
-    if now.get("source_commit", "").replace("+local", "") != p["source_commit"]:
-        raise ValueError("The installed app does not match the source it was built from. The previous app is at " + back)
-    subprocess.run(["open", APP], capture_output=True, timeout=60)
-    return {"state": "installed", "installed": now, "source_commit": p["source_commit"],
-            "rollback": back, "verification": "Sovereign was rebuilt from this device's source and reopened."}
+    for key, want in expected.items():
+        have = str(now.get(key) or "")
+        if key == "source_commit":
+            have = have.replace("+local", "")
+        if have != want:
+            raise ValueError("%s The previous app is at %s" % (mismatch, back))
+    return now
+
+
+# ---- the signed release -------------------------------------------------------------
+
+def stub_verifier():
+    """The test hook that stands in for Apple's gate, honoured only as a real executable.
+
+    A fake bundle can never pass codesign or Gatekeeper, so the test suite needs a stand-in.
+    Anything that is not an executable file falls through to the real checks, so a stray
+    variable can only ever make verification stricter, never skip it.
+    """
+    path = os.environ.get("SOV_UPDATE_VERIFY")
+    return path if path and os.path.isfile(path) and os.access(path, os.X_OK) else None
+
+
+def check_url(url):
+    """Refuse any address that is not HTTPS to GitHub, before a request is made.
+
+    `file://` is allowed only under the SOV_UPDATE_FEED test hook, which serves a fake
+    release from disk.
+    """
+    u = urllib.parse.urlsplit(url or "")
+    if u.scheme == "file" and os.environ.get("SOV_UPDATE_FEED"):
+        return
+    if u.scheme != "https" or (u.hostname or "") not in ALLOWED_HOSTS or u.port not in (None, 443):
+        raise ValueError("The update was refused: %s is not a GitHub address Sovereign downloads from. "
+                         "Nothing was changed." % (url or "an empty address"))
+
+
+class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
+    """A redirect is a new request, so it passes the same address check as the first."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        check_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+OPENER = urllib.request.build_opener(_CheckedRedirects)
+
+
+def user_agent(app):
+    return "Sovereign/%s" % (app.get("version") or "unknown")
+
+
+def fetch_feed(agent):
+    """GitHub's latest-release record, or the SOV_UPDATE_FEED file standing in for it."""
+    path = os.environ.get("SOV_UPDATE_FEED")
+    try:
+        if path:
+            with open(path, encoding="utf-8") as fh:
+                feed = json.load(fh)
+        else:
+            check_url(FEED_URL)
+            req = urllib.request.Request(FEED_URL, headers={
+                "User-Agent": agent, "Accept": "application/vnd.github+json"})
+            with OPENER.open(req, timeout=TIMEOUT) as r:
+                feed = json.load(r)
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        cause = str(getattr(e, "reason", None) or e).rstrip(". ") or type(e).__name__
+        raise ValueError("The releases page could not be reached: %s." % cause)
+    if not isinstance(feed, dict):
+        raise ValueError("The releases page could not be reached: it did not return a release.")
+    return feed
+
+
+def latest_from(feed):
+    """The release's version, build and the two assets the updater needs.
+
+    The asset names are a contract with the release process: Sovereign-<version>-build<N>.zip
+    and the same name plus .sha256. Anything missing is named, so the gap can be fixed.
+    """
+    tag = str(feed.get("tag_name") or "")
+    m = re.fullmatch(r"v(\d+(?:\.\d+)*)", tag)
+    if not m:
+        raise ValueError("The latest release has no version tag Sovereign can read (%s)." % (tag or "none"))
+    version = m.group(1)
+    assets = {a.get("name"): a for a in feed.get("assets") or [] if isinstance(a, dict)}
+    builds = sorted((int(b.group(1)), name) for name in assets
+                    for b in [re.fullmatch(r"Sovereign-%s-build(\d+)\.zip" % re.escape(version), name or "")] if b)
+    if not builds:
+        raise ValueError("The latest release, %s, has no Sovereign-%s-build<N>.zip download." % (tag, version))
+    build, name = builds[-1]
+    sha = assets.get(name + ".sha256")
+    if not sha:
+        raise ValueError("The latest release, %s, has no %s.sha256 checksum file." % (tag, name))
+    return {"version": version, "build": str(build),
+            "zip_url": assets[name].get("browser_download_url"), "sha_url": sha.get("browser_download_url"),
+            "size": assets[name].get("size"), "notes_url": feed.get("html_url")}
+
+
+def _key(release):
+    return (tuple(int(n) for n in re.findall(r"\d+", str(release.get("version") or ""))),
+            int(release.get("build")) if str(release.get("build") or "").isdigit() else 0)
+
+
+def newer(latest, app):
+    """Whether the release is strictly newer than what is installed. Equal is not newer."""
+    return _key(latest) > _key(app)
+
+
+def plan_release():
+    app = installed()
+    p = {"source": "release", "installed": app, "app_path": APP, "latest": None, "current": True,
+         "effects": EFFECTS + " Nothing is installed unless the download passes every check."}
+    if stub_verifier():
+        p["verification"] = "stubbed"
+    have = "Sovereign %s build %s" % (app.get("version") or "?", app.get("build") or "?")
+    try:
+        latest = latest_from(fetch_feed(user_agent(app)))
+    except ValueError as e:
+        # Still a preview: the UI says what went wrong, and there is nothing to confirm.
+        p["summary"] = p["error"] = str(e)
+        latest = {}
+    else:
+        p["latest"], p["current"] = latest, not newer(latest, app)
+        offered = "%s build %s" % (latest["version"], latest["build"])
+        if not p["current"]:
+            size = " (%.1f MB)" % (latest["size"] / 1e6) if isinstance(latest.get("size"), int) else ""
+            p["summary"] = "Sovereign %s is available%s.%s" % (
+                offered, size, " You have %s." % have if app else "")
+        elif _key(latest) == _key(app):
+            p["summary"] = "%s is the latest release." % have
+        else:
+            p["summary"] = ("The installed build, %s, is newer than the latest release, %s, "
+                            "so there is nothing to install." % (have, offered))
+    # The token binds a confirmation to exactly the state that was previewed.
+    p["token"] = hashlib.sha256(json.dumps(
+        [app.get("version"), app.get("build"), latest.get("version"), latest.get("build"),
+         latest.get("zip_url")]).encode()).hexdigest()[:32]
+    return p
+
+
+def refuse(reason):
+    raise ValueError("The downloaded update was refused: %s. Nothing was changed." % reason.rstrip(". "))
+
+
+def download(url, dest, agent):
+    """Stream one asset to dest. The address is checked first, and again on each redirect."""
+    check_url(url)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": agent})
+        with OPENER.open(req, timeout=TIMEOUT) as r, open(dest, "wb") as fh:
+            shutil.copyfileobj(r, fh, 1 << 20)
+    except (OSError, http.client.HTTPException) as e:
+        cause = str(getattr(e, "reason", None) or e).rstrip(". ") or type(e).__name__
+        raise ValueError("The update could not be downloaded: %s. Nothing was changed." % cause)
+    return dest
+
+
+def check_sum(zip_path, sha_path, name):
+    """The zip's SHA-256 must equal the one published beside it, for this exact file name."""
+    with open(sha_path, encoding="utf-8", errors="replace") as fh:
+        line = (fh.read().strip().splitlines() or [""])[0]
+    parts = line.split(None, 1)
+    # The release tooling writes the name as a path; only the file name has to agree.
+    if len(parts) != 2 or not re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]) \
+            or os.path.basename(parts[1].strip().lstrip("*")) != name:
+        refuse("its checksum file does not name %s" % name)
+    digest = hashlib.sha256()
+    with open(zip_path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != parts[0].lower():
+        refuse("its checksum does not match the one published with the release")
+
+
+def verify_bundle(app, latest):
+    """Apple's gate, then the bundle's own claims. Returns the sentence for the result.
+
+    Signed with a valid signature, by Sovereign's Developer ID team, accepted by
+    Gatekeeper (which means notarized), and carrying the bundle id, version and build the
+    release named. Any failure refuses the update.
+    """
+    stub = stub_verifier()
+    if stub:
+        r = subprocess.run([stub, app], capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            refuse((r.stderr or r.stdout).strip() or "the verification hook exited %d" % r.returncode)
+        verification = "stubbed"
+    else:
+        def last(r):
+            return ((r.stderr or r.stdout).strip().splitlines() or ["no detail"])[-1]
+        r = subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", app],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            refuse("its signature is not valid (%s)" % last(r))
+        r = subprocess.run(["/usr/bin/codesign", "-dvv", app], capture_output=True, text=True, timeout=60)
+        if "TeamIdentifier=%s" % TEAM_ID not in r.stderr or "Authority=Developer ID Application" not in r.stderr:
+            refuse("it is not signed with Sovereign's Developer ID (team %s)" % TEAM_ID)
+        r = subprocess.run(["/usr/sbin/spctl", "--assess", "--type", "execute", app],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            refuse("macOS Gatekeeper did not accept it (%s)" % last(r))
+        verification = ("Signed with Sovereign's Developer ID (team %s), accepted by Gatekeeper, "
+                        "and matched its published checksum." % TEAM_ID)
+    try:
+        with open(os.path.join(app, "Contents", "Info.plist"), "rb") as fh:
+            info = plistlib.load(fh)
+    except Exception:
+        refuse("its Info.plist could not be read")
+    if info.get("CFBundleIdentifier") != BUNDLE_ID:
+        refuse("it is %s, not Sovereign (%s)" % (info.get("CFBundleIdentifier") or "unidentified", BUNDLE_ID))
+    claims = (str(info.get("CFBundleShortVersionString")), str(info.get("CFBundleVersion")))
+    if claims != (latest["version"], latest["build"]):
+        refuse("it says version %s build %s, but the release is %s build %s" % (claims + (latest["version"], latest["build"])))
+    return verification
+
+
+def apply_release(token):
+    p = plan_release()
+    if token != p["token"]:
+        raise ValueError("This device's state changed since the preview. Refresh and try again.")
+    if not p["latest"]:
+        raise ValueError(p["summary"])
+    if p["current"]:
+        raise ValueError(p["summary"])   # never a downgrade, never a reinstall
+    latest = p["latest"]
+    name = "Sovereign-%s-build%s.zip" % (latest["version"], latest["build"])
+    for url in (latest["zip_url"], latest["sha_url"]):
+        check_url(url)   # before a directory exists or a byte is requested
+    agent = user_agent(p["installed"])
+    os.makedirs(UPDATES, exist_ok=True)
+    work = tempfile.mkdtemp(prefix="update-", dir=UPDATES)
+    try:
+        # 1. Download and verify. The installed app is untouched until this succeeds.
+        zip_path = download(latest["zip_url"], os.path.join(work, name), agent)
+        sha_path = download(latest["sha_url"], os.path.join(work, name + ".sha256"), agent)
+        check_sum(zip_path, sha_path, name)
+        out = os.path.join(work, "extracted")
+        r = subprocess.run(["ditto", "-x", "-k", zip_path, out], capture_output=True, text=True, timeout=300)
+        new_app = os.path.join(out, "Sovereign.app")
+        if r.returncode != 0 or os.path.islink(new_app) or not os.path.isdir(new_app):
+            refuse("the download holds no Sovereign.app")
+        verification = verify_bundle(new_app, latest)
+
+        # 2. Now, and only now, stand the app down and swap.
+        stand_down()
+        back = swap_in(new_app)
+        now = confirm_installed({"version": latest["version"], "build": latest["build"]},
+                                "The installed app does not match the release that was verified.", back)
+        subprocess.run(["open", APP], capture_output=True, timeout=60)
+        return {"state": "installed", "installed": now, "rollback": back, "verification": verification}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+        try:
+            os.rmdir(UPDATES)   # only when empty; a concurrent download keeps it
+        except OSError:
+            pass
 
 
 def main():
     ap = argparse.ArgumentParser(prog="sov-app-update")
+    ap.add_argument("--source", choices=("release", "local"),
+                    help="release: the latest signed GitHub release; local: build this machine's checkout")
     ap.add_argument("--preview", action="store_true")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--token")
     ap.add_argument("--template", help="the source checkout to build from")
     a = ap.parse_args()
     try:
-        if a.apply:
-            print(json.dumps(apply(a.token, a.template)))
+        source = a.source or ("local" if resolve_template(a.template) else "release")
+        if source == "release":
+            result = apply_release(a.token) if a.apply else dict(plan_release(), state="preview")
         else:
-            print(json.dumps(dict(plan(a.template), state="preview")))
+            result = apply(a.token, a.template) if a.apply else dict(plan(a.template), state="preview")
+        print(json.dumps(result))
     except (OSError, ValueError, subprocess.SubprocessError) as e:
         print(json.dumps({"error": str(e)}))
         return 1

@@ -23,6 +23,12 @@
 - `sov mcp` serves an archive reached through a symlink, caps a single
   card's size, and answers an unexpected failure with an error instead of
   ending the session.
+- Settings › Version › Check for updates installs the latest signed
+  release from GitHub. Before anything is replaced, the download has to match
+  its published checksum, carry Sovereign's Developer ID signature, pass
+  Gatekeeper and be the version and build it claims; the current app is kept
+  under `~/sovereign-rollback/`. Nothing is contacted until you click it.
+  Update from source still appears when this device's checkout is newer.
 
 ## 0.7.1 (build 50) — release candidate
 

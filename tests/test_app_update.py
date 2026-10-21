@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -192,5 +193,174 @@ class AppUpdatePreview(unittest.TestCase):
             self.assertEqual(code, 0, out)
             self.assertEqual(out["installed"], {})
             self.assertFalse(out["current"])
+def release_app(path, version, build, bundle_id="com.sovereign.console"):
+    (path / "Contents/MacOS").mkdir(parents=True, exist_ok=True)
+    (path / "Contents/Info.plist").write_bytes(plistlib.dumps(
+        {"CFBundleIdentifier": bundle_id, "CFBundleShortVersionString": version, "CFBundleVersion": build}))
+    (path / "Contents/MacOS/Sovereign").write_text("build %s\n" % build)
+def stub(path, body):
+    path.write_text("#!/bin/sh\n%s\n" % body)
+    path.chmod(0o755)
+    return path
+class ReleaseUpdate(unittest.TestCase):
+    """The second source: the latest GitHub release, checked before anything is replaced.
+
+    Every case runs against a fake release on disk (SOV_UPDATE_FEED) and a stub in place
+    of Apple's verification (SOV_UPDATE_VERIFY), with HOME, open and pgrep all fake, so
+    no test reaches the network or an installed app.
+    """
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(); root = Path(self._tmp.name)
+        self.home = root / "home"; self.rel = root / "release"; self.bin = root / "bin"
+        for d in (self.home, self.rel, self.bin):
+            d.mkdir()
+        self.opened = root / "opened"
+        stub(self.bin / "open", 'echo "$@" >> "%s"' % self.opened)
+        stub(self.bin / "pgrep", "exit 1")
+        self.ok = stub(root / "verify-ok", "exit 0")
+        self.no = stub(root / "verify-no", 'echo "signed by someone else" >&2; exit 1')
+        self.app = self.home / "Applications/Sovereign.app"
+        release_app(self.app, "0.7.1", "50")
+        self.plist = (self.app / "Contents/Info.plist").read_bytes()
+        self.updates = self.home / "Library/Caches/Sovereign/updates"
+    def tearDown(self):
+        self._tmp.cleanup()
+    def publish(self, version, build, bundle_id="com.sovereign.console", plist=None,
+                tamper=False, drop=(), url=None):
+        """A release as GitHub serves it: the zip, its .sha256, and the latest-release feed."""
+        name = "Sovereign-%s-build%s.zip" % (version, build)
+        stage = self.rel / ("stage-" + name); app = stage / "Sovereign.app"
+        release_app(app, *(plist or (version, build)), bundle_id=bundle_id)
+        z = self.rel / name
+        subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(z)], check=True)
+        sha = self.rel / (name + ".sha256")
+        sha.write_text("%s  %s\n" % (hashlib.sha256(z.read_bytes()).hexdigest(), name))
+        if tamper:
+            data = bytearray(z.read_bytes()); data[len(data) // 2] ^= 0xFF; z.write_bytes(bytes(data))
+        assets = [{"name": name, "browser_download_url": url or z.as_uri(), "size": z.stat().st_size},
+                  {"name": sha.name, "browser_download_url": sha.as_uri(), "size": sha.stat().st_size}]
+        feed = self.rel / ("feed-%s-%s.json" % (version, build))
+        feed.write_text(json.dumps({"tag_name": "v" + version,
+                                    "html_url": "https://github.com/SovereignSignal/sovereign/releases/tag/v" + version,
+                                    "assets": [a for a in assets if not any(a["name"].endswith(d) for d in drop)]}))
+        return feed
+    def upd(self, feed, *args, verify=None):
+        env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+                   SOV_UPDATE_FEED=str(feed))
+        env.pop("SOV_UPDATE_VERIFY", None)
+        if verify:
+            env["SOV_UPDATE_VERIFY"] = str(verify)
+        cp = subprocess.run([sys.executable, str(UPD), "--source", "release", *args],
+                            env=env, capture_output=True, text=True)
+        try:
+            return cp.returncode, json.loads(cp.stdout or "{}")
+        except json.JSONDecodeError:
+            return cp.returncode, {"raw": cp.stdout, "err": cp.stderr}
+    def files(self):
+        return sorted(str(p.relative_to(self.home)) for p in self.home.rglob("*"))
+    def assert_untouched(self):
+        self.assertEqual((self.app / "Contents/Info.plist").read_bytes(), self.plist, "the installed app must not change")
+        self.assertFalse(self.updates.exists() and any(self.updates.iterdir()), "the download must be deleted")
+        self.assertFalse(self.opened.exists(), "nothing was installed, so nothing reopens")
+        self.assertFalse((self.home / "sovereign-rollback").exists())
+    def apply(self, feed, verify=None):
+        _, prev = self.upd(feed, "--preview", verify=verify)
+        self.assertFalse(prev["current"], prev)
+        return self.upd(feed, "--apply", "--token", prev["token"], verify=verify)
+
+    def test_1_the_installed_release_is_current_and_preview_writes_nothing(self):
+        before = self.files()
+        code, out = self.upd(self.publish("0.7.1", "50"), "--preview")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((out["state"], out["source"], out["current"]), ("preview", "release", True))
+        self.assertEqual((out["latest"]["version"], out["latest"]["build"]), ("0.7.1", "50"))
+        self.assertIn("latest release", out["summary"])
+        self.assertEqual(self.files(), before)
+    def test_2_a_newer_release_is_offered_with_its_size_and_effects(self):
+        code, out = self.upd(self.publish("0.8.0", "51"), "--preview", verify=self.ok)
+        self.assertEqual(code, 0, out)
+        self.assertFalse(out["current"])
+        for word in ("0.8.0", "51", "MB"):
+            self.assertIn(word, out["summary"])
+        self.assertIn("close and reopen", out["effects"])
+        self.assertIn("current app is kept", out["effects"])
+        self.assertEqual(out["verification"], "stubbed")
+        self.assertTrue(out["latest"]["notes_url"].endswith("/v0.8.0"))
+    def test_3_apply_installs_keeps_the_previous_app_and_reopens(self):
+        code, out = self.apply(self.publish("0.8.0", "51"), verify=self.ok)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["state"], "installed")
+        self.assertEqual((out["installed"]["version"], out["installed"]["build"]), ("0.8.0", "51"))
+        self.assertEqual(out["verification"], "stubbed")
+        self.assertEqual((self.app / "Contents/MacOS/Sovereign").read_text(), "build 51\n")
+        kept = list((self.home / "sovereign-rollback").glob("app-update-*/previous.app"))
+        self.assertEqual(len(kept), 1)
+        self.assertEqual((kept[0] / "Contents/Info.plist").read_bytes(), self.plist)
+        self.assertEqual(out["rollback"], str(kept[0].parent))
+        self.assertIn(str(self.app), self.opened.read_text())
+        self.assertFalse(self.updates.exists() and any(self.updates.iterdir()))
+    def test_4_a_zip_altered_after_its_checksum_is_refused(self):
+        code, out = self.apply(self.publish("0.8.0", "51", tamper=True), verify=self.ok)
+        self.assertEqual(code, 1, out)
+        self.assertIn("checksum", out["error"])
+        self.assert_untouched()
+    def test_5_a_failed_verification_is_refused_with_its_reason(self):
+        code, out = self.apply(self.publish("0.8.0", "51"), verify=self.no)
+        self.assertEqual(code, 1, out)
+        self.assertIn("signed by someone else", out["error"])
+        self.assertIn("Nothing was changed", out["error"])
+        self.assert_untouched()
+    def test_6_an_older_release_is_never_offered(self):
+        release_app(self.app, "0.9.0", "60")
+        self.plist = (self.app / "Contents/Info.plist").read_bytes()
+        feed = self.publish("0.8.0", "51")
+        _, out = self.upd(feed, "--preview", verify=self.ok)
+        self.assertTrue(out["current"])
+        self.assertIn("newer than the latest release", out["summary"])
+        code, out = self.upd(feed, "--apply", "--token", out["token"], verify=self.ok)
+        self.assertEqual(code, 1, out)
+        self.assert_untouched()
+    def test_7_a_bundle_that_is_not_the_named_release_is_refused(self):
+        for feed, why in ((self.publish("0.8.0", "51", bundle_id="com.example.other"), "com.example.other"),
+                          (self.publish("0.8.1", "52", plist=("0.8.1", "53")), "says version 0.8.1 build 53"),
+                          (self.publish("0.8.2", "54", plist=("0.8.3", "54")), "says version 0.8.3 build 54")):
+            code, out = self.apply(feed, verify=self.ok)
+            self.assertEqual(code, 1, out)
+            self.assertIn("refused", out["error"]); self.assertIn(why, out["error"])
+            self.assert_untouched()
+    def test_8_a_token_from_another_preview_is_refused(self):
+        _, other = self.upd(self.publish("0.8.0", "51"), "--preview", verify=self.ok)
+        code, out = self.upd(self.publish("0.8.1", "52"), "--apply", "--token", other["token"], verify=self.ok)
+        self.assertEqual(code, 1, out)
+        self.assertIn("changed since the preview", out["error"])
+        self.assert_untouched()
+    def test_9_a_release_missing_its_zip_or_checksum_says_what_is_missing(self):
+        for drop, named in ((".zip",), ".zip"), ((".sha256",), ".sha256"):
+            code, out = self.upd(self.publish("0.8.0", "51", drop=drop), "--preview", verify=self.ok)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(out["state"], "preview")
+            self.assertTrue(out["current"]); self.assertIsNone(out["latest"])
+            self.assertIn(named, out["error"]); self.assertEqual(out["summary"], out["error"])
+            self.assertFalse(self.updates.exists())
+    def test_10_an_unreachable_feed_is_still_a_preview_naming_the_cause(self):
+        code, out = self.upd(self.rel / "no-such-feed.json", "--preview")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out["current"]); self.assertIsNone(out["latest"])
+        self.assertIn("could not be reached", out["summary"])
+    def test_11_an_address_outside_github_is_refused_before_any_request(self):
+        for url in ("http://github.com/SovereignSignal/sovereign/x.zip", "https://example.com/x.zip"):
+            code, out = self.apply(self.publish("0.8.0", "51", url=url), verify=self.ok)
+            self.assertEqual(code, 1, out)
+            self.assertIn("refused", out["error"])
+            self.assertFalse(self.updates.exists(), "no download may start for " + url)
+            self.assert_untouched()
+    def test_a_verify_hook_that_is_not_executable_is_ignored(self):
+        # The stub replaces Apple's gate only when it is a real executable. Anything else
+        # falls through to codesign, which a fake bundle cannot pass.
+        hook = self.rel / "not-executable"; hook.write_text("exit 0\n")
+        code, out = self.apply(self.publish("0.8.0", "51"), verify=hook)
+        self.assertEqual(code, 1, out)
+        self.assertIn("signature is not valid", out["error"])
+        self.assert_untouched()
 if __name__ == "__main__":
     unittest.main()

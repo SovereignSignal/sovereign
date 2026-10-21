@@ -1745,10 +1745,11 @@ window.onerror = function (msg, src, line, col) {
         SovSettings.note("set-imp-state", importState.note);
         return bridge({ cmd: "import", action: apply ? "apply" : "preview", text });
       }
-      if (b.id === "set-update") {
+      if (b.id === "set-update") { SovSettings.note("set-update-state", "Checking\u2026"); return bridge({ cmd: "appUpdate", source: "release" }); }
+      if (b.id === "set-update-source") {
         const template = D && D.machine && D.machine.template;
         if (!template) { SovSettings.note("set-update-state", "This device\u2019s source location is not known, so there is nothing to build from."); return; }
-        SovSettings.note("set-update-state", "Building\u2026"); return bridge({ cmd: "appUpdate", template });
+        SovSettings.note("set-update-state", "Building\u2026"); return bridge({ cmd: "appUpdate", source: "local", template });
       }
       if (b.id === "g-gear") return bridge({ cmd: "showConsole", place: { settings: true } });
       if (b.id === "g-console") return bridge({ cmd: "showConsole", place: { view: "today" } });
@@ -1791,7 +1792,7 @@ window.onerror = function (msg, src, line, col) {
         const template = D?.machine?.template;
         if (!template) { appUpdateResult = "This device's source location is not known, so there is nothing to build from."; renderInspector(); return; }
         appUpdatePending = true; appUpdateResult = null; renderInspector();
-        return bridge({ cmd: 'appUpdate', template });
+        return bridge({ cmd: 'appUpdate', source: 'local', template });
       }
       if (act === "kickstart") {   // data-lane: one lane inside a job that carries many, run by name
         const m = { cmd: "kickstart", label: b.dataset.label };
