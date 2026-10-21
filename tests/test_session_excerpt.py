@@ -69,14 +69,78 @@ class SessionExcerpt(unittest.TestCase):
         self.assertIn("T1 user: first prompt", text)
 
     def test_keys_redacted(self):
-        s = claude_code.scan(self.write(["one", "two", "three"]))
+        path = self.write(["one", "two", "three"])
+        self.assertTrue(all(k in Path(path).read_text() for k in fx.KEYS), "the fixture plants keys")
+        s = claude_code.scan(path)
+        self.assertTrue(any(k in b for t in s["turns"] for b in t["assistant"] for k in fx.KEYS))
         raw, _ = excerpt.build(s["turns"])
-        self.assertTrue(any(k in raw for k in fx.KEYS), "the fixture plants keys in assistant text")
+        for k in fx.KEYS:
+            self.assertNotIn(k, raw, "build redacts before it cuts")
         clean, dropped = excerpt.clean(raw)
         for k in fx.KEYS:
             self.assertNotIn(k, clean)
         self.assertIn("[redacted", clean)
         self.assertIsInstance(dropped, int)
+        self.assertEqual(excerpt.clean(clean), (clean, 0), "clean is idempotent")
+
+    def _excerpt(self, prompt="typed", assistant=()):
+        text, _ = excerpt.build([{"n": 1, "prompt": prompt, "assistant": list(assistant), "tools": []}])
+        return text, excerpt.clean(text)[0]
+
+    def test_pem_past_the_cut(self):
+        body = ["".join(chr(65 + (i * 7 + j) % 26) for j in range(60)) + "%04d" % i for i in range(60)]
+        pem = "-----BEGIN " + "PRIVATE KEY-----\n" + "\n".join(body) + "\n-----END " + "PRIVATE KEY-----"
+        self.assertGreater(len(pem), excerpt.PROMPT_CUT)
+        for text in self._excerpt("here is the key\n" + pem + "\nthanks"):
+            for line in body:
+                self.assertNotIn(line, text)
+            self.assertNotIn("BEGIN " + "PRIVATE", text)
+
+    def test_key_straddling_the_cut(self):
+        key = "gh" + "p_" + "B" * 36
+        for text in self._excerpt("x" * 1480 + " " + key):
+            self.assertNotIn("gh" + "p_", text)
+            self.assertNotIn("B" * 10, text)
+
+    def test_key_past_the_assistant_cut(self):
+        key = "gh" + "p_" + "C" * 36
+        for text in self._excerpt(assistant=["y " * 290 + key + " tail"]):
+            self.assertNotIn("gh" + "p_", text)
+            self.assertNotIn("C" * 10, text)
+        for text in self._excerpt(assistant=["z " * 400 + key]):
+            self.assertNotIn("gh" + "p_", text)
+
+    def test_cut_backs_off_to_whitespace(self):
+        text, _ = self._excerpt(("word " * 400).strip())
+        line = text.splitlines()[0]
+        self.assertTrue(line.endswith("word…"), line[-20:])
+        self.assertLessEqual(len(line) - len("T1 user: "), excerpt.PROMPT_CUT + 1)
+
+    def test_embedded_reminder_stripped(self):
+        path = self.write(["one", "two", "three"])
+        with open(path, "a") as fh:
+            fh.write(json.dumps({"type": "user", "sessionId": "11111111-aaaa", "message": {"content": [
+                {"type": "text", "text": "keep this typed text <system-reminder>MARK-PACK card text\nmore</system-reminder> and this"}]}}) + "\n")
+            fh.write(json.dumps({"type": "user", "sessionId": "11111111-aaaa",
+                                 "message": {"content": "second typed <system-reminder>MARK-PACK unclosed"}}) + "\n")
+        s = claude_code.scan(path)
+        self.assertEqual(s["turns"][3]["prompt"], "keep this typed text  and this")
+        self.assertEqual(s["turns"][4]["prompt"], "second typed")
+        text, _ = excerpt.build(s["turns"])
+        self.assertNotIn("MARK-PACK", text)
+        self.assertNotIn("system-reminder", text)
+
+    def test_nul_cwd_line_skipped(self):
+        path = self.write(["one", "two", "three"])
+        with open(path) as fh:
+            lines = fh.readlines()
+        lines.insert(8, json.dumps({"type": "user", "cwd": "a\u0000b", "message": {"content": "MARK-NUL"}}) + "\n")
+        lines.insert(9, json.dumps({"type": "user", "cwd": 7, "message": {"content": "MARK-NUL"}}) + "\n")
+        with open(path, "w") as fh:
+            fh.writelines(lines)
+        s = claude_code.scan(path, cwd_check=lambda real: None)
+        self.assertEqual([t["prompt"] for t in s["turns"]], ["one", "two", "three"])
+        self.assertEqual(s["cwds"], [os.path.realpath(self.cwd)])
 
     def test_clean_drops_tripped_line(self):
         # redact_text leaves this label-shaped value, secret_hits still sees it
@@ -123,6 +187,7 @@ class SessionExcerpt(unittest.TestCase):
         turns = [{"n": i, "prompt": "q%d " % i + "x" * 900, "assistant": ["ok"], "tools": ["Edit"]} for i in range(1, 41)]
         text, ids = excerpt.build(turns, hit_turns=frozenset({20}))
         self.assertLessEqual(len(text), 24000)
+        self.assertLessEqual(len(excerpt.clean(text)[0]), 24000)
         for n in (1, 2, 3, 20, 40):
             self.assertIn(n, ids)
             self.assertTrue(("T%d user: q%d " % (n, n)) in text, n)

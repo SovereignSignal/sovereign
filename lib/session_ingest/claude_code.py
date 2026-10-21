@@ -13,6 +13,7 @@ used for a decision; the cwd fields inside the file are, through cwd_check.
 import glob
 import json
 import os
+import re
 
 TOOL = "claude-code"
 LANE_PREFIX = "claude-code"
@@ -22,6 +23,12 @@ LANE_PREFIX = "claude-code"
 # the output of a `!` shell command.
 _HARNESS_TEXT = ("<system-reminder>", "<command-", "<local-command-", "<task-notification>",
                  "<bash-input>", "<bash-stdout>", "<bash-stderr>")
+
+
+# The archive's own session-start pack travels inside reminder text, so a reminder is
+# cut out wherever it sits in a part, not only when it opens one; an unclosed one runs
+# to the end of the part.
+_REMINDER = re.compile(r"<system-reminder>.*?(?:</system-reminder>|\Z)", re.S)
 
 
 def list_transcripts(home):
@@ -57,6 +64,7 @@ def _prompt_text(line):
         parts = [b["text"] for b in content]
     else:
         return None
+    parts = [_REMINDER.sub("", p) for p in parts]
     kept = [p.strip() for p in parts if not p.lstrip().startswith(_HARNESS_TEXT)]
     text = "\n".join(p for p in kept if p)
     return text or None
@@ -84,7 +92,9 @@ def scan(path, cwd_check=None):
             if out["id"] is None and isinstance(line.get("sessionId"), str) and line["sessionId"]:
                 out["id"] = line["sessionId"]
             cwd = line.get("cwd")
-            if isinstance(cwd, str) and cwd:
+            if "cwd" in line and (not isinstance(cwd, str) or "\x00" in cwd):
+                continue  # malformed: realpath refuses a NUL, and a non-string is no path
+            if cwd:
                 real = os.path.realpath(cwd)
                 if real not in out["cwds"]:
                     out["cwds"].append(real)

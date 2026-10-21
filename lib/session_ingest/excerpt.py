@@ -1,8 +1,9 @@
 """Turn a scanned session into the bounded, cleaned excerpt a distiller may read.
 
-The excerpt lives only in memory. build() numbers the turns T1..Tn, cuts each prompt
-and each assistant block, folds tool calls to their names, and keeps the whole thing
-under a character cap. clean() is the write-boundary redaction: shapes are redacted,
+The excerpt lives only in memory. build() redacts each prompt and each assistant block
+whole, then numbers the turns T1..Tn, cuts them, folds tool calls to their names, and keeps the whole thing
+under a character cap measured on the redacted text. clean() is the second pass, over
+the finished excerpt: shapes are redacted,
 and a line that still looks like it carries a credential is dropped whole, since a
 half-scrubbed line is worse than a missing one.
 """
@@ -15,8 +16,27 @@ HEAD_TURNS = 3
 DROPPED_LINE = "[line dropped]"
 
 
+CUT_BACKOFF = 200
+
+
 def _cut(text, limit):
-    return text if len(text) <= limit else text[:limit] + "…"
+    """Cut at `limit`, backing off to the last whitespace in the final 200 characters
+    so a token is never split mid-run."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    space = max(head.rfind(c) for c in (" ", "\n", "\t"))
+    if space >= limit - CUT_BACKOFF and head[:space].strip():
+        head = head[:space].rstrip()
+    return head + "…"
+
+
+def _scrub(text):
+    """Redact the whole raw string, then drop each line secret_hits still trips. Runs
+    before any cut or label: a cut can leave half a key no shape matches, or strip a
+    private key's END line, and an indent hides a key body from the block pattern."""
+    text, _ = redact_text(text)
+    return "\n".join(DROPPED_LINE if secret_hits(ln) else ln for ln in text.split("\n"))
 
 
 def _labelled(label, text):
@@ -39,9 +59,9 @@ def _tool_lines(tools):
 
 def _render(turn):
     n = turn["n"]
-    lines = _labelled("T%d user: " % n, _cut(turn["prompt"], PROMPT_CUT))
+    lines = _labelled("T%d user: " % n, _cut(_scrub(turn["prompt"]), PROMPT_CUT))
     for block in turn.get("assistant") or ():
-        lines += _labelled("T%d assistant: " % n, _cut(block, ASSISTANT_CUT))
+        lines += _labelled("T%d assistant: " % n, _cut(_scrub(block), ASSISTANT_CUT))
     return "\n".join(lines + _tool_lines(turn.get("tools") or ()))
 
 
