@@ -14,11 +14,19 @@ pipe (or the hub itself) carries it.
 Config resolution (same pointer files the other archive tools use):
   vault: $BRAIN_ROOT, $SOVS_VAULT, ~/.brain-root, else walk up for a knowledge/ dir
   lane:  --lane, $BRAIN_LANE, ~/.brain-lane
+  root:  a lane under raw/workspaces/ is always written in the vault. A tool lane goes to
+         <stage>/raw/tools/<lane>, the stage being $BRAIN_STAGE, $SOVEREIGN_STAGE, else
+         ~/.vault-staging when it is a directory (the order sov_dest in
+         connectors/harness/_lib/mirror-common.sh uses); with no stage, the vault. The
+         fence holds on whichever root was chosen, and only vault lanes commit.
 
 Usage:
   sov-capture <slug> --from FILE          # body from a file ("-" = stdin)
   sov-capture <slug> --note "text"        # short inline capture
   Options: --lane L  --type capture  --title T  --origin URL  --dry
+           --subdir sessions              # the one folder a capture may land in below the lane
+           --meta key=value               # repeatable, allow-listed session labels (META below)
+Refusals at the fence or of a label exit 64 with nothing written.
 """
 import os, re, sys, argparse, json, subprocess, uuid
 from pathlib import Path
@@ -43,6 +51,53 @@ def _label(value):
         return v
     return json.dumps(v, ensure_ascii=False)
 
+def _refuse(msg):
+    print("sov-capture: refused: " + msg, file=sys.stderr)
+    raise SystemExit(64)
+
+# Session labels, in the frontmatter order of the session-ingestion spec (section 2). Free
+# text is one line of at most 200 characters, written through _label; every other value
+# must match its pattern whole. ASCII only, so \d is 0-9 and nothing else.
+_FREE = None
+META = (
+    ("session_title", _FREE),
+    ("project", _FREE),
+    ("span", re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\dZ\.\.\d{4}-\d\d-\d\dT\d\d:\d\dZ", re.A)),
+    ("distiller", re.compile(r"[a-z0-9.-]+/[A-Za-z0-9._:-]+", re.A)),
+    ("prompt", re.compile(r"[a-z0-9-]+/v\d+", re.A)),
+    ("kind", re.compile(r"decision|preference|correction|fact|entity|howto")),
+    ("confidence", re.compile(r"high|med|low")),
+    ("evidence", re.compile(r"T\d+(,T\d+)*", re.A)),
+)
+
+def _meta(pairs):
+    """--meta key=value pairs, checked, as frontmatter lines in META order."""
+    checks, given = dict(META), {}
+    for pair in pairs or []:
+        key, eq, value = pair.partition("=")
+        if not eq or key not in checks:
+            _refuse(f"--meta takes key=value with key one of {', '.join(k for k, _ in META)}")
+        if key in given:
+            _refuse(f"--meta {key} given twice")
+        check = checks[key]
+        if check is _FREE:
+            if value.splitlines() != [value] or not value.strip() or len(value) > 200:
+                _refuse(f"--meta {key} must be one line of 1 to 200 characters")
+        elif not check.fullmatch(value):
+            _refuse(f"--meta {key} does not match {check.pattern}")
+        given[key] = value
+    lines = []
+    for key, check in META:
+        if key not in given:
+            continue
+        v = given[key]
+        if key == "evidence":
+            v = "[" + ", ".join(v.split(",")) + "]"
+        elif check is _FREE or key == "distiller":
+            v = _label(v)  # a distiller tag may end in ":", which YAML would read as a key
+        lines.append(f"{key}: {v}")
+    return lines
+
 def _resolve_vault():
     v = os.environ.get("BRAIN_ROOT") or os.environ.get("SOVS_VAULT") or _pointer("~/.brain-root")
     if v:
@@ -66,6 +121,9 @@ ap.add_argument("--title", default="", help="optional title label")
 ap.add_argument("--origin", default="", help="optional upstream URL this capture derives from")
 ap.add_argument("--topics", default="", help="comma-separated knowledge-card slugs this capture relates to; "
                 "only slugs with an existing card are linked (no phantom graph nodes)")
+ap.add_argument("--subdir", help='write into this folder below the lane; only "sessions" is accepted')
+ap.add_argument("--meta", action="append", metavar="KEY=VALUE",
+                help="an allow-listed session label, repeatable, each key once")
 ap.add_argument("--dry", action="store_true", help="print what would be written, write nothing")
 a = ap.parse_args()
 
@@ -82,9 +140,29 @@ if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
 if slug == "lane":
     sys.exit("sov-capture: refusing — LANE.md is the contract, never a capture")
 
-# the lane may live under raw/workspaces/ (agents) or raw/tools/ (tool pipes)
-candidates = [os.path.join(VAULT, "raw", "workspaces", lane), os.path.join(VAULT, "raw", "tools", lane)]
-LANE_DIR = next((d for d in candidates if os.path.isdir(d)), candidates[0])
+if a.subdir is not None and a.subdir != "sessions":
+    _refuse('--subdir accepts only "sessions"')
+META_LINES = _meta(a.meta)
+
+# ---- the root: the vault, or this machine's stage for a tool lane (sov_dest's order) ----
+# A workspace lane (agents, imports, git lanes) is the vault's, whatever stage exists; a
+# link standing there counts as one, so the fence below refuses it rather than staging.
+ws_lane = os.path.join(VAULT, "raw", "workspaces", lane)
+stage = os.environ.get("BRAIN_STAGE") or os.environ.get("SOVEREIGN_STAGE")
+if not stage and os.path.isdir(os.path.expanduser("~/.vault-staging")):
+    stage = "~/.vault-staging"
+STAGED = bool(stage) and not (os.path.isdir(ws_lane) or os.path.islink(ws_lane))
+if STAGED:
+    ROOT = os.path.abspath(os.path.expanduser(stage))
+    LANE_DIR = os.path.join(ROOT, "raw", "tools", lane)
+else:
+    # the lane may live under raw/workspaces/ (agents) or raw/tools/ (tool pipes). A new
+    # lane defaults to a workspace, except for sessions/: those belong to a tool lane, where
+    # the curator knows them as sessions (raw/tools/*/sessions/), as sov_dest would place it.
+    ROOT = VAULT
+    candidates = [ws_lane, os.path.join(VAULT, "raw", "tools", lane)]
+    LANE_DIR = next((d for d in candidates if os.path.isdir(d)), candidates[1 if a.subdir else 0])
+DEST = os.path.join(LANE_DIR, a.subdir) if a.subdir else LANE_DIR
 
 # ---- the body ----
 if a.src and a.note:
@@ -125,36 +203,44 @@ if a.title:
     fm.append(f"title: {_label(a.title)}")
 if a.origin:
     fm.append(f"origin: {_label(a.origin)}")
+fm += META_LINES
 card = "---\n" + "\n".join(fm) + "\n---\n\n" + body + topic_line + "\n"
 
 card, redactions = redact_text(card)
-out = os.path.join(LANE_DIR, slug + ".md")
+out = os.path.join(DEST, slug + ".md")
 if os.path.exists(out):
-    out = os.path.join(LANE_DIR, f"{slug}-{uuid.uuid4().hex[:12]}.md")
+    out = os.path.join(DEST, f"{slug}-{uuid.uuid4().hex[:12]}.md")
 
 # ---- the fence: the resolved path MUST be inside the lane, and only the lane ----
-real_out, real_lane = os.path.realpath(out), os.path.realpath(LANE_DIR)
-expected = os.path.join(os.path.realpath(VAULT), os.path.relpath(LANE_DIR, VAULT))
-if real_lane != expected:
-    sys.exit("sov-capture: linked capture destinations are refused")
-if not real_out.startswith(real_lane + os.sep):
-    sys.exit(f"sov-capture: refusing — resolved path escapes the lane: {real_out}")
-for fenced in ("knowledge", "workstreams"):
-    if os.path.realpath(os.path.join(VAULT, fenced)) in (os.path.dirname(real_out), real_out):
-        sys.exit(f"sov-capture: refusing — {fenced}/ is never a producer's to write")
+# Checked against the chosen root: no link anywhere from the root down to the folder the
+# capture lands in (the lane or its sessions/), and the file directly inside that folder.
+def _fence():
+    real_out, real_dest = os.path.realpath(out), os.path.realpath(DEST)
+    if real_dest != os.path.join(os.path.realpath(ROOT), os.path.relpath(DEST, ROOT)):
+        _refuse("linked capture destinations are refused")
+    if os.path.dirname(real_out) != real_dest:
+        _refuse(f"resolved path escapes the lane: {real_out}")
+    for fenced in ("knowledge", "workstreams"):
+        f = os.path.realpath(os.path.join(VAULT, fenced))
+        if real_out == f or real_out.startswith(f + os.sep):
+            _refuse(f"{fenced}/ is never a producer's to write")
 
+_fence()
 if a.dry:
-    print(f"[DRY] would write {os.path.relpath(out, VAULT)}:\n\n{card}")
+    print(f"[DRY] would write {os.path.relpath(out, ROOT)}:\n\n{card}")
     raise SystemExit(0)
 
-os.makedirs(LANE_DIR, exist_ok=True)
+os.makedirs(DEST, exist_ok=True)
+_fence()  # again: a link swapped in while the folders were made is still refused
 try:
     with open(out, "x", encoding="utf-8") as f:
         f.write(card)
 except FileExistsError:
     sys.exit("sov-capture: destination appeared during capture; retry without overwriting")
-rel = os.path.relpath(out, VAULT)
+rel = os.path.relpath(out, ROOT)
 print(f"captured: {rel}")
+if STAGED:
+    raise SystemExit(0)  # a stage has no git; the relay carries it into the vault
 
 # ---- git lane? commit on the declared branch and push ----
 def _lane_fm():
