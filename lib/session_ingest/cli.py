@@ -203,11 +203,12 @@ def _parse(args):
 
 # ---------------------------------------------------------------- the plan
 
-def _readiness(env):
-    """(resolved inference, ready, reason). On a hubless archive this reads the curator
-    provider's key from the Keychain, as sov-curator does; it never calls a model."""
+def _readiness(env, probe=False):
+    """(resolved inference, ready, reason); never calls a model. On a hubless archive
+    probe=True only checks that the provider's Keychain item exists (the plan and
+    status, which Settings polls); without it the key is read, as --on and a tick do."""
     res = inference.resolve(env)
-    ok, reason = inference.ready(res)
+    ok, reason = inference.ready(res, probe=probe)
     return res, ok, reason
 
 
@@ -298,7 +299,7 @@ def _print_plan(plan, preview=False):
 def _dry(opts, env):
     now = time.time()
     since = now - opts["since"] if opts["since"] is not None else None
-    plan = _plan(opts["tool"], env, now, since, _readiness(env))
+    plan = _plan(opts["tool"], env, now, since, _readiness(env, probe=True))
     if opts["json"]:
         print(json.dumps(plan, indent=2, sort_keys=True))
     else:
@@ -326,7 +327,7 @@ def _show(opts, env):
     path = _find(tool, env, sid)
     if path is None:
         return _not_found(tool, sid)
-    ctx = run._context(tool, env)
+    ctx = run.context(tool, env)
     s = ctx["reader"].scan(path, ctx["check"])
     if s["stopped"] == privacy.REFUSED:
         return _refuse("This session ran inside an archive, so it is never read or sent.")
@@ -334,7 +335,7 @@ def _show(opts, env):
         return _refuse("This session ran in a folder session capture leaves alone (denied, or temporary "
                        "and not allowed), so it is not read.")
     verdict, _, hits = prefilter.check(s, ctx["cfg"], ctx["floor"], ctx["stems"])
-    text, _ = run._excerpt(s, hits)
+    text, _ = run.excerpt_text(s, hits)
     if verdict is not None:
         sys.stderr.write("The next tick would not send this session (%s). This is what it would send if "
                          "it did.\n" % verdict)
@@ -453,9 +454,10 @@ def _on(opts, env):
     sd = state.state_dir(env)
     cfg = state.load_config(sd)
     entry = dict(cfg["tools"].get(tool) or {})
-    # Turning it on again never moves the floor forward: sessions since it was first
-    # turned on stay in reach. --since moves it back.
-    current = run._epoch(entry.get("enabled_at")) if entry.get("enabled") else None
+    # The floor is where reading starts. From off it resets to now, so sessions from a
+    # window when capture was off are not captured; while on, --on again keeps it where
+    # it is. --since moves it back in either case.
+    current = prefilter.epoch(entry.get("enabled_at")) if entry.get("enabled") else None
     floor = now if current is None else current
     if opts["since"] is not None:
         floor = min(floor, now - opts["since"])
@@ -508,7 +510,7 @@ def _set_list(opts, env, key):
     state.save_config(sd, cfg)
     if key == "allow":
         print("Allowed %s. Sessions that ran there are read from the next tick." % path)
-        if privacy.make_cwd_check(run._vault(env), {})(path) == privacy.REFUSED:
+        if privacy.make_cwd_check(run.vault_root(env), {})(path) == privacy.REFUSED:
             print("It is inside an archive, so sessions there stay refused.")
     else:
         print("Denied %s. Sessions that ran there are not read past their working folder." % path)
@@ -547,7 +549,7 @@ def _projects(tool, env, cfg, rows, now):
     up to its first cwd."""
     reader = READERS[tool]
     home = Path(env.get("HOME") or str(Path.home()))
-    vault = run._vault(env)
+    vault = run.vault_root(env)
     gate = privacy.make_cwd_check(vault, cfg)
     bare = privacy.make_cwd_check(vault, {})   # archives and temporary roots only
     deny = [_norm(x) for x in cfg.get("deny", [])]
@@ -579,11 +581,11 @@ def _status_doc(tool, env, now):
     cfg = state.load_config(sd)
     entry = cfg["tools"].get(tool) or {}
     enabled = bool(entry.get("enabled"))
-    res, ok, reason = _readiness(env)
+    res, ok, reason = _readiness(env, probe=True)
     wm = state.Watermark(sd, tool)
     counts = run.week_counts(wm, now)
     # Waiting: sessions the next tick would send, the same notion as the manifest's count.
-    waiting = sum(1 for r in run.candidates(tool, env, now) if r["verdict"] is None)
+    waiting = sum(1 for r in run.candidates(tool, env, now, with_excerpt=False) if r["verdict"] is None)
     budget = cfg["budget"]
     doc = {"tool": tool, "enabled": enabled, "available": ok, "mode": res["mode"], "reason": reason,
            "distiller": _distiller(res, sd),

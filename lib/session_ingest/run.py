@@ -57,12 +57,6 @@ def _iso(epoch, minutes=False):
     return time.strftime("%Y-%m-%dT%H:%MZ" if minutes else "%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
 
 
-def _epoch(value):
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-    return prefilter._epoch(value)
-
-
 def _one_line(value, limit):
     return " ".join(str(value or "").split())[:limit].strip()
 
@@ -76,7 +70,7 @@ def _host(env):
     return host or socket.gethostname().split(".")[0].lower()
 
 
-def _vault(env):
+def vault_root(env):
     root = sovereign_config.pointer("~/.brain-root", env)
     if not root:
         return None
@@ -90,7 +84,7 @@ def _project(s):
 
 
 def _span(s):
-    a, b = prefilter._epoch(s.get("first_ts")), prefilter._epoch(s.get("last_ts"))
+    a, b = prefilter.epoch(s.get("first_ts")), prefilter.epoch(s.get("last_ts"))
     return "%s..%s" % (_iso(a, True), _iso(b, True)) if a is not None and b is not None else ""
 
 
@@ -112,16 +106,16 @@ def _failures(row):
     return 0
 
 
-def _context(tool, env, since=None):
+def context(tool, env, since=None):
     if tool not in READERS:
         raise ValueError("Unknown tool: %s." % tool)
     sd = state.state_dir(env)
     cfg = state.load_config(sd)
     entry = cfg["tools"].get(tool) or {}
-    floor = _epoch(entry.get("enabled_at")) if entry.get("enabled") else None
+    floor = prefilter.epoch(entry.get("enabled_at")) if entry.get("enabled") else None
     if since is not None:
         floor = since if floor is None else min(floor, since)
-    vault = _vault(env)
+    vault = vault_root(env)
     return {"tool": tool, "reader": READERS[tool], "state_dir": sd, "cfg": cfg,
             "enabled": bool(entry.get("enabled")), "floor": floor, "vault": vault,
             "home": Path(env.get("HOME") or str(Path.home())),
@@ -177,7 +171,7 @@ def _walk(ctx, rows, now, observe=None, deadline=None):
         yield look
 
 
-def _excerpt(s, hits):
+def excerpt_text(s, hits):
     text, turn_ids = excerpt.build(s["turns"], hits)
     text, _ = excerpt.clean(text)
     return text, turn_ids
@@ -186,13 +180,15 @@ def _excerpt(s, hits):
 def enabled(tool, env):
     """Whether the owner has turned session capture on for `tool`. Raises ValueError on
     a config that cannot be read."""
-    return _context(tool, env)["enabled"]
+    return context(tool, env)["enabled"]
 
 
-def candidates(tool, env, now, since=None):
+def candidates(tool, env, now, since=None, with_excerpt=True):
     """The dry plan: one row per transcript the next tick would look at, with no model
-    call and no write. `since` (epoch seconds) lowers the enable floor for a backfill."""
-    ctx = _context(tool, env, since)
+    call and no write. `since` (epoch seconds) lowers the enable floor for a backfill.
+    With with_excerpt=False no excerpt is built, so excerpt_chars and est_tokens stay 0:
+    for status, which only counts."""
+    ctx = context(tool, env, since)
     wm = state.Watermark(ctx["state_dir"], tool)
     out = []
     for look in _walk(ctx, wm.rows, now):
@@ -202,8 +198,8 @@ def candidates(tool, env, now, since=None):
         s = look.get("scan")
         if s is not None:
             row.update(project=_project(s) or None, prompts=len(s["turns"]), score=look["score"])
-            if look["verdict"] is None:
-                text, _ = _excerpt(s, look["hits"])
+            if look["verdict"] is None and with_excerpt:
+                text, _ = excerpt_text(s, look["hits"])
                 row.update(excerpt_chars=len(text), est_tokens=len(text) // 4)
         out.append(row)
     return out
@@ -310,7 +306,7 @@ def tick(tool, env, dest_dir, now):
     sov-capture could not be run. Writes sessions/MANIFEST.md into dest_dir unless off."""
     started = time.monotonic()
     call_timeout, call_window, walk_window = windows(_bound(env))
-    ctx = _context(tool, env)
+    ctx = context(tool, env)
     summary = {"tool": tool, "status": "off", "reason": OFF_REASON, "calls": 0, "captures": 0, "pending": 0,
                "verdicts": {}, "exit": 0}
     if not ctx["enabled"]:
@@ -392,7 +388,7 @@ def tick(tool, env, dest_dir, now):
                 or time.monotonic() - started >= call_window):
             summary["pending"] += 1
             continue
-        text, turn_ids = _excerpt(s, look["hits"])
+        text, turn_ids = excerpt_text(s, look["hits"])
         if chars + len(text) > budget["chars_per_tick"]:
             summary["pending"] += 1
             continue
@@ -492,7 +488,7 @@ def week_counts(wm, now):
     counts = {"distilled": 0, "captures": 0, "skipped": 0, "failed": 0, "refused": 0}
     for row in rows.values():
         verdict = row.get("verdict") or ""
-        at = _epoch(row.get("at"))
+        at = prefilter.epoch(row.get("at"))
         if not verdict or at is None or at < now - WEEK_S:
             continue
         if verdict == "distilled":
@@ -519,7 +515,7 @@ def write_manifest(dest_dir, lane, wm, now, host="", items=0, failed=0, waiting=
              % (week["distilled"], week["captures"], week["skipped"], waiting, week["failed"], week["refused"])]
     if wait:
         phrase = waiting_phrase(wait.get("reason"))
-        since = _epoch(wait.get("since"))
+        since = prefilter.epoch(wait.get("since"))
         lines.append("Waiting: %s since %s." % (phrase, _iso(since, True)) if since is not None
                      else "Waiting: %s." % phrase)
     path = Path(dest_dir) / "MANIFEST.md"

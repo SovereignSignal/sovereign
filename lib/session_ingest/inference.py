@@ -16,6 +16,7 @@ comes from the loader that owns it, and a loader that refuses its file fails clo
 the mode it was resolving, no config, and the loader's reason.
 """
 from pathlib import Path
+import subprocess
 
 import brain_discovery
 import curator_inference
@@ -83,16 +84,32 @@ def resolve(env):
     return _answer("hubless", _cfg(env, {"CURATOR_PROVIDER": provider, "CURATOR_BACKEND": spec["backend"]}))
 
 
-def ready(res):
-    """(True, "") when the resolved model may be called, else (False, why)."""
+def ready(res, probe=False):
+    """(True, "") when the resolved model may be called, else (False, why). With
+    probe=True a chosen provider's key is only checked for, by has_key(), never read:
+    for status and the dry plan, which Settings polls. --on and the tick read it."""
     cfg = res.get("cfg")
     if cfg is None:
         return False, res.get("reason") or "no model for session capture"
     if curator_inference.violations(cfg):
         return False, GUARD_REASON
-    if cfg.get("provider") and not key(res):
+    if cfg.get("provider") and not (has_key(res) if probe else key(res)):
         return False, NO_KEY_REASON % curator_inference.PROVIDERS[cfg["provider"]]["name"]
     return True, ""
+
+
+def has_key(res):
+    """Whether the owner's Keychain item for the resolved provider exists. An attribute
+    lookup, `security find-generic-password -s <service>` without -w, as sov-curator's
+    key_saved() does: it neither asks for the secret nor prompts. True for a local model."""
+    cfg = res.get("cfg")
+    if cfg is None or not cfg.get("provider"):
+        return True
+    try:
+        return subprocess.run(["/usr/bin/security", "find-generic-password", "-s", cfg["keychain_service"]],
+                              capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def key(res):

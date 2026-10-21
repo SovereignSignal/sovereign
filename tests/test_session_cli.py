@@ -6,7 +6,9 @@ directory are hashed around each run. --apply runs the shipped sessions.sh once 
 refused while capture is off. --on prints the plan before it writes the switch, and
 is refused where no model may read a session, with the reason.
 """
+import contextlib
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -15,13 +17,14 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "tests"))
 import session_fixtures as fx  # noqa: E402
-from session_ingest import inference  # noqa: E402
+from session_ingest import cli, inference  # noqa: E402
 
 INGEST = ROOT / "bin" / "sov-ingest"
 SID = "5e551011-0000-4000-8000-00000000c711"
@@ -179,7 +182,7 @@ class Cli(unittest.TestCase):
         entry = self.config(rig)["tools"]["claude-code"]
         self.assertIs(entry["enabled"], True)
         from session_ingest import prefilter
-        at = prefilter._epoch(entry["enabled_at"])
+        at = prefilter.epoch(entry["enabled_at"])
         self.assertIsNotNone(at)
         self.assertLessEqual(abs(at - start), 5)
         self.assertLess(r.stdout.index("Budget left"), r.stdout.index("Session capture is on"))
@@ -197,7 +200,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn(SID, r.stdout)
         from session_ingest import prefilter
-        at = prefilter._epoch(self.config(rig)["tools"]["claude-code"]["enabled_at"])
+        at = prefilter.epoch(self.config(rig)["tools"]["claude-code"]["enabled_at"])
         self.assertLessEqual(abs(at - (start - 2 * 86400)), 5)
 
     def test_on_in_client_mode_exits_nonzero_with_the_reason(self):
@@ -366,6 +369,88 @@ class Cli(unittest.TestCase):
         text = "".join(r.stdout + r.stderr for r in outs)
         for bad in ("\u2014", "\u2013", "foster", "crucial", "significantly", "comprehensive"):
             self.assertNotIn(bad, text)
+
+
+class InProcess(unittest.TestCase):
+    """cli.main in this process, so a test can see which subprocesses it starts and which
+    functions it calls."""
+
+    def rig(self, **kw):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        rig = fx.Rig(tmp.name, **kw)
+        self.addCleanup(rig.close)
+        patcher = mock.patch.dict(os.environ, rig.env(), clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return rig
+
+    def main(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def keychain(self, saved=True):
+        """Stub /usr/bin/security; every other subprocess runs for real. Returns the argv log."""
+        real, log = subprocess.run, []
+
+        def run(argv, *a, **kw):
+            if argv and os.path.basename(str(argv[0])) == "security":
+                log.append(list(argv))
+                if not saved:
+                    return subprocess.CompletedProcess(argv, 44, stdout="", stderr="not found")
+                return subprocess.CompletedProcess(argv, 0, stdout="sk-" + "x" * 40 if "-w" in argv else "keychain: ...",
+                                                   stderr="")
+            return real(argv, *a, **kw)
+        patcher = mock.patch("subprocess.run", side_effect=run)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return log
+
+    def test_status_and_the_plan_only_probe_for_the_key_and_on_reads_it(self):
+        rig = self.rig(enabled=False)
+        (rig.state / "hub.json").unlink()   # hubless: the owner's provider, Anthropic by default
+        rig.transcript(SID)
+        log = self.keychain()
+        code, out, err = self.main("status", "--json")
+        self.assertEqual(code, 0, err)
+        doc = json.loads(out)
+        self.assertEqual((doc["mode"], doc["available"], doc["reason"]), ("hubless", True, ""))
+        self.assertEqual(doc["distiller"]["name"], "Anthropic")
+        for args in ([], ["--json"], ["--since", "2d"], ["status"]):
+            self.assertEqual(self.main(*args)[0], 0, args)
+        self.assertTrue(log, "status never checked for the key")
+        self.assertEqual([a for a in log if "-w" in a], [], "status or the plan read the secret")
+        for argv in log:
+            self.assertEqual(argv[:3], ["/usr/bin/security", "find-generic-password", "-s"])
+        code, out, err = self.main("--on")
+        self.assertEqual(code, 0, err)
+        self.assertTrue([a for a in log if "-w" in a], "--on did not read the key")
+        self.assertEqual(rig.stub.calls, 0)
+
+    def test_a_missing_key_gives_the_same_reason_from_the_probe(self):
+        rig = self.rig(enabled=False)
+        (rig.state / "hub.json").unlink()
+        log = self.keychain(saved=False)
+        doc = json.loads(self.main("status", "--json")[1])
+        self.assertIs(doc["available"], False)
+        self.assertEqual(doc["reason"], inference.NO_KEY_REASON % "Anthropic")
+        code, _, err = self.main("--on")
+        self.assertEqual(code, 1)
+        self.assertIn(inference.NO_KEY_REASON % "Anthropic", err)
+        self.assertTrue([a for a in log if "-w" in a])
+        self.assertTrue([a for a in log if "-w" not in a])
+
+    def test_status_counts_waiting_sessions_without_building_an_excerpt(self):
+        rig = self.rig()
+        for i in range(3):
+            rig.transcript("5e551011-0000-4000-8000-00000000c72%d" % i)
+        with mock.patch("session_ingest.excerpt.build", side_effect=AssertionError("excerpt built")):
+            code, out, err = self.main("status", "--json")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["week"]["waiting"], 3)
+        self.assertEqual(rig.stub.calls, 0)
 
 
 if __name__ == "__main__":

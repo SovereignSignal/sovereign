@@ -57,7 +57,10 @@ def _patterns(cfg):
     return out
 
 
-def _epoch(ts):
+def epoch(ts):
+    """Epoch seconds for an ISO 8601 time (naive means UTC) or a number, else None."""
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        return float(ts)
     if not isinstance(ts, str) or not ts:
         return None
     text = ts.strip()
@@ -97,7 +100,7 @@ def check(s, cfg, floor_epoch, card_stems):
     turns = s.get("turns") or []
     if len(turns) < cfg.get("min_prompts", 3):
         return "skipped:few-prompts", 0, nothing
-    last = _epoch(s.get("last_ts"))
+    last = epoch(s.get("last_ts"))
     if floor_epoch is None or last is None or last <= floor_epoch:
         return "skipped:before-enable", 0, nothing
 
