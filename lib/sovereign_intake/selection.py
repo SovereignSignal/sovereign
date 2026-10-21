@@ -22,10 +22,14 @@ FORBIDDEN = re.compile(
 
 
 def _jwt_pair(value):
-    """A run of the JWT alphabet with an eyJ segment of 18+ followed by one of 15+."""
+    """A run of the JWT alphabet with an eyJ header of 18+ (from any eyJ in a segment to its
+    dot) followed by a segment of 15+. Earlier fragments in the run are skipped."""
     segs = value.split(".")
-    return any(segs[i].startswith("eyJ") and len(segs[i]) >= 18 and len(segs[i + 1]) >= 15
-               for i in range(len(segs) - 1))
+    for i in range(len(segs) - 1):
+        j = segs[i].find("eyJ")
+        if j >= 0 and len(segs[i]) - j >= 18 and len(segs[i + 1]) >= 15:
+            return True
+    return False
 
 
 SECRET_PATTERNS = [
@@ -44,7 +48,8 @@ SECRET_PATTERNS = [
     (r"AIza[0-9A-Za-z_\-]{30,}",                         "google api key", None),
     (r"(?i)(?<![a-z0-9])(api[_-]?key|secret|password|passwd|access[_-]?token|bearer|pat)\b"
      r"\s*[:=]\s*[\"']?[A-Za-z0-9_\-\.]{16,}",           "assigned credential value", None),
-    (r"(?i)postgres(?:ql)?(?:\+[a-z0-9]+)?://[^\s:@/]+:[^\s@]{1,512}@", "database url with password", None),
+    (r"(?i)postgres(?:ql)?(?:\+[a-z0-9]+)?://[^\s:@/]+:(?:(?!\d{1,5}/)[^\s@]{1,512}|[^\s@/]+)@",
+     "database url with password", None),
 ]
 # The detector's full list: its own shapes, then every redactor shape, strict.
 DETECTOR = ([(re.compile(pat), name, check) for pat, name, check in SECRET_PATTERNS]

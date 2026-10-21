@@ -30,14 +30,16 @@ none of that leniency, so a token-shaped string the redactor let through still f
 closed there. Every scan is linear: a JWT is found as one run of its alphabet and its
 segments are checked in code, and every other body a later part must follow is bounded.
 Credential labels count after an underscore, so `DB_PASSWORD=` and `OPENAI_API_KEY=` are
-labels.
+labels. A connection-URL password is recognised only between `scheme://user:` and the `@`
+that ends the authority: a port followed by a path (`host:5432/app?notify=ops@example.com`)
+is not a password, so a URL without one keeps its port and path.
 
 Each hit becomes `[redacted <kind>]`. Idempotent: redacted text has no shapes left.
 """
 import os
 import re
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 REDACTED = "[redacted %s]"
 
@@ -59,12 +61,30 @@ def _glued_keylike(value: str) -> bool:
     return _keylike(value) and any(c.isdigit() for c in value)
 
 
-def _jwt_run(value: str) -> bool:
-    """A run of the JWT alphabet holds a token when two eyJ segments of 13 or more characters
-    are followed by a third of 10 or more. Checked here so the regex stays one linear run."""
+def _jwt_offset(value: str) -> int:
+    """Where a JWT starts inside a run of its alphabet, or -1. A token is an eyJ header of 13+
+    characters (from its eyJ to the dot), an eyJ payload of 13+ and a signature of 10+; earlier
+    fragments in the same run (`eyJfoo.` glued in front) are skipped, not fatal. One pass:
+    within a segment the first eyJ gives the longest header, so later ones cannot do better."""
     segs = value.split(".")
-    return any(segs[i].startswith("eyJ") and len(segs[i]) >= 13 and segs[i + 1].startswith("eyJ")
-               and len(segs[i + 1]) >= 13 and len(segs[i + 2]) >= 10 for i in range(len(segs) - 2))
+    start = 0
+    for i in range(len(segs) - 2):
+        j = segs[i].find("eyJ")
+        if (j >= 0 and len(segs[i]) - j >= 13 and segs[i + 1].startswith("eyJ")
+                and len(segs[i + 1]) >= 13 and len(segs[i + 2]) >= 10):
+            return start + j
+        start += len(segs[i]) + 1
+    return -1
+
+
+def _jwt_run(value: str) -> bool:
+    """A run of the JWT alphabet holds a token somewhere (see _jwt_offset). Checked here so the
+    regex stays one linear run."""
+    return _jwt_offset(value) >= 0
+
+
+# A shape whose match may carry text in front of the credential: where the credential starts.
+_TOKEN_START: Dict[str, Callable[[str], int]] = {"jwt": _jwt_offset}
 
 
 # How a match glued onto the text before it is judged (redactor only, see the docstring).
@@ -116,9 +136,12 @@ SHAPES: List[Tuple[str, "re.Pattern[str]", Optional[Callable[[str], bool]], Opti
 ]
 
 # postgres://user:PASSWORD@host (or postgresql+psycopg2://...): only the password goes; user
-# and host stay readable. A password may hold a slash; the 512 cap keeps the scan linear.
+# and host stay readable. The password is either a slash-free run of any length (it stops at
+# the next slash, so the scan stays linear) or a run of up to 512 that may hold a slash but
+# does not start like a port and path ("db:5432/app?to=ops@example.com" is a host, a port
+# and a path, not a user and a password).
 _URL_PASSWORD = re.compile(
-    r"((?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)(?:\+[a-z0-9]+)?://[A-Za-z0-9_.%-]+:)([^@\s]{6,512})(@)")
+    r"((?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)(?:\+[a-z0-9]+)?://[A-Za-z0-9_.%-]+:)((?!\d{1,5}/)[^@\s]{6,512}|[^@\s/]{6,})(@)")
 
 # "api key: VALUE", "password = VALUE": the value is judged by _looks_secret. "token" alone is
 # not a label: in a workspace about crypto it names public things all day long. A label may
@@ -159,7 +182,8 @@ def redact_text(text: str) -> Tuple[str, List[str]]:
             if not shape_accepts(m, check, glued):
                 return m.group(0)
             hits.append(kind)
-            return REDACTED % kind
+            start = _TOKEN_START[kind](m.group(0)) if kind in _TOKEN_START else 0
+            return m.group(0)[:start] + REDACTED % kind
         return sub
 
     for kind, pattern, check, glued in SHAPES:

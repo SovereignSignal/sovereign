@@ -247,6 +247,32 @@ class GluedTokens(unittest.TestCase):
         self.assertEqual(out, "postgres://app:[redacted password]@db.internal/wire")
         self.assertEqual(detector_hits("postgres://u:" + "p/wd" + "@h"), ["database url with password"])
 
+    def test_long_slash_free_url_password_is_redacted(self):
+        out, hits = redact_text("postgres://app:" + "Q7x" * 334 + "@db.internal/wire")
+        self.assertEqual(out, "postgres://app:[redacted password]@db.internal/wire")
+        self.assertIn("database url with password", detector_hits("postgres://app:" + "Q7x" * 334 + "@db/x"))
+
+    def test_a_port_and_a_path_with_an_at_sign_are_not_a_password(self):
+        for url in ("postgres://db.internal:5432/app?notify=ops@example.com",
+                    "redis://cache:6379/0#owner@team",
+                    "mysql://db:3306/shop?contact=dba@example.org"):
+            self.assertEqual(redact_text(url), (url, []), url)
+            self.assertEqual(secret_hits(url), [], url)
+
+    def test_a_jwt_after_an_earlier_eyj_fragment_in_the_same_run(self):
+        jwt = "ey" + "J" + MIX[:20] + ".ey" + "J" + MIX[:24] + "." + MIX[:20]
+        out, hits = redact_text("eyJfoo." + jwt)
+        self.assertEqual(out, "eyJfoo.[redacted jwt]")
+        out, hits = redact_text("eyJfoo.eyJbar." + jwt + " tail")
+        self.assertEqual(out, "eyJfoo.eyJbar.[redacted jwt] tail")
+        out, hits = redact_text("eyJfoo" + jwt)
+        self.assertEqual(hits, ["jwt"])
+        self.assertNotIn(MIX[:24], out)
+        self.assertEqual(detector_hits("eyJfoo." + jwt), ["jwt"])
+        for keep in ("eyJaa.eyJbb.cc", "eyJfoo.eyJbar.baz.eyJqux", "eyJ" + "a" * 40 + ".short"):
+            self.assertEqual(redact_text(keep), (keep, []), keep)
+            self.assertEqual(detector_hits(keep), [], keep)
+
     def test_a_long_jwt_payload_still_matches(self):
         jwt = "ey" + "J" + MIX[:30] + ".ey" + "J" + (MIX * 200)[:10000] + "." + MIX[:43]
         out, hits = redact_text("Authorization: Bearer " + jwt)
@@ -261,7 +287,8 @@ class Linear(unittest.TestCase):
     def test_long_prefix_runs_finish_quickly(self):
         runs = ["eyJ" * 50000, "eyJaaaaaaaaaaaa.eyJ" + "eyJ" * 50000, "eyJ." * 37500,
                 "-----BEGIN RSA PRIVATE KEY-----" * 4800, "postgres://u:" * 11500,
-                "postgres://u:" + "a/" * 75000]
+                "postgres://u:" + "a/" * 75000, "postgres://u:" + "1/" * 75000,
+                "postgres://u:" + "a" * 150000, "eyJfoo." * 21000]
         for text in runs:
             for fn in (redact_text, detector_hits):
                 started = time.perf_counter()
