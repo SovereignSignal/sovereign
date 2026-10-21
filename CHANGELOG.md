@@ -28,6 +28,9 @@
   instead of the vault's `raw/workspaces/<lane>`.
 - Sovereign in `/Applications` now shows its version and updates itself in place, as one
   in `~/Applications` always did; an app this user cannot change is refused up front.
+- An archive created in the app is a git repository from its first commit, the same as
+  `sov init`, and both use one shared setup. Without git the archive is still created
+  and the app says it has no history yet.
 
 ## 0.8.0 "Reach" (build 51)
 
