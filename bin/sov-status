@@ -115,7 +115,8 @@ def sessions_week(lane_dir):
     if not lane_dir:
         return None
     try:
-        lines = open(os.path.join(lane_dir, "sessions", "MANIFEST.md"), encoding="utf-8").read(65536).splitlines()
+        with open(os.path.join(lane_dir, "sessions", "MANIFEST.md"), encoding="utf-8") as fh:
+            lines = fh.read(65536).splitlines()
     except (OSError, UnicodeDecodeError):
         return None
     out = None

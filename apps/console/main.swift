@@ -1053,6 +1053,17 @@ final class Bridge: NSObject, WKScriptMessageHandler {
         return true
     }
 
+    /// A folder Open session may type into Terminal: absolute, bounded, and free of every
+    /// control or format scalar (Cc and Cf: tab, ESC, DEL, Ctrl-U, the bidi marks) and of
+    /// anything not a legal Unicode character. `do script` feeds its text to the new shell
+    /// as typed input, so the line editor would act on a control character before the
+    /// command ran; quoting cannot protect against that.
+    static func isTypableFolder(_ cwd: String) -> Bool {
+        guard !cwd.isEmpty, cwd.hasPrefix("/"), cwd.unicodeScalars.count <= 1024 else { return false }
+        let refused = CharacterSet.controlCharacters.union(.illegalCharacters)
+        return !cwd.unicodeScalars.contains { refused.contains($0) }
+    }
+
     /// Open session (Review): `claude --resume <id>` in Terminal, in the folder the session
     /// ran in. The id is a UUID before anything else happens; the folder comes from
     /// `sov ingest sessions --where <id>` and must be an existing absolute directory. The id
@@ -1074,9 +1085,10 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                 var cwd = out
                 while cwd.hasSuffix("\n") { cwd.removeLast() }
                 var isDir: ObjCBool = false
-                guard !cwd.isEmpty, cwd.hasPrefix("/"), cwd.unicodeScalars.count <= 1024,
-                      cwd.rangeOfCharacter(from: CharacterSet(charactersIn: "\n\r\u{0}")) == nil,
-                      FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else {
+                guard Bridge.isTypableFolder(cwd) else {
+                    reply(65, "The folder this session ran in has a name Open session will not type into Terminal."); return
+                }
+                guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else {
                     reply(65, "The folder this session ran in is not on this Mac any more."); return
                 }
                 let literal = cwd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
