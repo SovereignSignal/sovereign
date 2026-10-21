@@ -6,7 +6,8 @@
 # Without --apply it prints what it would do and changes nothing. Steps (shared
 # with every harness, see _lib/install-common.sh): pointer files, ~/brain-bin
 # symlinks, the SessionStart hook merged into ~/.claude/settings.json (backup kept),
-# mirror.sh declared in this machine's one connector job, LANE.md rendered or
+# mirror.sh declared in this machine's one connector job, sessions.sh declared beside
+# it (session capture, off until the owner turns it on), LANE.md rendered or
 # patched, then one smoke run of each wire.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,11 +18,13 @@ HARNESS=claude-code; LANE_PREFIX=claude-code
 sov_parse_args "$@"
 sov_resolve
 sov_plan "hook       $HERE/session-start.py  (SessionStart: startup|resume|clear|compact -> ~/.claude/settings.json)" \
-         "mirror     $HERE/mirror.sh  every ${INTERVAL}s in $RUNNER_LABEL (this machine's one connector job)"
+         "mirror     $HERE/mirror.sh  every ${INTERVAL}s in $RUNNER_LABEL (this machine's one connector job)" \
+         "sessions   $HERE/sessions.sh  every 900s in $RUNNER_LABEL, off until \`sov ingest sessions --on\`"
 sov_write_pointers
 sov_link_bins
 sov_merge_hook_claude_style "$HOME/.claude/settings.json" "$HERE/session-start.py" "startup|resume|clear|compact"
 sov_register_connector "$HERE/mirror.sh"
+sov_register_extra_wire claude-code-sessions "$HERE/sessions.sh" 900 300
 sov_lane_contract "$HERE/LANE.md.tmpl" "sov-load (session-start hook)"
 sov_smoke_mirror "$HERE/mirror.sh"
 sov_smoke_runner "$HARNESS"

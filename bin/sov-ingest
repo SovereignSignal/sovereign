@@ -390,4 +390,7 @@ def render(r):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "sessions":
+        from session_ingest import cli  # the session adapter keeps its own flags
+        sys.exit(cli.main(sys.argv[2:]))
     sys.exit(main())

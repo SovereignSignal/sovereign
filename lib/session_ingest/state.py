@@ -211,39 +211,53 @@ class Watermark:
             raise ValueError("%s has an invalid waiting entry." % Path(path).name)
         return doc
 
-    def _write_pending(self):
+    def write_pending(self):
         doc = {"sessions": self._staged}
         if self._staged_waiting is not _UNSET:
             doc["waiting"] = self._staged_waiting
         _write_json(self.pending_path, doc)
 
-    def observe(self, sid, size, mtime):
+    def observe(self, sid, size, mtime, write=True):
         """Record the size and mtime seen this tick in rows[sid]["seen"] and write it now,
         unstaged, so the next tick's quiet test survives a discarded tick. Verdict fields
-        are never touched; a session with no row gets a verdict-less one."""
+        are never touched; a session with no row gets a verdict-less one. With
+        write=False the record waits for write_seen(), so a tick that sees a thousand
+        files writes the watermark once rather than a thousand times."""
         row = self.rows.setdefault(sid, {})
         row["seen"] = {"size": size, "mtime": mtime,
                        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        if write:
+            self.write_seen()
+
+    def write_seen(self):
+        """Write the committed rows with every observe() made so far; nothing staged."""
         _write_json(self.path, {"sessions": self.rows, "waiting": self.waiting})
 
-    def stage(self, sid, row):
+    def stage(self, sid, row, write=True):
+        """Stage one verdict row; with write=False it waits for write_pending()."""
         self._staged[sid] = dict(row)
-        self._write_pending()
+        if write:
+            self.write_pending()
 
     def stage_waiting(self, waiting):
         """Stage {"reason", "since"} or None for the next commit."""
         self._staged_waiting = waiting
-        self._write_pending()
+        self.write_pending()
 
-    def commit(self):
+    def merged(self):
+        """(rows, waiting) as commit() would leave them; nothing is written."""
+        rows = dict(self.rows)
         for sid, row in self._staged.items():
             seen = self.rows.get(sid, {}).get("seen")
             merged = dict(row)
             if seen is not None and "seen" not in merged:
                 merged["seen"] = seen  # a verdict row keeps the last-tick size
-            self.rows[sid] = merged
-        if self._staged_waiting is not _UNSET:
-            self.waiting = self._staged_waiting
+            rows[sid] = merged
+        waiting = self.waiting if self._staged_waiting is _UNSET else self._staged_waiting
+        return rows, waiting
+
+    def commit(self):
+        self.rows, self.waiting = self.merged()
         _write_json(self.path, {"sessions": self.rows, "waiting": self.waiting})
         self._clear()
 

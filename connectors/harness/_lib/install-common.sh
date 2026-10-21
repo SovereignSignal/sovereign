@@ -401,6 +401,8 @@ if op == "upsert-harness":
         e["job_label"] = kw.get("job_label") or kw["label"]
         if kw.get("at"):
             e["at"] = kw["at"]
+    if kw.get("parent"):
+        e["parent"] = kw["parent"]       # a second wire of that harness, removed with it
     e.setdefault("registered", kw["registered"])
     d["harnesses"][hid] = e
     d.setdefault("retired_harnesses", {}).pop(hid, None)
@@ -422,6 +424,9 @@ elif op == "remove-harness":
     d = load()
     hid = pos[0] if pos else kw["id"]
     gone = d["harnesses"].pop(hid, None)
+    # A harness's extra wires (its session capture) declare it as their parent and go with it.
+    for k in [k for k, v in d["harnesses"].items() if isinstance(v, dict) and v.get("parent") == hid]:
+        d["harnesses"].pop(k)
     retired = d.setdefault("retired_harnesses", {}).setdefault(hid, gone or {})
     retired["cleanup_pending"] = True
     save(d)
@@ -501,9 +506,12 @@ elif op == "get":
     elif what == "lane-ids":
         # EVERY declared lane, calendar ones included: `sov disconnect all` walks this list,
         # and a lane it cannot see keeps its job loaded while the command reports a clean
-        # machine. `lane-ids tick` narrows it to the lanes the runner actually ticks.
+        # machine. `lane-ids tick` narrows it to the lanes the runner actually ticks. A wire
+        # with a parent has no installer or job of its own: its parent's removal takes it.
         only_tick = len(pos) > 1 and pos[1] == "tick"
         for k, v in sorted(d["harnesses"].items()):
+            if v.get("parent"):
+                continue
             if runs_on_the_tick(v) if only_tick else v.get("enabled"):
                 print(k)
     elif what == "relay-dest":
@@ -595,6 +603,22 @@ sov_register_connector() {
   # is not one of them, so "on this machine" was a count the manifest could contradict
   say "[runner] $HARNESS registered; $RUNNER_LABEL runs every ${ivl}s ($n lane(s) on the shared tick)"
   sov_retire_legacy_jobs "$HARNESS"
+}
+
+# A second write wire of this harness on the same shared tick, such as Claude Code's session
+# capture: its own manifest entry, lock and logs, writing <lane>/sessions/, with `parent` naming
+# this harness so disconnecting the harness removes it too. Called after
+# sov_register_connector, so the shared job it rides is already up.
+#   sov_register_extra_wire <id> <script> <cadence_s> <timeout_s>
+sov_register_extra_wire() {
+  local id="$1" script="$2" cadence="$3" timeout="$4" label
+  chmod +x "$script" 2>/dev/null || true
+  if [ "$PLATFORM" = "Darwin" ]; then label="com.sovereign.connector.$id"; else label="sovereign-connector-$id"; fi
+  : >> "$LANES_DIR/$id.log"; : >> "$LANES_DIR/$id.error.log"
+  _sov_manifest_py upsert-harness "id=$id" "label=$label" "mirror=$script" "lane=$LANE" \
+    "lane_dir=$LANE_DIR/sessions" "cadence_s=$cadence" "timeout_s=$timeout" enabled=true env_json='{}' \
+    "registered=$TODAY" "parent=$HARNESS" >/dev/null
+  say "[runner] $id registered beside $HARNESS (every ${cadence}s, bounded at ${timeout}s)"
 }
 
 # Render the unit, compare byte for byte, and only rewrite plus reload when it changed:

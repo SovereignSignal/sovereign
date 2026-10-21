@@ -22,6 +22,8 @@ log and error log sit beside the others under the connector state directory.
 `memory/MANIFEST.md` is the heartbeat: last run, project count, failures.
 Transcripts (`*.jsonl`) never cross.
 
+Session capture: `sessions.sh` distils quiet sessions into `sessions/`, off until the owner turns it on. Transcripts never cross.
+
 Read wire: `connectors/harness/claude-code/session-start.sh`, registered as a
 SessionStart hook in `~/.claude/settings.json`. It maps the session's working
 directory to a workstream, runs `sov-load`, and injects the pack as context.

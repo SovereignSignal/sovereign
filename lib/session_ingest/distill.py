@@ -95,6 +95,12 @@ def distill(res, key, session, excerpt, turn_ids, timeout=90):
     cfg = res.get("cfg")
     if cfg is None:
         return _result("unreachable", error=res.get("reason") or "no model for session capture")
+    provider = cfg.get("provider")
+    if provider and not key:
+        # A hosted provider without its key would only fail at the provider, after the
+        # excerpt had left this Mac; refuse here, before any request is built.
+        name = (curator_inference.PROVIDERS.get(provider) or {}).get("name") or provider
+        return _result("refused", error="No key is saved for %s." % name)
     messages = [{"role": "system", "content": prompt.SYSTEM},
                 {"role": "user", "content": prompt.user_message(session, excerpt)}]
     try:

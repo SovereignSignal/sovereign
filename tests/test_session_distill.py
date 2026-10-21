@@ -279,6 +279,15 @@ class Resolve(Base):
         self.assertEqual(out["status"], "refused")
         self.assertTrue(out["error"].startswith("REFUSING - sovereign-inference law: "))
 
+    def test_a_provider_with_no_key_is_refused_before_any_request(self):
+        (self.state / "curator-provider.json").write_text(json.dumps({"provider": "openai"}))
+        res = self.resolve()
+        sent = []
+        with mock.patch("curator_inference._post_json", side_effect=lambda *a, **k: sent.append(a) or {}):
+            out = distill.distill(res, "", SESSION, EXCERPT, [1, 2])
+        self.assertEqual(sent, [])
+        self.assertEqual(out, {"status": "refused", "captures": [], "error": "No key is saved for OpenAI."})
+
     def test_bad_hub_json_fails_closed(self):
         (self.state / "hub.json").write_text(json.dumps({"vault": str(self.vault), "lane": "curator",
                                                          "model": "m", "endpoint": "https://api.vendor.example/v1"}))

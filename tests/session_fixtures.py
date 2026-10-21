@@ -9,6 +9,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import threading
 import time
@@ -217,3 +218,77 @@ class ModelStub:
 
     def __exit__(self, *exc):
         self.close()
+
+
+SESSIONS_SH = ROOT / "connectors" / "harness" / "claude-code" / "sessions.sh"
+LANE = "claude-code-testhost"
+PROMPTS = ("Remember that every archive copy stays encrypted from now on.",
+           "We decided to switch to the staging copy for tests.",
+           "Thanks, that is all.")
+
+
+def iso_minute(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+class Rig:
+    """One machine for a session tick through sessions.sh: a temp HOME and archive, a
+    hub.json naming a loopback ModelStub (so the archive's own model is the stub),
+    capture switched on a day ago, and the temp root allow-listed so a synthetic
+    project under $TMPDIR is not refused as temporary. `cfg` overrides config keys."""
+
+    def __init__(self, tmp, reply_fn=None, enabled=True, **cfg):
+        self.tmp = Path(tmp).resolve()
+        self.home, self.vault, self.state = make_home(self.tmp)
+        self.proj = self.tmp / "work" / "proj"
+        self.proj.mkdir(parents=True)
+        self.stub = ModelStub(reply_fn)
+        self.hub_json(self.stub.url)
+        config = {"version": 1, "allow": [str(self.tmp)],
+                  "tools": {"claude-code": {"enabled": enabled, "enabled_at": iso_minute(time.time() - 86400)}}}
+        config.update(cfg)
+        (self.state / "session-capture.json").write_text(json.dumps(config))
+        self.lane = self.vault / "raw" / "tools" / LANE
+        self.sessions = self.lane / "sessions"
+
+    def hub_json(self, endpoint, model="qwen-test:8b"):
+        (self.state / "hub.json").write_text(json.dumps(
+            {"vault": str(self.vault), "lane": "curator", "model": model, "endpoint": endpoint}))
+
+    def env(self, **extra):
+        e = {"HOME": str(self.home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "SOV_STATE_DIR": str(self.state),
+             "BRAIN_ROOT": str(self.vault), "BRAIN_HOST": "testhost", "SOV_PYTHON": sys.executable,
+             "TMPDIR": os.environ.get("TMPDIR", "/tmp"), "PYTHONDONTWRITEBYTECODE": "1"}
+        e.update(extra)
+        return {k: v for k, v in e.items() if v is not None}
+
+    def transcript(self, sid, prompts=PROMPTS, cwd=None, **kw):
+        return transcript(self.home, "-work-proj", sid, cwd or self.proj, list(prompts), **kw)
+
+    def tick(self, **extra):
+        # The publish is rsync's quick check (size and whole-second mtime): two ticks in one
+        # second can write manifests of one size, and the second would not be carried.
+        wait = getattr(self, "_last_tick", 0) + 1.1 - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        self._last_tick = time.time()
+        return subprocess.run(["/bin/bash", str(SESSIONS_SH)], capture_output=True, text=True,
+                              env=self.env(**extra), timeout=240)
+
+    def watermark(self):
+        path = self.state / "sessions" / "claude-code.json"
+        return json.loads(path.read_text()) if path.exists() else {"sessions": {}, "waiting": None}
+
+    def verdict(self, sid):
+        return (self.watermark()["sessions"].get(sid) or {}).get("verdict")
+
+    def captures(self):
+        if not self.sessions.is_dir():
+            return []
+        return sorted(p for p in self.sessions.glob("*.md") if p.name != "MANIFEST.md")
+
+    def manifest(self):
+        return (self.sessions / "MANIFEST.md").read_text()
+
+    def close(self):
+        self.stub.close()
