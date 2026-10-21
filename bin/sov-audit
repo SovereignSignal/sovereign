@@ -34,7 +34,7 @@ Usage: sov-audit [--no-llm] [--max-screen N] [--max-skips N] [--stale-grace DAYS
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-import os, re, json, glob, sys, argparse, hashlib, urllib.request, urllib.parse, ast, time
+import os, re, json, glob, sys, argparse, hashlib, urllib.request, urllib.parse, time
 from datetime import datetime, timezone, date, timedelta
 from sovereign_hub.progress import Progress
 
@@ -65,30 +65,21 @@ TASTE = os.environ.get("CURATOR_TASTE", os.path.join(LANE, "taste.md"))
 
 
 def _inference_guard():
-    """Lift curator-run's _inference_violations and reuse it verbatim.
+    """curator-run's _inference_violations, reused verbatim from lib/curator_inference.
 
     The law is one rule, so it gets one predicate. A second copy here would drift
     from curator-run's at exactly the edges that matter (what counts as a local
     host, which model ids read as hosted), and the drift would be invisible until
-    the day it mattered. curator-run has no __main__ guard and evaluates its own
-    guard at module level, so importing it would run that and can SystemExit(4)
-    inside this process -- instead parse its AST and exec only this one function
-    node. That reads curator-run without importing or modifying it.
+    the day it mattered. This used to lift the function out of curator-run by AST,
+    because curator-run evaluates its own guard at module level and importing it
+    could SystemExit(4) inside this process; the predicate now lives in an
+    importable module that curator-run aliases, so there is one copy and no lift.
 
-    Fails CLOSED. If the shared predicate cannot be lifted (renamed, moved,
-    refactored), this refuses to run rather than silently falling back to a local
-    copy. A weekly propose-only audit is cheap to fail loudly; an unnoticed
-    divergence is the exact hole the guard exists to close.
+    Fails CLOSED. If the shared module cannot be imported, this raises and the
+    audit never reaches a model rather than silently falling back to a local copy.
     """
-    srcp = os.path.join(os.path.dirname(os.path.realpath(__file__)), "curator-run")
-    with open(srcp, encoding="utf-8") as fh:
-        tree = ast.parse(fh.read(), filename=srcp)
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "_inference_violations":
-            ns = {"urllib": urllib}
-            exec(compile(ast.Module(body=[node], type_ignores=[]), srcp, "exec"), ns)
-            return ns["_inference_violations"]
-    raise RuntimeError("curator-run exposes no _inference_violations to reuse")
+    from curator_inference import inference_violations
+    return inference_violations
 
 
 # The audit reads knowledge/ -- trusted, vault-derived content -- and feeds it to a

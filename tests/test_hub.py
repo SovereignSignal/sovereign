@@ -149,13 +149,8 @@ class HubTests(unittest.TestCase):
         self.server.redirect_followed=False
         config=dict(self.config,endpoint=f'http://127.0.0.1:{self.server.server_port}/redirect/completions')
         self.assertFalse(core.doctor(config)['model_available'])
-        import ast,urllib.request,time
-        tree=ast.parse((ROOT/'bin/curator-run').read_text())
-        node=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_post_json')
-        scope=dict(os=os,json=json,urllib=__import__('urllib'),time=time)
-        exec(compile(ast.Module(body=[node],type_ignores=[]),'<model-call>','exec'),scope)
-        with patch.dict(os.environ,CURATOR_LOCAL_ONLY='1'):
-            with self.assertRaises(ValueError):scope['_post_json'](urllib.request.Request(f'http://127.0.0.1:{self.server.server_port}/redirect'),2)
+        import curator_inference,urllib.request
+        with self.assertRaises(ValueError):curator_inference._post_json(urllib.request.Request(f'http://127.0.0.1:{self.server.server_port}/redirect'),2,local_only=True)
         self.assertFalse(self.server.redirect_followed)
 
     def test_08_activation_preview_and_failure_rollback_use_fake_scheduler(self):

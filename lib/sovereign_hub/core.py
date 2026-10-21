@@ -1,4 +1,3 @@
-import ast
 import hashlib
 import json
 import os
@@ -79,12 +78,9 @@ def same_path(a, b):
 
 
 def inference_guard(endpoint, model):
-    # The audit already uses this exact predicate. Reuse it without importing the runner.
-    source = (ROOT / 'bin/curator-run').read_text()
-    node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == '_inference_violations')
-    namespace = {'urllib': __import__('urllib')}
-    exec(compile(ast.Module(body=[node], type_ignores=[]), '<inference-guard>', 'exec'), namespace)
-    errors = namespace['_inference_violations'](endpoint, model, model, False)
+    # The curator and the audit use this exact predicate; one copy, in lib/.
+    from curator_inference import inference_violations
+    errors = inference_violations(endpoint, model, model, False)
     if errors:
         raise ValueError('Local inference required: ' + '; '.join(errors))
     url = urllib.parse.urlsplit(endpoint)

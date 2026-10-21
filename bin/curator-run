@@ -56,6 +56,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import _curator_brief as _brief
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'lib'))
 from sovereign_hub.progress import Progress
+import curator_inference
 from datetime import datetime, timezone
 
 def _pointer(path):
@@ -79,48 +80,12 @@ K = os.path.join(VAULT, "knowledge")
 NON_KNOWLEDGE_DIRS = ("workstreams", "raw", "archive", "repos")
 # Local by default — the law: machine writers to knowledge/ run on owner-controlled
 # compute. Cloud is an explicit opt-in via CURATOR_ENDPOINT, never the shipped default.
-# The hosted providers a hubless archive's owner may choose (rule 5, amended
-# 2026-10-18): exactly one at a time, under the owner's own account, pinned to
-# that provider's own API host. "backend" is the wire shape; only Anthropic
-# speaks its Messages API, the rest speak the OpenAI chat shape. Default models
-# are starting points; CURATOR_MODEL overrides. Muse's endpoint is empty on
-# purpose: no canonical public inference host exists yet, so CURATOR_ENDPOINT
-# must name its https API endpoint or the run refuses below.
-PROVIDERS = {
-    "anthropic": {"name": "Anthropic", "backend": "anthropic",
-                  "endpoint": "https://api.anthropic.com/v1/messages",
-                  "host": "api.anthropic.com", "model": "claude-opus-5-5"},
-    "openai": {"name": "OpenAI", "backend": "openai",
-               "endpoint": "https://api.openai.com/v1/chat/completions",
-               "host": "api.openai.com", "model": "gpt-5.6"},
-    "gemini": {"name": "Google Gemini", "backend": "openai",
-               "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-               "host": "generativelanguage.googleapis.com", "model": "gemini-2.5-pro"},
-    "grok": {"name": "xAI Grok", "backend": "openai",
-             "endpoint": "https://api.x.ai/v1/chat/completions",
-             "host": "api.x.ai", "model": "grok-4.7"},
-    "muse": {"name": "Muse", "backend": "openai",
-             "endpoint": "", "host": "", "model": "muse-wonder-full-1.0"},
-}
-PROVIDER = (os.environ.get("CURATOR_PROVIDER") or "").strip().lower()
-_P = PROVIDERS.get(PROVIDER) or {}
-BACKEND = (os.environ.get("CURATOR_BACKEND") or _P.get("backend") or "openai").strip().lower()
-# A bare CURATOR_BACKEND=anthropic (the pre-provider single-Mac wiring) is the
-# anthropic provider by another name.
-if not PROVIDER and BACKEND == "anthropic":
-    PROVIDER, _P = "anthropic", PROVIDERS["anthropic"]
-ANTHROPIC_ENDPOINT = PROVIDERS["anthropic"]["endpoint"]
-ENDPOINT = os.environ.get("CURATOR_ENDPOINT") or _P.get("endpoint") or (
-    ANTHROPIC_ENDPOINT if BACKEND == "anthropic" else "http://localhost:11434/v1/chat/completions")
-MODEL = os.environ.get("CURATOR_MODEL") or _P.get("model") or ("claude-opus-5-5" if BACKEND == "anthropic" else "qwen3.8:27b")
-KEYCHAIN_SERVICE = f"sovereign-curator-{PROVIDER}" if PROVIDER else ""
-LOCAL_ONLY = os.environ.get("CURATOR_LOCAL_ONLY") == "1"
-# The judge thinks: empty sends no reasoning_effort, so the model's default applies.
-# 2026-09-23: "none" ran 3x faster and tied on the bake-off corpus, but live it lost
-# recall (1 promote in its first 100 judgments against ~11% before; 2 of 10 paired
-# skips flipped to promote with thinking on, both dense design docs). "minimal" and
-# "low" were not cheaper on qwen3.8. Owner reverted the same day.
-REASONING_EFFORT = os.environ.get("CURATOR_REASONING_EFFORT", "")
+# The provider table, the guard, the precedence and the model calls live in
+# lib/curator_inference.py, shared with every other caller; these names are aliases
+# so the self-test and the call sites below read as they always have.
+_CFG = curator_inference.config_from_env(os.environ)
+PROVIDERS = curator_inference.PROVIDERS
+PROVIDER, ENDPOINT, MODEL = _CFG["provider"], _CFG["endpoint"], _CFG["model"]
 try:
     JUDGE_PARALLEL = min(4, max(1, int(os.environ.get("CURATOR_JUDGE_PARALLEL") or 1)))
 except ValueError:
@@ -128,7 +93,6 @@ except ValueError:
 # A call can wait at the server behind the others in flight before its own turn, so the
 # per-call ceiling grows with the number in flight rather than timing out queued calls.
 CALL_TIMEOUT = 480 * JUDGE_PARALLEL
-KEYFILE = os.environ.get("CURATOR_KEYFILE", "")
 # never-promote paths (vault-relative prefixes, colon-separated) — pruned from the gather entirely
 EXCLUDE = [e.strip().strip("/") for e in os.environ.get("CURATOR_EXCLUDE", "").split(":") if e.strip()]
 # optional harvest scope (vault-relative prefixes, colon-separated) — when set, ONLY these paths are gathered
@@ -146,7 +110,7 @@ AUTOREJECT = os.environ.get("CURATOR_AUTOREJECT", os.path.join(LANE, "auto-rejec
 # judge could otherwise ride an act-and-report gear into knowledge/ unreviewed. When on,
 # a flagged source is never dropped — it loses its gears and queues for the owner.
 SCREEN = os.environ.get("CURATOR_SCREEN", "").strip().lower() in ("1", "on", "true", "yes")
-SCREEN_MODEL = os.environ.get("CURATOR_SCREEN_MODEL", MODEL)
+SCREEN_MODEL = _CFG["screen_model"]
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--since-days", type=float, default=None, help="lookback window if no watermark")
@@ -796,61 +760,7 @@ def _strip_raw_links(text, resolver=None):
 
 
 
-def _inference_violations(endpoint, model, screen_model, allow_remote,
-                          local_hosts=("localhost", "127.0.0.1", "::1", "0.0.0.0"),
-                          backend="openai", local_only=False, provider=""):
-    """The law: every model that reads vault-derived content runs on inference the
-    owner controls, with no cloud primary and no cloud fallback in the curation
-    path. Until 2026-08-28 that was enforced only by the DEFAULTS being local, so a
-    one-token typo in CURATOR_MODEL (a hosted ':cloud' tag, say) would egress vault
-    content and still look like a clean run.
-
-    Two independent ways to leave the box, so two checks: a non-loopback ENDPOINT,
-    and a model id carrying a hosted-inference marker even on a local endpoint
-    (Ollama's ':cloud' tag proxies through the vendor's servers, and the request
-    still goes to localhost:11434).
-
-    Pure and injectable so --self-test covers it with no env and no network.
-    Returns a list of violation strings; empty means clean. `allow_remote` is the
-    explicit owner opt-out the law allows, and is reported by the caller so an
-    opted-out run is never silent.
-
-    A chosen provider is the standard's second lawful shape (rule 5, 2026-10-13;
-    widened 2026-10-18 from Anthropic alone to the PROVIDERS table): a hosted
-    provider the owner chose under their own account, judging and drafting only,
-    never holding the gate. It is exactly one provider at a time at exactly its
-    own API host, and an archive marked local-only (local_only) refuses every
-    hosted provider whatever else is set. Muse's host is not canonical yet, so
-    its pin is the shape itself: an https, non-loopback endpoint the owner named."""
-    if backend not in ("openai", "anthropic"):
-        return [f"CURATOR_BACKEND is not a known backend: {backend}"]
-    if not provider and backend == "anthropic":
-        provider = "anthropic"
-    if provider:
-        p = PROVIDERS.get(provider)
-        if p is None:
-            return [f"CURATOR_PROVIDER is not a known provider: {provider}"]
-        if local_only:
-            return [f"CURATOR_PROVIDER={provider} on an archive marked local-only (CURATOR_LOCAL_ONLY=1)"]
-        if backend != p["backend"]:
-            return [f"CURATOR_BACKEND={backend} does not speak the {provider} provider's API shape"]
-        u = urllib.parse.urlparse(endpoint)
-        host = (u.hostname or "").lower()
-        if u.scheme != "https" or not host or host in local_hosts:
-            return [f"the {provider} provider only talks to its own https API host, not {endpoint}"]
-        if p["host"] and host != p["host"]:
-            return [f"the {provider} provider only talks to https://{p['host']}, not {endpoint}"]
-        return []
-    if allow_remote:
-        return []
-    out = []
-    host = urllib.parse.urlparse(endpoint).hostname or ""
-    if host.lower() not in local_hosts and not host.lower().endswith(".local"):
-        out.append(f"endpoint is not local: {host or endpoint}")
-    for label, m in (("CURATOR_MODEL", model), ("CURATOR_SCREEN_MODEL", screen_model)):
-        if m and m.strip().lower().endswith(":cloud"):
-            out.append(f"{label} is a hosted model: {m}")
-    return out
+_inference_violations = curator_inference.inference_violations
 
 def _self_test():
     """Assert the auto-promote and auto-reject decision tables plus the
@@ -1341,10 +1251,7 @@ def _self_test():
 if a.self_test:
     raise SystemExit(_self_test())
 
-_violations = _inference_violations(ENDPOINT, MODEL, SCREEN_MODEL,
-                                    os.environ.get("CURATOR_ALLOW_REMOTE", "").strip().lower()
-                                    in ("1", "on", "true", "yes"),
-                                    backend=BACKEND, local_only=LOCAL_ONLY, provider=PROVIDER)
+_violations = curator_inference.violations(_CFG)
 if _violations:
     for _v in _violations:
         print(f"curator-run: REFUSING — sovereign-inference law: {_v}", file=sys.stderr)
@@ -1352,7 +1259,7 @@ if _violations:
           "for non-vault work; the curation path must stay on owned inference.",
           file=sys.stderr)
     raise SystemExit(4)
-if os.environ.get("CURATOR_ALLOW_REMOTE", "").strip().lower() in ("1", "on", "true", "yes"):
+if _CFG["allow_remote"]:
     print("curator-run: WARNING — CURATOR_ALLOW_REMOTE is set; inference locality is NOT enforced")
 
 
@@ -1723,19 +1630,13 @@ index = ", ".join(sorted(have))
 rejected_topics = set()
 for _p in glob.glob(os.path.join(LANE, "rejected") + "/*.md"):
     rejected_topics.add(re.sub(r"--rejected-\d{8}-\d{6}$", "", os.path.basename(_p)[:-3]))
-KEY = open(KEYFILE).read().strip() if os.path.exists(KEYFILE) else os.environ.get("CURATOR_KEY", "")
-if PROVIDER and not KEY and not (a.init or a.dump_brief or a.brief_for or a.source_for):
-    # The owner's own key for the chosen provider, saved by the app into the
-    # login Keychain; never on argv or disk.
-    try:
-        KEY = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
-                             capture_output=True, text=True, timeout=20).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        KEY = ""
-    if not KEY:
-        print(f"curator-run: no {PROVIDERS[PROVIDER]['name']} key: save one in Sovereign (Settings › Curator) or set CURATOR_KEYFILE",
-              file=sys.stderr)
-        raise SystemExit(4)
+# The offline modes never call a model, so they never ask the Keychain either.
+_offline = a.init or a.dump_brief or a.brief_for or a.source_for
+KEY = curator_inference.load_key(dict(_CFG, provider="") if _offline else _CFG, os.environ)
+if PROVIDER and not KEY and not _offline:
+    print(f"curator-run: no {PROVIDERS[PROVIDER]['name']} key: save one in Sovereign (Settings › Curator) or set CURATOR_KEYFILE",
+          file=sys.stderr)
+    raise SystemExit(4)
 
 _profile = ""
 if os.path.exists(PROFILE):
@@ -2094,81 +1995,10 @@ if a.source_for:
     raise SystemExit(0)
 
 
-def _post_json(req, timeout):
-    """One retry on a timed-out model call. A single timeout otherwise costs the
-    document until the next run; transient queue pressure should not do that."""
-    open_request = urllib.request.urlopen
-    if os.environ.get("CURATOR_LOCAL_ONLY") == "1":
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                raise ValueError("Local Hub inference redirects are refused.")
-        open_request = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open
-    try:
-        return json.load(open_request(req, timeout=timeout))
-    except urllib.error.HTTPError as exc:
-        # Keep the server's own explanation ("`temperature` is deprecated for this
-        # model"): a bare "400 Bad Request" in the judgments log says nothing. The body
-        # is the provider's error object; the request's key is never in it.
-        try:
-            detail = exc.read(400).decode("utf-8", "replace").strip()
-        except Exception:
-            detail = ""
-        raise RuntimeError(f"HTTP {exc.code}: {detail or exc.reason}") from None
-    except Exception as exc:
-        if "timed out" not in str(exc).lower():
-            raise
-        time.sleep(30)
-        return json.load(open_request(req, timeout=timeout))
-
-
-def _chat_body(model, temperature, messages):
-    """The request body of every model call, so the judge, the update merge and the
-    screen cannot drift apart on how they ask."""
-    body = {"model": model, "temperature": temperature, "stream": False,
-            "response_format": {"type": "json_object"}, "messages": messages}
-    if REASONING_EFFORT:
-        body["reasoning_effort"] = REASONING_EFFORT
-    return json.dumps(body).encode()
-
-
-ANTHROPIC_EFFORT = os.environ.get("CURATOR_EFFORT") or "medium"
-
-
-def _anthropic_body(model, messages):
-    """The same request on the Messages API. Current Claude models refuse sampling
-    parameters (temperature is a 400) and always think, so there is no temperature
-    and no thinking switch: effort sets the depth. max_tokens leaves room for the
-    thinking as well as the card. No JSON mode: every prompt already asks for one JSON
-    object and the callers extract it. A refused request is retried on Anthropic's
-    fallback model rather than failing (server-side fallback, routed by category)."""
-    system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
-    rest = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"]
-    body = {"model": model, "max_tokens": 16000, "output_config": {"effort": ANTHROPIC_EFFORT},
-            "fallbacks": "default", "messages": rest}
-    if system:
-        body["system"] = system
-    return json.dumps(body).encode()
-
-
 def _chat(model, temperature, messages, timeout):
-    """Every model call goes through here, so the backends cannot drift apart. Returns
-    the reply text."""
-    if BACKEND == "anthropic":
-        req = urllib.request.Request(ENDPOINT, _anthropic_body(model, messages),
-                                     {"x-api-key": KEY, "anthropic-version": "2023-06-01",
-                                      "anthropic-beta": "server-side-fallback-2026-07-01",
-                                      "Content-Type": "application/json"})
-        out = _post_json(req, timeout)
-        # Read the stop reason before the content: a refusal or a cut-off reply is an
-        # error for this item (recorded, retried next run), never an empty verdict.
-        stop = out.get("stop_reason")
-        if stop in ("refusal", "max_tokens"):
-            raise ValueError(f"Claude stopped with {stop}" + (
-                f" ({(out.get('stop_details') or {}).get('category')})" if stop == "refusal" else ""))
-        return "".join(b.get("text", "") for b in out.get("content", []) if b.get("type") == "text")
-    req = urllib.request.Request(ENDPOINT, _chat_body(model, temperature, messages),
-                                 {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
-    return _post_json(req, timeout)["choices"][0]["message"]["content"]
+    """Every model call goes through curator_inference.chat, so the backends, and
+    every caller of the law, cannot drift apart. Returns the reply text."""
+    return curator_inference.chat(_CFG, KEY, model, temperature, messages, timeout)
 
 
 def judge(path):
