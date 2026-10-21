@@ -14,7 +14,7 @@ from brain_redact import redact_text
 FOLDERS = ('raw', 'workstreams', 'knowledge', 'archive', 'repos')
 # Kept out of history: code working trees, cold storage, editor state and Finder litter.
 GITIGNORE = '.DS_Store\n.obsidian/workspace*\narchive/\nrepos/\n'
-# Used only when git has no identity it can use for this repository.
+# Set in the repository only for a name or email that no git config supplies.
 FALLBACK_IDENTITY = ('Sovereign', 'sovereign@localhost')
 NO_GIT = 'git was not found; the archive has no history yet.'
 NO_COMMIT = 'git could not make the first commit; the archive has no history yet.'
@@ -107,9 +107,11 @@ def init_repository(root, name):
     try:
         if run('init', '-q').returncode:
             raise subprocess.SubprocessError
-        if run('var', 'GIT_AUTHOR_IDENT').returncode or run('var', 'GIT_COMMITTER_IDENT').returncode:
-            run('config', 'user.name', FALLBACK_IDENTITY[0])
-            run('config', 'user.email', FALLBACK_IDENTITY[1])
+        # Decide as the hub's approve check does: a configured name and email, local or
+        # inherited. An identity git would only synthesise from the system user does not count.
+        for key, value in zip(('user.name', 'user.email'), FALLBACK_IDENTITY):
+            if not run('config', key).stdout.strip():
+                run('config', key, value)
         if run('add', '-A').returncode or run('commit', '-q', '-m', 'new instance: %s (from Sovereign)' % name).returncode:
             raise subprocess.SubprocessError
     except (OSError, subprocess.SubprocessError):

@@ -113,8 +113,22 @@ class ArchiveHistory(unittest.TestCase):
                 os.environ.pop(key, None)
             root = Path(m.create(self.base / 'Owned', ROOT)['root'])
             self.assertEqual(git(root, 'log', '--format=%an <%ae>').strip(), 'Owner <owner@example.test>')
-            local = subprocess.run(['git', 'config', '--local', '--get', 'user.name'], cwd=root, capture_output=True)
-        self.assertNotEqual(local.returncode, 0)
+            for key in ('user.name', 'user.email'):
+                local = subprocess.run(['git', 'config', '--local', '--get', key], cwd=root, capture_output=True)
+                self.assertNotEqual(local.returncode, 0, key)
+
+    def test_empty_global_config_gets_a_local_identity_the_hub_accepts(self):
+        # git can synthesise an identity from the system user here, but the hub's approve
+        # check reads git config, so the archive must carry a configured one.
+        config = self.base / 'gitconfig'; config.write_text('')
+        with mock.patch.dict(os.environ, {'GIT_CONFIG_GLOBAL': str(config), 'GIT_CONFIG_NOSYSTEM': '1'}):
+            for key in ('GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'EMAIL'):
+                os.environ.pop(key, None)
+            root = Path(m.create(self.base / 'Bare', ROOT)['root'])
+            self.assertEqual(git(root, 'config', '--local', 'user.name').strip(), 'Sovereign')
+            self.assertEqual(git(root, 'config', '--local', 'user.email').strip(), 'sovereign@localhost')
+            self.assertEqual(git(root, 'log', '--format=%an <%ae>').strip(), 'Sovereign <sovereign@localhost>')
+        self.assertEqual(config.read_text(), '')
 
     def test_no_git_still_creates_the_archive_and_says_so(self):
         empty = self.base / 'empty-bin'; empty.mkdir()
