@@ -2,13 +2,13 @@
 
 # Sovereign
 
-**Your context, in plain text you own, read by every AI tool you use.**
+**Memory you can audit for the AI tools you use, kept as plain files you own.**
 
 **Status: closed beta.** The current app is Sovereign 0.7.1 (build 50), built from this repo and in daily use by its maintainer. A signed, notarized download is on the [releases page](https://github.com/SovereignSignal/sovereign/releases), validated on clean installs of macOS 13.6 and the current macOS. Apple Silicon Mac, macOS 13 or later.
 
-Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Sovereign keeps that context in one place you own: a folder of Markdown files on your Mac, versioned with git, that your tools read before they work and add to as they go. You approve what becomes trusted. Switch models or tools and your context comes with you.
+Every AI tool you use starts each session knowing nothing about you. You re-explain your projects, your people, the decisions you already made. Most memory tools fix that by writing on their own, so whatever one session said becomes what the next one believes, and there's no step where you decide it's true.
 
-It's deliberately simple. The whole standard fits on one page ([`CLAUDE.md`](CLAUDE.md)), the archive is ordinary files you can open in any editor, and nothing about it depends on this app, this repo, or any one AI company staying around. Where Sovereign goes next: [`ROADMAP.md`](ROADMAP.md).
+Sovereign keeps that context in a folder of Markdown files on your Mac that your tools read before they work and add to as they go. A curator drafts short cards from what they save, and at first nothing becomes trusted until you approve it. Every trusted card names its source, and an append-only decisions log records who let it in and when; keep the archive in git and each verdict is a commit too. After ten clean routine decisions you can let routine cards land on their own, and one button sends the curator back to asking first. The rules fit on one page ([`CLAUDE.md`](CLAUDE.md)), and the files read fine in any editor with no Sovereign software installed. Where Sovereign goes next: [`ROADMAP.md`](ROADMAP.md).
 
 ## How it works
 
@@ -24,7 +24,7 @@ It's deliberately simple. The whole standard fits on one page ([`CLAUDE.md`](CLA
 
 - **The archive** is five folders with one job each: `raw/` (the loading dock), `knowledge/` (the trusted cards), `workstreams/` (your active work), `archive/` (cold storage) and an optional `repos/` for code.
 - **Connectors** tie a tool to the archive both ways. Claude Code reads the relevant cards when a session starts and saves its memory into its own lane in `raw/`.
-- **The curator** reads what arrived in the background and drafts one-screen briefing cards. At first it asks before any of it becomes trusted; routine cards can graduate to landing on their own once its judgments earn it. Its default answer is no: most raw material never becomes a card, and that's the system working.
+- **The curator** reads what arrived in the background and drafts one-screen briefing cards. At first it asks before any of it becomes trusted; routine cards can graduate to landing on their own once its judgments earn it, and every approval, rejection and background landing goes in the decisions log. Its default answer is no: most raw material never becomes a card, and that's the system working.
 
 ## Get started on a Mac (about five minutes)
 

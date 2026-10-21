@@ -29,6 +29,8 @@
   Gatekeeper and be the version and build it claims; the current app is kept
   under `~/sovereign-rollback/`. Nothing is contacted until you click it.
   Update from source still appears when this device's checkout is newer.
+- The README, the welcome screen and the release notes now lead with what
+  Sovereign is for: memory you can audit, kept as plain files you own.
 
 ## 0.7.1 (build 50) — release candidate
 
