@@ -14,7 +14,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
-from session_ingest import state  # noqa: E402
+from session_ingest import prefilter, state  # noqa: E402
 
 
 def mode(path):
@@ -170,6 +170,80 @@ class WatermarkTest(unittest.TestCase):
         fresh.record_call("2026-10-22")
         self.assertEqual(sorted(json.loads(calls.read_text())),
                          ["2026-10-16", "2026-10-21", "2026-10-22"])
+
+    def test_commit_without_stage_waiting_preserves_waiting(self):
+        wm = state.Watermark(self.sd, "claude-code")
+        wm.stage_waiting({"reason": "model unreachable", "since": "2026-10-21T14:05Z"})
+        wm.commit()
+        tick = state.Watermark(self.sd, "claude-code")
+        tick.stage("a", self.row("distilled"))
+        self.assertNotIn("waiting", json.loads(self.pending.read_text()))
+        state.Watermark(self.sd, "claude-code").commit()  # a separate commit process
+        done = state.Watermark(self.sd, "claude-code")
+        self.assertEqual(done.waiting, {"reason": "model unreachable", "since": "2026-10-21T14:05Z"})
+        self.assertEqual(set(done.rows), {"a"})
+
+    def test_stage_waiting_none_clears_it(self):
+        wm = state.Watermark(self.sd, "claude-code")
+        wm.stage_waiting({"reason": "model unreachable", "since": "2026-10-21T14:05Z"})
+        wm.commit()
+        tick = state.Watermark(self.sd, "claude-code")
+        tick.stage_waiting(None)
+        self.assertIsNone(json.loads(self.pending.read_text())["waiting"])
+        state.Watermark(self.sd, "claude-code").commit()
+        self.assertIsNone(state.Watermark(self.sd, "claude-code").waiting)
+
+    def test_observe_writes_seen_at_once_and_leaves_verdicts(self):
+        wm = state.Watermark(self.sd, "claude-code")
+        wm.observe("new", 50, 2.0)
+        wm.stage("old", self.row("skipped:low-signal", size=100))
+        wm.commit()
+        wm.observe("old", 120, 3.0)
+        wm.stage("old", self.row("failed:1", size=120))
+        wm.discard()
+        fresh = state.Watermark(self.sd, "claude-code")
+        self.assertEqual(set(fresh.rows["new"]), {"seen"})
+        self.assertTrue(state.needs_look(fresh.rows["new"], 50, "p"))
+        old = fresh.rows["old"]
+        self.assertEqual((old["verdict"], old["size"]), ("skipped:low-signal", 100))
+        self.assertEqual((old["seen"]["size"], old["seen"]["mtime"]), (120, 3.0))
+        self.assertRegex(old["seen"]["at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        fresh.stage("old", self.row("distilled", size=120))
+        fresh.commit()
+        self.assertEqual(state.Watermark(self.sd, "claude-code").rows["old"]["seen"]["size"], 120)
+
+    def test_grown_skipped_session_is_quiet_on_the_next_tick(self):
+        wm = state.Watermark(self.sd, "claude-code")
+        wm.stage("a", self.row("skipped:low-signal", size=100))
+        wm.observe("a", 100, 1.0)
+        wm.commit()
+        now, old_mtime = 10000.0, 1.0
+        # Tick 1: the file has grown to 200 since the last tick.
+        tick1 = state.Watermark(self.sd, "claude-code")
+        self.assertFalse(prefilter.quiet(200, old_mtime, tick1.rows["a"], now, 45))
+        tick1.observe("a", 200, old_mtime)
+        # Tick 2: same size as tick 1 saw, so quiet, and the verdict-time size differs.
+        tick2 = state.Watermark(self.sd, "claude-code")
+        row = tick2.rows["a"]
+        self.assertTrue(prefilter.quiet(200, old_mtime, row, now, 45))
+        self.assertTrue(state.needs_look(row, 200, "p"))
+
+    def test_grown_distilled_session_stays_final(self):
+        wm = state.Watermark(self.sd, "claude-code")
+        wm.stage("a", self.row("distilled", size=100))
+        wm.commit()
+        for size in (150, 150, 300, 300):
+            tick = state.Watermark(self.sd, "claude-code")
+            tick.observe("a", size, 1.0)
+            self.assertFalse(state.needs_look(state.Watermark(self.sd, "claude-code").rows["a"], size, "p"))
+        self.assertEqual(state.Watermark(self.sd, "claude-code").rows["a"]["verdict"], "distilled")
+
+    def test_corrupt_call_count_raises(self):
+        calls = self.sd / "sessions" / "claude-code.calls.json"
+        calls.parent.mkdir(parents=True)
+        calls.write_text('{"2026-10-21": "many"}')
+        with self.assertRaises(ValueError):
+            state.Watermark(self.sd, "claude-code").calls_today("2026-10-21")
 
     def test_bad_tool_name_refused(self):
         for tool in ("../x", "", "a/b", "Claude"):

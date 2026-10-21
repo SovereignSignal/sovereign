@@ -23,10 +23,16 @@ _SENTENCE_START = re.compile(r"(?:^|[.!?:;]\s+|\n\s*)$")
 
 
 def quiet(size, mtime, row, now, quiet_min):
-    """Untouched for quiet_min minutes and, when a row exists, the size it recorded."""
+    """Untouched for quiet_min minutes and the same size as at the last tick.
+
+    The last-tick size is `row["seen"]["size"]`, written by Watermark.observe. With no
+    row or no `seen` record there is nothing to compare, so a first sighting with an
+    old mtime is quiet. `row["size"]` is the verdict-time size that state.needs_look
+    reads, and is not used here."""
     if now - mtime < quiet_min * 60:
         return False
-    return row is None or row.get("size") == size
+    seen = (row or {}).get("seen")
+    return not isinstance(seen, dict) or seen.get("size") == size
 
 
 def card_stems(vault):

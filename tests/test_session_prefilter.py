@@ -65,8 +65,11 @@ class PreFilter(unittest.TestCase):
         self.assertFalse(prefilter.quiet(s["size"], s["mtime"], None, now, 45))
         old = self.session(BLAND, age_s=3600)
         self.assertTrue(prefilter.quiet(old["size"], old["mtime"], None, now, 45))
-        self.assertTrue(prefilter.quiet(old["size"], old["mtime"], {"size": old["size"]}, now, 45))
-        self.assertFalse(prefilter.quiet(old["size"], old["mtime"], {"size": old["size"] - 1}, now, 45))
+        seen = lambda n: {"size": 1, "verdict": "skipped:low-signal", "seen": {"size": n, "mtime": 0, "at": "t"}}
+        self.assertTrue(prefilter.quiet(old["size"], old["mtime"], seen(old["size"]), now, 45))
+        self.assertFalse(prefilter.quiet(old["size"], old["mtime"], seen(old["size"] - 1), now, 45))
+        # The verdict-time size is needs_look's; with no seen record nothing is compared.
+        self.assertTrue(prefilter.quiet(old["size"], old["mtime"], {"size": 1}, now, 45))
 
     def test_remember_session_passes(self):
         s = self.session(["remember that the deploy runs nightly", "run the tests", "thanks"])

@@ -64,7 +64,12 @@ def _under(p, x):
 
 def make_cwd_check(vault, cfg):
     """A cwd_check for claude_code.scan: realpath -> "refused-archive", "denied" or None.
-    Lists and the temporary roots are resolved once, here."""
+    Lists and the temporary roots are resolved once, here.
+
+    Only the archive and what lies under it are refused. A cwd that is an ancestor of
+    the archive, such as the home folder holding ~/<archive>, is not: a home-folder
+    archive is the default, and refusing ancestors would exclude every session run
+    from the home directory. The owner's deny list covers such a folder when wanted."""
     vault_root = _norm(vault) if vault else None
     allow = [_norm(x) for x in cfg.get("allow", [])]
     deny = [_norm(x) for x in cfg.get("deny", [])]

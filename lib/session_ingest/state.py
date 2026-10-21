@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import time
 
 CONFIG_NAME = "session-capture.json"
 DEFAULT_CONFIG = {
@@ -151,7 +152,13 @@ def save_config(sd, cfg):
 
 def needs_look(row, size, policy):
     """Whether a session with this watermark row deserves another look at `size` bytes
-    under the current privacy `policy` hash."""
+    under the current privacy `policy` hash.
+
+    A row carries two sizes. `row["size"]` is the size when the verdict was given, and
+    this compares against it: a skipped, denied or refused session is re-checked once
+    the file has changed since that verdict. `row["seen"]["size"]` is the size at the
+    last tick, which only prefilter.quiet reads. A row with no verdict yet (one that
+    observe() made) is always looked at."""
     if row is None:
         return True
     verdict = row.get("verdict") or ""
@@ -171,7 +178,10 @@ def needs_look(row, size, policy):
 
 class Watermark:
     """Rows per session id for one tool. `.rows` is the committed state only; staged
-    rows and a staged `waiting` reach it through commit()."""
+    rows and a staged `waiting` reach it through commit(), while observe() writes the
+    last-tick size at once. One runner per tool at a time (the connector runner's lane
+    lock) is assumed: record_call, observe and commit read, change and replace their
+    file without a lock of their own."""
 
     def __init__(self, sd, tool):
         if not isinstance(tool, str) or not _TOOL.match(tool):
@@ -183,13 +193,13 @@ class Watermark:
         doc = self._doc(self.path)
         self.rows = doc["sessions"]
         self.waiting = doc["waiting"]
-        pending = self._doc(self.pending_path, staged=True)
+        pending = self._doc(self.pending_path, staged=True)  # no "waiting" key: not staged
         self._staged = pending["sessions"]
         self._staged_waiting = pending.get("waiting", _UNSET)
 
     @staticmethod
     def _doc(path, staged=False):
-        doc = _read_json(path, {"sessions": {}, "waiting": None})
+        doc = _read_json(path, {"sessions": {}} if staged else {"sessions": {}, "waiting": None})
         if not isinstance(doc, dict) or not isinstance(doc.get("sessions", {}), dict) \
                 or not all(isinstance(r, dict) for r in doc.get("sessions", {}).values()):
             raise ValueError("%s is not a session watermark." % Path(path).name)
@@ -207,6 +217,15 @@ class Watermark:
             doc["waiting"] = self._staged_waiting
         _write_json(self.pending_path, doc)
 
+    def observe(self, sid, size, mtime):
+        """Record the size and mtime seen this tick in rows[sid]["seen"] and write it now,
+        unstaged, so the next tick's quiet test survives a discarded tick. Verdict fields
+        are never touched; a session with no row gets a verdict-less one."""
+        row = self.rows.setdefault(sid, {})
+        row["seen"] = {"size": size, "mtime": mtime,
+                       "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        _write_json(self.path, {"sessions": self.rows, "waiting": self.waiting})
+
     def stage(self, sid, row):
         self._staged[sid] = dict(row)
         self._write_pending()
@@ -217,7 +236,12 @@ class Watermark:
         self._write_pending()
 
     def commit(self):
-        self.rows.update(self._staged)
+        for sid, row in self._staged.items():
+            seen = self.rows.get(sid, {}).get("seen")
+            merged = dict(row)
+            if seen is not None and "seen" not in merged:
+                merged["seen"] = seen  # a verdict row keeps the last-tick size
+            self.rows[sid] = merged
         if self._staged_waiting is not _UNSET:
             self.waiting = self._staged_waiting
         _write_json(self.path, {"sessions": self.rows, "waiting": self.waiting})
@@ -242,7 +266,9 @@ class Watermark:
 
     def calls_today(self, date):
         n = self._calls().get(date, 0)
-        return n if _number(n) else 0
+        if not _number(n):
+            raise ValueError("%s has an invalid count for %s." % (self.calls_path.name, date))
+        return n
 
     def record_call(self, date):
         """Count one call on `date` (YYYY-MM-DD) now, keep the last 7 days, return the
