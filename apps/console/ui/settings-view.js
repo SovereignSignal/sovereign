@@ -56,6 +56,38 @@ window.SovSettings = (() => {
      own key, every two
      hours, in ask-first until the owner grants background landing. A Mac that runs a hub
      curates from its own jobs, so the section says that instead of a second curator. */
+  /* Making a provider key is where a newcomer stalls, so each provider's own pages are a
+     click away, in the browser. Checked against each provider's documentation on
+     2026-10-20. Where a provider documents no spend limit (xAI) or no public sign-up
+     (Muse), the guide says so instead of guessing. */
+  const KEY_GUIDES = {
+    anthropic: { steps: ["Sign in to the Claude Console, or create an account, and add credits under Billing.",
+                         "On API keys, choose Create key, name it Sovereign, and copy it. It is shown only once.",
+                         "Optional: on Billing, under Spend limits, choose Set limit to cap what a month can cost."],
+                 links: [["https://platform.claude.com/settings/keys", "API keys"], ["https://platform.claude.com/settings/billing", "Billing"]] },
+    openai: { steps: ["Sign in to the OpenAI API platform, or create an account, and add credits under Billing.",
+                      "Under API keys, choose Create new secret key, name it Sovereign, and copy it. It is shown only once.",
+                      "Optional: on Limits, under Spend, choose Edit spend limit and turn on Enforce a hard limit."],
+              links: [["https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key", "Finding your key"], ["https://platform.openai.com/settings/organization/limits", "Limits"]] },
+    gemini: { steps: ["Sign in to Google AI Studio with your Google account.",
+                      "On API keys, choose Create API key and copy it. Keys made there work with the Gemini API, which is all Sovereign uses.",
+                      "Optional: on Spend, under Monthly spend cap, choose Edit spend cap. Google notes spend can run slightly past the cap."],
+              links: [["https://aistudio.google.com/apikey", "API keys"], ["https://aistudio.google.com/spend", "Spend"]] },
+    grok: { steps: ["Sign in to the xAI Console, or create an account, and load it with credits.",
+                    "On API keys, create a key, name it Sovereign, and copy it.",
+                    "xAI's documentation describes no spend limit, so the credits you load are what the curator can draw on."],
+            links: [["https://console.x.ai/team/default/api-keys", "API keys"]] },
+    muse: { steps: ["Muse has no public sign-up page yet. Ask whoever runs your Muse endpoint for a key and its address."], links: [] },
+  };
+  function keyGuide(id, name, open) {
+    const g = KEY_GUIDES[id];
+    if (!g) return "";
+    const steps = `<ol class="set-steps">${g.steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol>`;
+    const links = g.links.length ? `<div class="set-inline set-links">${g.links.map(([url, label]) => `<button data-act="openurl" data-url="${esc(url)}">${esc(label)} ↗</button>`).join("")}</div>` : "";
+    return more(`Get your ${esc(name)} key`, steps + links
+      + `<p class="set-note">Pages open in your browser. Sovereign only needs the key, never your password, and keeps it in this Mac's Keychain.</p>`, open);
+  }
+
   function curatorSection(C) {
     if (!C) return sect("Curator", say("Checking…"));
     if (C.hub) return sect("Curator", say("Your hub curates this archive."));
@@ -97,7 +129,8 @@ window.SovSettings = (() => {
     const note = trusted
       ? `Your key stays in this Mac's Keychain. Each pass sends new material to ${P.name} under your account. Switching provider returns to ask-first. Auto-rejection stays off.`
       : `Your key stays in this Mac's Keychain. Each pass sends new material to ${P.name} under your account. Cards wait for you in Review until you grant background landing.`;
-    return sect("Curator", say(lead) + picker + key + trustSay + landedList + `<span class="pulls" id="set-cur-state" aria-live="polite"></span>`, note, acts);
+    const guide = keyGuide(C.provider || "anthropic", P.name, !C.key_saved);
+    return sect("Curator", say(lead) + picker + key + guide + trustSay + landedList + `<span class="pulls" id="set-cur-state" aria-live="polite"></span>`, note, acts);
   }
 
   /* What ChatGPT already remembers, brought in without a terminal. The prompt is the one

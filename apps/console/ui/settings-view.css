@@ -18,6 +18,16 @@
 .set-sect .set-lead+.set-more summary{font-size:11px;color:var(--muted);margin-top:2px}
 .set-sect:has(.set-perms){align-items:start}
 .set-sect:has(.set-perms) .set-body{grid-column:2/-1}
+/* The key field and its Save button share a row; the page-wide input rule made the field
+   full width and pushed Save onto a line of its own. */
+.set-inline:has(#set-cur-key){flex-wrap:nowrap;gap:8px;align-items:center;max-width:640px;margin-top:8px}
+.set-inline #set-cur-key{flex:1;min-width:0;width:auto;margin:0}
+/* The key walkthrough: numbered steps, then the provider's own pages. While it is open the
+   section top-aligns, so its name stays beside the first line instead of floating mid-list. */
+.set-sect:has(details[open] .set-steps){align-items:start}
+.set-steps{margin:6px 0 0;padding-left:18px;font-size:11.5px;line-height:1.6;color:var(--ink-2);max-width:66ch}
+.set-steps li{margin:2px 0}
+.set-links{gap:8px;margin-top:8px}
 /* Import: the prompt to copy, the answer to paste, the plan to read before importing. */
 /* The body takes the whole row and the buttons follow the plan, so Import sits where the
    owner has just read what it will do, and a narrow window keeps the text readable. */

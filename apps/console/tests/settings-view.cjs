@@ -273,4 +273,21 @@ test('import offers Import only after a preview, and keeps the answer across red
   view.importText('');
 });
 
+test('each provider has a key guide that opens until a key is saved and links only over https', () => {
+  const providers = [['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['gemini', 'Google Gemini'], ['grok', 'xAI Grok'], ['muse', 'Muse']]
+    .map(([id, name]) => ({ id, name, hint: 'k', key_saved: false }));
+  const cur = (provider, key_saved) => ({ hub: false, key_saved, installed: key_saved, loaded: key_saved, pending: 0,
+    provider, providers, trust: 'ask-first', trust_record: { state: 'ask-first' } });
+  for (const [id, name] of providers.map(p => [p.id, p.name])) {
+    const html = paint({ root: '/a', curator: cur(id, false) });
+    assert(html.includes(`<details class="set-more" open><summary>Get your ${name} key</summary>`), id);
+    assert(html.includes('never your password'), id);
+    for (const [, url] of html.matchAll(/data-act="openurl" data-url="([^"]+)"/g)) assert(url.startsWith('https://'), id + ' ' + url);
+  }
+  assert(!paint({ root: '/a', curator: cur('muse', false) }).includes('data-act="openurl"'));
+  assert(paint({ root: '/a', curator: cur('anthropic', false) }).includes('data-url="https://platform.claude.com/settings/keys"'));
+  // Once the key is in, the guide steps aside but stays one click away.
+  assert(paint({ root: '/a', curator: cur('openai', true) }).includes('<details class="set-more"><summary>Get your OpenAI key</summary>'));
+});
+
 console.log(checks + ' settings view checks passed.');

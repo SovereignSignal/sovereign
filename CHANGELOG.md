@@ -11,6 +11,10 @@
 - Import from ChatGPT, in Settings › Import or with `sov import chatgpt`: a
   prompt for ChatGPT, a preview, then one untrusted capture per memory for
   the curator to judge. Re-importing brings in only what changed.
+- Settings › Curator walks a newcomer through getting a key from each
+  provider: the steps, the provider's own key and spend-limit pages (opened
+  in the browser), and where a provider documents no spend limit, it says
+  so. Save key now sits beside the key field instead of below it.
 - A new archive's curator now judges what connected tools saved before it
   was turned on, such as existing Claude Code memory, 20 files a pass.
   Before, it looked back only two days and never saw the rest.
