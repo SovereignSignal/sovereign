@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -149,6 +150,35 @@ class ArchiveHistory(unittest.TestCase):
         self.assertTrue({'CLAUDE.md', '.gitignore', '.obsidian/templates/note.md', 'workstreams/.gitkeep'} <= tracked)
         self.assertFalse(any(p.startswith(('archive/', 'repos/')) for p in tracked))
         self.assertNotIn('{{SOVEREIGN_NAME}}', (target / 'CLAUDE.md').read_text())
+
+    def test_sov_init_leaves_an_existing_repository_alone(self):
+        target = self.base / 'existing'; target.mkdir()
+        subprocess.run(['git', 'init', '-q'], cwd=target, check=True)
+        (target / 'mine.txt').write_text('owner work')
+        r = self.run_sov_init(target, os.environ['PATH'])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('is already a git repository; left as is.', r.stderr)
+        self.assertEqual(subprocess.run(['git', 'rev-parse', '--verify', 'HEAD'], cwd=target, capture_output=True).returncode, 128)
+        self.assertNotEqual(subprocess.run(['git', 'config', '--local', 'user.name'], cwd=target, capture_output=True).returncode, 0)
+        self.assertFalse((target / '.gitignore').exists())
+        self.assertIn('mine.txt', git(target, 'status', '--porcelain'))
+
+    def test_linked_target_makes_no_repository_elsewhere(self):
+        elsewhere = self.base / 'elsewhere'; elsewhere.mkdir()
+        link = self.base / 'linked'; link.symlink_to(elsewhere)
+        out = m.init_repository(link, 'Linked')
+        self.assertIs(out['git'], False); self.assertIn('links to another folder', out['git_message'])
+        self.assertEqual(list(elsewhere.iterdir()), [])
+        r = self.run_sov_init(link, os.environ['PATH'])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('links to another folder', r.stderr)
+        self.assertFalse((elsewhere / '.git').exists())
+
+    def test_find_git_mirrors_the_git_guard_order(self):
+        guard = (ROOT / 'bin/git-guard/git').read_text()
+        first = re.search(r'xcode-select -p[^\n]*then exec (\S+) ', guard).group(1)
+        others = tuple(re.search(r'for g in ([^;]+); do', guard).group(1).split())
+        self.assertEqual((first, others), (m.TOOLS_GIT, m.OTHER_GITS))
 
     def test_sov_init_without_git_still_scaffolds(self):
         target = self.base / 'cli-plain'

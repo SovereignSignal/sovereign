@@ -1,10 +1,10 @@
 #!/bin/bash
 # git, or a quiet "not installed". On a Mac without Apple's developer tools /usr/bin/git is
-# a shim that opens the "Install Command Line Developer Tools" dialog, and Sovereign calls
-# git only to describe or commit an archive that is already a repository. A newcomer's
-# archive is not one, so on such a Mac every caller already handles git failing: fail fast
-# instead of putting an installer in front of them. bin/sov puts this folder first on PATH
-# only when it runs on the app's bundled Python.
+# a shim that opens the "Install Command Line Developer Tools" dialog. Sovereign calls git
+# to start an archive's history and to describe or commit it, and every caller handles git
+# failing (an archive made without git is created anyway and has no history yet), so on
+# such a Mac fail fast instead of putting an installer in front of them. bin/sov puts this
+# folder first on PATH only when it runs on the app's bundled Python.
 if [ "$(uname -s)" != Darwin ] || /usr/bin/xcode-select -p >/dev/null 2>&1; then exec /usr/bin/git "$@"; fi
 for g in /opt/homebrew/bin/git /usr/local/bin/git; do [ -x "$g" ] && exec "$g" "$@"; done
 echo "git is not installed on this Mac (no developer tools); Sovereign works without it" >&2

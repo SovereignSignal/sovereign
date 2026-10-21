@@ -18,6 +18,9 @@ GITIGNORE = '.DS_Store\n.obsidian/workspace*\narchive/\nrepos/\n'
 FALLBACK_IDENTITY = ('Sovereign', 'sovereign@localhost')
 NO_GIT = 'git was not found; the archive has no history yet.'
 NO_COMMIT = 'git could not make the first commit; the archive has no history yet.'
+# bin/git-guard/git picks these in this order on a Mac; a test keeps the two in step.
+TOOLS_GIT = '/usr/bin/git'
+OTHER_GITS = ('/opt/homebrew/bin/git', '/usr/local/bin/git')
 
 
 def archive_root(value):
@@ -66,7 +69,7 @@ def _find_git():
             tools = subprocess.run(['/usr/bin/xcode-select', '-p'], capture_output=True, timeout=10).returncode == 0
         except (OSError, subprocess.SubprocessError):
             tools = False
-        found = ['/usr/bin/git'] if tools else [g for g in ('/opt/homebrew/bin/git', '/usr/local/bin/git') if os.access(g, os.X_OK)]
+        found = [TOOLS_GIT] if tools else [g for g in OTHER_GITS if os.access(g, os.X_OK)]
         git = found[0] if found else None
     if not git:
         return None
@@ -85,7 +88,13 @@ def init_repository(root, name):
     history. The owner's global git config is never touched; a repository-local identity
     is set only when git has none it can use.
     """
-    root = Path(root)
+    root = Path(root).absolute()
+    # sov-init writes into a folder that may already exist: never re-init or commit into an
+    # existing repository, and never follow a linked target to a repository elsewhere.
+    if os.path.lexists(root / '.git'):
+        return {'git': False, 'git_message': '%s is already a git repository; left as is.' % root}
+    if root.is_symlink() or root.resolve() != root.parent.resolve() / root.name:
+        return {'git': False, 'git_message': '%s links to another folder; no git repository was made.' % root}
     (root / '.gitignore').write_text(GITIGNORE)
     git = _find_git()
     if not git:
@@ -95,7 +104,6 @@ def init_repository(root, name):
         return subprocess.run([git, *args], cwd=root, capture_output=True, text=True,
                               stdin=subprocess.DEVNULL, timeout=20)
 
-    fresh = not (root / '.git').exists()
     try:
         if run('init', '-q').returncode:
             raise subprocess.SubprocessError
@@ -105,9 +113,8 @@ def init_repository(root, name):
         if run('add', '-A').returncode or run('commit', '-q', '-m', 'new instance: %s (from Sovereign)' % name).returncode:
             raise subprocess.SubprocessError
     except (OSError, subprocess.SubprocessError):
-        # A half-made repository would claim history it does not have.
-        if fresh:
-            shutil.rmtree(root / '.git', ignore_errors=True)
+        # A half-made repository would claim history it does not have; this run made it.
+        shutil.rmtree(root / '.git', ignore_errors=True)
         return {'git': False, 'git_message': NO_COMMIT}
     return {'git': True}
 
