@@ -31,8 +31,9 @@ closed there. Every scan is linear: a JWT is found as one run of its alphabet an
 segments are checked in code, and every other body a later part must follow is bounded.
 Credential labels count after an underscore, so `DB_PASSWORD=` and `OPENAI_API_KEY=` are
 labels. A connection-URL password is recognised only between `scheme://user:` and the `@`
-that ends the authority: a port followed by a path (`host:5432/app?notify=ops@example.com`)
-is not a password, so a URL without one keeps its port and path.
+that ends the authority. A run with a slash and then a `?` or `#` before that `@` is a port,
+a path and a query or fragment (`host:5432/app?notify=ops@example.com`), not a password, so
+such a URL keeps its port and path; any other run there is redacted, digits and slash too.
 
 Each hit becomes `[redacted <kind>]`. Idempotent: redacted text has no shapes left.
 """
@@ -87,6 +88,12 @@ def _jwt_run(value: str) -> bool:
 _TOKEN_START: Dict[str, Callable[[str], int]] = {"jwt": _jwt_offset}
 
 
+def _benign_prefix(prefix: str) -> bool:
+    """Text kept in front of a cut token must be short and not token-shaped itself: under 16
+    characters and no dot-separated piece of 10 or more. Anything else goes with the token."""
+    return len(prefix) < 16 and all(len(piece) < 10 for piece in prefix.split("."))
+
+
 # How a match glued onto the text before it is judged (redactor only, see the docstring).
 GLUED_KEYLIKE = "keylike"   # glued onto a word character: must pass _glued_keylike
 GLUED_UPPER_RUN = "upper"   # must not continue a longer uppercase-or-digit run
@@ -137,11 +144,12 @@ SHAPES: List[Tuple[str, "re.Pattern[str]", Optional[Callable[[str], bool]], Opti
 
 # postgres://user:PASSWORD@host (or postgresql+psycopg2://...): only the password goes; user
 # and host stay readable. The password is either a slash-free run of any length (it stops at
-# the next slash, so the scan stays linear) or a run of up to 512 that may hold a slash but
-# does not start like a port and path ("db:5432/app?to=ops@example.com" is a host, a port
-# and a path, not a user and a password).
+# the next slash, so the scan stays linear) or a run of up to 512 that may hold a slash. The
+# one exemption is a real port and path: a slash-holding run with a ? or # after its first
+# slash ("db:5432/app?to=ops@example.com", "cache:6379/0#owner@team") is a query or fragment
+# that carries an @, not a password. Every lookahead is bounded, so each start costs O(512).
 _URL_PASSWORD = re.compile(
-    r"((?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)(?:\+[a-z0-9]+)?://[A-Za-z0-9_.%-]+:)((?!\d{1,5}/)[^@\s]{6,512}|[^@\s/]{6,})(@)")
+    r"((?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis|rediss|amqp|amqps)(?:\+[a-z0-9]+)?://[A-Za-z0-9_.%-]+:)((?![^@\s/]{0,512}/[^@\s]{0,512}[?#])[^@\s]{6,512}|[^@\s/]{6,})(@)")
 
 # "api key: VALUE", "password = VALUE": the value is judged by _looks_secret. "token" alone is
 # not a label: in a workspace about crypto it names public things all day long. A label may
@@ -183,6 +191,8 @@ def redact_text(text: str) -> Tuple[str, List[str]]:
                 return m.group(0)
             hits.append(kind)
             start = _TOKEN_START[kind](m.group(0)) if kind in _TOKEN_START else 0
+            if start and not _benign_prefix(m.group(0)[:start]):
+                start = 0
             return m.group(0)[:start] + REDACTED % kind
         return sub
 

@@ -252,6 +252,14 @@ class GluedTokens(unittest.TestCase):
         self.assertEqual(out, "postgres://app:[redacted password]@db.internal/wire")
         self.assertIn("database url with password", detector_hits("postgres://app:" + "Q7x" * 334 + "@db/x"))
 
+    def test_digits_and_a_slash_are_still_a_password(self):
+        for url, pw in (("postgres://u:" + "5432/abcdef" + "@host", "5432/abcdef"),
+                        ("postgres://u:" + "12/abcdefgh" + "@host", "12/abcdefgh")):
+            out, hits = redact_text(url)
+            self.assertEqual(out, "postgres://u:[redacted password]@host", url)
+            self.assertIn("database url with password", detector_hits(url), url)
+            self.assertNotIn(pw, out)
+
     def test_a_port_and_a_path_with_an_at_sign_are_not_a_password(self):
         for url in ("postgres://db.internal:5432/app?notify=ops@example.com",
                     "redis://cache:6379/0#owner@team",
@@ -265,6 +273,10 @@ class GluedTokens(unittest.TestCase):
         self.assertEqual(out, "eyJfoo.[redacted jwt]")
         out, hits = redact_text("eyJfoo.eyJbar." + jwt + " tail")
         self.assertEqual(out, "eyJfoo.eyJbar.[redacted jwt] tail")
+        out, hits = redact_text("x " + "ey" + "J" + MIX[:37] + "." + jwt)
+        self.assertEqual(out, "x [redacted jwt]", "a long fragment in front goes with the token")
+        out, hits = redact_text("eyJfoo.eyJbar.eyJbaz." + jwt)
+        self.assertEqual(out, "[redacted jwt]", "a kept prefix stays under 16 characters")
         out, hits = redact_text("eyJfoo" + jwt)
         self.assertEqual(hits, ["jwt"])
         self.assertNotIn(MIX[:24], out)
