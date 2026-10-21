@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from brain_redact import redact_file, redact_paths, redact_text  # noqa: E402
+from sovereign_intake.selection import secret_hits  # noqa: E402
 
 GH = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
 SK = "sk-proj-" + "abcDEF123456abcDEF123456abcDEF123456"
@@ -102,6 +103,99 @@ class Shapes(unittest.TestCase):
     def test_csv_cells(self):
         out, hits = redact_text("Name,Token,Note\nGrok,%s,rotate me\nPlain,none,ok\n" % ("xai-" + "a" * 48))
         self.assertEqual(out, "Name,Token,Note\nGrok,[redacted xai key],rotate me\nPlain,none,ok\n")
+
+
+# Key shapes for the glued cases, assembled so no fixture reads as a real credential.
+GH36 = "gh" + "p_" + "A" * 36
+SLACK = "xo" + "xb-" + "1" * 10 + "-" + "b" * 12
+AWS = "AK" + "IA" + "B" * 16
+HEX36 = "3f9a8b7c6d5e" * 3
+
+# One fixture per shape both sides know: redact_text must redact it, secret_hits must see
+# it, and secret_hits must find nothing left in what redact_text wrote.
+TOKEN_CORPUS = [
+    GH36, SLACK, AWS, TG, SK,
+    "github" + "_pat_" + "C" * 40,
+    "nt" + "n_" + "D" * 40,
+    "AI" + "za" + "E" * 35,
+    "ey" + "J" + "F" * 16 + ".ey" + "J" + "G" * 16 + "." + "H" * 16,
+]
+
+
+class GluedTokens(unittest.TestCase):
+    """A token is recognised by its own shape, not by a word boundary in front of it."""
+
+    def test_github_token_glued_onto_a_word(self):
+        for text in ("word" + GH36, "x" * 1480 + GH36, "key_" + GH36, "1234" + GH36):
+            out, hits = redact_text(text)
+            self.assertNotIn("gh" + "p_", out, text[-60:])
+            self.assertEqual(hits, ["github token"])
+        self.assertEqual(redact_text("word" + GH36)[0], "word[redacted github token]")
+
+    def test_slack_token_glued_onto_a_word(self):
+        out, hits = redact_text("word" + SLACK + " tail")
+        self.assertEqual(out, "word[redacted slack token] tail")
+        self.assertEqual(hits, ["slack token"])
+
+    def test_aws_key_id_glued_onto_a_word(self):
+        for glue in ("word", "id_", "key-"):
+            out, hits = redact_text(glue + AWS + "\n")
+            self.assertEqual(out, glue + "[redacted aws key]\n")
+        out, hits = redact_text("word" + AWS + "trailing")
+        self.assertEqual(out, "word[redacted aws key]trailing")
+
+    def test_token_at_end_of_line(self):
+        out, hits = redact_text("first line\nthe key is word" + GH36)
+        self.assertEqual(out, "first line\nthe key is word[redacted github token]")
+        out, hits = redact_text("| row | value" + SLACK + "\n| next | ok |")
+        self.assertEqual(out, "| row | value[redacted slack token]\n| next | ok |")
+
+    def test_token_inside_a_url(self):
+        out, hits = redact_text("https://api.example.com/v1/items?access=" + GH36 + "&page=2")
+        self.assertEqual(out, "https://api.example.com/v1/items?access=[redacted github token]&page=2")
+        out, hits = redact_text("https://api.telegram.org/bot" + TG + "/sendMessage")
+        self.assertEqual(out, "https://api.telegram.org/bot[redacted telegram bot token]/sendMessage")
+
+    def test_underscore_joined_labels_count(self):
+        out, hits = redact_text("DB_PASS" + "WORD=" + "Xy9kLm2pQ7rT4vW8")
+        self.assertEqual(out, "DB_PASSWORD=[redacted value]")
+        out, hits = redact_text("OPENAI_API" + "_KEY=" + "qZ8xL2mN4vB7cD1eF3gH")
+        self.assertEqual(out, "OPENAI_API_KEY=[redacted value]")
+        out, hits = redact_text('print("api' + '_key=' + 'Zx9QwErTy7UiOp3AsDfGh2JkL\\n")')
+        self.assertEqual(out, 'print("api_key=[redacted value]\\n")')
+        for keep in ("API_KEY_ID=" + "Ab3dEf6gH9jKl2Mn", "mypassword: " + "Xy9kLm2pQ7rT4vW8",
+                     'write_text("NOTION_API' + '_KEY=k\\nBRAIN_ROOT=%s\\n" % root)'):
+            self.assertEqual(redact_text(keep), (keep, []), keep)
+
+    def test_ordinary_text_still_passes(self):
+        keep = [
+            "The crowd laughs at the joke and laughs_loudly_at_the_end.",
+            "That was sk-ill, not a key, and the desk-ill-advised plan stays.",
+            "sought_after_feature_flag_for_the_new_release",
+            "task-" + HEX36 + " and risk-" + HEX36,
+            "id " + HEX36 + " and " + HEX36.upper(),
+            "| name | id | note |\n|---|---|---|\n| laughs | " + HEX36 + " | sk-ill |",
+            "SOUTHEAST ASIA PACIFIC REGION 2026",
+            "MSG.connectionTimeoutHandler.retryWithBackoff",
+            "benchmark_test_HashFunctionPerformanceSuite",
+        ]
+        for line in keep:
+            self.assertEqual(redact_text(line), (line, []), line)
+            self.assertEqual(secret_hits(line), [], line)
+
+
+class DetectorAgreesWithRedactor(unittest.TestCase):
+    """secret_hits (drop a line) and redact_text (rewrite a value) see the same tokens."""
+
+    def test_corpus(self):
+        for token in TOKEN_CORPUS:
+            for text in (token, "word" + token, "key_" + token + " tail", "?q=" + token + "&x=1"):
+                with self.subTest(text=text[:40]):
+                    out, hits = redact_text(text)
+                    self.assertTrue(hits)
+                    self.assertNotIn(token, out)
+                    self.assertTrue(secret_hits(text))
+                    self.assertEqual(secret_hits(out), [], out)
 
 
 class Files(unittest.TestCase):

@@ -22,6 +22,9 @@
 - `sov-capture` on a staged host: a capture for a lane with no `raw/workspaces/<lane>`
   now lands in the staging area's `raw/tools/<lane>`, as the write wires already did,
   instead of the vault's `raw/workspaces/<lane>`.
+- The secret redactor recognises a token by its shape, not by what comes before it: a key
+  glued onto a word, a path or a bot URL, and an underscore-joined label such as
+  `DB_PASSWORD=`, are now redacted and detected.
 
 ## 0.8.0 "Reach" (build 51)
 

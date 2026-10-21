@@ -14,21 +14,24 @@ FORBIDDEN = re.compile(
     r"\.sh$|\.py$|\.pem$|crontab|\.venv|node_modules)", re.I)
 
 
+# Detector-side shapes; secret_hits adds every kind brain_redact.redact_text redacts. The
+# leading-boundary rule is brain_redact's: a vendor token matches wherever it starts, and
+# \b stays only on the short prefixes that end ordinary words (bare sk-, pat, re_).
 SECRET_PATTERNS = [
     (r"-----BEGIN [A-Z ]*(PRIVATE|PUBLIC) KEY-----",     "key block"),
-    (r"\bssh-(ed25519|rsa|dss)\s+AAAA",                  "ssh public key"),
-    (r"\bghp_[A-Za-z0-9]{20,}",                          "github token"),
-    (r"\bgithub_pat_[A-Za-z0-9_]{20,}",                  "github fine-grained pat"),
-    (r"\bsk-[A-Za-z0-9_\-]{20,}",                        "openai-style key"),
+    (r"ssh-(ed25519|rsa|dss)\s+AAAA",                    "ssh public key"),
+    (r"ghp_[A-Za-z0-9]{20,}",                            "github token"),
+    (r"github_pat_[A-Za-z0-9_]{20,}",                    "github fine-grained pat"),
+    (r"(?:sk-(?=proj-|ant-|svcacct-)|\bsk-)[A-Za-z0-9_\-]{20,}", "openai-style key"),
     (r"\bpat[A-Za-z0-9]{10,}\.[A-Za-z0-9]{40,}",         "airtable pat"),
     (r"\bre_[A-Za-z0-9_\-]{20,}",                        "resend key"),
-    (r"\bntn_[A-Za-z0-9]{20,}",                          "notion token"),
-    (r"\bxox[baprs]-[A-Za-z0-9\-]{10,}",                 "slack token"),
-    (r"\bAKIA[0-9A-Z]{16}\b",                            "aws access key id"),
-    (r"\b\d{8,10}:AA[A-Za-z0-9_\-]{30,}",                "telegram bot token"),
-    (r"\beyJ[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{15,}",   "jwt"),
-    (r"\bAIza[0-9A-Za-z_\-]{30,}",                       "google api key"),
-    (r"(?i)\b(api[_-]?key|secret|password|passwd|access[_-]?token|bearer|pat)\b"
+    (r"ntn_[A-Za-z0-9]{20,}",                            "notion token"),
+    (r"xox[baprs]-[A-Za-z0-9\-]{10,}",                   "slack token"),
+    (r"AKIA[0-9A-Z]{16}(?![0-9A-Z])",                    "aws access key id"),
+    (r"\d{8,10}:AA[A-Za-z0-9_\-]{30,}",                  "telegram bot token"),
+    (r"eyJ[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{15,}",     "jwt"),
+    (r"AIza[0-9A-Za-z_\-]{30,}",                         "google api key"),
+    (r"(?i)(?<![a-z0-9])(api[_-]?key|secret|password|passwd|access[_-]?token|bearer|pat)\b"
      r"\s*[:=]\s*[\"']?[A-Za-z0-9_\-\.]{16,}",           "assigned credential value"),
     (r"(?i)postgres(?:ql)?://[^\s:@]+:[^\s@]+@",         "database url with password"),
 ]
