@@ -38,6 +38,19 @@
 .set-prompt{color:var(--ink-2);background:var(--panel);border:1px solid var(--rule-soft);white-space:pre-wrap;overflow-wrap:anywhere;max-height:168px;overflow:auto}
 .set-sect textarea{color:var(--ink);background:var(--panel);border:1px solid var(--rule);resize:vertical}
 .set-imp-plan{max-height:none}
+/* Session capture: the switch, its distiller, a checkbox per project, then the plan. Like
+   Import, the body takes the row and the buttons follow the plan they act on. */
+.set-sect:has(.set-ses-projects){align-items:start}
+.set-sect:has(.set-ses-projects) .set-body{grid-column:2/-1}
+.set-sect:has(.set-ses-projects) .acts{grid-column:2/-1;justify-content:flex-start}
+.set-ses-switch{margin-left:8px;font:10px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.set-ses-switch.on{color:var(--brass-text)}
+.set-ses-waiting{color:var(--brass-text)}
+.set-ses-projects{display:flex;flex-direction:column;gap:4px;margin:8px 0 0}
+.set-ses-projects .check{gap:6px;align-items:baseline;overflow-wrap:anywhere}
+.set-ses-projects small{color:var(--muted);font-size:10.5px}
+.set-ses-projects .check:has(input:disabled){color:var(--muted);cursor:default}
+.set-ses-plan{max-height:none}
 @media(max-width:800px){.set-sect{grid-template-columns:96px minmax(0,1fr) auto}.set-pane{padding:8px 16px 24px}}
 
 /* Permissions read as a table because the comparison between lanes is the point:

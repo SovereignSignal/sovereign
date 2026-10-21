@@ -13,6 +13,7 @@ const view = global.window.SovSettings;
 const paint = ctx => { host.innerHTML = ''; view.mount(host, Object.assign({ S: {}, D: null, root: null, pinned: false }, ctx)); return host.innerHTML };
 
 const app = extra => ({ machine: Object.assign({ app: { installed: true, version: '0.5.6', build: '28', source_commit: 'abc1234' }, template: '/Owner/src', template_rev: 'abc1234 subject' }, extra) });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const RELEASE = '<button class="brass" id="set-update">Check for updates</button>';
 const SOURCE = 'id="set-update-source">Update from source';
 
@@ -305,6 +306,112 @@ test('each provider has a key guide that opens until a key is saved and links on
   assert(paint({ root: '/a', curator: cur('anthropic', false) }).includes('data-url="https://platform.claude.com/settings/keys"'));
   // Once the key is in, the guide steps aside but stays one click away.
   assert(paint({ root: '/a', curator: cur('openai', true) }).includes('<details class="set-more"><summary>Get your OpenAI key</summary>'));
+});
+
+
+// Settings › Session capture: the status `sov ingest sessions status --json` prints.
+const SES = extra => Object.assign({ tool: 'claude-code', enabled: false, available: true, mode: 'hubless', reason: '',
+  distiller: { provider: 'anthropic', model: 'claude-x', name: 'Anthropic' },
+  budget: { calls_per_tick: 3, calls_per_day: 30, chars_per_tick: 60000, used_today: 0 },
+  week: { distilled: 0, captures: 0, skipped: 0, waiting: 0, failed: 0, refused: 0 }, waiting: null,
+  projects: [
+    { path: '/Owner/src/garden', label: 'garden', sessions: 4, on: true, kind: 'normal', denied: false },
+    { path: '/private/tmp/scratch', label: 'scratch', sessions: 1, on: false, kind: 'temp', denied: false },
+    { path: '/Owner/Research', label: 'Research', sessions: 2, on: false, kind: 'archive', denied: false }],
+  next: [{ tool: 'codex', label: 'Codex' }] }, extra);
+const CUR = { hub: true };
+// The Session capture section alone, so other sections' strings never leak into an assertion.
+const sesOf = html => { const i = html.indexOf('<h2>Session capture</h2>'); assert(i >= 0, 'no Session capture section');
+  const start = html.lastIndexOf('<div class="set-sect">', i), end = html.indexOf('<div class="set-sect">', i);
+  return html.slice(start, end < 0 ? undefined : end); };
+// mount merges into the last ctx, so every paint names the preview keys, as index.html does.
+const ses = ctx => sesOf(paint(Object.assign({ root: '/Owner/Research', curator: CUR, sessionsPlan: '', sessionsPreviewed: false }, ctx)));
+
+test('session capture says Checking until its status is read, and only for an open archive', () => {
+  assert(!paint({ root: null }).includes('Session capture'));
+  const html = ses({ sessions: null });
+  assert(html.includes('Checking…'));
+  assert(!html.includes('id="set-ses-preview"') && !html.includes('id="set-ses-on"'));
+});
+
+test('a client Mac says capture is off here and why, with no controls', () => {
+  const reason = "This Mac sends its work to a hub archive. Session capture needs the archive's own model, which runs on the hub, so it stays off here.";
+  const html = ses({ sessions: SES({ mode: 'client', available: false, reason }), sessionsPreviewed: true, sessionsPlan: 'plan' });
+  assert(html.includes('Session capture is off on this Mac.'));
+  assert(html.includes(esc(reason)));
+  for (const id of ['set-ses-on', 'set-ses-off', 'set-ses-preview']) assert(!html.includes(`id="${id}"`), id);
+  assert(!html.includes('data-ses-path'));
+});
+
+test('an archive with no usable model gives the reason and no switch', () => {
+  const html = ses({ sessions: SES({ available: false, reason: 'No key is saved for Anthropic. Add one in Settings › Curator.' }), sessionsPreviewed: true });
+  assert(html.includes('No key is saved for Anthropic.'));
+  assert(!html.includes('id="set-ses-on"'));
+  assert(!html.includes('data-ses-path'));
+  // A guard fragment still reads as a sentence.
+  assert(ses({ sessions: SES({ available: false, reason: 'needs a local model on this archive' }) })
+    .includes('Session capture needs a local model on this archive.'));
+});
+
+test('off before a preview offers Preview and no Turn on', () => {
+  const html = ses({ sessions: SES() });
+  assert(html.includes('Claude Code: distill quiet sessions into its lane'));
+  assert(html.includes('Codex: next'));
+  assert(html.includes('Uses your curator&#39;s provider: Anthropic') || html.includes("Uses your curator's provider: Anthropic"));
+  assert(html.includes('Up to 3 sessions a tick and 30 a day, oldest first.'));
+  assert(html.includes('id="set-ses-preview"'));
+  assert(!html.includes('id="set-ses-on"'));
+  assert(!html.includes('id="set-ses-off"'));
+});
+
+test('off after a preview shows the plan and offers Turn on', () => {
+  const html = ses({ sessions: SES(), sessionsPreviewed: true, sessionsPlan: 'Session capture for Claude Code is off.\n<b>1 would be distilled</b>' });
+  assert(html.includes('id="set-ses-on"'));
+  assert(html.includes('1 would be distilled') && !html.includes('<b>1 would'), 'the plan is escaped');
+  // A preview that has not rendered here does not count.
+  assert(!ses({ sessions: SES(), sessionsPlan: 'plan' }).includes('id="set-ses-on"'));
+});
+
+test('on shows the week and Turn off, never Turn on', () => {
+  const html = ses({ sessions: SES({ enabled: true, week: { distilled: 3, captures: 2, skipped: 41, waiting: 1, failed: 0, refused: 1 },
+    waiting: { reason: 'model unreachable', since: '2026-10-21T14:05Z' } }), sessionsPreviewed: true, sessionsPlan: 'plan' });
+  assert(html.includes('This week: distilled 3, captures 2, skipped 41, waiting 1, failed 0, refused 1.'));
+  assert(html.includes('Waiting: model unreachable since 2026-10-21T14:05Z.'));
+  assert(html.includes('id="set-ses-off"'));
+  assert(!html.includes('id="set-ses-on"'));
+});
+
+test('projects: one checkbox each with its count, temporary folders unchecked, archives a fixed row', () => {
+  const html = ses({ sessions: SES() });
+  assert(/<input type="checkbox" data-ses-path="\/Owner\/src\/garden" checked>/.test(html));
+  assert(/<input type="checkbox" data-ses-path="\/private\/tmp\/scratch">/.test(html), 'a temporary folder starts off');
+  assert(html.includes('4 sessions') && html.includes('1 session<'));
+  assert(!html.includes('data-ses-path="/Owner/Research"'), 'an archive is never a choice');
+  assert(/<input type="checkbox" disabled> Inside an archive: never/.test(html));
+  const evil = ses({ sessions: SES({ projects: [{ path: '/a/"><img src=x>', label: '<img src=x>', sessions: 1, on: true, kind: 'normal', denied: false }] }) });
+  assert(!evil.includes('<img'));
+});
+
+test('sections run Curator, Session capture, Import', () => {
+  const html = paint({ root: '/Owner/Research', curator: CUR, sessions: SES() });
+  const at = h => html.indexOf(`<h2>${h}</h2>`);
+  assert(at('Curator') >= 0 && at('Curator') < at('Session capture') && at('Session capture') < at('Import'));
+});
+
+test('no em or en dash in any session capture string', () => {
+  const states = [{ sessions: null }, { sessions: { error: 'x' } },
+    { sessions: SES({ mode: 'client', available: false, reason: 'r' }) }, { sessions: SES({ available: false, reason: 'r' }) },
+    { sessions: SES() }, { sessions: SES(), sessionsPreviewed: true, sessionsPlan: 'p' },
+    { sessions: SES({ enabled: true, waiting: { reason: 'r', since: 's' } }) }, { sessions: SES({ projects: [] }) }];
+  for (const s of states) assert(!/[\u2013\u2014]/.test(ses(s)), JSON.stringify(s));
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../ui/settings-view.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function sessionSection'), src.indexOf('function importSection'));
+  assert(fn.length > 100, 'sessionSection precedes importSection');
+  assert(!/[\u2013\u2014]/.test(fn));
+});
+
+test('session capture never posts on its own', () => {
+  assert.equal(sent.length, 0);
 });
 
 console.log(checks + ' settings view checks passed.');

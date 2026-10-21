@@ -877,8 +877,11 @@ window.onerror = function (msg, src, line, col) {
       const open=[...rows.querySelectorAll('.set-pane details')].map(x=>x.open),note=$('#set-update-state')?.textContent;
       if(selectedRoot&&!curatorAsked){curatorAsked=true;bridge({cmd:'curator',action:'status'});}
       if(selectedRoot&&!importAsked){importAsked=true;bridge({cmd:'import',action:'prompt'});}
-      SovSettings.mount(rows,{S,D,root:selectedRoot,pinned,curator:curatorState,imports:importState});
+      if(selectedRoot&&!sessionsAsked){sessionsAsked=true;bridge({cmd:'sessions',action:'status'});}
+      SovSettings.mount(rows,{S,D,root:selectedRoot,pinned,curator:curatorState,imports:importState,
+        sessions:sessionsState.status,sessionsPlan:sessionsState.plan,sessionsPreviewed:sessionsState.previewed});
       if(importState.note)SovSettings.note('set-imp-state',importState.note);
+      if(sessionsState.note)SovSettings.note('set-ses-state',sessionsState.note);
       const now=rows.querySelectorAll('.set-pane details');if(now.length===open.length)now.forEach((x,i)=>{x.open=open[i];});
       if(note)SovSettings.note('set-update-state',note);footerMeta(0);return;}
     if(view==='recovery'){region('Archive backups');SovBackups.mount(rows,selectedRoot);footerMeta(0);return;}
@@ -1018,6 +1021,12 @@ window.onerror = function (msg, src, line, col) {
   document.addEventListener("change", e => {
     if(e.target.id==='discovery-filter'){discoveryFilter=e.target.value;renderList();renderInspector();$('#discovery-filter').focus();}
     if (e.target.id === "s-appearance") bridge({cmd: "appearance", value: e.target.value});
+    // A project's checkbox is the allow or deny list: checked reads its sessions, unchecked never does.
+    if (e.target.dataset && e.target.dataset.sesPath) {
+      if (sessionsBusy) { e.target.checked = !e.target.checked; return; }
+      sessionsBusy = true; sessionsState.note = "Saving\u2026"; SovSettings.note("set-ses-state", sessionsState.note);
+      bridge({cmd: "sessions", action: e.target.checked ? "allow" : "deny", path: e.target.dataset.sesPath});
+    }
   });
   window.addEventListener("sov-appearance", e => {
     S.appearance = e.detail;
@@ -1126,6 +1135,8 @@ window.onerror = function (msg, src, line, col) {
   let curatorState=null,curatorAsked=false,curatorBusy=false;
   // Settings › Import: the prompt (asked for once), the last preview, and whether Import may run.
   let importState={prompt:'',plan:'',ready:false,note:''},importAsked=false,importBusy=false;
+  // Settings › Session capture: its status, the last Preview plan (Turn on waits for one), one action at a time.
+  let sessionsState={status:null,plan:'',previewed:false,note:''},sessionsAsked=false,sessionsBusy=false;
   // A hub job the owner can retry from here: the button, why it may be held, and the honest outcome.
   function retryActions(o){
     const health=o.health||{},fresh=!D?._status?.stale&&!D?._status?.error&&hub().reachable===true&&selectedRoot===D?.machine?.vault;
@@ -1735,6 +1746,14 @@ window.onerror = function (msg, src, line, col) {
         SovSettings.note("set-cur-state", { key: "Saving\u2026", enable: "Turning on\u2026", disable: "Turning off\u2026", run: "Curating\u2026 this can take a few minutes.", trust: "Granting background landing\u2026", untrust: "Returning to ask-first\u2026" }[action]);
         return bridge(action === "key" ? { cmd: "curator", action, key } : { cmd: "curator", action });
       }
+      if (b.id === "set-ses-preview" || b.id === "set-ses-on" || b.id === "set-ses-off") {
+        if (sessionsBusy) return;
+        const action = { "set-ses-preview": "preview", "set-ses-on": "on", "set-ses-off": "off" }[b.id];
+        sessionsBusy = true;
+        sessionsState.note = { preview: "Checking\u2026", on: "Turning on\u2026", off: "Turning off\u2026" }[action];
+        SovSettings.note("set-ses-state", sessionsState.note);
+        return bridge({ cmd: "sessions", action });
+      }
       if (b.id === "set-imp-preview" || b.id === "set-imp-apply") {
         if (importBusy) return;
         const text = SovSettings.importText(), apply = b.id === "set-imp-apply";
@@ -2010,6 +2029,26 @@ window.onerror = function (msg, src, line, col) {
           importState = { prompt: importState.prompt, plan: "", ready: false, note: line[0].toUpperCase() + line.slice(1) + " Curate now to judge them sooner." };
           SovSettings.importText("");
           setTimeout(refresh, 500);
+        }
+      }
+      if (settingsOpen) renderList();
+    } else if (kind === "sessionsResult") {
+      const out = String(payload.out || "").trim(), err = String(payload.err || "").trim().split("\n").filter(Boolean).pop() || "";
+      if (payload.action === "status") {
+        let parsed = null; try { parsed = JSON.parse(out); } catch (e) {}
+        sessionsState.status = parsed || { error: err || "Session capture's status could not be read." };
+      } else {
+        sessionsBusy = false;
+        if (payload.action === "preview") {
+          // The plan as `sov ingest sessions` prints it. Turn on is offered only once it is shown.
+          sessionsState.plan = payload.exit === 0 ? out : "";
+          sessionsState.previewed = payload.exit === 0 && !!out;
+          sessionsState.note = payload.exit === 0 ? "" : (err || "The preview did not run.");
+        } else {
+          // Switching on or off starts the next look from a fresh preview.
+          if (payload.exit === 0 && (payload.action === "on" || payload.action === "off")) { sessionsState.plan = ""; sessionsState.previewed = false; }
+          sessionsState.note = payload.exit === 0 ? (out.split("\n").filter(Boolean).pop() || "Saved.") : (err || "That did not work.");
+          bridge({ cmd: "sessions", action: "status" });
         }
       }
       if (settingsOpen) renderList();

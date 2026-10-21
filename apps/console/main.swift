@@ -260,6 +260,33 @@ final class Bridge: NSObject, WKScriptMessageHandler {
                     self.deliver("importResult", ["action": action, "exit": code, "out": out, "err": err], generation: generation)
                 }
             }
+        case "sessions":
+            // Session capture (lib/session_ingest/cli.py) through the bundled runtime, as the
+            // other backend bridges run: status and the Preview plan never read the Keychain
+            // secret or call a model; on, off, allow and deny change only its config.
+            let action = d["action"] as? String ?? "status"
+            let commands: [String: [String]] = ["status": ["status", "--json"], "preview": [], "on": ["--on"],
+                                                "off": ["--off"], "allow": ["--allow"], "deny": ["--deny"]]
+            guard var tail = commands[action], let resources = Bundle.main.resourceURL else {
+                deliver("sessionsResult", ["action": action, "exit": 64, "err": "Unknown session capture action."], generation: generation); return
+            }
+            if action == "allow" || action == "deny" {
+                // A folder from the status this page read: absolute, one line, bounded.
+                guard let path = d["path"] as? String, path.hasPrefix("/"), path.unicodeScalars.count <= 1024,
+                      path.rangeOfCharacter(from: CharacterSet(charactersIn: "\n\r\u{0}")) == nil else {
+                    deliver("sessionsResult", ["action": action, "exit": 64, "err": "That folder is not one session capture can store."], generation: generation); return
+                }
+                tail.append(path)
+            }
+            let args = [resources.appendingPathComponent("runtime/bin/python3").path, "-I", "-B",
+                        resources.appendingPathComponent("backend/bin/sov-ingest").path, "sessions"] + tail
+            var env: [String: String] = [:]
+            if let root = Settings.archive { env["SOVS_VAULT"] = root }
+            run(args, environment: env, timeLimit: action == "status" || action == "preview" || action == "on" ? 120 : 30) { out, err, code in
+                DispatchQueue.main.async {
+                    self.deliver("sessionsResult", ["action": action, "exit": code, "out": out, "err": err], generation: generation)
+                }
+            }
         case "connect":
             guard let sov = sov else { refuse(d, "connect", "sov is not installed on this machine.", generation: generation); return }
             guard let h = d["harness"] as? String else { refuse(d, "connect", "No tool was named.", generation: generation); return }

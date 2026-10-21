@@ -139,6 +139,47 @@ window.SovSettings = (() => {
     return sect("Curator", say(lead) + picker + key + guide + trustSay + landedList + `<span class="pulls" id="set-cur-state" aria-live="polite"></span>`, note, acts);
   }
 
+  /* Session capture (`sov ingest sessions status --json`): quiet Claude Code sessions,
+     distilled on this archive's own curator provider into the tool's lane as untrusted
+     captures. Off until the owner turns it on, and Turn on is offered only once a Preview
+     (the dry plan, no model call) has rendered here, so nobody switches on blind. A Mac
+     that sends its work to a hub has no model of its own here and says so. */
+  function sessionSection(X, plan, previewed) {
+    const T = "Session capture";
+    if (!X) return sect(T, say("Checking…"));
+    if (X.error) return sect(T, say(esc(X.error)));
+    if (X.mode === "client") return sect(T, say("Session capture is off on this Mac.") + (X.reason ? `<p class="set-note">${esc(X.reason)}</p>` : ""));
+    const off = `<button id="set-ses-off">Turn off</button>`;
+    if (!X.available) {
+      const r = String(X.reason || "no model can read a session here").trim();
+      const line = /^[a-z]/.test(r) ? `Session capture ${r}${/[.!?]$/.test(r) ? "" : "."}` : r;
+      // Capture already on with its model gone keeps a way to switch it off; never on.
+      return sect(T, say(esc(line)), "", X.enabled ? off : "");
+    }
+    const d = X.distiller || {}, b = X.budget || {}, w = X.week || {};
+    const nextUp = (Array.isArray(X.next) ? X.next : []).map(n => `<p class="set-note">${esc(n.label)}: next</p>`).join("");
+    const projects = (Array.isArray(X.projects) ? X.projects : []).filter(p => p.kind !== "archive");
+    const n = k => Number.isFinite(k) ? k : 0;
+    const rows = projects.map(p => `<label class="check" title="${esc(p.path)}"><input type="checkbox" data-ses-path="${esc(p.path)}"${p.on ? " checked" : ""}> ${esc(p.label || p.path)} <small>${n(p.sessions)} session${n(p.sessions) === 1 ? "" : "s"}</small></label>`).join("")
+      + `<label class="check"><input type="checkbox" disabled> Inside an archive: never</label>`;
+    const week = X.enabled ? `<p class="set-note">This week: distilled ${n(w.distilled)}, captures ${n(w.captures)}, skipped ${n(w.skipped)}, waiting ${n(w.waiting)}, failed ${n(w.failed)}, refused ${n(w.refused)}.</p>`
+      + (X.waiting && X.waiting.reason ? `<p class="set-note set-ses-waiting">Waiting: ${esc(X.waiting.reason)} since ${esc(X.waiting.since || "")}.</p>` : "") : "";
+    const body = `<p class="set-lead">Claude Code: distill quiet sessions into its lane <span class="set-ses-switch${X.enabled ? " on" : ""}">${X.enabled ? "On" : "Off"}</span></p>`
+      + nextUp
+      + `<p class="set-note">Uses your curator's provider: ${esc(d.name || d.provider || "none")}</p>`
+      + week
+      + `<div class="set-ses-projects">${rows}</div>`
+      + (projects.length ? "" : `<p class="set-note">No Claude Code sessions in the last 30 days.</p>`)
+      + `<p class="set-note">Up to ${n(b.calls_per_tick)} sessions a tick and ${n(b.calls_per_day)} a day, oldest first.</p>`
+      + (plan ? `<pre class="set-prompt set-ses-plan">${esc(plan)}</pre>` : "")
+      + `<span class="pulls" id="set-ses-state" aria-live="polite"></span>`;
+    const acts = `<button id="set-ses-preview">Preview</button>`
+      + (X.enabled ? off : previewed && plan ? `<button class="brass" id="set-ses-on">Turn on</button>` : "");
+    const note = X.enabled ? "Transcripts stay on this Mac. A cleaned excerpt of each quiet session goes to the distiller, and what it keeps lands untrusted in the lane for the curator and you to judge."
+      : "Preview shows what the next tick would read, with no model call. Turn on appears after it.";
+    return sect(T, body, note, acts);
+  }
+
   /* What ChatGPT already remembers, brought in without a terminal. The prompt is the one
      `sov import chatgpt --prompt` prints, so the app and the command line never ask
      ChatGPT different things. A preview always comes before Import, and Import only
@@ -250,11 +291,13 @@ window.SovSettings = (() => {
 
   function render() {
     if (!host || !host.isConnected) return;
-    const { S = {}, D = null, root = null, pinned = false, curator = null, imports = null } = ctx;
+    const { S = {}, D = null, root = null, pinned = false, curator = null, imports = null,
+            sessions = null, sessionsPlan = "", sessionsPreviewed = false } = ctx;
     host.className = "";
     host.innerHTML = `<div class="set-pane">
       ${archiveSection(root)}
       ${root ? curatorSection(curator) : ""}
+      ${root ? sessionSection(sessions, sessionsPlan, sessionsPreviewed) : ""}
       ${root ? importSection(imports) : ""}
       ${appSection(D)}
       ${prefsSection(S, pinned)}
