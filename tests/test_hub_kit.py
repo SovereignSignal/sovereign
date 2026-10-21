@@ -79,9 +79,9 @@ class Kit(unittest.TestCase):
         return inst
 
     def test_a_listed_extra_file_round_trips_and_a_helper_stays_executable(self):
-        """A hand-kept job can call a small compiled helper (here: one that mounts a NAS
-        share). The wrapper falls back to the old, broken path when the helper is not
-        executable, so a restore that dropped the bit would bring the failure back."""
+        """A hand-kept job can call a small compiled helper, for example one that mounts a
+        network share. A wrapper that checks the helper with -x falls back to whatever it
+        replaced when the bit is gone, so a restore that dropped it would undo the fix."""
         helper = self.home / "bin" / "helper"; helper.parent.mkdir()
         helper.write_bytes(b"\xcf\xfa\xed\xfe\x00\x01binary"); helper.chmod(0o755)
         source = self.home / "bin" / "helper.c"; source.write_text("// helper source\n"); source.chmod(0o644)
@@ -99,20 +99,33 @@ class Kit(unittest.TestCase):
         self.assertEqual((out / "include/secret.env").stat().st_mode & 0o777, 0o600)
 
     def test_a_missing_listed_file_fails_the_build_and_writes_no_kit(self):
+        folder = Path(self.inst["snapshot"]["folder"]) / "hub-kit"
+        kit.build(self.inst, self.state, self.home, ROOT, apply=True)
+        (good,) = folder.glob("*.kit"); before = good.read_bytes()
+        on_target = sorted(p.name for p in self.target.glob("*.kit"))
         inst = self._with_include(self.home / "secret.env", self.home / "bin" / "gone")
         with self.assertRaisesRegex(ValueError, "not there"):
             kit.inventory(inst, self.state, self.home)
-        folder = Path(inst["snapshot"]["folder"]) / "hub-kit"
         for apply in (False, True):
             with self.assertRaisesRegex(ValueError, "gone"):
                 kit.build(inst, self.state, self.home, ROOT, apply=apply)
-        self.assertFalse(folder.exists() and any(folder.glob("*.kit")), "no kit without every listed file")
+        self.assertEqual(list(folder.glob("*.kit")), [good], "no new kit without every listed file")
+        self.assertEqual(good.read_bytes(), before, "the last good kit is untouched")
+        self.assertEqual(sorted(p.name for p in self.target.glob("*.kit")), on_target)
 
     def test_two_listed_files_with_one_name_fail_instead_of_shadowing(self):
         other = self.home / "elsewhere"; other.mkdir(); (other / "secret.env").write_text("OTHER=1\n")
         inst = self._with_include(self.home / "secret.env", other / "secret.env")
-        with self.assertRaisesRegex(ValueError, "share the name"):
+        with self.assertRaisesRegex(ValueError, "own name"):
             kit.inventory(inst, self.state, self.home)
+        upper = self.home / "a" / "Helper"; upper.parent.mkdir(); upper.write_text("A\n")
+        lower = self.home / "b" / "helper"; lower.parent.mkdir(); lower.write_text("B\n")
+        folded = self._with_include(upper, lower)
+        with self.assertRaisesRegex(ValueError, "own name"):
+            kit.inventory(folded, self.state, self.home)
+        with self.assertRaisesRegex(ValueError, "own name"):
+            kit.build(folded, self.state, self.home, ROOT, apply=True)
+        self.assertFalse(any((Path(folded["snapshot"]["folder"]) / "hub-kit").glob("*.kit")))
         same = self._with_include(self.home / "secret.env", self.home / "secret.env")
         same["notify"] = {"archive": str(self.home / "tg.env"), "alerts": str(self.home / "tg.env")}
         names = [n for n, _ in kit.inventory(same, self.state, self.home)]

@@ -54,13 +54,14 @@ def inventory(inst, state, home, executables=None):
     entries = []; seen = {}
 
     def add(name, p):
-        src = Path(p).resolve()
-        if name in seen:
-            if seen[name] == src:      # the same file named twice (one env for both notify slots)
+        src = Path(p).resolve(); folded = name.casefold()
+        if folded in seen:
+            if seen[folded] == src:    # the same file named twice (one env for both notify slots)
                 return
-            # Listed files land under include/ by name; a second one would shadow the first.
-            raise ValueError("two kit entries would share the name %s; list their folder instead" % name)
-        seen[name] = src; entries.append((name, Path(p).read_bytes()))
+            # Files land in the kit by name, and a restore onto a case-insensitive disk folds
+            # case, so a second file under the same name (in any case) would overwrite the first.
+            raise ValueError("two different files would land in the kit as %s; each needs its own name" % name)
+        seen[folded] = src; entries.append((name, Path(p).read_bytes()))
         if executables is not None and Path(p).stat().st_mode & 0o100:
             executables.add(name)
 
