@@ -4,14 +4,24 @@ Run from inside an app, the backend's own bundle is the installed app, wherever 
 put it: ~/Applications, /Applications or anywhere else. Run from a source checkout it is
 the first known folder that holds Sovereign.app, and ~/Applications for a fresh install.
 
-Never whatever the bundle identifier resolves to. On 2026-09-20 four bundles on one
-machine shared com.sovereign.console and macOS picked the highest version it had
-indexed, which that day was an unreleased build sitting in /private/tmp.
+A bundle counts only when its Info.plist names Sovereign's bundle id and it is not a
+preview. The updater deletes whatever this returns before copying the new app in, so a
+folder that merely ends in .app, or another app that happens to hold a copy of the
+backend, must never be the answer.
+
+Never whatever the bundle identifier resolves to through Launch Services. On 2026-09-20
+four bundles on one machine shared com.sovereign.console and macOS picked the highest
+version it had indexed, which that day was an unreleased build sitting in /private/tmp.
+
+writable() probes the holding folder and the bundle's top folder only, not every file
+inside it. A delete that fails partway is covered by the updater's restore(), which puts
+the kept copy back.
 """
 import os
 import plistlib
 
 NAME = "Sovereign.app"
+BUNDLE_ID = "com.sovereign.console"
 # Searched in order from a checkout. The first is also where a fresh install goes.
 ROOTS = ("~/Applications", "/Applications")
 
@@ -28,29 +38,32 @@ def bundle_of(path):
         p = parent
 
 
-def _preview(app):
-    """Preview builds stay separate (build.sh will not install one), so one never counts."""
+def is_sovereign(app):
+    """Whether app is an installed Sovereign: its bundle id, and not a preview build.
+
+    Preview builds stay separate (build.sh will not install one), so one never counts."""
     try:
         with open(os.path.join(app, "Contents", "Info.plist"), "rb") as fh:
-            return bool(plistlib.load(fh).get("SovereignPreview"))
+            info = plistlib.load(fh)
     except Exception:
         return False
+    return info.get("CFBundleIdentifier") == BUNDLE_ID and not info.get("SovereignPreview")
 
 
-def installed_app_path(here, roots=ROOTS):
+def installed_app_path(here, roots=None):
     """The installed app for code running at `here` (pass the caller's __file__)."""
     app = bundle_of(here)
-    if app and not _preview(app):
+    if app and is_sovereign(app):
         return app
-    known = [os.path.join(os.path.expanduser(r), NAME) for r in roots]
+    known = [os.path.join(os.path.expanduser(r), NAME) for r in (ROOTS if roots is None else roots)]
     for candidate in known:
-        if os.path.isdir(candidate):
+        if os.path.isdir(candidate) and is_sovereign(candidate):
             return candidate
     return known[0] if known else os.path.join(os.path.expanduser(ROOTS[0]), NAME)
 
 
 def writable(app):
-    """Whether this user can replace app: remove it and put a new one in its folder."""
+    """Whether this process may replace app: remove it and put a new one in its folder."""
     folder = os.path.dirname(app)
     if not os.path.isdir(folder):
         return writable(folder) if folder != app else False

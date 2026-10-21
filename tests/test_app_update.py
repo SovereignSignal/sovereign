@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 UPD = ROOT / "bin/sov-app-update"
 def bundle(path, version, build, commit):
     (path / "Contents").mkdir(parents=True, exist_ok=True)
-    d = {"CFBundleShortVersionString": version, "CFBundleVersion": build}
+    d = {"CFBundleIdentifier": "com.sovereign.console", "CFBundleShortVersionString": version, "CFBundleVersion": build}
     if commit is not None:
         d["SovereignSourceCommit"] = commit
     (path / "Contents/Info.plist").write_bytes(plistlib.dumps(d))
@@ -203,11 +203,20 @@ class AppUpdatePreview(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             code, out = run(Path(tmp), "--preview")
             self.assertEqual(code, 0, out)
-            if not Path("/Applications/Sovereign.app").exists():   # outside any temp HOME
-                self.assertEqual(out["installed"], {})
-                self.assertFalse(out["current"])
-                self.assertEqual(out["app_path"], str(Path(tmp) / "Applications/Sovereign.app"),
-                                 "a fresh install goes to the home folder's Applications")
+        # /Applications is outside any temp HOME, so name both folders to get the same
+        # answer on every machine, including one that has Sovereign installed there.
+        import runpy
+        from unittest.mock import patch
+        sys.path.insert(0, str(ROOT / "lib"))
+        import sovereign_app
+        with tempfile.TemporaryDirectory() as tmp:
+            mine, system = Path(tmp) / "home/Applications", Path(tmp) / "Applications"
+            with patch.object(sovereign_app, "ROOTS", (str(mine), str(system))):
+                p = runpy.run_path(str(UPD))["plan"]()
+            self.assertEqual(p["installed"], {})
+            self.assertFalse(p["current"])
+            self.assertEqual(p["app_path"], str(mine / "Sovereign.app"),
+                             "a fresh install goes to the home folder's Applications")
 def release_app(path, version, build, bundle_id="com.sovereign.console"):
     (path / "Contents/MacOS").mkdir(parents=True, exist_ok=True)
     (path / "Contents/Info.plist").write_bytes(plistlib.dumps(
@@ -428,12 +437,23 @@ class ReleaseUpdate(unittest.TestCase):
         finally:
             folder.chmod(0o755)
         self.assertEqual(code, 1, out)
-        self.assertIn(str(app), out["error"])
+        self.assertIn("This process is not allowed to change %s." % app, out["error"])
+        self.assertIn("App Management", out["error"])
         self.assertIn("Nothing was changed", out["error"])
+        self.assertNotIn("\u2014", out["error"]); self.assertNotIn("\u2013", out["error"])
         self.assertEqual((app / "Contents/Info.plist").read_bytes(), plist)
         self.assertFalse(self.updates.exists() and any(self.updates.iterdir()), "nothing may be downloaded")
         self.assertFalse(self.opened.exists())
         self.assertFalse((self.home / "sovereign-rollback").exists())
+    def test_15_something_else_at_the_app_path_is_never_deleted(self):
+        # The swap deletes the installed app before copying the new one in, so whatever
+        # sits at that path has to be Sovereign. Anything else is refused untouched.
+        release_app(self.app, "0.7.1", "50", bundle_id="com.example.other")
+        self.plist = (self.app / "Contents/Info.plist").read_bytes()
+        code, out = self.apply(self.publish("0.8.0", "51"), verify=self.ok)
+        self.assertEqual(code, 1, out)
+        self.assertIn("%s is not a Sovereign app" % self.app, out["error"])
+        self.assert_untouched()
     def test_a_verify_hook_that_is_not_executable_is_ignored(self):
         # The stub replaces Apple's gate only when it is a real executable. Anything else
         # falls through to codesign, which a fake bundle cannot pass.
@@ -508,6 +528,54 @@ class InstalledAppLocation(unittest.TestCase):
             self.assertEqual(self.mod.installed_app_path(str(UPD), roots=roots), str(system / "Sovereign.app"))
             release_app(mine / "Sovereign.app", "0.8.0", "51")
             self.assertEqual(self.mod.installed_app_path(str(UPD), roots=roots), str(mine / "Sovereign.app"))
+    def test_a_bundle_with_another_id_is_never_the_app_even_when_it_holds_the_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            other = Path(tmp) / "Applications/Sovereign.app"
+            release_app(other, "0.8.0", "51", bundle_id="com.example.other")
+            here = embed(other, UPD) / "sov-app-update"
+            mine = Path(tmp) / "home/Applications"
+            self.assertEqual(self.mod.installed_app_path(str(here), roots=(str(mine), str(other.parent))),
+                             str(mine / "Sovereign.app"), "falls through, and the roots get the same check")
+            release_app(mine / "Sovereign.app", "0.8.0", "51")
+            self.assertEqual(self.mod.installed_app_path(str(here), roots=(str(other.parent), str(mine))),
+                             str(mine / "Sovereign.app"), "the first root that is Sovereign wins")
+    def test_a_folder_named_like_an_app_with_no_identity_is_not_the_app(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "Projects.app"; (fake / "Contents").mkdir(parents=True)
+            here = embed(fake, UPD) / "sov-app-update"
+            mine = Path(tmp) / "home/Applications"
+            self.assertEqual(self.mod.installed_app_path(str(here), roots=(str(mine),)), str(mine / "Sovereign.app"))
+    def test_only_the_innermost_bundle_counts_and_only_with_sovereigns_id(self):
+        # /x/Foo.app/Contents/y/Sovereign.app: the inner bundle is the app when its id is
+        # Sovereign's, and the outer one is never taken in its place.
+        for outer_id, inner_id, inner_wins in (("com.example.foo", "com.sovereign.console", True),
+                                               ("com.sovereign.console", "com.example.other", False),
+                                               ("com.example.foo", "com.example.other", False)):
+            with tempfile.TemporaryDirectory() as tmp:
+                outer = Path(os.path.realpath(tmp)) / "x/Foo.app"
+                release_app(outer, "1.0", "1", bundle_id=outer_id)
+                inner = outer / "Contents/y/Sovereign.app"
+                release_app(inner, "0.8.0", "51", bundle_id=inner_id)
+                here = embed(inner, UPD) / "sov-app-update"
+                mine = Path(tmp) / "home/Applications"
+                got = self.mod.installed_app_path(str(here), roots=(str(mine),))
+                self.assertEqual(got, str(inner) if inner_wins else str(mine / "Sovereign.app"), (outer_id, inner_id))
+                self.assertNotEqual(got, str(outer))
+    def test_a_script_reached_through_a_symlink_resolves_to_its_real_bundle_then_checks_it(self):
+        for real_id, resolves in (("com.sovereign.console", True), ("com.example.other", False)):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(os.path.realpath(tmp))
+                real = root / "Applications/Sovereign.app"
+                release_app(real, "0.8.0", "51", bundle_id=real_id)
+                script = embed(real, UPD) / "sov-app-update"
+                host = root / "Other.app"
+                release_app(host, "1.0", "1", bundle_id="com.sovereign.console")
+                (host / "Contents/Resources").mkdir(parents=True)
+                link = host / "Contents/Resources/sov-app-update"; link.symlink_to(script)
+                mine = root / "home/Applications"
+                got = self.mod.installed_app_path(str(link), roots=(str(mine),))
+                self.assertEqual(got, str(real) if resolves else str(mine / "Sovereign.app"), real_id)
+                self.assertNotEqual(got, str(host), "the bundle holding the link is never the app")
     def test_a_preview_bundle_is_never_taken_for_the_installed_app(self):
         # Preview builds stay separate (build.sh refuses to install one), so an update or a
         # version read from inside one is about the installed app, never the preview.

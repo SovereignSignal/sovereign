@@ -47,7 +47,7 @@ APP = sovereign_app.installed_app_path(__file__)
 
 RELEASE_REPO = "SovereignSignal/sovereign"
 FEED_URL = "https://api.github.com/repos/%s/releases/latest" % RELEASE_REPO
-BUNDLE_ID = "com.sovereign.console"
+BUNDLE_ID = sovereign_app.BUNDLE_ID   # com.sovereign.console
 TEAM_ID = "SM97GYTF25"
 # The API, the release download page, and the hosts GitHub redirects an asset download
 # to. GitHub moved release assets from objects. to release-assets. in 2025; both are its own.
@@ -191,11 +191,19 @@ def apply(token, template=None):
 
 
 def check_writable():
-    """Refuse up front when this user cannot replace the app, as in an /Applications
-    folder that needs an administrator. Before a build, a download or a quit."""
+    """Refuse up front when the app cannot safely be replaced. Before a build, a download
+    or a quit, because the swap deletes APP before copying the new app in.
+
+    Whatever sits at APP must be Sovereign itself. And this process must be allowed to
+    change it: an /Applications folder owned by someone else, or macOS App Management
+    (the com.apple.macl attribute) stopping a Terminal-run updater, both look the same here.
+    """
+    if os.path.exists(APP) and not sovereign_app.is_sovereign(APP):
+        raise ValueError("%s is not a Sovereign app, so it was not replaced. Nothing was changed." % APP)
     if not sovereign_app.writable(APP):
-        raise ValueError("Sovereign is installed at %s, which this user cannot change without "
-                         "an administrator, so it was not updated. Nothing was changed." % APP)
+        raise ValueError("This process is not allowed to change %s. Run the update from Sovereign itself, "
+                         "or from a Terminal that has App Management permission in System Settings "
+                         "› Privacy & Security. Nothing was changed." % APP)
 
 
 def stand_down():
