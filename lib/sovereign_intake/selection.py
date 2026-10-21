@@ -1,6 +1,6 @@
 """Deterministic method selectors extracted from the existing lane exporter."""
 import re
-from brain_redact import redact_text
+from brain_redact import redact_text, shape_accepts
 
 FORBIDDEN = re.compile(
     r"(CREDS|\.env|/secrets?/|ACCESS\.md|token|credential|"          # credentials
@@ -14,27 +14,29 @@ FORBIDDEN = re.compile(
     r"\.sh$|\.py$|\.pem$|crontab|\.venv|node_modules)", re.I)
 
 
-# Detector-side shapes; secret_hits adds every kind brain_redact.redact_text redacts. The
-# leading-boundary rule is brain_redact's: a vendor token matches wherever it starts, and
-# \b stays only on the short prefixes that end ordinary words (bare sk-, pat, re_).
+# Detector-side shapes, (pattern, name, glued_check); secret_hits adds every kind
+# brain_redact.redact_text redacts. The boundary rule is brain_redact's: a vendor token matches
+# wherever it starts, a glued match must look random (brain_redact.shape_accepts), and \b stays
+# only on the short prefixes that end ordinary words (bare sk-, pat, re_).
 SECRET_PATTERNS = [
-    (r"-----BEGIN [A-Z ]*(PRIVATE|PUBLIC) KEY-----",     "key block"),
-    (r"ssh-(ed25519|rsa|dss)\s+AAAA",                    "ssh public key"),
-    (r"ghp_[A-Za-z0-9]{20,}",                            "github token"),
-    (r"github_pat_[A-Za-z0-9_]{20,}",                    "github fine-grained pat"),
-    (r"(?:sk-(?=proj-|ant-|svcacct-)|\bsk-)[A-Za-z0-9_\-]{20,}", "openai-style key"),
-    (r"\bpat[A-Za-z0-9]{10,}\.[A-Za-z0-9]{40,}",         "airtable pat"),
-    (r"\bre_[A-Za-z0-9_\-]{20,}",                        "resend key"),
-    (r"ntn_[A-Za-z0-9]{20,}",                            "notion token"),
-    (r"xox[baprs]-[A-Za-z0-9\-]{10,}",                   "slack token"),
-    (r"AKIA[0-9A-Z]{16}(?![0-9A-Z])",                    "aws access key id"),
-    (r"\d{8,10}:AA[A-Za-z0-9_\-]{30,}",                  "telegram bot token"),
-    (r"eyJ[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{15,}",     "jwt"),
-    (r"AIza[0-9A-Za-z_\-]{30,}",                         "google api key"),
+    (r"-----BEGIN [A-Z ]*(PRIVATE|PUBLIC) KEY-----",     "key block", False),
+    (r"ssh-(ed25519|rsa|dss)\s+AAAA",                    "ssh public key", False),
+    (r"ghp_[A-Za-z0-9]{20,}",                            "github token", True),
+    (r"github_pat_[A-Za-z0-9_]{20,}",                    "github fine-grained pat", True),
+    (r"(?:sk-(?=proj-|ant-|svcacct-)|\bsk-)[A-Za-z0-9_\-]{20,}", "openai-style key", True),
+    (r"\bpat[A-Za-z0-9]{10,}\.[A-Za-z0-9]{40,}",         "airtable pat", False),
+    (r"\bre_[A-Za-z0-9_\-]{20,}",                        "resend key", False),
+    (r"ntn_[A-Za-z0-9]{20,}",                            "notion token", True),
+    (r"xox[baprs]-[A-Za-z0-9\-]{10,}",                   "slack token", True),
+    (r"(?<![0-9A-Z])AKIA[0-9A-Z]{16}(?![0-9A-Z])",       "aws access key id", False),
+    (r"\d{8,10}:AA[A-Za-z0-9_\-]{30,}",                  "telegram bot token", True),
+    (r"eyJ[A-Za-z0-9_\-]{15,2048}\.[A-Za-z0-9_\-]{15,}", "jwt", True),
+    (r"AIza[0-9A-Za-z_\-]{30,}",                         "google api key", True),
     (r"(?i)(?<![a-z0-9])(api[_-]?key|secret|password|passwd|access[_-]?token|bearer|pat)\b"
-     r"\s*[:=]\s*[\"']?[A-Za-z0-9_\-\.]{16,}",           "assigned credential value"),
-    (r"(?i)postgres(?:ql)?://[^\s:@]+:[^\s@]+@",         "database url with password"),
+     r"\s*[:=]\s*[\"']?[A-Za-z0-9_\-\.]{16,}",           "assigned credential value", False),
+    (r"(?i)postgres(?:ql)?(?:\+[a-z0-9]+)?://[^\s:@/]+:[^\s@/]+@", "database url with password", False),
 ]
+_COMPILED = [(re.compile(pat), name, glued) for pat, name, glued in SECRET_PATTERNS]
 
 
 ADDRESS = re.compile(
@@ -57,8 +59,27 @@ FORENSIC = re.compile(
     r"|\b\d{9,}\b)")
 
 
+def detector_hits(text):
+    """The kinds SECRET_PATTERNS alone finds, without the redactor's contribution."""
+    return sorted({name for rx, name, glued in _COMPILED
+                   if any(shape_accepts(m, None, glued) for m in rx.finditer(text))})
+
+
+def scrub_detected(text):
+    """Replace every SECRET_PATTERNS hit with [redacted <name>]. Returns (text, names)."""
+    hits = []
+    for rx, name, glued in _COMPILED:
+        def sub(m, name=name, glued=glued):
+            if not shape_accepts(m, None, glued):
+                return m.group(0)
+            hits.append(name)
+            return "[redacted " + name + "]"
+        text = rx.sub(sub, text)
+    return text, hits
+
+
 def secret_hits(text):
-    return sorted(set([name for pat, name in SECRET_PATTERNS if re.search(pat, text)] + redact_text(text)[1]))
+    return sorted(set(detector_hits(text) + redact_text(text)[1]))
 
 
 def filter_lines(lines):

@@ -2,11 +2,10 @@
 import datetime
 import hashlib
 import json
-import re
 from pathlib import Path
 from brain_redact import redact_text
 from .common import IntakeError, read_under, relative, slug
-from .selection import SECRET_PATTERNS, secret_hits
+from .selection import scrub_detected, secret_hits
 
 LIMIT = 256000
 CHUNK = 8000
@@ -22,9 +21,8 @@ def permitted(path):
 
 def clean(text):
     text, hits = redact_text(text)
-    for pat, label in SECRET_PATTERNS:
-        text, n = re.subn(pat, '[redacted '+label+']', text)
-        hits.extend([label] * n)
+    text, more = scrub_detected(text)
+    hits.extend(more)
     if secret_hits(text):
         raise IntakeError('evidence_redaction_failed')
     return text, sorted(set(hits))

@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -9,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from brain_redact import redact_file, redact_paths, redact_text  # noqa: E402
-from sovereign_intake.selection import secret_hits  # noqa: E402
+from sovereign_intake.selection import detector_hits, secret_hits  # noqa: E402
 
 GH = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
 SK = "sk-proj-" + "abcDEF123456abcDEF123456abcDEF123456"
@@ -105,20 +106,22 @@ class Shapes(unittest.TestCase):
         self.assertEqual(out, "Name,Token,Note\nGrok,[redacted xai key],rotate me\nPlain,none,ok\n")
 
 
-# Key shapes for the glued cases, assembled so no fixture reads as a real credential.
-GH36 = "gh" + "p_" + "A" * 36
-SLACK = "xo" + "xb-" + "1" * 10 + "-" + "b" * 12
+# Key shapes for the glued cases, assembled so no fixture reads as a real credential. A glued
+# token must look random (mixed classes and a digit), so the bodies mix them.
+MIX = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2W3x4Y5z6"
+GH36 = "gh" + "p_" + MIX[:36]
+SLACK = "xo" + "xb-" + "1234567890" + "-" + "1234567890123" + "-" + MIX[:24]
 AWS = "AK" + "IA" + "B" * 16
 HEX36 = "3f9a8b7c6d5e" * 3
 
-# One fixture per shape both sides know: redact_text must redact it, secret_hits must see
-# it, and secret_hits must find nothing left in what redact_text wrote.
+# One fixture per shape both sides know: redact_text must redact it, the detector's own
+# patterns must see it, and neither may find anything left in what redact_text wrote.
 TOKEN_CORPUS = [
     GH36, SLACK, AWS, TG, SK,
-    "github" + "_pat_" + "C" * 40,
-    "nt" + "n_" + "D" * 40,
-    "AI" + "za" + "E" * 35,
-    "ey" + "J" + "F" * 16 + ".ey" + "J" + "G" * 16 + "." + "H" * 16,
+    "github" + "_pat_" + MIX[:40],
+    "nt" + "n_" + MIX[:40],
+    "AI" + "za" + MIX[:35],
+    "ey" + "J" + MIX[:20] + ".ey" + "J" + MIX[:20] + "." + MIX[:16],
 ]
 
 
@@ -156,6 +159,11 @@ class GluedTokens(unittest.TestCase):
         out, hits = redact_text("https://api.telegram.org/bot" + TG + "/sendMessage")
         self.assertEqual(out, "https://api.telegram.org/bot[redacted telegram bot token]/sendMessage")
 
+    def test_unglued_single_class_fixtures_still_redact(self):
+        for text in ("key " + "gh" + "p_" + "B" * 36, "Grok," + "xai-" + "a" * 48):
+            out, hits = redact_text(text)
+            self.assertEqual(len(hits), 1, text)
+
     def test_underscore_joined_labels_count(self):
         out, hits = redact_text("DB_PASS" + "WORD=" + "Xy9kLm2pQ7rT4vW8")
         self.assertEqual(out, "DB_PASSWORD=[redacted value]")
@@ -164,8 +172,20 @@ class GluedTokens(unittest.TestCase):
         out, hits = redact_text('print("api' + '_key=' + 'Zx9QwErTy7UiOp3AsDfGh2JkL\\n")')
         self.assertEqual(out, 'print("api_key=[redacted value]\\n")')
         for keep in ("API_KEY_ID=" + "Ab3dEf6gH9jKl2Mn", "mypassword: " + "Xy9kLm2pQ7rT4vW8",
-                     'write_text("NOTION_API' + '_KEY=k\\nBRAIN_ROOT=%s\\n" % root)'):
+                     'write_text("NOTION_API' + '_KEY=k\\nBRAIN_ROOT=%s\\n" % root)',
+                     "API_KEY=k\\nROOT=" + "Ab3dEf6gH9jKl2Mn"):
             self.assertEqual(redact_text(keep), (keep, []), keep)
+
+    def test_a_password_holding_backslash_n_stays_whole(self):
+        out, hits = redact_text("pass" + "word=" + "Gx7\\nQ2pL9vR4tW")
+        self.assertEqual(out, "password=[redacted value]")
+        out, hits = redact_text("passphrase: " + "Rt5\\tKw8mZ2qPx")
+        self.assertEqual(out, "passphrase: [redacted value]")
+
+    def test_database_url_with_a_driver_suffix(self):
+        out, hits = redact_text("postgresql+psycopg2://app:" + "Xy9kLm2pQ" + "@db.internal/wire")
+        self.assertEqual(out, "postgresql+psycopg2://app:[redacted password]@db.internal/wire")
+        self.assertEqual(detector_hits("postgresql+psycopg2://user:" + "pw" + "@host"), ["database url with password"])
 
     def test_ordinary_text_still_passes(self):
         keep = [
@@ -183,9 +203,39 @@ class GluedTokens(unittest.TestCase):
             self.assertEqual(redact_text(line), (line, []), line)
             self.assertEqual(secret_hits(line), [], line)
 
+    def test_identifiers_ending_in_a_prefix_are_not_glued_tokens(self):
+        keep = [
+            "laughs_LoudlyAtTheEndOfTheShowTonight",
+            "EURASIAFUNDINGROUND2026",
+            "PAIzaSyntheticComponentRendererFactoryXy",
+            "top_secret_ProjectCodenameRegistryEntriesForTheWholeTeam",
+            "slackxoxb-IntegrationSettings-ChannelNotificationPreferences",
+            "task-proj-roadmap-q3",
+            "task-proj-roadmap-q3-planning-notes-for-the-team",
+            "desk-ant-colony-notes",
+            "desk-ant-colony-field-notes-and-observations",
+        ]
+        for line in keep:
+            self.assertEqual(redact_text(line), (line, []), line)
+            self.assertEqual(secret_hits(line), [], line)
+
+
+class Linear(unittest.TestCase):
+    """A long run of a prefix must not make a pattern scan the rest of the text per start."""
+
+    def test_long_prefix_runs_finish_quickly(self):
+        runs = ["eyJ" * 50000, "eyJaaaaaaaaaaaa.eyJ" + "eyJ" * 50000,
+                "-----BEGIN RSA PRIVATE KEY-----" * 4800, "postgres://u:" * 11500]
+        for text in runs:
+            for fn in (redact_text, detector_hits):
+                started = time.perf_counter()
+                fn(text)
+                self.assertLess(time.perf_counter() - started, 0.5, (fn.__name__, text[:20]))
+
 
 class DetectorAgreesWithRedactor(unittest.TestCase):
-    """secret_hits (drop a line) and redact_text (rewrite a value) see the same tokens."""
+    """The detector's own patterns (drop a line) and redact_text (rewrite a value) see the
+    same tokens; secret_hits is not used here because it already includes the redactor."""
 
     def test_corpus(self):
         for token in TOKEN_CORPUS:
@@ -194,8 +244,9 @@ class DetectorAgreesWithRedactor(unittest.TestCase):
                     out, hits = redact_text(text)
                     self.assertTrue(hits)
                     self.assertNotIn(token, out)
-                    self.assertTrue(secret_hits(text))
-                    self.assertEqual(secret_hits(out), [], out)
+                    self.assertTrue(detector_hits(text))
+                    self.assertEqual(detector_hits(out), [], out)
+                    self.assertEqual(redact_text(out)[1], [], out)
 
 
 class Files(unittest.TestCase):
