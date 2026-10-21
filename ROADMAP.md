@@ -1,6 +1,6 @@
 # Sovereign Roadmap
 
-Status: planning document, owner: Sovereign Signal. Last updated 2026-10-19.
+Status: planning document, owned by the maintainer. Last updated 2026-10-20.
 Current release: 0.7.1 (closed beta, MVO). This file is the canonical product
 roadmap. GitHub Issues and Milestones are the public execution layer; when
 they disagree with this file, this file wins until it is edited.
