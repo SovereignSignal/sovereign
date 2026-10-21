@@ -5,11 +5,19 @@ import json
 from pathlib import Path
 import re
 import shutil
+import subprocess
+import sys
 import uuid
 
 from brain_redact import redact_text
 
 FOLDERS = ('raw', 'workstreams', 'knowledge', 'archive', 'repos')
+# Kept out of history: code working trees, cold storage, editor state and Finder litter.
+GITIGNORE = '.DS_Store\n.obsidian/workspace*\narchive/\nrepos/\n'
+# Used only when git has no identity it can use for this repository.
+FALLBACK_IDENTITY = ('Sovereign', 'sovereign@localhost')
+NO_GIT = 'git was not found; the archive has no history yet.'
+NO_COMMIT = 'git could not make the first commit; the archive has no history yet.'
 
 
 def archive_root(value):
@@ -37,8 +45,71 @@ def create(value, template):
     shutil.copyfile(template / 'templates/note.md', root / '.obsidian/templates/note.md')
     law = (template / 'CLAUDE.md').read_text().replace('{{SOVEREIGN_NAME}}', root.name).replace('{{BRAIN_NAME}}', root.name)
     (root / 'CLAUDE.md').write_text(law)
-    (root / '.gitignore').write_text('.DS_Store\n.obsidian/workspace*\narchive/\nrepos/\n')
-    return {'root': str(root.resolve()), 'name': root.name}
+    for keep in ('raw/tools', 'raw/workspaces', 'workstreams', 'knowledge/entities',
+                 'knowledge/concepts', 'knowledge/syntheses', 'archive', 'repos'):
+        (root / keep / '.gitkeep').touch()
+    result = {'root': str(root.resolve()), 'name': root.name}
+    result.update(init_repository(root, root.name))
+    return result
+
+
+def _find_git():
+    """The git to run, or None. Mirrors bin/git-guard on a Mac.
+
+    Without Apple's developer tools /usr/bin/git is a shim that opens an install dialog, so
+    on a Mac PATH only says whether git is there, and the binary is chosen the way the guard
+    chooses it. A git that cannot answer --version (an unaccepted Xcode licence) is none.
+    """
+    git = shutil.which('git')
+    if git and sys.platform == 'darwin':
+        try:
+            tools = subprocess.run(['/usr/bin/xcode-select', '-p'], capture_output=True, timeout=10).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            tools = False
+        found = ['/usr/bin/git'] if tools else [g for g in ('/opt/homebrew/bin/git', '/usr/local/bin/git') if os.access(g, os.X_OK)]
+        git = found[0] if found else None
+    if not git:
+        return None
+    try:
+        ok = subprocess.run([git, '--version'], capture_output=True, stdin=subprocess.DEVNULL, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    return git if ok else None
+
+
+def init_repository(root, name):
+    """Write the ignore file and make the archive a git repository with one first commit.
+
+    The one place both the app (create) and the CLI (bin/sov-init) start history, so the
+    two cannot drift. Without git the archive still stands: the result says it has no
+    history. The owner's global git config is never touched; a repository-local identity
+    is set only when git has none it can use.
+    """
+    root = Path(root)
+    (root / '.gitignore').write_text(GITIGNORE)
+    git = _find_git()
+    if not git:
+        return {'git': False, 'git_message': NO_GIT}
+
+    def run(*args):
+        return subprocess.run([git, *args], cwd=root, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, timeout=20)
+
+    fresh = not (root / '.git').exists()
+    try:
+        if run('init', '-q').returncode:
+            raise subprocess.SubprocessError
+        if run('var', 'GIT_AUTHOR_IDENT').returncode or run('var', 'GIT_COMMITTER_IDENT').returncode:
+            run('config', 'user.name', FALLBACK_IDENTITY[0])
+            run('config', 'user.email', FALLBACK_IDENTITY[1])
+        if run('add', '-A').returncode or run('commit', '-q', '-m', 'new instance: %s (from Sovereign)' % name).returncode:
+            raise subprocess.SubprocessError
+    except (OSError, subprocess.SubprocessError):
+        # A half-made repository would claim history it does not have.
+        if fresh:
+            shutil.rmtree(root / '.git', ignore_errors=True)
+        return {'git': False, 'git_message': NO_COMMIT}
+    return {'git': True}
 
 
 def note_path(root, relative):

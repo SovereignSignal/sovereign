@@ -24,14 +24,17 @@ cp "$HERE/templates/note.md" "$TARGET/.obsidian/templates/note.md"
 # drop the rules in, stamped with the archive's name
 sed "s/{{SOVEREIGN_NAME}}/$NAME/g; s/{{BRAIN_NAME}}/$NAME/g" "$HERE/CLAUDE.md" > "$TARGET/CLAUDE.md"
 
-cat > "$TARGET/.gitignore" <<'EOF'
-.DS_Store
-.obsidian/workspace*
-archive/
-repos/
-EOF
-
-( cd "$TARGET" && git init -q && git add -A && git commit -q -m "new instance: $NAME (from Sovereign)" )
+# The ignore file and the first commit come from the same function the app uses, so the
+# two ways of making an archive cannot drift. Without git the archive still stands.
+. "$HERE/bin/_sov-python.sh"
+"$(sov_python "$HERE")" -I -B - "$HERE/lib" "$TARGET" "$NAME" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import brain_local
+out = brain_local.init_repository(sys.argv[2], sys.argv[3])
+if not out['git']:
+    print(out['git_message'], file=sys.stderr)
+PY
 
 echo "Archive '$NAME' created at $TARGET"
 echo "Next: open it in Obsidian, set the Templates folder to .obsidian/templates, write your first note, then run:"

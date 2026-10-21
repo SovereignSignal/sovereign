@@ -22,6 +22,9 @@
 - `sov-capture` on a staged host: a capture for a lane with no `raw/workspaces/<lane>`
   now lands in the staging area's `raw/tools/<lane>`, as the write wires already did,
   instead of the vault's `raw/workspaces/<lane>`.
+- An archive created in the app is a git repository from its first commit, the same as
+  `sov init`, and both use one shared setup. Without git the archive is still created
+  and the app says it has no history yet.
 
 ## 0.8.0 "Reach" (build 51)
 

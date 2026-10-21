@@ -1401,6 +1401,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
                 self.bridge.deliver("localState", ["root": root, "chosen": true, "connectSeen": Settings.connectSeen(root)])
                 // The Glance is a second document on its own bridge; it asked once, at load.
                 self.glanceBridge?.deliver("localState", ["root": root])
+                // The archive stands without git; say so once, so its missing history is no surprise.
+                if create, result["git"] as? Bool == false, let note = result["git_message"] as? String {
+                    let alert = NSAlert(); alert.messageText = "Archive created"; alert.informativeText = note; alert.window.appearance = nil; alert.window.backgroundColor = self.pageGround; alert.runModal()
+                }
             }
         }
     }
