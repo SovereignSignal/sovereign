@@ -275,6 +275,21 @@ class Rig:
         return subprocess.run(["/bin/bash", str(SESSIONS_SH)], capture_output=True, text=True,
                               env=self.env(**extra), timeout=240)
 
+    def tick_here(self, **extra):
+        """run.tick in this process, then commit or discard as sessions.sh would, with no
+        publish: for cases that patch the module (a missing sov-capture, short timeouts).
+        The tick's private stage is <tmp>/private/stage; returns the tick's summary."""
+        from unittest import mock
+        from session_ingest import run
+        dest = self.tmp / "private" / "stage" / "raw" / "tools" / LANE / "sessions"
+        dest.mkdir(parents=True, exist_ok=True)
+        env = self.env(**extra)
+        with mock.patch.dict(os.environ, env, clear=True):
+            summary = run.tick("claude-code", env, str(dest), time.time())
+            (run.commit if summary["exit"] == 0 else run.discard)("claude-code", env)
+        self.private = dest
+        return summary
+
     def watermark(self):
         path = self.state / "sessions" / "claude-code.json"
         return json.loads(path.read_text()) if path.exists() else {"sessions": {}, "waiting": None}

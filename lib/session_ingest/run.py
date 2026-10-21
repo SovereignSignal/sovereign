@@ -39,6 +39,8 @@ RETRY_SLEEP_S = 30
 CAPTURE_TIMEOUT_S = 60
 WEEK_S = 7 * 86400
 UNREACHABLE = "model unreachable"
+MAX_TIMEOUTS = 3
+AUTH_CODES = (401, 403)
 # The Waiting line is published into the lane, so it carries one of these phrases and
 # never the reason itself, which can name a path, a host or an endpoint. The full
 # reason stays in the watermark for `status`.
@@ -237,7 +239,8 @@ def waiting_phrase(reason):
     reason = str(reason or "")
     if reason == UNREACHABLE:
         return WAITING_PHRASES[0]
-    if reason.startswith(distill.REFUSING) or reason == inference.GUARD_REASON:
+    if (reason.startswith(distill.REFUSING) or reason == inference.GUARD_REASON
+            or reason.startswith(tuple("HTTP %d" % c for c in AUTH_CODES))):
         return WAITING_PHRASES[1]
     if reason.startswith("No key is saved for"):
         return WAITING_PHRASES[2]
@@ -270,6 +273,13 @@ def _capture(c, s, sid, tool, lane, stage, vault, distiller, env):
         sys.stderr.write("sessions: capture for %s did not run: %s\n" % (sid, exc))
         return "fault"
     if done.returncode != 0:
+        if "Traceback (most recent call last)" in done.stderr or (
+                done.returncode == 2 and "can't open file" in done.stderr):
+            # sov-capture crashed or is not there: a broken install, never this session's fault
+            last = (done.stderr.strip().splitlines() or [""])[-1][:300]
+            sys.stderr.write("sessions: sov-capture failed to run for %s (exit %d): %s\n"
+                             % (sid, done.returncode, last))
+            return "fault"
         sys.stderr.write("sessions: capture for %s was refused (exit %d): %s\n"
                          % (sid, done.returncode, done.stderr.strip()[:300]))
         return "refused"
@@ -305,6 +315,11 @@ def tick(tool, env, dest_dir, now):
     if not ctx["vault"]:
         raise ValueError("No archive on this Mac (set ~/.brain-root).")
     lane, stage, dest = _lane_paths(ctx, env, dest_dir)
+    if not CAPTURE.is_file():
+        # Every capture would fail: no call is worth making and no session is at fault.
+        sys.stderr.write("sessions: sov-capture is missing (%s); no call made\n" % CAPTURE)
+        summary.update(status="fault", reason="sov-capture is missing", exit=1)
+        return summary
     host = _host(env)
     wm = state.Watermark(ctx["state_dir"], tool)
     # Rows still staged at the start of a tick belong to a run that never reached its
@@ -324,6 +339,18 @@ def tick(tool, env, dest_dir, now):
     day = time.strftime("%Y-%m-%d", time.gmtime(now))
     waiting = prior if prior and prior.get("reason") == UNREACHABLE else None
     calls_open, chars, failed_writes, faults = True, 0, 0, 0
+    # A timeout is held until the next call says whether the model is working: then it
+    # counts against its session; a second timeout in a row, or no answer at all, makes
+    # both an outage and neither counts.
+    held = None
+
+    def settle(entry):
+        hsid, hrow = entry
+        wm.stage(hsid, hrow, write=False)
+        if hrow.get("verdict") == "failed:%d" % MAX_TIMEOUTS and hrow.get("timeouts") == MAX_TIMEOUTS:
+            summary["verdicts"][hsid] = hrow["verdict"]
+        else:
+            summary["pending"] += 1
 
     for look in _walk(ctx, wm.rows, now, observe=lambda *a: wm.observe(*a, write=False),
                       deadline=started + walk_window):
@@ -334,6 +361,7 @@ def tick(tool, env, dest_dir, now):
         verdict_row = {"size": look["size"], "mtime": look["mtime"], "policy": ctx["policy"],
                        "cwd": cwds[0] if cwds else None, "project": _project(s) if s else "", "at": _iso(now),
                        "attempts": int((row or {}).get("attempts") or 0), "captures": 0,
+                       "timeouts": int((row or {}).get("timeouts") or 0),
                        "distiller": res["distiller"], "prompt": prompt.VERSION}
         if look["verdict"] is not None:
             wm.stage(sid, dict(verdict_row, verdict=look["verdict"]), write=False)
@@ -354,6 +382,10 @@ def tick(tool, env, dest_dir, now):
         chars += len(text)
         out = distill.distill(res, key, s, text, turn_ids, timeout=call_timeout)
         verdict_row["attempts"] += 1
+        answered = out["status"] in ("ok", "failed") or out.get("responded")
+        if answered and held is not None:
+            settle(held)          # the model is working, so the last call's timeout stands
+            held = None
         if out["status"] == "ok":
             waiting = None
             before = set(os.listdir(str(dest)))
@@ -371,6 +403,7 @@ def tick(tool, env, dest_dir, now):
                 failed_writes += len(out["captures"])
                 if "fault" in results:
                     faults += 1
+                    calls_open = False    # every later capture would fail the same way
                     summary["pending"] += 1
                     continue
                 verdict = "failed:%d" % (_failures(row) + 1)
@@ -387,17 +420,39 @@ def tick(tool, env, dest_dir, now):
             waiting = None
             verdict = "failed:%d" % (_failures(row) + 1)
             wm.stage(sid, dict(verdict_row, verdict=verdict), write=False)
+        elif out["status"] == "unreachable" and out.get("timed_out") and held is None:
+            # One timeout is not proof of an outage: one large excerpt on a slow model can
+            # time out every tick. It counts in its own counter (three end the session) once
+            # the next call shows the model is working, and the walk goes on.
+            n = verdict_row["timeouts"] + 1
+            if n >= MAX_TIMEOUTS:
+                held = (sid, dict(verdict_row, verdict="failed:%d" % MAX_TIMEOUTS, timeouts=n,
+                                  error="timed out %d times" % n))
+            else:
+                held = (sid, dict(verdict_row, verdict=(row or {}).get("verdict") or None, timeouts=n))
+            continue
         else:
-            # unreachable with no answer at all: an outage, nothing about the session, so
-            # it is never counted against it and stays pending for as long as it lasts.
-            # refused: a guard refusal at call time, a configuration the owner must see.
-            # Either way this tick makes no further call.
-            waiting = _waiting(prior, UNREACHABLE if out["status"] == "unreachable" else
-                               _one_line(out["error"], 300) or "refused", now)
+            # No answer at all, a second timeout in a row, or a 404, 408, 429 or 5xx: an
+            # outage, never counted against a session, which stays pending for as long as
+            # it lasts. 401 or 403, or a guard refusal at call time: a configuration the
+            # owner must see. Either way this tick makes no further call, and a timeout
+            # held from the call before counts for nothing.
+            if held is not None:
+                held = None
+                summary["pending"] += 1
+            if out["status"] == "refused":
+                reason = _one_line(out["error"], 300) or "refused"
+            elif out.get("code") in AUTH_CODES:
+                reason = _one_line(out["error"], 300)
+            else:
+                reason = UNREACHABLE
+            waiting = _waiting(prior, reason, now)
             calls_open = False
             summary["pending"] += 1
             continue
         summary["verdicts"][sid] = verdict
+    if held is not None:
+        settle(held)
     wm.write_seen()
     wm.write_pending()        # one write for every row staged above
     if waiting != prior:

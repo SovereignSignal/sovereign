@@ -24,6 +24,9 @@ BODY_WORDS = 120
 TEMPERATURE = 0.1
 _TURN = re.compile(r"T([0-9]{1,6})")
 REFUSING = "REFUSING - sovereign-inference law"
+# HTTP answers about this request's content: the model saw the excerpt and rejected it.
+CONTENT_CODES = (400, 413, 422)
+_HTTP = re.compile(r"HTTP ([0-9]{3})\b")
 
 
 def _first_object(raw):
@@ -94,12 +97,14 @@ def _result(status, captures=(), error=None, **extra):
 def distill(res, key, session, excerpt, turn_ids, timeout=90):
     """Ask the resolved model (inference.resolve) about one excerpt. Returns
     {"status": "ok"|"failed"|"unreachable"|"refused", "captures", "error"}. An
-    unreachable result also carries `responded`: True when the model host answered with
-    an HTTP error (it rejected this excerpt), False when no answer came at all (an
-    outage: refused connection, DNS, a timeout after the retry)."""
+    unreachable result also carries `code` (the HTTP status the host answered with, or
+    None when no answer came), `responded` (True only for an answer about this request's
+    content: 400, 413 or 422) and `timed_out` (the call ran out of time, after the retry),
+    so the caller can tell a rejected excerpt from a configuration problem or an outage."""
     cfg = res.get("cfg")
     if cfg is None:
-        return _result("unreachable", error=res.get("reason") or "no model for session capture", responded=False)
+        return _result("unreachable", error=res.get("reason") or "no model for session capture",
+                       code=None, responded=False, timed_out=False)
     provider = cfg.get("provider")
     if provider and not key:
         # A hosted provider without its key would only fail at the provider, after the
@@ -121,8 +126,11 @@ def distill(res, key, session, excerpt, turn_ids, timeout=90):
         if isinstance(exc, RuntimeError) and str(exc).startswith(REFUSING):
             return _result("refused", error=str(exc))
         # curator_inference._post_json turns an HTTP error response into "HTTP <code>: ...".
-        responded = isinstance(exc, RuntimeError) and str(exc).startswith("HTTP ")
-        return _result("unreachable", error=error, responded=responded)
+        m = _HTTP.match(str(exc)) if isinstance(exc, RuntimeError) else None
+        code = int(m.group(1)) if m else None
+        timed_out = code is None and (isinstance(exc, TimeoutError) or "timed out" in str(exc).lower())
+        return _result("unreachable", error=error, code=code, responded=code in CONTENT_CODES,
+                       timed_out=timed_out)
     captures = validate(raw, turn_ids)
     if captures is None:
         return _result("failed", error="the reply held no captures object")

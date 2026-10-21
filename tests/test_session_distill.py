@@ -181,7 +181,28 @@ class Distill(Base):
             out = distill.distill(self.resolve(), "", SESSION, EXCERPT, [1, 2])
         self.assertEqual(out["status"], "unreachable")
         self.assertIn("HTTP 500", out["error"])
-        self.assertIs(out["responded"], True)   # the host answered: about this excerpt, not an outage
+        self.assertIs(out["responded"], False)  # a server fault says nothing about this excerpt
+        self.assertEqual(out["code"], 500)
+
+    def test_only_content_answers_count_as_responded(self):
+        for code, responded in ((400, True), (413, True), (422, True), (401, False), (403, False),
+                                (404, False), (408, False), (429, False), (503, False)):
+            with fx.ModelStub(lambda body, code=code: code) as stub:
+                self.hub_json(stub.url)
+                out = distill.distill(self.resolve(), "", SESSION, EXCERPT, [1, 2])
+            self.assertEqual((out["status"], out["responded"], out["code"]), ("unreachable", responded, code))
+            self.assertFalse(out["timed_out"])
+
+    def test_a_timeout_is_marked(self):
+        import threading
+        import types
+        import curator_inference
+        with fx.ModelStub(lambda body: threading.Event().wait(1.5) or reply(cand())) as stub:
+            self.hub_json(stub.url)
+            with mock.patch.object(curator_inference, "time", types.SimpleNamespace(sleep=lambda s: None)):
+                out = distill.distill(self.resolve(), "", SESSION, EXCERPT, [1, 2], timeout=0.5)
+        self.assertEqual((out["status"], out["timed_out"], out["responded"], out["code"]),
+                         ("unreachable", True, False, None))
 
     def test_unreachable(self):
         sock = socket.socket()
@@ -192,6 +213,7 @@ class Distill(Base):
         out = distill.distill(self.resolve(), "", SESSION, EXCERPT, [1, 2], timeout=5)
         self.assertEqual(out["status"], "unreachable")
         self.assertIs(out["responded"], False)
+        self.assertFalse(out["timed_out"])
         self.assertEqual(out["captures"], [])
         self.assertTrue(out["error"])
 

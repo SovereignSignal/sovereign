@@ -9,13 +9,18 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
+import types
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "tests"))
 import session_fixtures as fx  # noqa: E402
+import curator_inference  # noqa: E402
+from session_ingest import run  # noqa: E402
 
 SID = "5e551011-0000-4000-8000-0000000000b1"
 VALID = {"title": "Every archive copy stays encrypted",
@@ -98,11 +103,11 @@ class Watermark(unittest.TestCase):
         self.assertIsNone(rig.watermark()["waiting"])
         self.assertNotIn("Waiting:", rig.manifest())
 
-    def test_a_500_answer_fails_the_session_and_the_tick_goes_on(self):
+    def test_a_422_answer_fails_the_session_and_the_tick_goes_on(self):
         bad, good = "5e551011-0000-4000-8000-0000000000h1", "5e551011-0000-4000-8000-0000000000h2"
 
         def reply(body):
-            return 500 if "HTTP-REJECTED" in json.dumps(body) else json.dumps({"captures": [VALID]})
+            return 422 if "HTTP-REJECTED" in json.dumps(body) else json.dumps({"captures": [VALID]})
         rig = self.rig(reply)
         rig.transcript(bad, prompts=["Remember HTTP-REJECTED always."] + list(fx.PROMPTS[1:]), age_s=7200)
         rig.transcript(good)
@@ -141,6 +146,28 @@ class Watermark(unittest.TestCase):
         self.assertNotIn(poison_sid, vault_text)
         self.assertIn("failed 1", rig.manifest())
         self.assertIn("Items mirrored: 1. Failed: 2.", rig.manifest())
+
+    def test_a_rate_limit_or_a_server_fault_is_an_outage(self):
+        for code in (429, 503):
+            rig = self.rig(lambda body, code=code: code)
+            rig.transcript(SID, age_s=7200)
+            rig.transcript("5e551011-0000-4000-8000-0000000000b2")
+            for _ in range(3):
+                self.ok(rig.tick())
+            self.assertEqual([r.get("verdict") for r in rig.watermark()["sessions"].values()], [None, None], code)
+            self.assertEqual(rig.watermark()["waiting"]["reason"], "model unreachable")
+            self.assertIn("Waiting: model unreachable since", rig.manifest())
+            self.assertEqual(rig.stub.calls, 3, code)          # one call a tick, then calls close
+
+    def test_an_auth_answer_waits_on_configuration(self):
+        rig = self.rig(lambda body: 401)
+        rig.transcript(SID, age_s=7200)
+        rig.transcript("5e551011-0000-4000-8000-0000000000b2")
+        self.ok(rig.tick())
+        self.assertEqual(rig.stub.calls, 1)
+        self.assertIsNone(rig.verdict(SID))
+        self.assertTrue(rig.watermark()["waiting"]["reason"].startswith("HTTP 401"))
+        self.assertIn("Waiting: model refused this configuration since", rig.manifest())
 
     def test_an_outage_across_three_ticks_fails_no_session(self):
         rig = self.rig()
@@ -225,6 +252,90 @@ class Watermark(unittest.TestCase):
         self.assertEqual(rig.verdict(SID), "distilled")
         self.assertEqual(rig.stub.calls, 2)
         self.assertEqual(len(rig.captures()), 1)
+
+
+SLOW = "SLOW-MARKER"
+
+
+def slow_or_valid(body):
+    if SLOW in json.dumps(body):
+        threading.Event().wait(1.5)   # past the 0.5 s per-call timeout these cases use
+    return json.dumps({"captures": [VALID]})
+
+
+class InProcess(unittest.TestCase):
+    """Ticks run in this process, so the module can be pointed at a missing sov-capture or
+    given a short per-call timeout (the retry's 30 s sleep is skipped)."""
+
+    def rig(self, reply_fn=valid, **cfg):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        rig = fx.Rig(tmp.name, reply_fn, **cfg)
+        self.addCleanup(rig.close)
+        return rig
+
+    def short_calls(self):
+        for patcher in (mock.patch.object(run, "windows", return_value=(0.5, 100, 200)),
+                        mock.patch.object(curator_inference, "time", types.SimpleNamespace(sleep=lambda s: None))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_a_missing_sov_capture_is_a_fault_before_any_call(self):
+        rig = self.rig()
+        rig.transcript(SID)
+        with mock.patch.object(run, "CAPTURE", rig.tmp / "no-such" / "sov-capture"):
+            summary = rig.tick_here()
+        self.assertEqual(summary["exit"], 1)
+        self.assertEqual(rig.stub.calls, 0)
+        self.assertEqual(rig.watermark()["sessions"].get(SID, {}).get("verdict"), None)
+        self.assertFalse((rig.state / "sessions" / "claude-code.json.pending").exists())
+
+    def test_a_sov_capture_that_crashes_is_a_fault_not_a_refusal(self):
+        rig = self.rig()
+        rig.transcript(SID, age_s=7200)
+        rig.transcript("5e551011-0000-4000-8000-0000000000b2")
+        broken = rig.tmp / "sov-capture"
+        broken.write_text("raise RuntimeError('broken install')\n")
+        with mock.patch.object(run, "CAPTURE", broken):
+            summary = rig.tick_here()
+        self.assertEqual(summary["exit"], 1)
+        self.assertEqual(rig.stub.calls, 1)          # calls close at the fault
+        self.assertIsNone(rig.verdict(SID))          # never failed:n for a broken install
+        self.assertIsNone(rig.verdict("5e551011-0000-4000-8000-0000000000b2"))
+
+    def test_a_slow_session_times_out_alone_and_ends_at_three(self):
+        self.short_calls()
+        rig = self.rig(slow_or_valid)
+        slow, fast = SID, "5e551011-0000-4000-8000-0000000000b2"
+        rig.transcript(slow, prompts=["Remember %s always." % SLOW] + list(fx.PROMPTS[1:]), age_s=7200)
+        rig.transcript(fast)
+        self.assertEqual(rig.tick_here()["exit"], 0)
+        self.assertEqual(rig.verdict(fast), "distilled")        # the same tick went on to it
+        row = rig.watermark()["sessions"][slow]
+        self.assertEqual((row.get("verdict"), row.get("timeouts")), (None, 1))
+        self.assertIsNone(rig.watermark()["waiting"])
+        for n in (2, 3):
+            rig.tick_here()
+        row = rig.watermark()["sessions"][slow]
+        self.assertEqual((row["verdict"], row["timeouts"], row["error"]), ("failed:3", 3, "timed out 3 times"))
+        calls = rig.stub.calls
+        rig.tick_here()
+        self.assertEqual(rig.stub.calls, calls)                  # terminal: no further call
+
+    def test_two_timeouts_in_a_row_are_an_outage(self):
+        self.short_calls()
+        rig = self.rig(slow_or_valid)
+        a, b, c = SID, "5e551011-0000-4000-8000-0000000000b2", "5e551011-0000-4000-8000-0000000000b3"
+        for i, sid in enumerate((a, b)):
+            rig.transcript(sid, prompts=["Remember %s always." % SLOW] + list(fx.PROMPTS[1:]), age_s=9000 - i * 600)
+        rig.transcript(c)
+        self.assertEqual(rig.tick_here()["exit"], 0)
+        rows = rig.watermark()["sessions"]
+        for sid in (a, b, c):
+            self.assertIsNone(rows[sid].get("verdict"), sid)
+            self.assertFalse(rows[sid].get("timeouts"), sid)     # no increment in an outage
+        self.assertEqual(rig.watermark()["waiting"]["reason"], "model unreachable")
+        self.assertEqual(len([r for r in rig.stub.requests if SLOW not in json.dumps(r)]), 0)  # calls closed
 
 
 if __name__ == "__main__":
