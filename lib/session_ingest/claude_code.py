@@ -44,6 +44,22 @@ def list_transcripts(home):
     return sorted(found)
 
 
+def first_cwd(path):
+    """The realpath of the first working directory the transcript names, or None. The
+    read stops at that line, so nothing after it is parsed; status uses it to list a
+    project for a session the watermark holds no cwd for."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for raw in fh:
+            try:
+                line = json.loads(raw)
+            except ValueError:
+                continue
+            cwd = line.get("cwd") if isinstance(line, dict) else None
+            if isinstance(cwd, str) and cwd and "\x00" not in cwd:
+                return os.path.realpath(cwd)
+    return None
+
+
 def _prompt_text(line):
     """The typed prompt this user line carries, or None when it is not one."""
     if line.get("isMeta") or "toolUseResult" in line:

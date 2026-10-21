@@ -33,6 +33,9 @@
 #                                 convert, redact, content-dedup, hand each file to
 #                                 sov-capture. Dry plan unless --apply; an undeclared
 #                                 lane is printed and refused, the owner saves LANE.md (sov-ingest)
+#   sov ingest sessions [--since 30d] [--show <id>] [--apply] [--on|--off] [status]
+#                                 distill quiet Claude Code sessions into candidate captures in
+#                                 its lane. Off until --on, and a dry plan unless --apply (sov-ingest)
 #   sov app-update [--source release|local] [--apply]  install the latest signed release, or build
 #                                 this machine's source into the installed app; preview without --apply (sov-app-update)
 #   sov gate approve|reject <slug> [reason]
