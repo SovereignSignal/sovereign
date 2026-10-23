@@ -1244,6 +1244,8 @@ def backups_view(root, hub, fleet):
     wanted = []                                            # (host record, node, vmid), registry order
     for h in fleet.get("hosts", []):
         meta = h.get("meta") or {}
+        if re.match(r"retired\b", (meta.get("reach") or "").strip(), re.I):
+            continue                                       # a destroyed VM has no backup posture to probe
         m = re.search(r"Proxmox node (\S+)", (meta.get("where") or "") + " " + (meta.get("kind") or ""))
         vm = re.search(r"\bVM (\d+)\b", meta.get("kind") or "")
         if m and vm:

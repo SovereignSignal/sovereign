@@ -82,6 +82,17 @@ class HypervisorProbe(unittest.TestCase):
         self.assertFalse(any(h["reachable"] for h in hosts.values()))
         self.assertTrue(all(h["jobs"] is None for h in hosts.values()))
 
+    def test_retired_vms_are_not_in_the_backup_roster(self):
+        """A destroyed VM kept in hosts.md as provenance has no backup posture; listing it
+        as 'unknown' sent the owner after VMs that no longer exist (2026-10-22)."""
+        m = self.mod
+        m.port_open = lambda host, port=22, timeout=1.0: False
+        fleet = fleet_two_nodes()
+        fleet["hosts"][1]["meta"]["reach"] = "retired (owner, 2026-10-16)"
+        fleet["hosts"][2]["meta"]["reach"] = "Retired 2026-10-03"
+        view = m.backups_view("/nonexistent", {}, fleet)
+        self.assertEqual([h["host"] for h in view["hosts"]], ["worker-a"])
+
     def test_reachable_nodes_are_probed_concurrently(self):
         m = self.mod
         lock, active, peak = threading.Lock(), [0], [0]
