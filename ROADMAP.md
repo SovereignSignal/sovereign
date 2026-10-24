@@ -97,6 +97,19 @@ Grouped by theme. Effort is rough: S days, M one to two weeks, L a month+.
 - **API key walkthrough** (S): non-technical in-app guide for creating a
   provider key, with per-provider steps.
 
+### Housekeeping
+- **Rename the legacy "brain" names** (M): the product predates its name, and
+  the first name still shows in the checkout and bin folder paths a maintainer
+  uses, 22 `brain-*` CLI aliases (each a symlink to its `sov-*` twin), the
+  `~/.brain-*` pointer files (move to `~/.sovereign/`), the `BRAIN_*`
+  environment variables (`SOVEREIGN_*` is already read beside them), the
+  modules `brain_discovery`, `brain_local`, `brainhook` and the
+  `brain-connector` skill, two producer scripts, and the app's
+  `~/brain-bin/sov` lookup (`~/.local/bin/sov` instead). Ship a
+  `sov migrate-paths` helper with a dry run, keep the legacy readers through
+  0.9, remove them at 1.0. Deferred 2026-10-23 after mapping: about 120 files
+  and every connected machine, for no change in behaviour.
+
 ### Beyond one person (later)
 - **Two-Mac wizard** (L): productize the hub-and-mirror setup that today
   only the maintainer's fleet runs.
